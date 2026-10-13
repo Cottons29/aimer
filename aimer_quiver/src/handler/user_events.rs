@@ -5,7 +5,6 @@ use crate::aimer_app::AimerNativePlatformEvent;
 use crate::handler::AimerApplicationHandler;
 use crate::handler::event_handler::WindowEventHandler;
 
-
 /// Delivers a platform event that did not come from the window itself.
 ///
 /// The soft keyboard on iOS and Android, and the display link that drives
@@ -61,10 +60,8 @@ pub(crate) fn handle_user_event<W: Widget + 'static>(
         }
         AimerNativePlatformEvent::TextEditingDelta(delta) => {
             if app.active_root().is_some() {
-                let result = app.dispatch_element_event(
-                    app.cursor_pos,
-                    &ElementEvent::TextEditingDelta(delta),
-                );
+                let result = app
+                    .dispatch_element_event(app.cursor_pos, &ElementEvent::TextEditingDelta(delta));
                 if result.is_consumed() || result.needs_redraw() {
                     app.request_full_redraw();
                 }
@@ -88,6 +85,9 @@ pub(crate) fn handle_user_event<W: Widget + 'static>(
             app.note_frame_request(kind);
             on_frame_ready(app, kind);
         }
+        // The windowed handler exits its loop before reaching this shared path;
+        // a headless application has no loop to exit.
+        AimerNativePlatformEvent::ShutdownRequested => {}
         // Windowed native handlers deliver completions before this shared path.
         AimerNativePlatformEvent::RenderWorkerReady => {}
         AimerNativePlatformEvent::HotReloadCallbackReady => {

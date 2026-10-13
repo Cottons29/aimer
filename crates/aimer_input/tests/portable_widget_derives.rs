@@ -5,12 +5,11 @@ use aimer_input::gesture::gesture_detector::GestureDetector;
 use aimer_input::input::{TextArea, TextField};
 use aimer_input::mouse_region::MouseRegion;
 use aimer_style::{BoxDecoration, LayoutSpacing, Spacing};
-use aimer_widget::base::Color;
 use aimer_widget::base::BuildContext;
+use aimer_widget::base::Color;
 use aimer_widget::portable::{
-    PortableBuildContext, PortableBuildError, PortableLimits, PortableNodeId,
-    PortableNativeWidget, PortableWidgetLimits, PortableWidgetSchema, SourceFingerprint,
-    StableId128,
+    PortableBuildContext, PortableBuildError, PortableLimits, PortableNativeWidget, PortableNodeId,
+    PortableWidgetLimits, PortableWidgetSchema, SourceFingerprint, StableId128,
 };
 use aimer_widget::{AnyElement, PortableWidget, Widget};
 
@@ -134,8 +133,7 @@ fn derived_input_widgets_lower_bounded_nodes_with_children_and_properties() {
         .unwrap();
     let area_document = area_context.finish_document(area_root).unwrap();
     let area_bytes = area_document.encode().unwrap();
-    let area_view =
-        WidgetDocumentView::decode(&area_bytes, area_document.model_limits()).unwrap();
+    let area_view = WidgetDocumentView::decode(&area_bytes, area_document.model_limits()).unwrap();
     let area_node = area_view.node(area_root.index()).unwrap();
     assert_eq!(area_node.properties().count(), 2);
 
@@ -163,9 +161,11 @@ fn text_input_contract_round_trips_bounded_configuration_without_native_handles(
         .iter()
         .map(|property| property.canonical_name())
         .collect::<Vec<_>>();
-    assert!(field_properties.iter().any(|name| {
-        name.ends_with("TextField:max_length_wire")
-    }));
+    assert!(
+        field_properties
+            .iter()
+            .any(|name| { name.ends_with("TextField:max_length_wire") })
+    );
 
     let area_schema = <TextArea as PortableWidgetSchema>::SCHEMA;
     let area_properties = area_schema
@@ -173,12 +173,16 @@ fn text_input_contract_round_trips_bounded_configuration_without_native_handles(
         .iter()
         .map(|property| property.canonical_name())
         .collect::<Vec<_>>();
-    assert!(area_properties
-        .iter()
-        .any(|name| name.ends_with("TextArea:min_lines_wire")));
-    assert!(area_properties
-        .iter()
-        .any(|name| name.ends_with("TextArea:max_lines_wire")));
+    assert!(
+        area_properties
+            .iter()
+            .any(|name| name.ends_with("TextArea:min_lines_wire"))
+    );
+    assert!(
+        area_properties
+            .iter()
+            .any(|name| name.ends_with("TextArea:max_lines_wire"))
+    );
 
     let source = source(5);
     let mut field_context = context();
@@ -191,17 +195,21 @@ fn text_input_contract_round_trips_bounded_configuration_without_native_handles(
         .unwrap();
     let field_document = field_context.finish_document(field_root).unwrap();
     let field_image = field_document.encode().unwrap();
-    let field_view = WidgetDocumentView::decode(&field_image, field_document.model_limits()).unwrap();
+    let field_view =
+        WidgetDocumentView::decode(&field_image, field_document.model_limits()).unwrap();
     let field_node = field_view.node(field_root.index()).unwrap();
     assert_eq!(field_node.children().count(), 0);
-    assert!(field_node.properties().any(|property| {
-        property.property_id() == field_schema.properties()[0].id()
-    }));
+    assert!(
+        field_node
+            .properties()
+            .any(|property| { property.property_id() == field_schema.properties()[0].id() })
+    );
     <TextField as PortableNativeWidget>::materialize_widget(&field_view, field_node, Vec::new())
         .expect("TextField's checked native materializer should rebuild fresh native state");
-    assert!((0..field_view.string_count()).all(|index| {
-        field_view.string(index) != Some("native-only")
-    }));
+    assert!(
+        (0..field_view.string_count())
+            .all(|index| { field_view.string(index) != Some("native-only") })
+    );
 
     let mut area_context = context();
     let area_root = TextArea::new()

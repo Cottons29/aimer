@@ -134,11 +134,7 @@ impl CallbackBinding {
 
     /// Creates a binding between a typed event and a stable guest callback.
     #[inline]
-    pub const fn new(
-        event_kind: EventId,
-        event_schema: Version,
-        callback_id: StableId128,
-    ) -> Self {
+    pub const fn new(event_kind: EventId, event_schema: Version, callback_id: StableId128) -> Self {
         Self {
             event_kind,
             event_schema,
@@ -320,11 +316,7 @@ impl<'a> WidgetDocument<'a> {
             u32::try_from(self.blobs.len()).map_err(|_| ModelError::LengthOverflow)?;
         for node in self.nodes {
             for property in node.properties {
-                validate_property_value(
-                    property.value,
-                    source_string_count,
-                    source_blob_count,
-                )?;
+                validate_property_value(property.value, source_string_count, source_blob_count)?;
             }
         }
 
@@ -335,8 +327,7 @@ impl<'a> WidgetDocument<'a> {
             let index = if let Some(&index) = string_indices.get(value) {
                 index
             } else {
-                let index =
-                    u32::try_from(strings.len()).map_err(|_| ModelError::LengthOverflow)?;
+                let index = u32::try_from(strings.len()).map_err(|_| ModelError::LengthOverflow)?;
                 string_indices.insert(value, index);
                 strings.push(value);
                 index
@@ -476,7 +467,11 @@ impl<'a> WidgetDocument<'a> {
             write_u64(&mut output, node.widget_type.value());
             write_version(&mut output, node.widget_schema);
             write_u32(&mut output, u32::from(node.key.is_some()) * KEY_PRESENT);
-            output.extend_from_slice(node.key.unwrap_or(StableId128::from_bytes([0; 16])).as_bytes());
+            output.extend_from_slice(
+                node.key
+                    .unwrap_or(StableId128::from_bytes([0; 16]))
+                    .as_bytes(),
+            );
             write_u32(&mut output, property_start);
             write_u32(&mut output, node.properties.len() as u32);
             write_u32(&mut output, callback_start);
@@ -595,12 +590,7 @@ impl<'a> WidgetDocumentView<'a> {
         }
         for index in 0..layout.property_count {
             let offset = layout.properties_start + index as usize * PROPERTY_RECORD_LEN;
-            decode_property(
-                bytes,
-                offset,
-                layout.string_count,
-                layout.blob_count,
-            )?;
+            decode_property(bytes, offset, layout.string_count, layout.blob_count)?;
         }
         for index in 0..layout.callback_count {
             let offset = layout.callbacks_start + index as usize * CALLBACK_RECORD_LEN;
@@ -696,10 +686,7 @@ impl<'a> WidgetDocumentView<'a> {
     /// Structural decoding always completes first. Callers can therefore use a
     /// registry that owns native factories without allowing malformed topology
     /// to invoke those factories or otherwise mutate host state.
-    pub fn validate_schemas(
-        &self,
-        support: &impl WidgetSchemaSupport,
-    ) -> Result<(), ModelError> {
+    pub fn validate_schemas(&self, support: &impl WidgetSchemaSupport) -> Result<(), ModelError> {
         for node_index in 0..self.layout.node_count {
             let node = self
                 .node(node_index)
@@ -1118,16 +1105,8 @@ impl Layout {
         }
         let nodes_start = HEADER_LEN;
         let properties_start = checked_end(nodes_start, node_count, NODE_RECORD_LEN)?;
-        let callbacks_start = checked_end(
-            properties_start,
-            property_count,
-            PROPERTY_RECORD_LEN,
-        )?;
-        let children_start = checked_end(
-            callbacks_start,
-            callback_count,
-            CALLBACK_RECORD_LEN,
-        )?;
+        let callbacks_start = checked_end(properties_start, property_count, PROPERTY_RECORD_LEN)?;
+        let children_start = checked_end(callbacks_start, callback_count, CALLBACK_RECORD_LEN)?;
         let string_ranges_start = checked_end(children_start, child_count, 4)?;
         let string_bytes_start = checked_end(string_ranges_start, string_count, RANGE_RECORD_LEN)?;
         let blob_ranges_start = string_bytes_start
@@ -1183,9 +1162,12 @@ fn checked_variable_bytes(values: &[&str], limit: u32) -> Result<usize, ModelErr
                 limit,
             });
         }
-        total = total.checked_add(value.len()).ok_or(ModelError::LengthOverflow)?;
+        total = total
+            .checked_add(value.len())
+            .ok_or(ModelError::LengthOverflow)?;
     }
-    u32::try_from(total).map_err(|_| ModelError::LengthOverflow)
+    u32::try_from(total)
+        .map_err(|_| ModelError::LengthOverflow)
         .map(|value| value as usize)
 }
 
@@ -1198,9 +1180,12 @@ fn checked_blob_bytes(values: &[&[u8]], limit: u32) -> Result<usize, ModelError>
                 limit,
             });
         }
-        total = total.checked_add(value.len()).ok_or(ModelError::LengthOverflow)?;
+        total = total
+            .checked_add(value.len())
+            .ok_or(ModelError::LengthOverflow)?;
     }
-    u32::try_from(total).map_err(|_| ModelError::LengthOverflow)
+    u32::try_from(total)
+        .map_err(|_| ModelError::LengthOverflow)
         .map(|value| value as usize)
 }
 
@@ -1232,9 +1217,7 @@ fn validate_canonical_range(
         return Err(ModelError::NonCanonicalSectionLayout);
     }
     validate_range(start, count, section_count)?;
-    *expected_start = start
-        .checked_add(count)
-        .ok_or(ModelError::LengthOverflow)?;
+    *expected_start = start.checked_add(count).ok_or(ModelError::LengthOverflow)?;
     Ok(())
 }
 
@@ -1244,12 +1227,7 @@ fn validate_strings(bytes: &[u8], layout: Layout, limits: ModelLimits) -> Result
         let record = layout.string_ranges_start + index * RANGE_RECORD_LEN;
         let start = read_u32(bytes, record);
         let length = read_u32(bytes, record + 4);
-        validate_canonical_range(
-            start,
-            length,
-            layout.string_bytes_len,
-            &mut expected_start,
-        )?;
+        validate_canonical_range(start, length, layout.string_bytes_len, &mut expected_start)?;
         if length > limits.max_string_bytes {
             return Err(ModelError::StringTooLarge {
                 length: length as usize,
@@ -1266,18 +1244,17 @@ fn validate_strings(bytes: &[u8], layout: Layout, limits: ModelLimits) -> Result
     Ok(())
 }
 
-fn validate_blob_ranges(bytes: &[u8], layout: Layout, limits: ModelLimits) -> Result<(), ModelError> {
+fn validate_blob_ranges(
+    bytes: &[u8],
+    layout: Layout,
+    limits: ModelLimits,
+) -> Result<(), ModelError> {
     let mut expected_start = 0_u32;
     for index in 0..layout.blob_count as usize {
         let record = layout.blob_ranges_start + index * RANGE_RECORD_LEN;
         let start = read_u32(bytes, record);
         let length = read_u32(bytes, record + 4);
-        validate_canonical_range(
-            start,
-            length,
-            layout.blob_bytes_len,
-            &mut expected_start,
-        )?;
+        validate_canonical_range(start, length, layout.blob_bytes_len, &mut expected_start)?;
         if length > limits.max_blob_bytes {
             return Err(ModelError::BlobTooLarge {
                 length: length as usize,
@@ -1375,9 +1352,9 @@ fn decode_property(
         5 => PropertyValue::StringRef(
             u32::try_from(encoded).map_err(|_| ModelError::InvalidProperty)?,
         ),
-        6 => PropertyValue::BlobRef(
-            u32::try_from(encoded).map_err(|_| ModelError::InvalidProperty)?,
-        ),
+        6 => {
+            PropertyValue::BlobRef(u32::try_from(encoded).map_err(|_| ModelError::InvalidProperty)?)
+        }
         _ => return Err(ModelError::InvalidProperty),
     };
     validate_property_value(value, string_count, blob_count)?;
@@ -1445,8 +1422,8 @@ fn read_version(bytes: &[u8], offset: usize) -> Version {
 #[cfg(test)]
 mod tests {
     use crate::{
-        CallbackBinding, ModelLimits, PROPERTY_TEXT_CONTENT, PropertyValue, StableId128,
-        Version, WIDGET_TEXT, WidgetDocument, WidgetDocumentView, WidgetNode, WidgetProperty,
+        CallbackBinding, ModelLimits, PROPERTY_TEXT_CONTENT, PropertyValue, StableId128, Version,
+        WIDGET_TEXT, WidgetDocument, WidgetDocumentView, WidgetNode, WidgetProperty,
         WidgetSchemaId, WidgetSchemaMetadata, WidgetSchemaMetadataError, stable_schema_hash64,
         validate_widget_schema_metadata,
     };
@@ -1471,19 +1448,16 @@ mod tests {
         let nodes = [WidgetNode::new(WIDGET_TEXT, Version::new(1, 0)).properties(&properties)];
         let strings = ["Hello"];
         let document = WidgetDocument::new(1, 1, 0, &nodes, &strings, &[]);
-        let encoded = document
-            .encode(ModelLimits::new(512, 16, 64, 64))
-            .unwrap();
+        let encoded = document.encode(ModelLimits::new(512, 16, 64, 64)).unwrap();
 
         assert_eq!(&encoded[..8], &[b'A', b'W', b'I', b'R', 2, 0, 0, 0]);
-        let view = WidgetDocumentView::decode(
-            &encoded,
-            ModelLimits::new(512, 16, 64, 64),
-        )
-        .unwrap();
+        let view = WidgetDocumentView::decode(&encoded, ModelLimits::new(512, 16, 64, 64)).unwrap();
         let root = view.node(0).unwrap();
         assert_eq!(root.widget_type(), WIDGET_TEXT);
-        assert_eq!(root.properties().next().unwrap().property_id(), PROPERTY_TEXT_CONTENT);
+        assert_eq!(
+            root.properties().next().unwrap().property_id(),
+            PROPERTY_TEXT_CONTENT
+        );
     }
 
     #[test]
@@ -1507,9 +1481,18 @@ mod tests {
 
     #[test]
     fn button_event_kinds_are_stable_and_distinct() {
-        assert_ne!(CallbackBinding::EVENT_BUTTON_PRESS, CallbackBinding::EVENT_BUTTON_LONG_PRESS);
-        assert_ne!(CallbackBinding::EVENT_BUTTON_PRESS, CallbackBinding::EVENT_BUTTON_DOUBLE_PRESS);
-        assert_ne!(CallbackBinding::EVENT_BUTTON_PRESS, CallbackBinding::EVENT_BUTTON_RIGHT_PRESS);
+        assert_ne!(
+            CallbackBinding::EVENT_BUTTON_PRESS,
+            CallbackBinding::EVENT_BUTTON_LONG_PRESS
+        );
+        assert_ne!(
+            CallbackBinding::EVENT_BUTTON_PRESS,
+            CallbackBinding::EVENT_BUTTON_DOUBLE_PRESS
+        );
+        assert_ne!(
+            CallbackBinding::EVENT_BUTTON_PRESS,
+            CallbackBinding::EVENT_BUTTON_RIGHT_PRESS
+        );
     }
 
     #[test]
@@ -1517,46 +1500,20 @@ mod tests {
         let nodes = [WidgetNode::new(WidgetSchemaId::new(7), Version::new(1, 2))];
         let document = WidgetDocument::new(11, 13, 0, &nodes, &[], &[]);
 
-        let encoded = document
-            .encode(ModelLimits::new(512, 16, 64, 64))
-            .unwrap();
+        let encoded = document.encode(ModelLimits::new(512, 16, 64, 64)).unwrap();
 
         assert_eq!(
             encoded,
             [
-                b'A', b'W', b'I', b'R',
-                2, 0, 0, 0,
-                11, 0, 0, 0, 0, 0, 0, 0,
-                13, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0,
-                1, 0, 0, 0,
-                0, 0, 0, 0,
-                0, 0, 0, 0,
-                0, 0, 0, 0,
-                0, 0, 0, 0,
-                0, 0, 0, 0,
-                0, 0, 0, 0,
-                0, 0, 0, 0,
-                128, 0, 0, 0,
-                7, 0, 0, 0, 0, 0, 0, 0,
-                1, 0, 2, 0,
-                0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0,
-                0, 0, 0, 0,
-                0, 0, 0, 0,
-                0, 0, 0, 0,
-                0, 0, 0, 0,
-                0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0, 0, 0,
+                b'A', b'W', b'I', b'R', 2, 0, 0, 0, 11, 0, 0, 0, 0, 0, 0, 0, 13, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0, 1, 0, 2, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             ]
         );
 
-        let view = WidgetDocumentView::decode(
-            &encoded,
-            ModelLimits::new(512, 16, 64, 64),
-        )
-        .unwrap();
+        let view = WidgetDocumentView::decode(&encoded, ModelLimits::new(512, 16, 64, 64)).unwrap();
         assert_eq!(view.generation_id(), 11);
         assert_eq!(view.document_revision(), 13);
         assert_eq!(view.root_node(), 0);
@@ -1598,11 +1555,8 @@ mod tests {
         let encoded = document
             .encode(ModelLimits::new(1_024, 16, 64, 64))
             .unwrap();
-        let view = WidgetDocumentView::decode(
-            &encoded,
-            ModelLimits::new(1_024, 16, 64, 64),
-        )
-        .unwrap();
+        let view =
+            WidgetDocumentView::decode(&encoded, ModelLimits::new(1_024, 16, 64, 64)).unwrap();
 
         assert_eq!(view.string(0), Some("Aimer"));
         assert_eq!(view.blob(0), Some(blob.as_slice()));
@@ -1613,7 +1567,8 @@ mod tests {
             child.properties().collect::<Vec<_>>(),
             [
                 WidgetProperty::new(crate::PropertyId::new(3), PropertyValue::StringRef(0)),
-                WidgetProperty::new(crate::PropertyId::new(5), PropertyValue::BlobRef(0)).optional(),
+                WidgetProperty::new(crate::PropertyId::new(5), PropertyValue::BlobRef(0))
+                    .optional(),
                 WidgetProperty::new(crate::PropertyId::new(8), PropertyValue::Bool(true)),
             ]
         );
@@ -1630,9 +1585,8 @@ mod tests {
     #[test]
     fn widget_document_rejects_out_of_range_child_indices() {
         let children = [1];
-        let nodes = [
-            WidgetNode::new(WidgetSchemaId::new(7), Version::new(1, 0)).children(&children),
-        ];
+        let nodes =
+            [WidgetNode::new(WidgetSchemaId::new(7), Version::new(1, 0)).children(&children)];
         let document = WidgetDocument::new(1, 1, 0, &nodes, &[], &[]);
 
         assert_eq!(
@@ -1666,9 +1620,7 @@ mod tests {
     fn widget_document_rejects_unsupported_versions_and_resource_limits() {
         let nodes = [WidgetNode::new(WidgetSchemaId::new(7), Version::new(1, 0))];
         let document = WidgetDocument::new(1, 1, 0, &nodes, &[], &[]);
-        let mut encoded = document
-            .encode(ModelLimits::new(512, 16, 64, 64))
-            .unwrap();
+        let mut encoded = document.encode(ModelLimits::new(512, 16, 64, 64)).unwrap();
         encoded[4] = 3;
 
         assert!(matches!(

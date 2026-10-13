@@ -2,8 +2,8 @@
 
 use std::alloc::Layout;
 use std::cell::{Cell, RefCell};
-use std::rc::Rc;
 use std::ptr::NonNull;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use allocator_api2::alloc::{AllocError, Allocator};
@@ -180,6 +180,18 @@ impl UiAllocator {
         Some(unsafe { Self::clone_from_inner(inner) })
     }
 
+    /// Returns the allocator active on the current thread, if a build or an
+    /// explicit [`UiAllocator::scope`] is running.
+    #[inline]
+    pub unsafe fn current_unchecked() -> Self {
+        // SAFETY: The active scope owns a strong allocator handle while the
+        // thread-local pointer is set, so the Rc allocation is live here.
+        let inner = unsafe { Self::current_inner().unwrap_unchecked() };
+        // SAFETY: The active scope owns a strong allocator handle while the
+        // thread-local pointer is set, so the Rc allocation is live here.
+        unsafe { Self::clone_from_inner(inner) }
+    }
+
     #[inline(always)]
     fn current_inner() -> Option<NonNull<UiMemoryInner>> {
         ACTIVE_UI_MEMORY
@@ -243,12 +255,7 @@ impl UiAllocator {
     /// `block` must be a live allocation from [`UiAllocator::allocate_rubick`]
     /// with the same `class` and `layout`, and its payload must be destroyed.
     #[inline(always)]
-    pub(crate) unsafe fn deallocate_rubick(
-        &self,
-        block: NonNull<u8>,
-        class: u8,
-        layout: Layout,
-    ) {
+    pub(crate) unsafe fn deallocate_rubick(&self, block: NonNull<u8>, class: u8, layout: Layout) {
         debug_assert_ne!(class, EMPTY, "Rubick blocks always include a header");
         if class != UNPOOLED && self.inner.rubick_cache.push(class, block) {
             return;

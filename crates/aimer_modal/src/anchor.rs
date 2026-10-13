@@ -212,7 +212,9 @@ impl Drawable for RawAnchor {
     }
 
     #[inline]
-    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+    fn retained_v2_interaction_disagreement(
+        &self,
+    ) -> Option<aimer_widget::InteractionDisagreement> {
         self.handle.bounds.disagreement("Anchor")
     }
 
@@ -225,7 +227,6 @@ impl Drawable for RawAnchor {
         self.track(ctx, self.child.computed_size(ctx));
         self.child.sync_paint_geometry(ctx);
     }
-
 }
 
 impl EventElement for RawAnchor {

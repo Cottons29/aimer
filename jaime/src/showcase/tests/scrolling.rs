@@ -2,10 +2,12 @@ use super::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use aimer::{AnyElement, Drawable, Element, EventElement, HeadlessOptions, LayoutElement,
-    Rebuildable, ResolvedSize, Vec2d, VisitorElement};
 use aimer::quiver::winit::dpi::{PhysicalPosition, PhysicalSize};
 use aimer::quiver::winit::event::{DeviceId, MouseScrollDelta, TouchPhase, WindowEvent};
+use aimer::{
+    AnyElement, Drawable, Element, EventElement, HeadlessOptions, LayoutElement, Rebuildable,
+    ResolvedSize, Vec2d, VisitorElement,
+};
 
 struct CapturedShowcase {
     selected: ExampleId,
@@ -19,8 +21,12 @@ impl Widget for CapturedShowcase {
             updater: StateUpdater::empty(),
         };
         CapturedShowcaseElement {
-            child: state.build(ctx).to_element(ctx), positions: self.positions,
-        }.boxed()
+            child: state
+                .build(ctx)
+                .to_element(ctx),
+            positions: self.positions,
+        }
+        .boxed()
     }
 }
 impl aimer::PortableWidget for CapturedShowcase {}
@@ -30,34 +36,55 @@ struct CapturedShowcaseElement {
     positions: Rc<RefCell<Vec<Vec2d>>>,
 }
 impl VisitorElement for CapturedShowcaseElement {
-    fn debug_name(&self) -> &'static str { "CapturedShowcase" }
+    fn debug_name(&self) -> &'static str {
+        "CapturedShowcase"
+    }
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         visitor(self.child.as_ref());
     }
 }
 impl EventElement for CapturedShowcaseElement {}
 impl Rebuildable for CapturedShowcaseElement {
-    fn rebuild_if_dirty(&self, ctx: &BuildContext) { self.child.rebuild_if_dirty(ctx); }
+    fn rebuild_if_dirty(&self, ctx: &BuildContext) {
+        self.child
+            .rebuild_if_dirty(ctx);
+    }
 }
 impl LayoutElement for CapturedShowcaseElement {
-    fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize { self.child.computed_size(ctx) }
-    fn content_size(&self, ctx: &BuildContext) -> ResolvedSize { self.child.content_size(ctx) }
+    fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
+        self.child
+            .computed_size(ctx)
+    }
+    fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
+        self.child
+            .content_size(ctx)
+    }
 }
 impl Drawable for CapturedShowcaseElement {
-    fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool { true }
-    fn paint_local_v2(&self, ctx: &BuildContext) { aimer::canvas::Canvas::of(ctx).finish(); }
+    fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+        true
+    }
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        aimer::canvas::Canvas::of(ctx).finish();
+    }
     fn update(&self, ctx: &BuildContext) {
-        self.child.update(ctx);
-        self.positions.replace(scroll_positions(self.child.as_ref()));
+        self.child
+            .update(ctx);
+        self.positions
+            .replace(scroll_positions(self.child.as_ref()));
     }
 }
 
 fn scroll_positions(root: &dyn Element) -> Vec<Vec2d> {
     fn first_position(element: &dyn Element) -> Option<Vec2d> {
-        if let Some(bounds) = element.pos_start_end() { return Some(bounds.0); }
+        if let Some(bounds) = element.pos_start_end() {
+            return Some(bounds.0);
+        }
         let mut position = None;
         element.visit_children(&mut |child| {
-            if position.is_none() { position = first_position(child); }
+            if position.is_none() {
+                position = first_position(child);
+            }
         });
         position
     }
@@ -88,14 +115,26 @@ fn wheel_reaches_the_right_panel_page_scrollable() {
 fn check_panel_scrolling(scale_factor: f64) {
     let positions = Rc::new(RefCell::new(Vec::new()));
     let mut app = AimerApp::start_headless_with(
-        theme::provide(CapturedShowcase { selected: ExampleId::ChoiceControls, positions: positions.clone() }),
-        HeadlessOptions { size: PhysicalSize::new(1280, 800), scale_factor },
+        theme::provide(CapturedShowcase {
+            selected: ExampleId::ChoiceControls,
+            positions: positions.clone(),
+        }),
+        HeadlessOptions {
+            size: PhysicalSize::new(1280, 800),
+            scale_factor,
+        },
     );
     app.render_frame();
-    let before = positions.borrow().clone();
-    let right = before.iter().position(|content| content.x > SIDEBAR_WIDTH).unwrap();
+    let before = positions
+        .borrow()
+        .clone();
+    let right = before
+        .iter()
+        .position(|content| content.x > SIDEBAR_WIDTH)
+        .unwrap();
     app.send_window_event(WindowEvent::CursorMoved {
-        device_id: DeviceId::dummy(), position: PhysicalPosition::new(900.0, 400.0),
+        device_id: DeviceId::dummy(),
+        position: PhysicalPosition::new(900.0, 400.0),
     });
     app.render_frame();
     for _ in 0..4 {
@@ -106,20 +145,32 @@ fn check_panel_scrolling(scale_factor: f64) {
         });
         app.render_frame();
     }
-    let after = positions.borrow().clone();
-    assert!(after[right].y < before[right].y, "right-panel content must scroll: before={before:?}, after={after:?}");
-    assert_eq!(after[0], before[0], "scrolling the right panel must leave the sidebar fixed");
+    let after = positions
+        .borrow()
+        .clone();
+    assert!(
+        after[right].y < before[right].y,
+        "right-panel content must scroll: before={before:?}, after={after:?}"
+    );
+    assert_eq!(
+        after[0], before[0],
+        "scrolling the right panel must leave the sidebar fixed"
+    );
 
     app.send_window_event(WindowEvent::MouseWheel {
-        device_id: DeviceId::dummy(), delta: MouseScrollDelta::PixelDelta(PhysicalPosition::new(0.0, 0.0)),
+        device_id: DeviceId::dummy(),
+        delta: MouseScrollDelta::PixelDelta(PhysicalPosition::new(0.0, 0.0)),
         phase: TouchPhase::Cancelled,
     });
     app.render_frame();
     app.send_window_event(WindowEvent::CursorMoved {
-        device_id: DeviceId::dummy(), position: PhysicalPosition::new(120.0, 400.0),
+        device_id: DeviceId::dummy(),
+        position: PhysicalPosition::new(120.0, 400.0),
     });
     app.render_frame();
-    let before = positions.borrow().clone();
+    let before = positions
+        .borrow()
+        .clone();
     for _ in 0..4 {
         app.send_window_event(WindowEvent::MouseWheel {
             device_id: DeviceId::dummy(),
@@ -128,7 +179,15 @@ fn check_panel_scrolling(scale_factor: f64) {
         });
         app.render_frame();
     }
-    let after = positions.borrow().clone();
-    assert!(after[0].y < before[0].y, "the sidebar must continue scrolling: before={before:?}, after={after:?}");
-    assert_eq!(after[right], before[right], "scrolling the sidebar must leave the right panel fixed");
+    let after = positions
+        .borrow()
+        .clone();
+    assert!(
+        after[0].y < before[0].y,
+        "the sidebar must continue scrolling: before={before:?}, after={after:?}"
+    );
+    assert_eq!(
+        after[right], before[right],
+        "scrolling the sidebar must leave the right panel fixed"
+    );
 }

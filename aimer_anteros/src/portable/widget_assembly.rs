@@ -111,7 +111,11 @@ impl fmt::Display for WidgetAssemblyError {
                 self.kind, self.context
             ),
             None if self.context.is_empty() => write!(formatter, "assembly error: {:?}", self.kind),
-            None => write!(formatter, "assembly error: {:?}: {}", self.kind, self.context),
+            None => write!(
+                formatter,
+                "assembly error: {:?}: {}",
+                self.kind, self.context
+            ),
         }
     }
 }
@@ -380,7 +384,11 @@ impl Parser {
         }
     }
 
-    fn parse_line(&mut self, line_number: usize, source_line: &str) -> Result<(), WidgetAssemblyError> {
+    fn parse_line(
+        &mut self,
+        line_number: usize,
+        source_line: &str,
+    ) -> Result<(), WidgetAssemblyError> {
         let line = source_line.trim();
         if line.is_empty() {
             return Ok(());
@@ -391,7 +399,8 @@ impl Parser {
         if let Some(label) = line.strip_suffix(':') {
             return self.declare_label(line_number, label);
         }
-        let fields = split_fields(line).map_err(|kind| WidgetAssemblyError::at(kind, line_number, line))?;
+        let fields =
+            split_fields(line).map_err(|kind| WidgetAssemblyError::at(kind, line_number, line))?;
         let directive = fields.first().map(String::as_str).unwrap_or("");
         match directive {
             "GENERATION" => self.parse_generation(line_number, &fields, true),
@@ -420,7 +429,8 @@ impl Parser {
     }
 
     fn parse_header(&mut self, line_number: usize, line: &str) -> Result<(), WidgetAssemblyError> {
-        let fields = split_fields(line).map_err(|kind| WidgetAssemblyError::at(kind, line_number, line))?;
+        let fields =
+            split_fields(line).map_err(|kind| WidgetAssemblyError::at(kind, line_number, line))?;
         if fields.len() != 3 || fields[0] != "AWIR" {
             return Err(WidgetAssemblyError::at(
                 AssemblyErrorKind::InvalidSyntax,
@@ -448,11 +458,23 @@ impl Parser {
         generation: bool,
     ) -> Result<(), WidgetAssemblyError> {
         if self.section != Section::Header || fields.len() != 2 {
-            return Err(WidgetAssemblyError::at(AssemblyErrorKind::InvalidSyntax, line, fields.join(" ")));
+            return Err(WidgetAssemblyError::at(
+                AssemblyErrorKind::InvalidSyntax,
+                line,
+                fields.join(" "),
+            ));
         }
-        let seen = if generation { &mut self.saw_generation } else { &mut self.saw_revision };
+        let seen = if generation {
+            &mut self.saw_generation
+        } else {
+            &mut self.saw_revision
+        };
         if *seen {
-            return Err(WidgetAssemblyError::at(AssemblyErrorKind::InvalidSyntax, line, fields[0].clone()));
+            return Err(WidgetAssemblyError::at(
+                AssemblyErrorKind::InvalidSyntax,
+                line,
+                fields[0].clone(),
+            ));
         }
         let value = fields[1].parse::<u64>().map_err(|_| {
             WidgetAssemblyError::at(AssemblyErrorKind::InvalidSyntax, line, fields[1].clone())
@@ -468,10 +490,18 @@ impl Parser {
 
     fn parse_section(&mut self, line: usize, fields: &[String]) -> Result<(), WidgetAssemblyError> {
         if fields.len() != 2 || self.pending_label.is_some() {
-            return Err(WidgetAssemblyError::at(AssemblyErrorKind::InvalidSyntax, line, fields.join(" ")));
+            return Err(WidgetAssemblyError::at(
+                AssemblyErrorKind::InvalidSyntax,
+                line,
+                fields.join(" "),
+            ));
         }
         if self.current_node.is_some() {
-            return Err(WidgetAssemblyError::at(AssemblyErrorKind::MissingEnd, line, fields.join(" ")));
+            return Err(WidgetAssemblyError::at(
+                AssemblyErrorKind::MissingEnd,
+                line,
+                fields.join(" "),
+            ));
         }
         match fields[1].as_str() {
             "TEXT" if self.section == Section::Header && !self.saw_text => {
@@ -493,26 +523,53 @@ impl Parser {
     }
 
     fn parse_root(&mut self, line: usize, fields: &[String]) -> Result<(), WidgetAssemblyError> {
-        if self.section != Section::Text || fields.len() != 2 || self.root.is_some() || self.current_node.is_some() {
-            return Err(WidgetAssemblyError::at(AssemblyErrorKind::InvalidSyntax, line, fields.join(" ")));
+        if self.section != Section::Text
+            || fields.len() != 2
+            || self.root.is_some()
+            || self.current_node.is_some()
+        {
+            return Err(WidgetAssemblyError::at(
+                AssemblyErrorKind::InvalidSyntax,
+                line,
+                fields.join(" "),
+            ));
         }
         validate_label(&fields[1], line)?;
-        self.root = Some(Reference { label: fields[1].clone(), line });
+        self.root = Some(Reference {
+            label: fields[1].clone(),
+            line,
+        });
         Ok(())
     }
 
     fn declare_label(&mut self, line: usize, label: &str) -> Result<(), WidgetAssemblyError> {
         if self.section == Section::Header || label.trim() != label || !is_label(label) {
-            return Err(WidgetAssemblyError::at(AssemblyErrorKind::InvalidSyntax, line, label));
+            return Err(WidgetAssemblyError::at(
+                AssemblyErrorKind::InvalidSyntax,
+                line,
+                label,
+            ));
         }
         if self.current_node.is_some() {
-            return Err(WidgetAssemblyError::at(AssemblyErrorKind::MissingEnd, line, label));
+            return Err(WidgetAssemblyError::at(
+                AssemblyErrorKind::MissingEnd,
+                line,
+                label,
+            ));
         }
         if self.pending_label.is_some() {
-            return Err(WidgetAssemblyError::at(AssemblyErrorKind::InvalidSyntax, line, label));
+            return Err(WidgetAssemblyError::at(
+                AssemblyErrorKind::InvalidSyntax,
+                line,
+                label,
+            ));
         }
         if !self.labels.insert(label.to_owned()) {
-            return Err(WidgetAssemblyError::at(AssemblyErrorKind::DuplicateLabel, line, label));
+            return Err(WidgetAssemblyError::at(
+                AssemblyErrorKind::DuplicateLabel,
+                line,
+                label,
+            ));
         }
         self.pending_label = Some((label.to_owned(), line));
         Ok(())
@@ -520,10 +577,18 @@ impl Parser {
 
     fn parse_node(&mut self, line: usize, fields: &[String]) -> Result<(), WidgetAssemblyError> {
         if self.section != Section::Text || fields.len() != 4 || self.current_node.is_some() {
-            return Err(WidgetAssemblyError::at(AssemblyErrorKind::InvalidSyntax, line, fields.join(" ")));
+            return Err(WidgetAssemblyError::at(
+                AssemblyErrorKind::InvalidSyntax,
+                line,
+                fields.join(" "),
+            ));
         }
         let (label, _) = self.pending_label.take().ok_or_else(|| {
-            WidgetAssemblyError::at(AssemblyErrorKind::InvalidSyntax, line, "NODE requires a label")
+            WidgetAssemblyError::at(
+                AssemblyErrorKind::InvalidSyntax,
+                line,
+                "NODE requires a label",
+            )
         })?;
         check_count(self.nodes.len() + 1, self.limits, line)?;
         let index = u32::try_from(self.nodes.len()).map_err(|_| {
@@ -544,11 +609,19 @@ impl Parser {
 
     fn parse_key(&mut self, line: usize, fields: &[String]) -> Result<(), WidgetAssemblyError> {
         if fields.len() != 2 {
-            return Err(WidgetAssemblyError::at(AssemblyErrorKind::InvalidSyntax, line, fields.join(" ")));
+            return Err(WidgetAssemblyError::at(
+                AssemblyErrorKind::InvalidSyntax,
+                line,
+                fields.join(" "),
+            ));
         }
         let node = self.current_node_mut(line, "KEY")?;
         if node.key.is_some() {
-            return Err(WidgetAssemblyError::at(AssemblyErrorKind::InvalidSyntax, line, "duplicate KEY"));
+            return Err(WidgetAssemblyError::at(
+                AssemblyErrorKind::InvalidSyntax,
+                line,
+                "duplicate KEY",
+            ));
         }
         node.key = Some(parse_identity(&fields[1], line)?);
         Ok(())
@@ -566,20 +639,36 @@ impl Parser {
             offset += 1;
         }
         if fields.len() != offset + 3 {
-            return Err(WidgetAssemblyError::at(AssemblyErrorKind::InvalidSyntax, line, fields.join(" ")));
+            return Err(WidgetAssemblyError::at(
+                AssemblyErrorKind::InvalidSyntax,
+                line,
+                fields.join(" "),
+            ));
         }
         let property_id = PropertyId::new(parse_schema_id(&fields[offset], line)?);
         let value = parse_property_value(&fields[offset + 1], &fields[offset + 2], line)?;
         let limit = self.limits;
         let node = self.current_node_mut(line, "PROP")?;
         check_count(node.properties.len() + 1, limit, line)?;
-        node.properties.push(RawProperty { property_id, value, optional });
+        node.properties.push(RawProperty {
+            property_id,
+            value,
+            optional,
+        });
         Ok(())
     }
 
-    fn parse_callback(&mut self, line: usize, fields: &[String]) -> Result<(), WidgetAssemblyError> {
+    fn parse_callback(
+        &mut self,
+        line: usize,
+        fields: &[String],
+    ) -> Result<(), WidgetAssemblyError> {
         if fields.len() != 5 {
-            return Err(WidgetAssemblyError::at(AssemblyErrorKind::InvalidSyntax, line, fields.join(" ")));
+            return Err(WidgetAssemblyError::at(
+                AssemblyErrorKind::InvalidSyntax,
+                line,
+                fields.join(" "),
+            ));
         }
         let callback = CallbackBinding::new(
             EventId::new(parse_schema_id(&fields[1], line)?),
@@ -595,32 +684,52 @@ impl Parser {
 
     fn parse_child(&mut self, line: usize, fields: &[String]) -> Result<(), WidgetAssemblyError> {
         if fields.len() != 2 {
-            return Err(WidgetAssemblyError::at(AssemblyErrorKind::InvalidSyntax, line, fields.join(" ")));
+            return Err(WidgetAssemblyError::at(
+                AssemblyErrorKind::InvalidSyntax,
+                line,
+                fields.join(" "),
+            ));
         }
         validate_label(&fields[1], line)?;
         let limit = self.limits;
         let node = self.current_node_mut(line, "CHILD")?;
         check_count(node.children.len() + 1, limit, line)?;
-        node.children.push(Reference { label: fields[1].clone(), line });
+        node.children.push(Reference {
+            label: fields[1].clone(),
+            line,
+        });
         Ok(())
     }
 
     fn parse_end(&mut self, line: usize, fields: &[String]) -> Result<(), WidgetAssemblyError> {
-        if fields.len() != 1 || self.section != Section::Text || self.current_node.take().is_none() {
-            return Err(WidgetAssemblyError::at(AssemblyErrorKind::InvalidSyntax, line, fields.join(" ")));
+        if fields.len() != 1 || self.section != Section::Text || self.current_node.take().is_none()
+        {
+            return Err(WidgetAssemblyError::at(
+                AssemblyErrorKind::InvalidSyntax,
+                line,
+                fields.join(" "),
+            ));
         }
         Ok(())
     }
 
     fn parse_string(&mut self, line: usize, source: &str) -> Result<(), WidgetAssemblyError> {
         if self.section != Section::Data {
-            return Err(WidgetAssemblyError::at(AssemblyErrorKind::UnknownDirective, line, source));
+            return Err(WidgetAssemblyError::at(
+                AssemblyErrorKind::UnknownDirective,
+                line,
+                source,
+            ));
         }
         let (label, _) = self.take_data_label(line, "STRING")?;
         let value_source = source.strip_prefix("STRING").unwrap().trim_start();
         let value = parse_quoted_string(value_source, line)?;
         if value.len() > self.limits.max_string_bytes as usize {
-            return Err(WidgetAssemblyError::at(AssemblyErrorKind::LimitExceeded, line, label));
+            return Err(WidgetAssemblyError::at(
+                AssemblyErrorKind::LimitExceeded,
+                line,
+                label,
+            ));
         }
         check_count(self.strings.len() + 1, self.limits, line)?;
         let index = u32::try_from(self.strings.len()).map_err(|_| {
@@ -633,24 +742,31 @@ impl Parser {
 
     fn parse_blob(&mut self, line: usize, source: &str) -> Result<(), WidgetAssemblyError> {
         if self.section != Section::Data {
-            return Err(WidgetAssemblyError::at(AssemblyErrorKind::UnknownDirective, line, source));
+            return Err(WidgetAssemblyError::at(
+                AssemblyErrorKind::UnknownDirective,
+                line,
+                source,
+            ));
         }
         let (label, _) = self.take_data_label(line, "BLOB")?;
         let value_source = source.strip_prefix("BLOB").unwrap().trim();
         let value_source = value_source.strip_prefix("0x").unwrap_or(value_source);
-        if value_source.len() % 2 != 0
-            || !value_source.bytes().all(|byte| byte.is_ascii_hexdigit())
+        if value_source.len() % 2 != 0 || !value_source.bytes().all(|byte| byte.is_ascii_hexdigit())
         {
-            return Err(WidgetAssemblyError::at(AssemblyErrorKind::InvalidHex, line, value_source));
+            return Err(WidgetAssemblyError::at(
+                AssemblyErrorKind::InvalidHex,
+                line,
+                value_source,
+            ));
         }
         if value_source.len() / 2 > self.limits.max_blob_bytes as usize {
-            return Err(WidgetAssemblyError::at(AssemblyErrorKind::LimitExceeded, line, label));
+            return Err(WidgetAssemblyError::at(
+                AssemblyErrorKind::LimitExceeded,
+                line,
+                label,
+            ));
         }
-        let value = parse_hex(
-            value_source,
-            line,
-            AssemblyErrorKind::InvalidHex,
-        )?;
+        let value = parse_hex(value_source, line, AssemblyErrorKind::InvalidHex)?;
         check_count(self.blobs.len() + 1, self.limits, line)?;
         let index = u32::try_from(self.blobs.len()).map_err(|_| {
             WidgetAssemblyError::at(AssemblyErrorKind::LimitExceeded, line, "blob index")
@@ -660,9 +776,17 @@ impl Parser {
         Ok(())
     }
 
-    fn current_node_mut(&mut self, line: usize, directive: &str) -> Result<&mut RawNode, WidgetAssemblyError> {
+    fn current_node_mut(
+        &mut self,
+        line: usize,
+        directive: &str,
+    ) -> Result<&mut RawNode, WidgetAssemblyError> {
         if self.section != Section::Text || self.pending_label.is_some() {
-            return Err(WidgetAssemblyError::at(AssemblyErrorKind::UnknownDirective, line, directive));
+            return Err(WidgetAssemblyError::at(
+                AssemblyErrorKind::UnknownDirective,
+                line,
+                directive,
+            ));
         }
         let index = self.current_node.ok_or_else(|| {
             WidgetAssemblyError::at(AssemblyErrorKind::UnknownDirective, line, directive)
@@ -670,7 +794,11 @@ impl Parser {
         Ok(&mut self.nodes[index])
     }
 
-    fn take_data_label(&mut self, line: usize, directive: &str) -> Result<(String, usize), WidgetAssemblyError> {
+    fn take_data_label(
+        &mut self,
+        line: usize,
+        directive: &str,
+    ) -> Result<(String, usize), WidgetAssemblyError> {
         self.pending_label.take().ok_or_else(|| {
             WidgetAssemblyError::at(
                 AssemblyErrorKind::InvalidSyntax,
@@ -696,7 +824,11 @@ impl Parser {
             });
         }
         if let Some((label, line)) = self.pending_label {
-            return Err(WidgetAssemblyError::at(AssemblyErrorKind::InvalidSyntax, line, label));
+            return Err(WidgetAssemblyError::at(
+                AssemblyErrorKind::InvalidSyntax,
+                line,
+                label,
+            ));
         }
         let root = self.root.ok_or_else(|| WidgetAssemblyError {
             kind: AssemblyErrorKind::MissingRoot,
@@ -751,9 +883,16 @@ impl Parser {
     }
 }
 
-fn resolve_node(labels: &HashMap<String, u32>, reference: Reference) -> Result<u32, WidgetAssemblyError> {
+fn resolve_node(
+    labels: &HashMap<String, u32>,
+    reference: Reference,
+) -> Result<u32, WidgetAssemblyError> {
     labels.get(&reference.label).copied().ok_or_else(|| {
-        WidgetAssemblyError::at(AssemblyErrorKind::MissingReference, reference.line, reference.label)
+        WidgetAssemblyError::at(
+            AssemblyErrorKind::MissingReference,
+            reference.line,
+            reference.label,
+        )
     })
 }
 
@@ -773,7 +912,11 @@ fn resolve_data(
     }
 }
 
-fn parse_property_value(kind: &str, value: &str, line: usize) -> Result<RawValue, WidgetAssemblyError> {
+fn parse_property_value(
+    kind: &str,
+    value: &str,
+    line: usize,
+) -> Result<RawValue, WidgetAssemblyError> {
     let invalid = || WidgetAssemblyError::at(AssemblyErrorKind::InvalidSyntax, line, value);
     match kind {
         "BOOL" => match value {
@@ -788,14 +931,22 @@ fn parse_property_value(kind: &str, value: &str, line: usize) -> Result<RawValue
         "F64" => {
             let parsed = if let Some(bits) = value.strip_prefix("0x") {
                 if bits.len() != 16 || !bits.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-                    return Err(WidgetAssemblyError::at(AssemblyErrorKind::InvalidHex, line, value));
+                    return Err(WidgetAssemblyError::at(
+                        AssemblyErrorKind::InvalidHex,
+                        line,
+                        value,
+                    ));
                 }
                 f64::from_bits(u64::from_str_radix(bits, 16).map_err(|_| invalid())?)
             } else {
                 value.parse::<f64>().map_err(|_| invalid())?
             };
             if !parsed.is_finite() {
-                return Err(WidgetAssemblyError::at(AssemblyErrorKind::NonFiniteFloat, line, value));
+                return Err(WidgetAssemblyError::at(
+                    AssemblyErrorKind::NonFiniteFloat,
+                    line,
+                    value,
+                ));
             }
             Ok(RawValue::Direct(PropertyValue::F64(parsed)))
         }
@@ -803,24 +954,37 @@ fn parse_property_value(kind: &str, value: &str, line: usize) -> Result<RawValue
             .map(|value| RawValue::Direct(PropertyValue::Rgba(value))),
         "STRREF" => {
             validate_label(value, line)?;
-            Ok(RawValue::StringRef(Reference { label: value.to_owned(), line }))
+            Ok(RawValue::StringRef(Reference {
+                label: value.to_owned(),
+                line,
+            }))
         }
         "BLOBREF" => {
             validate_label(value, line)?;
-            Ok(RawValue::BlobRef(Reference { label: value.to_owned(), line }))
+            Ok(RawValue::BlobRef(Reference {
+                label: value.to_owned(),
+                line,
+            }))
         }
-        _ => Err(WidgetAssemblyError::at(AssemblyErrorKind::UnknownDirective, line, kind)),
+        _ => Err(WidgetAssemblyError::at(
+            AssemblyErrorKind::UnknownDirective,
+            line,
+            kind,
+        )),
     }
 }
 
 fn parse_schema_id(value: &str, line: usize) -> Result<u64, WidgetAssemblyError> {
     if let Some(hex) = value.strip_prefix("0x") {
         if hex.len() != 16 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            return Err(WidgetAssemblyError::at(AssemblyErrorKind::InvalidHex, line, value));
+            return Err(WidgetAssemblyError::at(
+                AssemblyErrorKind::InvalidHex,
+                line,
+                value,
+            ));
         }
-        return u64::from_str_radix(hex, 16).map_err(|_| {
-            WidgetAssemblyError::at(AssemblyErrorKind::InvalidHex, line, value)
-        });
+        return u64::from_str_radix(hex, 16)
+            .map_err(|_| WidgetAssemblyError::at(AssemblyErrorKind::InvalidHex, line, value));
     }
     let inner = value
         .strip_prefix("hash64(")
@@ -832,35 +996,47 @@ fn parse_schema_id(value: &str, line: usize) -> Result<u64, WidgetAssemblyError>
 fn parse_identity(value: &str, line: usize) -> Result<StableId128, WidgetAssemblyError> {
     let hex = value.strip_prefix("0x").unwrap_or(value);
     if hex.len() != 32 {
-        return Err(WidgetAssemblyError::at(AssemblyErrorKind::InvalidIdentity, line, value));
+        return Err(WidgetAssemblyError::at(
+            AssemblyErrorKind::InvalidIdentity,
+            line,
+            value,
+        ));
     }
     let bytes = parse_hex(hex, line, AssemblyErrorKind::InvalidHex)?;
-    let identity = <[u8; 16]>::try_from(bytes).map_err(|_| {
-        WidgetAssemblyError::at(AssemblyErrorKind::InvalidIdentity, line, value)
-    })?;
+    let identity = <[u8; 16]>::try_from(bytes)
+        .map_err(|_| WidgetAssemblyError::at(AssemblyErrorKind::InvalidIdentity, line, value))?;
     Ok(StableId128::from_bytes(identity))
 }
 
 fn parse_fixed_hex_u32(value: &str, line: usize) -> Result<u32, WidgetAssemblyError> {
-    let hex = value.strip_prefix("0x").ok_or_else(|| {
-        WidgetAssemblyError::at(AssemblyErrorKind::InvalidHex, line, value)
-    })?;
+    let hex = value
+        .strip_prefix("0x")
+        .ok_or_else(|| WidgetAssemblyError::at(AssemblyErrorKind::InvalidHex, line, value))?;
     if hex.len() != 8 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err(WidgetAssemblyError::at(AssemblyErrorKind::InvalidHex, line, value));
+        return Err(WidgetAssemblyError::at(
+            AssemblyErrorKind::InvalidHex,
+            line,
+            value,
+        ));
     }
     u32::from_str_radix(hex, 16)
         .map_err(|_| WidgetAssemblyError::at(AssemblyErrorKind::InvalidHex, line, value))
 }
 
-fn parse_hex(value: &str, line: usize, kind: AssemblyErrorKind) -> Result<Vec<u8>, WidgetAssemblyError> {
+fn parse_hex(
+    value: &str,
+    line: usize,
+    kind: AssemblyErrorKind,
+) -> Result<Vec<u8>, WidgetAssemblyError> {
     if value.len() % 2 != 0 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err(WidgetAssemblyError::at(kind, line, value));
     }
     let mut bytes = Vec::with_capacity(value.len() / 2);
     for offset in (0..value.len()).step_by(2) {
-        bytes.push(u8::from_str_radix(&value[offset..offset + 2], 16).map_err(|_| {
-            WidgetAssemblyError::at(AssemblyErrorKind::InvalidHex, line, value)
-        })?);
+        bytes.push(
+            u8::from_str_radix(&value[offset..offset + 2], 16)
+                .map_err(|_| WidgetAssemblyError::at(AssemblyErrorKind::InvalidHex, line, value))?,
+        );
     }
     Ok(bytes)
 }
@@ -890,35 +1066,67 @@ fn parse_quoted_string(value: &str, line: usize) -> Result<String, WidgetAssembl
             'x' => {
                 let high = chars.next().and_then(|value| value.to_digit(16));
                 let low = chars.next().and_then(|value| value.to_digit(16));
-                let byte = high.zip(low).map(|(high, low)| (high * 16 + low) as u8).ok_or_else(|| {
-                    WidgetAssemblyError::at(AssemblyErrorKind::InvalidEscape, line, value)
-                })?;
+                let byte = high
+                    .zip(low)
+                    .map(|(high, low)| (high * 16 + low) as u8)
+                    .ok_or_else(|| {
+                        WidgetAssemblyError::at(AssemblyErrorKind::InvalidEscape, line, value)
+                    })?;
                 if !byte.is_ascii() {
-                    return Err(WidgetAssemblyError::at(AssemblyErrorKind::InvalidEscape, line, value));
+                    return Err(WidgetAssemblyError::at(
+                        AssemblyErrorKind::InvalidEscape,
+                        line,
+                        value,
+                    ));
                 }
                 output.push(char::from(byte));
             }
             'u' => {
                 if chars.next() != Some('{') {
-                    return Err(WidgetAssemblyError::at(AssemblyErrorKind::InvalidEscape, line, value));
+                    return Err(WidgetAssemblyError::at(
+                        AssemblyErrorKind::InvalidEscape,
+                        line,
+                        value,
+                    ));
                 }
                 let mut digits = String::new();
                 loop {
                     match chars.next() {
                         Some('}') => break,
-                        Some(digit) if digit.is_ascii_hexdigit() && digits.len() < 6 => digits.push(digit),
-                        _ => return Err(WidgetAssemblyError::at(AssemblyErrorKind::InvalidEscape, line, value)),
+                        Some(digit) if digit.is_ascii_hexdigit() && digits.len() < 6 => {
+                            digits.push(digit)
+                        }
+                        _ => {
+                            return Err(WidgetAssemblyError::at(
+                                AssemblyErrorKind::InvalidEscape,
+                                line,
+                                value,
+                            ));
+                        }
                     }
                 }
                 if digits.is_empty() {
-                    return Err(WidgetAssemblyError::at(AssemblyErrorKind::InvalidEscape, line, value));
+                    return Err(WidgetAssemblyError::at(
+                        AssemblyErrorKind::InvalidEscape,
+                        line,
+                        value,
+                    ));
                 }
-                let scalar = u32::from_str_radix(&digits, 16).ok().and_then(char::from_u32).ok_or_else(|| {
-                    WidgetAssemblyError::at(AssemblyErrorKind::InvalidEscape, line, value)
-                })?;
+                let scalar = u32::from_str_radix(&digits, 16)
+                    .ok()
+                    .and_then(char::from_u32)
+                    .ok_or_else(|| {
+                        WidgetAssemblyError::at(AssemblyErrorKind::InvalidEscape, line, value)
+                    })?;
                 output.push(scalar);
             }
-            _ => return Err(WidgetAssemblyError::at(AssemblyErrorKind::InvalidEscape, line, value)),
+            _ => {
+                return Err(WidgetAssemblyError::at(
+                    AssemblyErrorKind::InvalidEscape,
+                    line,
+                    value,
+                ));
+            }
         }
     }
     Ok(output)
@@ -949,8 +1157,16 @@ fn split_fields(line: &str) -> Result<Vec<String>, AssemblyErrorKind> {
         }
         match character {
             '"' => quoted = true,
-            '(' => parentheses = parentheses.checked_add(1).ok_or(AssemblyErrorKind::InvalidSyntax)?,
-            ')' => parentheses = parentheses.checked_sub(1).ok_or(AssemblyErrorKind::InvalidSyntax)?,
+            '(' => {
+                parentheses = parentheses
+                    .checked_add(1)
+                    .ok_or(AssemblyErrorKind::InvalidSyntax)?
+            }
+            ')' => {
+                parentheses = parentheses
+                    .checked_sub(1)
+                    .ok_or(AssemblyErrorKind::InvalidSyntax)?
+            }
             _ if character.is_whitespace() && parentheses == 0 => {
                 let field_start = start.take().unwrap();
                 fields.push(line[field_start..offset].to_owned());
@@ -968,16 +1184,20 @@ fn split_fields(line: &str) -> Result<Vec<String>, AssemblyErrorKind> {
 }
 
 fn parse_u16(value: &str, line: usize) -> Result<u16, WidgetAssemblyError> {
-    value.parse::<u16>().map_err(|_| {
-        WidgetAssemblyError::at(AssemblyErrorKind::InvalidSyntax, line, value)
-    })
+    value
+        .parse::<u16>()
+        .map_err(|_| WidgetAssemblyError::at(AssemblyErrorKind::InvalidSyntax, line, value))
 }
 
 fn validate_label(value: &str, line: usize) -> Result<(), WidgetAssemblyError> {
     if is_label(value) {
         Ok(())
     } else {
-        Err(WidgetAssemblyError::at(AssemblyErrorKind::InvalidSyntax, line, value))
+        Err(WidgetAssemblyError::at(
+            AssemblyErrorKind::InvalidSyntax,
+            line,
+            value,
+        ))
     }
 }
 
@@ -1037,7 +1257,9 @@ fn write_escaped_string(output: &mut String, value: &str) {
             '\r' => output.push_str("\\r"),
             '\t' => output.push_str("\\t"),
             '\0' => output.push_str("\\0"),
-            character if character.is_control() => write!(output, "\\u{{{:x}}}", character as u32).unwrap(),
+            character if character.is_control() => {
+                write!(output, "\\u{{{:x}}}", character as u32).unwrap()
+            }
             character => output.push(character),
         }
     }

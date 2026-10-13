@@ -3,8 +3,8 @@ use std::rc::Rc;
 
 use super::gl;
 use super::{
-    OpenGlError, OpenGlShared, OpenGlTextureFormat, OpenGlTextureView,
-    OpenGlTextureViewInner, OpenGlViewTarget,
+    OpenGlError, OpenGlShared, OpenGlTextureFormat, OpenGlTextureView, OpenGlTextureViewInner,
+    OpenGlViewTarget,
 };
 
 /// A window's OpenGL default framebuffer and its drawable dimensions.
@@ -71,7 +71,8 @@ impl OpenGlSurface {
             .make_current()
             .map_err(|error| OpenGlError::new("activate OpenGL drawable", error))?;
         self.shared.bind_framebuffer(gl::FRAMEBUFFER, 0);
-        self.shared.set_viewport(0, 0, self.size.0 as i32, self.size.1 as i32);
+        self.shared
+            .set_viewport(0, 0, self.size.0 as i32, self.size.1 as i32);
         let view = self.view.clone();
         Ok(Some(OpenGlSurfaceFrame {
             surface: self,

@@ -116,7 +116,6 @@ impl Drawable for RawOpacity {
     fn sync_paint_geometry(&self, ctx: &BuildContext) {
         self.child.sync_paint_geometry(ctx);
     }
-
 }
 
 impl LayoutElement for RawOpacity {

@@ -168,12 +168,7 @@ mod tests {
         assert_eq!(
             ends_reported(
                 &end,
-                &[
-                    (true, false),
-                    (false, false),
-                    (true, false),
-                    (false, false),
-                ]
+                &[(true, false), (false, false), (true, false), (false, false),]
             ),
             2
         );

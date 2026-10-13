@@ -16,9 +16,7 @@ pub use collection::{
     CollectionWindow, VisibleRange, WindowError, WindowSpec,
 };
 pub use table::{
-    ColumnWidth, ColumnWidthError, DataColumn, DataTable, SelectionMode, SortDirection,
-    SortState, TableError, TableRow,
+    ColumnWidth, ColumnWidthError, DataColumn, DataTable, SelectionMode, SortDirection, SortState,
+    TableError, TableRow,
 };
-pub use tree::{
-    ChildLoadState, TreeError, TreeKey, TreeKeyResult, TreeNodeSpec, TreeView,
-};
+pub use tree::{ChildLoadState, TreeError, TreeKey, TreeKeyResult, TreeNodeSpec, TreeView};

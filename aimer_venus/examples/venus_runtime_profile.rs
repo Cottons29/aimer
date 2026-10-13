@@ -11,8 +11,8 @@ use std::future::Future;
 use std::hint::black_box;
 use std::pin::Pin;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::{Context, Poll, Waker};
 use std::thread;
 use std::time::Instant;
@@ -70,9 +70,7 @@ fn collect_samples(mut operation: impl FnMut() -> f64) -> Vec<f64> {
         black_box(operation());
     }
 
-    (0..MEASURED_ROUNDS)
-        .map(|_| operation())
-        .collect()
+    (0..MEASURED_ROUNDS).map(|_| operation()).collect()
 }
 
 fn drive_empty_frame(venus: &Venus) {
@@ -100,9 +98,7 @@ fn measure_empty_frames() {
         for _ in 0..EMPTY_FRAMES_PER_ROUND {
             drive_empty_frame(&venus);
         }
-        samples.push(
-            start.elapsed().as_secs_f64() * 1e9 / EMPTY_FRAMES_PER_ROUND as f64,
-        );
+        samples.push(start.elapsed().as_secs_f64() * 1e9 / EMPTY_FRAMES_PER_ROUND as f64);
     }
 
     report("empty frame scheduler", &mut samples, "ns");
@@ -218,9 +214,7 @@ fn main() {
     } else {
         "release"
     };
-    println!(
-        "Venus runtime profile ({profile}, {MEASURED_ROUNDS} measured rounds)"
-    );
+    println!("Venus runtime profile ({profile}, {MEASURED_ROUNDS} measured rounds)");
     println!("scenario                                      p50        p95");
 
     measure_empty_frames();

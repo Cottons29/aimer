@@ -3,12 +3,12 @@
 //! W17 adds the page to the central showcase and exposes the model through the
 //! umbrella crate.
 
-use aimer::style::{LayoutSpacing, Spacing};
-use aimer::{AimerApp, AnyElement, BuildContext, Column, Container, Text, Widget};
 use aimer::data_view::{
     CollectionItem, CollectionModel, CollectionSlot, DataColumn, DataTable, SortDirection,
     SortState, TableRow, TreeKey, TreeNodeSpec, TreeView, WindowSpec,
 };
+use aimer::style::{LayoutSpacing, Spacing};
+use aimer::{AimerApp, AnyElement, BuildContext, Column, Container, Text, Widget};
 
 struct ExampleRow {
     id: u64,
@@ -41,13 +41,17 @@ impl DataViewExample {
             .set_state(102, "selected")
             .expect("showcase state key is present");
 
-        let name = DataColumn::new("name", "Name")
-            .cell(|row: &ExampleRow| row.name.to_owned());
-        let group = DataColumn::new("group", "Group")
-            .cell(|row: &ExampleRow| row.group.to_owned());
+        let name = DataColumn::new("name", "Name").cell(|row: &ExampleRow| row.name.to_owned());
+        let group = DataColumn::new("group", "Group").cell(|row: &ExampleRow| row.group.to_owned());
         let score = DataColumn::new("score", "Score")
-            .cell(|row: &ExampleRow| row.score.to_string())
-            .sortable_by(|left: &ExampleRow, right: &ExampleRow| left.score.cmp(&right.score));
+            .cell(|row: &ExampleRow| {
+                row.score
+                    .to_string()
+            })
+            .sortable_by(|left: &ExampleRow, right: &ExampleRow| {
+                left.score
+                    .cmp(&right.score)
+            });
         let mut table: DataTable<u64, ExampleRow> =
             DataTable::new([name, group, score]).expect("showcase column keys are unique");
         table
@@ -84,7 +88,9 @@ impl DataViewExample {
         table
             .set_sort(Some(SortState::new("score", SortDirection::Descending)))
             .expect("score is sortable");
-        table.refresh().expect("showcase table refresh is valid");
+        table
+            .refresh()
+            .expect("showcase table refresh is valid");
 
         let mut tree = TreeView::new();
         tree.insert_root(301, "Projects".to_owned())
@@ -93,10 +99,12 @@ impl DataViewExample {
             .expect("showcase child key is unique");
         tree.insert_child(301, 303, "Jaime".to_owned())
             .expect("showcase child key is unique");
-        tree.mark_lazy(302).expect("empty project is lazy");
+        tree.mark_lazy(302)
+            .expect("empty project is lazy");
         tree.set_expanded(301, true)
             .expect("showcase root exists");
-        tree.focus(302).expect("showcase lazy node exists");
+        tree.focus(302)
+            .expect("showcase lazy node exists");
         let request = tree
             .handle_key(TreeKey::ArrowRight)
             .expect("showcase lazy request is valid");
@@ -104,11 +112,8 @@ impl DataViewExample {
             request,
             aimer::data_view::TreeKeyResult::RequestChildren(302)
         ));
-        tree.complete_children(
-            302,
-            [TreeNodeSpec::new(304, "Collection layer".to_owned())],
-        )
-        .expect("showcase lazy response is valid");
+        tree.complete_children(302, [TreeNodeSpec::new(304, "Collection layer".to_owned())])
+            .expect("showcase lazy response is valid");
         tree.set_expanded(302, true)
             .expect("showcase lazy node exists");
 
@@ -142,17 +147,26 @@ impl Widget for DataViewExample {
             CollectionSlot::Loading => "loading collection".to_owned(),
             CollectionSlot::Error(message) => format!("collection error: {message}"),
             CollectionSlot::Items(window) => {
-                format!("collection window {:?} ({}/{} rows)", window.range(), window.len(), self.collection.len())
+                format!(
+                    "collection window {:?} ({}/{} rows)",
+                    window.range(),
+                    window.len(),
+                    self.collection
+                        .len()
+                )
             }
         };
         let table_keys = self
             .table
             .visible_keys_in_window(&window)
             .expect("showcase table window geometry is valid");
-        let tree_ids = self.tree.visible_ids();
+        let tree_ids = self
+            .tree
+            .visible_ids();
         let table_summary = format!(
             "table: {} rows, sorted by score, window keys {:?}",
-            self.table.row_count(),
+            self.table
+                .row_count(),
             table_keys
         );
         let tree_summary = format!("tree visible IDs: {:?}", tree_ids);
@@ -162,12 +176,22 @@ impl Widget for DataViewExample {
             .child(
                 Column::new().children([
                     Text::new("Collections and data views").boxed(),
-                    Text::new(collection_summary).wrapped().boxed(),
-                    Text::new(table_summary).wrapped().boxed(),
-                    Text::new(format!("selected table keys: {:?}", self.table.selected_keys()))
+                    Text::new(collection_summary)
                         .wrapped()
                         .boxed(),
-                    Text::new(tree_summary).wrapped().boxed(),
+                    Text::new(table_summary)
+                        .wrapped()
+                        .boxed(),
+                    Text::new(format!(
+                        "selected table keys: {:?}",
+                        self.table
+                            .selected_keys()
+                    ))
+                    .wrapped()
+                    .boxed(),
+                    Text::new(tree_summary)
+                        .wrapped()
+                        .boxed(),
                 ]),
             )
             .to_element(ctx)

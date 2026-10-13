@@ -9,8 +9,8 @@ use aimer_events::element::ElementEvent;
 use aimer_widget::base::*;
 use aimer_widget::{
     AnyElement, ChildBuilder, Drawable, Element, EventElement, EventResult, Key, LayoutElement,
-    Rebuildable, State, StateUpdater, StatefulElement, StatefulWidget,
-    StatelessElement, VisitorElement, Widget,
+    Rebuildable, State, StateUpdater, StatefulElement, StatefulWidget, StatelessElement,
+    VisitorElement, Widget,
 };
 
 use crate::control::controller::AnimationController;
@@ -160,10 +160,8 @@ impl<T: Widget + 'static> aimer_widget::PortableWidget for AnimatedSwitcher<T> {
         self,
         ctx: &mut aimer_widget::portable::PortableBuildContext,
         source: aimer_widget::portable::SourceFingerprint,
-    ) -> Result<
-        aimer_widget::portable::PortableNodeId,
-        aimer_widget::portable::PortableBuildError,
-    > {
+    ) -> Result<aimer_widget::portable::PortableNodeId, aimer_widget::portable::PortableBuildError>
+    {
         self.child.into_portable_node(ctx, source.child(0))
     }
 }
@@ -254,9 +252,9 @@ impl Widget for AnimatedSwitcherFrame {
 
         AnimatedSwitcherElement {
             current_child: keyed_child_element(current_child, current_child_key, ctx),
-            old_child: UnsafeCell::new(old_child.map(|child| {
-                keyed_child_element(child, old_child_key, ctx)
-            })),
+            old_child: UnsafeCell::new(
+                old_child.map(|child| keyed_child_element(child, old_child_key, ctx)),
+            ),
             in_controller,
             out_controller,
         }
@@ -264,11 +262,7 @@ impl Widget for AnimatedSwitcherFrame {
     }
 }
 
-fn keyed_child_element(
-    child: ChildBuilder,
-    key: Option<Key>,
-    ctx: &BuildContext,
-) -> AnyElement {
+fn keyed_child_element(child: ChildBuilder, key: Option<Key>, ctx: &BuildContext) -> AnyElement {
     let child = child.build(ctx);
     // The switcher's current and outgoing children are siblings during a
     // transition. Give those slots the same identity used by the transition
@@ -357,7 +351,6 @@ impl Drawable for AnimatedSwitcherElement {
             request_next_frame();
         }
     }
-
 }
 
 impl VisitorElement for AnimatedSwitcherElement {
@@ -368,10 +361,7 @@ impl VisitorElement for AnimatedSwitcherElement {
         }
     }
 
-    fn visit_retained_v2_children<'a>(
-        &'a self,
-        visitor: &mut dyn FnMut(usize, &'a dyn Element),
-    ) {
+    fn visit_retained_v2_children<'a>(&'a self, visitor: &mut dyn FnMut(usize, &'a dyn Element)) {
         let mut index = 0;
         if let Some(old) = unsafe { &*self.old_child.get() } {
             visitor(index, old.as_ref());
@@ -501,11 +491,11 @@ mod tests {
     #[cfg(feature = "portable-guest")]
     #[test]
     fn portable_lowering_is_transparent_to_the_current_child() {
+        use aimer_widget::portable::__anteros::{Version, WIDGET_TEXT, WidgetDocumentView};
         use aimer_widget::portable::{
             PortableBuildContext, PortableLimits, PortableWidgetLimits, SourceFingerprint,
             StableId128,
         };
-        use aimer_widget::portable::__anteros::{Version, WidgetDocumentView, WIDGET_TEXT};
         use aimer_widget::{ErrorWidget, PortableWidget};
 
         struct PortableLeaf;
@@ -536,21 +526,20 @@ mod tests {
             PortableLimits::new(8, 16, 64, 128, 1_024),
         )
         .unwrap();
-        let root = AnimatedSwitcher::new(
-            Duration::from_millis(100),
-            Curve::Linear,
-            PortableLeaf,
-        )
-        .to_portable_node(
-            &mut context,
-            SourceFingerprint::new(StableId128::from_bytes([9; 16])),
-        )
-        .unwrap();
+        let root = AnimatedSwitcher::new(Duration::from_millis(100), Curve::Linear, PortableLeaf)
+            .to_portable_node(
+                &mut context,
+                SourceFingerprint::new(StableId128::from_bytes([9; 16])),
+            )
+            .unwrap();
         let document = context.finish_document(root).unwrap();
         let bytes = document.encode().unwrap();
         let view = WidgetDocumentView::decode(&bytes, document.model_limits()).unwrap();
 
-        assert_eq!(view.node(view.root_node()).unwrap().widget_type(), WIDGET_TEXT);
+        assert_eq!(
+            view.node(view.root_node()).unwrap().widget_type(),
+            WIDGET_TEXT
+        );
         assert_eq!(view.node_count(), 1);
     }
 

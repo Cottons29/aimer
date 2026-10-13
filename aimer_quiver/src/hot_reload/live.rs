@@ -2,8 +2,8 @@ use std::error::Error;
 use std::fmt;
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::rc::Rc;
-use std::sync::{Arc, mpsc};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, mpsc};
 use std::thread::{self, JoinHandle};
 
 use aimer_anteros::{
@@ -184,8 +184,7 @@ impl LiveReloadHost {
         }
         let bridge_wake = Arc::clone(&wake);
         let (sink, inbox) = reload_command_bridge_with_wake(1, 0, move || bridge_wake());
-        let (callback_sender, callback_receiver) =
-            mpsc::sync_channel(config.max_queued_events);
+        let (callback_sender, callback_receiver) = mpsc::sync_channel(config.max_queued_events);
         let listener = ReloadCommandListener::bind_secure(
             address,
             credentials,
@@ -285,9 +284,7 @@ impl LiveReloadHost {
     }
 
     /// Exports the active guest state for diagnostics and proof tooling.
-    pub fn export_active_state(
-        &mut self,
-    ) -> Result<Option<Vec<u8>>, aimer_anteros::RuntimeError> {
+    pub fn export_active_state(&mut self) -> Result<Option<Vec<u8>>, aimer_anteros::RuntimeError> {
         let Some(coordinator) = self.active.as_mut() else {
             return Ok(None);
         };
@@ -423,9 +420,13 @@ impl LiveReloadHost {
                     return Ok(None);
                 }
             };
-            let mut coordinator = ReloadCoordinator::new(snapshot)
-                .max_queued_events(self.max_queued_events);
-            coordinator.active_mut().generation_mut().guest_mut().activate();
+            let mut coordinator =
+                ReloadCoordinator::new(snapshot).max_queued_events(self.max_queued_events);
+            coordinator
+                .active_mut()
+                .generation_mut()
+                .guest_mut()
+                .activate();
             coordinator.active().root().invalidate_layout();
             self.active = Some(coordinator);
             self.clear_reload_diagnostic();
@@ -463,10 +464,9 @@ impl LiveReloadHost {
                 return Ok(None);
             }
         };
-        let reset_state_entries = u32::try_from(
-            prepared.state_transfer_report().reset_state_ids().len(),
-        )
-        .unwrap_or(u32::MAX);
+        let reset_state_entries =
+            u32::try_from(prepared.state_transfer_report().reset_state_ids().len())
+                .unwrap_or(u32::MAX);
         coordinator.stage_candidate(transaction, prepared.into_snapshot())?;
         let commit = match coordinator.commit(
             transaction,
@@ -600,7 +600,13 @@ impl LiveReloadHost {
         let sequence = self.next_event_sequence;
         self.next_event_sequence = self.next_event_sequence.saturating_add(1);
         let event = generation
-            .encode_callback_event(callback_id, sequence, sequence, &[], self.candidate_limits.model())
+            .encode_callback_event(
+                callback_id,
+                sequence,
+                sequence,
+                &[],
+                self.candidate_limits.model(),
+            )
             .map_err(|error| LiveReloadError::Callback(error.to_string()))?;
         generation
             .validate_event(&event, self.candidate_limits.model())
@@ -659,7 +665,9 @@ fn enqueue_callback(
         }
         Err(mpsc::TrySendError::Disconnected(_)) => {
             dropped.fetch_add(1, Ordering::AcqRel);
-            aimer_utils::error!("Aimer hot reload callback queue is disconnected; the event was rejected");
+            aimer_utils::error!(
+                "Aimer hot reload callback queue is disconnected; the event was rejected"
+            );
         }
     }
 }
@@ -740,7 +748,9 @@ impl fmt::Display for LiveReloadError {
         match self {
             Self::ListenerDisconnected => formatter.write_str("live reload listener disconnected"),
             Self::ResultDisconnected => formatter.write_str("live reload client disconnected"),
-            Self::Transaction(error) => write!(formatter, "live reload transaction failed: {error}"),
+            Self::Transaction(error) => {
+                write!(formatter, "live reload transaction failed: {error}")
+            }
             Self::Callback(error) => write!(formatter, "live reload callback failed: {error}"),
         }
     }
@@ -778,20 +788,13 @@ mod tests {
         });
         let dropped = AtomicU64::new(0);
 
-        enqueue_callback(
-            &sender,
-            &wake,
-            &dropped,
-            StableId128::from_bytes([1; 16]),
-        );
-        enqueue_callback(
-            &sender,
-            &wake,
-            &dropped,
-            StableId128::from_bytes([2; 16]),
-        );
+        enqueue_callback(&sender, &wake, &dropped, StableId128::from_bytes([1; 16]));
+        enqueue_callback(&sender, &wake, &dropped, StableId128::from_bytes([2; 16]));
 
-        assert_eq!(receiver.try_recv().unwrap(), StableId128::from_bytes([1; 16]));
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            StableId128::from_bytes([1; 16])
+        );
         assert_eq!(wakes.load(Ordering::Acquire), 1);
         assert_eq!(dropped.load(Ordering::Acquire), 1);
     }

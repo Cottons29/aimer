@@ -9,7 +9,10 @@ fn default_profile_uses_a_host_font_for_basic_latin() {
 
     let mut rasterizer = aimer_cupid::glyph_rasterizer::GlyphRasterizer::new();
     let key = rasterizer.glyph_key_for_codepoint('A', 16.0);
-    assert_ne!(key.glyph_id, 0, "the host should provide a basic Latin face");
+    assert_ne!(
+        key.glyph_id, 0,
+        "the host should provide a basic Latin face"
+    );
 
     let glyph = rasterizer.rasterize_key(key, 16.0);
     assert!(

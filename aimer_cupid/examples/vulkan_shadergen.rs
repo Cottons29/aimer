@@ -5,7 +5,10 @@ use std::path::PathBuf;
 // Pass a shader name (for example `-- material`) to regenerate only that module.
 
 const SHADERS: &[(&str, &str)] = &[
-    ("rect", include_str!("../src/pipeline/shaders/wgsl/rect.wgsl")),
+    (
+        "rect",
+        include_str!("../src/pipeline/shaders/wgsl/rect.wgsl"),
+    ),
     (
         "image",
         concat!(
@@ -20,8 +23,14 @@ const SHADERS: &[(&str, &str)] = &[
             include_str!("../src/pipeline/shaders/wgsl/image.wgsl")
         ),
     ),
-    ("text", include_str!("../src/pipeline/shaders/wgsl/text.wgsl")),
-    ("text_color", include_str!("../src/pipeline/shaders/wgsl/text_color.wgsl")),
+    (
+        "text",
+        include_str!("../src/pipeline/shaders/wgsl/text.wgsl"),
+    ),
+    (
+        "text_color",
+        include_str!("../src/pipeline/shaders/wgsl/text_color.wgsl"),
+    ),
     (
         "text_decoration",
         include_str!("../src/pipeline/shaders/wgsl/text_decoration.wgsl"),
@@ -53,16 +62,22 @@ const SHADERS: &[(&str, &str)] = &[
 fn main() {
     let selected = std::env::args().nth(1);
     if let Some(name) = selected.as_deref() {
-        assert!(SHADERS.iter().any(|(shader, _)| *shader == name), "unknown shader: {name}");
+        assert!(
+            SHADERS.iter().any(|(shader, _)| *shader == name),
+            "unknown shader: {name}"
+        );
     }
-    let output = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("src/pipeline/shaders/vulkan");
+    let output = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/pipeline/shaders/vulkan");
     std::fs::create_dir_all(&output).expect("create Vulkan shader output directory");
     for (name, source) in SHADERS {
-        if selected.as_deref().is_some_and(|selected| selected != *name) {
+        if selected
+            .as_deref()
+            .is_some_and(|selected| selected != *name)
+        {
             continue;
         }
-        let bytes = compile_spirv(source).unwrap_or_else(|error| panic!("compile {name}.wgsl: {error}"));
+        let bytes =
+            compile_spirv(source).unwrap_or_else(|error| panic!("compile {name}.wgsl: {error}"));
         std::fs::write(output.join(format!("{name}.spv")), bytes)
             .unwrap_or_else(|error| panic!("write {name}.spv: {error}"));
     }
@@ -100,7 +115,11 @@ mod tests {
         for (name, source) in SHADERS {
             let expected = checked_in_shader(name);
             let actual = compile_spirv(source).unwrap_or_else(|error| panic!("{name}: {error}"));
-            assert_eq!(actual.as_slice(), expected, "{name}.spv is stale; regenerate the checked-in shaders");
+            assert_eq!(
+                actual.as_slice(),
+                expected,
+                "{name}.spv is stale; regenerate the checked-in shaders"
+            );
         }
     }
 
@@ -111,10 +130,14 @@ mod tests {
             "image.android" => include_bytes!("../src/pipeline/shaders/vulkan/image.android.spv"),
             "text" => include_bytes!("../src/pipeline/shaders/vulkan/text.spv"),
             "text_color" => include_bytes!("../src/pipeline/shaders/vulkan/text_color.spv"),
-            "text_decoration" => include_bytes!("../src/pipeline/shaders/vulkan/text_decoration.spv"),
+            "text_decoration" => {
+                include_bytes!("../src/pipeline/shaders/vulkan/text_decoration.spv")
+            }
             "svg" => include_bytes!("../src/pipeline/shaders/vulkan/svg.spv"),
             "svg.android" => include_bytes!("../src/pipeline/shaders/vulkan/svg.android.spv"),
-            "frame_composite" => include_bytes!("../src/pipeline/shaders/vulkan/frame_composite.spv"),
+            "frame_composite" => {
+                include_bytes!("../src/pipeline/shaders/vulkan/frame_composite.spv")
+            }
             "material" => include_bytes!("../src/pipeline/shaders/vulkan/material.spv"),
             _ => panic!("unlisted Vulkan shader {name}"),
         }

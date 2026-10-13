@@ -8,19 +8,19 @@
 use std::time::Duration;
 
 use aimer::feedback::{
-    Announcer, Announcement, DismissReason, ManualClock, MotionPolicy, OverlayHost, OverlayId,
+    Announcement, Announcer, DismissReason, ManualClock, MotionPolicy, OverlayHost, OverlayId,
     OverlayRequest, ProgressIndicator, Spinner, StatusBanner, StatusKind, Toast, ToastAction,
     ToastKind, ToastQueue, ToastQueueEvent, Tooltip, TooltipController, TooltipEvent,
 };
+use aimer::input::button::Button;
 use aimer::macros::widget;
 use aimer::style::{
-    AnimatedTheme, BoxDecoration, FontWeight, LayoutSpacing, Spacing, TextAlign, TextStyle,
-    Theme, ThemeData,
+    AnimatedTheme, BoxDecoration, FontWeight, LayoutSpacing, Spacing, TextAlign, TextStyle, Theme,
+    ThemeData,
 };
-use aimer::input::button::Button;
 use aimer::{
-    AimerApp, AnyWidget, BuildContext, Column, Container, Dimension, Row,
-    ScrollAxis, Scrollable, State, StateUpdater, StatefulWidget, Text, Widget,
+    AimerApp, AnyWidget, BuildContext, Column, Container, Dimension, Row, ScrollAxis, Scrollable,
+    State, StateUpdater, StatefulWidget, Text, Widget,
 };
 
 /// Builds the feedback showcase without starting an application.
@@ -126,11 +126,13 @@ impl FeedbackExampleState {
             MotionPolicy::Full => MotionPolicy::Reduced,
             MotionPolicy::Reduced => MotionPolicy::Full,
         };
-        self.spinner.set_motion_policy(self.motion_policy);
+        self.spinner
+            .set_motion_policy(self.motion_policy);
     }
 
     fn advance_spinner(&mut self) {
-        self.spinner.advance(Duration::from_millis(250));
+        self.spinner
+            .advance(Duration::from_millis(250));
     }
 
     fn queue_toast(&mut self) {
@@ -145,7 +147,8 @@ impl FeedbackExampleState {
     }
 
     fn advance_toast_clock(&mut self) {
-        self.clock.advance(Duration::from_secs(4));
+        self.clock
+            .advance(Duration::from_secs(4));
         let event = self
             .queue
             .pump(&mut self.host, Some(&mut self.announcer));
@@ -173,7 +176,11 @@ impl FeedbackExampleState {
     }
 
     fn activate_toast_action(&mut self) {
-        if self.queue.activate_action(&mut self.host, "undo").is_some() {
+        if self
+            .queue
+            .activate_action(&mut self.host, "undo")
+            .is_some()
+        {
             self.last_toast_event = self
                 .queue
                 .pump(&mut self.host, Some(&mut self.announcer));
@@ -181,16 +188,21 @@ impl FeedbackExampleState {
     }
 
     fn show_tooltip(&mut self) {
-        self.tooltip.set_focused(true);
-        self.clock.advance(Duration::from_millis(350));
+        self.tooltip
+            .set_focused(true);
+        self.clock
+            .advance(Duration::from_millis(350));
         self.last_tooltip_event = self
             .tooltip
             .pump_with_announcer(&mut self.host, Some(&mut self.announcer));
     }
 
     fn hide_tooltip(&mut self) {
-        self.tooltip.set_focused(false);
-        self.last_tooltip_event = self.tooltip.pump(&mut self.host);
+        self.tooltip
+            .set_focused(false);
+        self.last_tooltip_event = self
+            .tooltip
+            .pump(&mut self.host);
     }
 }
 
@@ -223,23 +235,24 @@ impl State<FeedbackExample> for FeedbackExampleState {
             .width(420.0)
             .height(10.0)
             .track_color(recessed_surface(&app_theme))
-            .progress_color(app_theme.primary_color.with_alpha(0.62));
-        let spinner = self.spinner.size(32.0).color(app_theme.primary_color);
+            .progress_color(
+                app_theme
+                    .primary_color
+                    .with_alpha(0.62),
+            );
+        let spinner = self
+            .spinner
+            .size(32.0)
+            .color(app_theme.primary_color);
 
         let progress_updater = self.updater;
-        let advance_progress = action_button(
-            "+10%",
-            app_theme,
-            true,
-            move || progress_updater.set_state(|state| state.advance_progress()),
-        );
+        let advance_progress = action_button("+10%", app_theme, true, move || {
+            progress_updater.set_state(|state| state.advance_progress())
+        });
         let reset_updater = self.updater;
-        let reset_progress = action_button(
-            "Reset",
-            app_theme,
-            false,
-            move || reset_updater.set_state(|state| state.reset_progress()),
-        );
+        let reset_progress = action_button("Reset", app_theme, false, move || {
+            reset_updater.set_state(|state| state.reset_progress())
+        });
         let motion_updater = self.updater;
         let toggle_motion = action_button(
             if self.motion_policy == MotionPolicy::Reduced {
@@ -252,81 +265,74 @@ impl State<FeedbackExample> for FeedbackExampleState {
             move || motion_updater.set_state(|state| state.toggle_motion()),
         );
         let spinner_updater = self.updater;
-        let advance_spinner = action_button(
-            "Advance 250ms",
-            app_theme,
-            false,
-            move || spinner_updater.set_state(|state| state.advance_spinner()),
-        );
+        let advance_spinner = action_button("Advance 250ms", app_theme, false, move || {
+            spinner_updater.set_state(|state| state.advance_spinner())
+        });
 
         let queue_updater = self.updater;
-        let queue_toast = action_button(
-            "Queue toast",
-            app_theme,
-            true,
-            move || queue_updater.set_state(|state| state.queue_toast()),
-        );
+        let queue_toast = action_button("Queue toast", app_theme, true, move || {
+            queue_updater.set_state(|state| state.queue_toast())
+        });
         let advance_toast_updater = self.updater;
-        let advance_toast = action_button(
-            "Advance 4s",
-            app_theme,
-            false,
-            move || advance_toast_updater.set_state(|state| state.advance_toast_clock()),
-        );
+        let advance_toast = action_button("Advance 4s", app_theme, false, move || {
+            advance_toast_updater.set_state(|state| state.advance_toast_clock())
+        });
         let dismiss_updater = self.updater;
-        let dismiss_toast = action_button(
-            "Dismiss",
-            app_theme,
-            false,
-            move || dismiss_updater.set_state(|state| state.dismiss_toast()),
-        );
+        let dismiss_toast = action_button("Dismiss", app_theme, false, move || {
+            dismiss_updater.set_state(|state| state.dismiss_toast())
+        });
         let action_updater = self.updater;
-        let undo_toast = action_button(
-            "Undo action",
-            app_theme,
-            false,
-            move || action_updater.set_state(|state| state.activate_toast_action()),
-        );
+        let undo_toast = action_button("Undo action", app_theme, false, move || {
+            action_updater.set_state(|state| state.activate_toast_action())
+        });
 
         let show_updater = self.updater;
-        let show_tooltip = action_button(
-            "Show tooltip",
-            app_theme,
-            true,
-            move || show_updater.set_state(|state| state.show_tooltip()),
-        );
+        let show_tooltip = action_button("Show tooltip", app_theme, true, move || {
+            show_updater.set_state(|state| state.show_tooltip())
+        });
         let hide_updater = self.updater;
-        let hide_tooltip = action_button(
-            "Hide tooltip",
-            app_theme,
-            false,
-            move || hide_updater.set_state(|state| state.hide_tooltip()),
-        );
+        let hide_tooltip = action_button("Hide tooltip", app_theme, false, move || {
+            hide_updater.set_state(|state| state.hide_tooltip())
+        });
 
         let toast_summary = match self.queue.active() {
             Some(toast) => format!(
                 "Visible: {} · pending: {} · remaining: {:?}",
                 toast.message(),
-                self.queue.pending_len(),
-                self.queue.remaining()
+                self.queue
+                    .pending_len(),
+                self.queue
+                    .remaining()
             ),
-            None => format!("No toast visible · pending: {}", self.queue.pending_len()),
+            None => format!(
+                "No toast visible · pending: {}",
+                self.queue
+                    .pending_len()
+            ),
         };
         let tooltip_summary = format!(
             "{} · last event: {:?} · overlays hosted: {}",
-            if self.tooltip.is_visible() {
+            if self
+                .tooltip
+                .is_visible()
+            {
                 "Visible"
             } else {
                 "Hidden"
             },
             self.last_tooltip_event,
-            self.host.overlays.len()
+            self.host
+                .overlays
+                .len()
         );
         let announcement_summary = self
             .announcer
             .last
             .as_deref()
-            .map_or_else(|| "No announcements yet".to_owned(), |text| format!("Last: {text}"));
+            .map_or_else(
+                || "No announcements yet".to_owned(),
+                |text| format!("Last: {text}"),
+            );
 
         Container::new()
             .width(Dimension::Percent(100.0))
@@ -537,22 +543,30 @@ fn local_theme_provider<W: Widget + 'static>(child: W) -> impl Widget {
         .on_background_color(aimer::Color::Rgb(237, 226, 222))
         .surface_color(aimer::Color::Rgb(42, 28, 26))
         .on_surface_color(aimer::Color::Rgb(237, 226, 222));
-    AnimatedTheme::new().data(theme).child(child)
+    AnimatedTheme::new()
+        .data(theme)
+        .child(child)
 }
 
 #[inline]
 fn muted_text(app_theme: &ThemeData) -> aimer::Color {
-    app_theme.on_background_color.with_alpha(0.72)
+    app_theme
+        .on_background_color
+        .with_alpha(0.72)
 }
 
 #[inline]
 fn raised_surface(app_theme: &ThemeData) -> aimer::Color {
-    app_theme.surface_color.lighten(0.08)
+    app_theme
+        .surface_color
+        .lighten(0.08)
 }
 
 #[inline]
 fn recessed_surface(app_theme: &ThemeData) -> aimer::Color {
-    app_theme.background_color.lighten(0.06)
+    app_theme
+        .background_color
+        .lighten(0.06)
 }
 
 fn status_banner(kind: StatusKind, message: impl Into<String>, app_theme: ThemeData) -> AnyWidget {
@@ -560,7 +574,13 @@ fn status_banner(kind: StatusKind, message: impl Into<String>, app_theme: ThemeD
         .kind(kind)
         .background_color(status_background(kind, app_theme))
         .foreground_color(app_theme.on_surface_color)
-        .padding(LayoutSpacing::new().top(10).bottom(10).left(12).right(12))
+        .padding(
+            LayoutSpacing::new()
+                .top(10)
+                .bottom(10)
+                .left(12)
+                .right(12),
+        )
         .boxed()
 }
 
@@ -650,7 +670,9 @@ fn action_button(
         .hover_decoration(
             BoxDecoration::new()
                 .background_color(if primary {
-                    app_theme.primary_color.lighten(0.08)
+                    app_theme
+                        .primary_color
+                        .lighten(0.08)
                 } else {
                     raised_surface(&app_theme)
                 })
@@ -659,7 +681,9 @@ fn action_button(
         .press_decoration(
             BoxDecoration::new()
                 .background_color(if primary {
-                    app_theme.primary_color.darken(0.08)
+                    app_theme
+                        .primary_color
+                        .darken(0.08)
                 } else {
                     recessed_surface(&app_theme)
                 })
@@ -668,14 +692,20 @@ fn action_button(
         .child(
             Container::new()
                 .height(Dimension::Px(32.0))
-                .padding(LayoutSpacing::new().left(11).right(11))
+                .padding(
+                    LayoutSpacing::new()
+                        .left(11)
+                        .right(11),
+                )
                 .child(
-                    Text::new(label).text_align(TextAlign::MidCenter).text_style(
-                        TextStyle::new()
-                            .font_size(12)
-                            .font_weight(FontWeight::Bold)
-                            .color(foreground),
-                    ),
+                    Text::new(label)
+                        .text_align(TextAlign::MidCenter)
+                        .text_style(
+                            TextStyle::new()
+                                .font_size(12)
+                                .font_weight(FontWeight::Bold)
+                                .color(foreground),
+                        ),
                 ),
         )
         .boxed()
@@ -689,14 +719,21 @@ struct DemoOverlayHost {
 
 impl OverlayHost for DemoOverlayHost {
     fn present(&mut self, request: OverlayRequest) -> OverlayId {
-        self.next_id = self.next_id.saturating_add(1).max(1);
+        self.next_id = self
+            .next_id
+            .saturating_add(1)
+            .max(1);
         let id = OverlayId::new(self.next_id);
-        self.overlays.push((id, request));
+        self.overlays
+            .push((id, request));
         id
     }
 
     fn update(&mut self, id: OverlayId, request: OverlayRequest) -> bool {
-        let Some((_, current)) = self.overlays.iter_mut().find(|(overlay_id, _)| *overlay_id == id)
+        let Some((_, current)) = self
+            .overlays
+            .iter_mut()
+            .find(|(overlay_id, _)| *overlay_id == id)
         else {
             return false;
         };
@@ -705,11 +742,15 @@ impl OverlayHost for DemoOverlayHost {
     }
 
     fn dismiss(&mut self, id: OverlayId, _reason: DismissReason) -> bool {
-        let Some(index) = self.overlays.iter().position(|(overlay_id, _)| *overlay_id == id)
+        let Some(index) = self
+            .overlays
+            .iter()
+            .position(|(overlay_id, _)| *overlay_id == id)
         else {
             return false;
         };
-        self.overlays.remove(index);
+        self.overlays
+            .remove(index);
         true
     }
 }
@@ -722,7 +763,13 @@ struct DemoAnnouncer {
 
 impl Announcer for DemoAnnouncer {
     fn announce(&mut self, announcement: Announcement) {
-        self.last = Some(announcement.text().to_owned());
-        self.count = self.count.saturating_add(1);
+        self.last = Some(
+            announcement
+                .text()
+                .to_owned(),
+        );
+        self.count = self
+            .count
+            .saturating_add(1);
     }
 }

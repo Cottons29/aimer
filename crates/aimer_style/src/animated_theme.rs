@@ -1,31 +1,30 @@
-use std::cell::RefCell;
 #[cfg(feature = "portable-guest")]
 use std::any::type_name;
+use std::cell::RefCell;
 use std::marker::PhantomData;
 use std::rc::Rc;
 use std::time::Duration;
 
 use aimer_animation::{AnimInstant, AnimationController, Curve};
 use aimer_macro::PortableWidget;
-use aimer_provider::{Provider, ProviderHandle};
 #[cfg(feature = "portable-guest")]
 use aimer_provider::with_portable_provider;
+use aimer_provider::{Provider, ProviderHandle};
 use aimer_widget::base::{BuildContext, ResolvedSize, Size, Vec2d};
 use aimer_widget::{
-    AnyElement, AnyWidget, Brightness, ChildBuilder, Drawable, Element, EventElement, Key,
-    EventTreeRole, LayoutElement, Rebuildable, RequiredChild, State, StateUpdater,
-    StatefulElement, StatefulWidget, StatelessElement, VisitorElement, Widget,
-    platform_brightness,
+    AnyElement, AnyWidget, Brightness, ChildBuilder, Drawable, Element, EventElement,
+    EventTreeRole, Key, LayoutElement, Rebuildable, RequiredChild, State, StateUpdater,
+    StatefulElement, StatefulWidget, StatelessElement, VisitorElement, Widget, platform_brightness,
 };
 
 #[cfg(feature = "portable-guest")]
 use aimer_widget::portable::__anteros::{
-    BUILTIN_WIDGET_SCHEMA_VERSION, PROPERTY_ANIMATED_THEME_CURVE,
-    PROPERTY_ANIMATED_THEME_CURVE_X1, PROPERTY_ANIMATED_THEME_CURVE_X2,
-    PROPERTY_ANIMATED_THEME_CURVE_Y1, PROPERTY_ANIMATED_THEME_CURVE_Y2,
-    PROPERTY_ANIMATED_THEME_DURATION_MILLIS, PROPERTY_ANIMATED_THEME_MODE,
-    PROPERTY_ANIMATED_THEME_SCHEMA_VERSION, PROPERTY_ANIMATED_THEME_TYPE,
-    PROPERTY_ANIMATED_THEME_VALUE, PropertyValue, WIDGET_ANIMATED_THEME, WidgetProperty,
+    BUILTIN_WIDGET_SCHEMA_VERSION, PROPERTY_ANIMATED_THEME_CURVE, PROPERTY_ANIMATED_THEME_CURVE_X1,
+    PROPERTY_ANIMATED_THEME_CURVE_X2, PROPERTY_ANIMATED_THEME_CURVE_Y1,
+    PROPERTY_ANIMATED_THEME_CURVE_Y2, PROPERTY_ANIMATED_THEME_DURATION_MILLIS,
+    PROPERTY_ANIMATED_THEME_MODE, PROPERTY_ANIMATED_THEME_SCHEMA_VERSION,
+    PROPERTY_ANIMATED_THEME_TYPE, PROPERTY_ANIMATED_THEME_VALUE, PropertyValue,
+    WIDGET_ANIMATED_THEME, WidgetProperty,
 };
 
 use crate::{Theme, ThemeData, ThemeMode, ThemeSelection};
@@ -111,11 +110,7 @@ fn request_next_frame() {
 /// let _ = AnimatedTheme::new().boxed();
 /// ```
 #[derive(PortableWidget)]
-#[portable_widget(
-    id = "aimer_style::AnimatedTheme",
-    schema_only,
-    manual_lowering
-)]
+#[portable_widget(id = "aimer_style::AnimatedTheme", schema_only, manual_lowering)]
 pub struct AnimatedTheme<W = RequiredChild, T = ThemeData> {
     #[portable_skip]
     selection: ThemeSelection<T>,
@@ -492,20 +487,20 @@ impl<W: Widget + 'static, T: Theme> aimer_widget::PortableWidget for AnimatedThe
         self,
         ctx: &mut aimer_widget::portable::PortableBuildContext,
         source: aimer_widget::portable::SourceFingerprint,
-    ) -> Result<
-        aimer_widget::portable::PortableNodeId,
-        aimer_widget::portable::PortableBuildError,
-    > {
+    ) -> Result<aimer_widget::portable::PortableNodeId, aimer_widget::portable::PortableBuildError>
+    {
         let build_context = ctx.build_context();
         let brightness = self.system_appearance(&build_context);
         let data = self.selection.resolve(brightness);
         let Some(codec) = T::portable_codec() else {
-            return Err(aimer_widget::portable::PortableBuildError::ProviderEncoding {
-                provider: "AnimatedTheme",
-                value: type_name::<T>(),
-                source,
-                message: "custom themes must provide an explicit portable codec".to_owned(),
-            });
+            return Err(
+                aimer_widget::portable::PortableBuildError::ProviderEncoding {
+                    provider: "AnimatedTheme",
+                    value: type_name::<T>(),
+                    source,
+                    message: "custom themes must provide an explicit portable codec".to_owned(),
+                },
+            );
         };
         let bytes = codec.encode(&data).map_err(|error| {
             aimer_widget::portable::PortableBuildError::ProviderEncoding {
@@ -516,16 +511,18 @@ impl<W: Widget + 'static, T: Theme> aimer_widget::PortableWidget for AnimatedThe
             }
         })?;
         if bytes.len() > codec.schema().maximum_encoded_bytes() as usize {
-            return Err(aimer_widget::portable::PortableBuildError::ProviderEncoding {
-                provider: "AnimatedTheme",
-                value: type_name::<T>(),
-                source,
-                message: format!(
-                    "encoded theme is {} bytes, above the {} byte limit",
-                    bytes.len(),
-                    codec.schema().maximum_encoded_bytes(),
-                ),
-            });
+            return Err(
+                aimer_widget::portable::PortableBuildError::ProviderEncoding {
+                    provider: "AnimatedTheme",
+                    value: type_name::<T>(),
+                    source,
+                    message: format!(
+                        "encoded theme is {} bytes, above the {} byte limit",
+                        bytes.len(),
+                        codec.schema().maximum_encoded_bytes(),
+                    ),
+                },
+            );
         }
         let value = ctx.push_owned_blob(bytes)?;
         let duration = i64::try_from(self.duration.as_millis()).map_err(|_| {
@@ -569,11 +566,9 @@ impl<W: Widget + 'static, T: Theme> aimer_widget::PortableWidget for AnimatedThe
                     .optional(),
             ]);
         }
-        let child = with_portable_provider(
-            ctx,
-            ProviderHandle::new(data),
-            |ctx| self.child.into_portable_node(ctx, source.child(0)),
-        )?;
+        let child = with_portable_provider(ctx, ProviderHandle::new(data), |ctx| {
+            self.child.into_portable_node(ctx, source.child(0))
+        })?;
         let key = Key::fixed(source.identity().to_bytes());
         ctx.push_node(
             WIDGET_ANIMATED_THEME,
@@ -607,7 +602,9 @@ fn portable_curve(curve: Curve) -> (i64, Option<[f64; 4]>) {
         Curve::EaseIn => (1, None),
         Curve::EaseOut => (2, None),
         Curve::EaseInOut => (3, None),
-        Curve::CubicBezier(x1, y1, x2, y2) => (4, Some([x1 as f64, y1 as f64, x2 as f64, y2 as f64])),
+        Curve::CubicBezier(x1, y1, x2, y2) => {
+            (4, Some([x1 as f64, y1 as f64, x2 as f64, y2 as f64]))
+        }
         Curve::Decelerate => (5, None),
         Curve::BounceOut => (6, None),
         Curve::BounceIn => (7, None),
@@ -917,7 +914,9 @@ mod tests {
 
     #[test]
     fn an_explicit_mode_ignores_the_system_appearance() {
-        let light_only = AnimatedTheme::new().mode(ThemeMode::Light).child(TestWidget);
+        let light_only = AnimatedTheme::new()
+            .mode(ThemeMode::Light)
+            .child(TestWidget);
         let dark_only = AnimatedTheme::new().mode(ThemeMode::Dark).child(TestWidget);
 
         assert_eq!(
@@ -972,8 +971,8 @@ mod tests {
         let document = context.finish_document(root).unwrap();
         let limits = document.model_limits();
         let image = document.encode().unwrap();
-        let view = aimer_widget::portable::__anteros::WidgetDocumentView::decode(&image, limits)
-            .unwrap();
+        let view =
+            aimer_widget::portable::__anteros::WidgetDocumentView::decode(&image, limits).unwrap();
         let node = view.node(view.root_node()).unwrap();
 
         assert_eq!(
@@ -984,14 +983,12 @@ mod tests {
         assert!(node.properties().any(|property| {
             property.property_id()
                 == aimer_widget::portable::__anteros::PROPERTY_ANIMATED_THEME_MODE
-                && property.value()
-                    == aimer_widget::portable::__anteros::PropertyValue::I64(2)
+                && property.value() == aimer_widget::portable::__anteros::PropertyValue::I64(2)
         }));
         assert!(node.properties().any(|property| {
             property.property_id()
                 == aimer_widget::portable::__anteros::PROPERTY_ANIMATED_THEME_DURATION_MILLIS
-                && property.value()
-                    == aimer_widget::portable::__anteros::PropertyValue::I64(321)
+                && property.value() == aimer_widget::portable::__anteros::PropertyValue::I64(321)
         }));
         assert_eq!(view.blob(0).map(<[u8]>::len), Some(24));
     }
@@ -1001,8 +998,7 @@ mod tests {
     fn animated_theme_exposes_derived_schema_for_one_child() {
         use aimer_widget::portable::PortableWidgetSchema;
 
-        let schema =
-            <AnimatedTheme<PortableLeaf, ThemeData> as PortableWidgetSchema>::SCHEMA;
+        let schema = <AnimatedTheme<PortableLeaf, ThemeData> as PortableWidgetSchema>::SCHEMA;
         assert_eq!(schema.widget().id(), WIDGET_ANIMATED_THEME);
         assert_eq!(schema.children().minimum(), 1);
         assert_eq!(schema.children().maximum(), 1);
@@ -1087,8 +1083,7 @@ mod tests {
         let new_state = custom_widget(CustomTheme { value: 101.0 }, Duration::ZERO).create_state();
 
         <AnimatedThemeState<CustomTheme> as State<ResolvedTheme<CustomTheme>>>::adopt_config_from(
-            &mut state,
-            new_state,
+            &mut state, new_state,
         );
 
         assert_eq!(*state.handle.read(), CustomTheme { value: 101.0 });
@@ -1187,10 +1182,9 @@ mod tests {
     }
 
     fn frame_of(state: &AnimatedThemeState<ThemeData>, ctx: &BuildContext) {
-        let frame = <AnimatedThemeState<ThemeData> as State<ResolvedTheme<ThemeData>>>::build(
-            state, ctx,
-        )
-        .to_element(ctx);
+        let frame =
+            <AnimatedThemeState<ThemeData> as State<ResolvedTheme<ThemeData>>>::build(state, ctx)
+                .to_element(ctx);
         // Drawing is the frame boundary: it ticks the controller, places the
         // retained child again, and rebuilds the marked subtree before paint.
         frame.update(ctx);

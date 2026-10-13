@@ -9,8 +9,8 @@ use aimer_events::element::ElementEvent;
 use aimer_widget::base::*;
 use aimer_widget::{
     AnyElement, ChildBuilder, Drawable, Element, EventElement, EventResult, Key, LayoutElement,
-    Rebuildable, State, StateUpdater, StatefulElement, StatefulWidget,
-    StatelessElement, VisitorElement, Widget,
+    Rebuildable, State, StateUpdater, StatefulElement, StatefulWidget, StatelessElement,
+    VisitorElement, Widget,
 };
 
 use crate::control::controller::AnimationController;
@@ -205,9 +205,7 @@ impl<T: Widget + 'static> StatefulWidget for MorphTransition<T> {
 
     fn create_state(self) -> Self::State {
         MorphTransitionState {
-            child_key: self
-                .transition_key
-                .or_else(|| Widget::key(&self.child)),
+            child_key: self.transition_key.or_else(|| Widget::key(&self.child)),
             current_child: self.child,
             old_child: None,
             old_child_key: None,
@@ -394,7 +392,6 @@ impl Drawable for MorphBackgroundElement {
     fn local_v2_paint_needs_recording(&self, _ctx: &BuildContext) -> bool {
         self.recorded_signature.get() != Some(Self::signature(self.paint_value()))
     }
-
 }
 
 impl VisitorElement for MorphBackgroundElement {
@@ -605,11 +602,7 @@ impl Drawable for MorphTransitionElement {
         }
 
         if self.morph_state.get() == MorphState::Idle {
-            return ctx.set_local_v2_child_presentation_at(
-                0,
-                aimer_canvas::Mat3::identity(),
-                1.0,
-            );
+            return ctx.set_local_v2_child_presentation_at(0, aimer_canvas::Mat3::identity(), 1.0);
         }
 
         if unsafe { self.old_child.get() }.is_none() {
@@ -747,10 +740,7 @@ impl VisitorElement for MorphTransitionElement {
         }
     }
 
-    fn visit_retained_v2_children<'a>(
-        &'a self,
-        visitor: &mut dyn FnMut(usize, &'a dyn Element),
-    ) {
+    fn visit_retained_v2_children<'a>(&'a self, visitor: &mut dyn FnMut(usize, &'a dyn Element)) {
         let mut index = 0;
         if self.morph_state.get() == MorphState::MorphingIn {
             unsafe {

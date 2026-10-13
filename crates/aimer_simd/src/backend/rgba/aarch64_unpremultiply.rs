@@ -1,10 +1,12 @@
-use core::arch::asm;
 use core::arch::aarch64::float32x4_t;
+use core::arch::asm;
 
 #[inline]
 pub(crate) fn unpremultiply(bitmap: &mut [u8]) -> usize {
     let end = bitmap.len() / 16 * 16;
-    if end == 0 { return 0; }
+    if end == 0 {
+        return 0;
+    }
     let scale: float32x4_t;
     let one: float32x4_t;
     // SAFETY: NEON is baseline; conversion produces exact integer constants.

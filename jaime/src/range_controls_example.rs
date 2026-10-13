@@ -6,7 +6,9 @@
 //! application would use.
 
 use aimer::macros::widget;
-use aimer::style::{BoxDecoration, FontWeight, LayoutSpacing, Spacing, TextStyle, Theme, ThemeData};
+use aimer::style::{
+    BoxDecoration, FontWeight, LayoutSpacing, Spacing, TextStyle, Theme, ThemeData,
+};
 use aimer::{
     AimerApp, AnyWidget, BuildContext, Column, Container, State, StateUpdater, StatefulWidget,
     Text, Widget,
@@ -215,7 +217,14 @@ pub(crate) fn invalid_sample() -> (bool, bool) {
         .range(100.0..0.0)
         .step(0.0)
         .value(50.0);
-    (slider.validate().is_err(), slider.semantics().invalid_range())
+    (
+        slider
+            .validate()
+            .is_err(),
+        slider
+            .semantics()
+            .invalid_range(),
+    )
 }
 
 fn range_card(

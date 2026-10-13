@@ -47,17 +47,27 @@ fn start(calls: Rc<Cell<usize>>) -> HeadlessAimerApp<impl Widget + 'static> {
     });
     let mut rows = vec![animated.boxed()];
     rows.extend((0..ROWS).map(|_| deep_row()));
-    let page = aimer_container::Container::new().color(Color::WHITE).child(Column::new().children(rows));
-    let mut app = AimerApp::start_headless_with(page, HeadlessOptions {
-        size: PhysicalSize::new(200, 800), scale_factor: 1.0,
-    });
+    let page = aimer_container::Container::new()
+        .color(Color::WHITE)
+        .child(Column::new().children(rows));
+    let mut app = AimerApp::start_headless_with(
+        page,
+        HeadlessOptions {
+            size: PhysicalSize::new(200, 800),
+            scale_factor: 1.0,
+        },
+    );
     app.pump_frames(4);
     app
 }
 
 fn next_frame<W: Widget + 'static>(app: &mut HeadlessAimerApp<W>) {
     std::thread::sleep(Duration::from_millis(12));
-    assert_eq!(app.pump_frames(1), 1, "the animation keeps asking for frames");
+    assert_eq!(
+        app.pump_frames(1),
+        1,
+        "the animation keeps asking for frames"
+    );
     app.last_frame_result.take().expect("a frame was drawn");
 }
 
@@ -75,8 +85,10 @@ fn descents_per_frame() -> (Vec<u64>, Vec<u64>, usize) {
     let mut descents = Vec::new();
     let mut visits = Vec::new();
     for _ in 0..FRAMES {
-        let (descended, entered) =
-            (aimer_widget::rebuild_descent_count(), aimer_widget::rebuild_visit_count());
+        let (descended, entered) = (
+            aimer_widget::rebuild_descent_count(),
+            aimer_widget::rebuild_visit_count(),
+        );
         next_frame(&mut app);
         descents.push(aimer_widget::rebuild_descent_count() - descended);
         visits.push(aimer_widget::rebuild_visit_count() - entered);
@@ -86,10 +98,15 @@ fn descents_per_frame() -> (Vec<u64>, Vec<u64>, usize) {
 
 #[test]
 fn an_animating_builder_descends_only_its_own_path_in_the_rebuild_prepass() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     let (descents, visits, runs) = descents_per_frame();
 
-    assert!(runs >= FRAMES - 5, "the builder ran only {runs} times in {FRAMES} animating frames");
+    assert!(
+        runs >= FRAMES - 5,
+        "the builder ran only {runs} times in {FRAMES} animating frames"
+    );
     // The path to the builder is the window root, the page container, the
     // column and the builder itself, plus the wrappers around each and the
     // builder's own fresh child. None of that depends on the number of rows,
@@ -108,7 +125,9 @@ fn an_animating_builder_descends_only_its_own_path_in_the_rebuild_prepass() {
 /// should reach only the children that lead to the builder.
 #[test]
 fn an_animating_builder_does_not_enter_its_clean_siblings() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     let (_, visits, _) = descents_per_frame();
 
     let worst = visits.iter().copied().max().unwrap_or(0);
@@ -122,7 +141,9 @@ fn an_animating_builder_does_not_enter_its_clean_siblings() {
 
 #[test]
 fn a_builder_in_deep_rows_keeps_animating_while_the_prepass_stays_pruned() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     let calls = Rc::new(Cell::new(0usize));
     let mut app = start(calls.clone());
     let before = calls.get();
@@ -130,7 +151,11 @@ fn a_builder_in_deep_rows_keeps_animating_while_the_prepass_stays_pruned() {
         next_frame(&mut app);
     }
     let runs = calls.get() - before;
-    assert!(runs >= FRAMES * 2 - 5, "the builder froze: {runs} runs in {} frames", FRAMES * 2);
+    assert!(
+        runs >= FRAMES * 2 - 5,
+        "the builder froze: {runs} runs in {} frames",
+        FRAMES * 2
+    );
 }
 
 /// An animator that lives inside another builder's output is a brand-new
@@ -139,7 +164,9 @@ fn a_builder_in_deep_rows_keeps_animating_while_the_prepass_stays_pruned() {
 /// animator would be pruned and stop as soon as the outer one finished.
 #[test]
 fn an_animator_inside_a_finished_builder_keeps_animating() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     let inner_runs = Rc::new(Cell::new(0usize));
     let outer = AnimationController::new(Duration::from_millis(40), Curve::Linear);
     outer.forward_from_first_tick();
@@ -159,23 +186,35 @@ fn an_animator_inside_a_finished_builder_keeps_animating() {
     };
     let mut rows = vec![animated.boxed()];
     rows.extend((0..ROWS).map(|_| deep_row()));
-    let page = aimer_container::Container::new().color(Color::WHITE).child(Column::new().children(rows));
-    let mut app = AimerApp::start_headless_with(page, HeadlessOptions {
-        size: PhysicalSize::new(200, 800), scale_factor: 1.0,
-    });
+    let page = aimer_container::Container::new()
+        .color(Color::WHITE)
+        .child(Column::new().children(rows));
+    let mut app = AimerApp::start_headless_with(
+        page,
+        HeadlessOptions {
+            size: PhysicalSize::new(200, 800),
+            scale_factor: 1.0,
+        },
+    );
     app.pump_frames(4);
     // Run past the outer animation so its last replacement is long behind us.
     for _ in 0..8 {
         next_frame(&mut app);
     }
-    assert!(!outer.is_animating(), "the outer animation must have finished");
+    assert!(
+        !outer.is_animating(),
+        "the outer animation must have finished"
+    );
 
     let before = inner_runs.get();
     for _ in 0..FRAMES {
         next_frame(&mut app);
     }
     let runs = inner_runs.get() - before;
-    assert!(runs >= FRAMES - 5, "the inner animator ran only {runs} times in {FRAMES} frames");
+    assert!(
+        runs >= FRAMES - 5,
+        "the inner animator ran only {runs} times in {FRAMES} frames"
+    );
 }
 
 mod moved_state {
@@ -202,7 +241,11 @@ mod moved_state {
         type State = TaggedState;
 
         fn create_state(self) -> TaggedState {
-            TaggedState { shade: 0, builds: self.builds, updater: self.updater }
+            TaggedState {
+                shade: 0,
+                builds: self.builds,
+                updater: self.updater,
+            }
         }
     }
 
@@ -224,9 +267,14 @@ mod moved_state {
 
     impl Widget for Tagged {
         fn to_element(self, ctx: &BuildContext) -> AnyElement {
-            StatefulElement::new_with_name(self, ctx, "Tagged", Some(aimer_widget::Key::Value("tag".into())))
-                .0
-                .boxed()
+            StatefulElement::new_with_name(
+                self,
+                ctx,
+                "Tagged",
+                Some(aimer_widget::Key::Value("tag".into())),
+            )
+            .0
+            .boxed()
         }
     }
 
@@ -246,7 +294,10 @@ mod moved_state {
     }
 
     fn spacer() -> aimer_widget::AnyWidget {
-        SizedBox::new().width(Dimension::Px(40.0)).height(Dimension::Px(20.0)).boxed()
+        SizedBox::new()
+            .width(Dimension::Px(40.0))
+            .height(Dimension::Px(20.0))
+            .boxed()
     }
 
     /// The pass reaches a long list's children through the dirty paths, so a
@@ -255,8 +306,13 @@ mod moved_state {
     /// builder keeps going.
     #[test]
     fn a_dirty_sibling_is_rebuilt_while_a_builder_animates_beside_it() {
-        let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-        let tagged = Tagged { builds: Rc::new(Cell::new(0)), updater: Rc::default() };
+        let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let tagged = Tagged {
+            builds: Rc::new(Cell::new(0)),
+            updater: Rc::default(),
+        };
         let builds = tagged.builds.clone();
         let calls = Rc::new(Cell::new(0usize));
         let animated = {
@@ -271,10 +327,16 @@ mod moved_state {
         };
         let mut rows = vec![animated.boxed(), tagged.boxed()];
         rows.extend((0..ROWS).map(|_| deep_row()));
-        let page = aimer_container::Container::new().color(Color::WHITE).child(Column::new().children(rows));
-        let mut app = AimerApp::start_headless_with(page, HeadlessOptions {
-            size: PhysicalSize::new(200, 800), scale_factor: 1.0,
-        });
+        let page = aimer_container::Container::new()
+            .color(Color::WHITE)
+            .child(Column::new().children(rows));
+        let mut app = AimerApp::start_headless_with(
+            page,
+            HeadlessOptions {
+                size: PhysicalSize::new(200, 800),
+                scale_factor: 1.0,
+            },
+        );
         app.pump_frames(4);
         for _ in 0..4 {
             next_frame(&mut app);
@@ -284,13 +346,21 @@ mod moved_state {
         // Marking the element directly keeps the index of dirty paths, which a
         // state update would discard, so the pass reaches it through the edges.
         let root = app.app.widget_root.as_ref().expect("the tree is mounted");
-        find_element(root.as_ref(), "Tagged").expect("the sibling is mounted").mark_needs_rebuild();
+        find_element(root.as_ref(), "Tagged")
+            .expect("the sibling is mounted")
+            .mark_needs_rebuild();
         for _ in 0..4 {
             next_frame(&mut app);
         }
 
-        assert!(builds.get() > builds_before, "the dirty sibling was skipped");
-        assert!(calls.get() >= calls_before + 3, "the builder stopped animating");
+        assert!(
+            builds.get() > builds_before,
+            "the dirty sibling was skipped"
+        );
+        assert!(
+            calls.get() >= calls_before + 3,
+            "the builder stopped animating"
+        );
     }
 
     /// A keyed stateful element carries its dirty source, and with it the path
@@ -300,14 +370,21 @@ mod moved_state {
     /// its new place.
     #[test]
     fn a_stateful_element_moved_by_a_builder_still_rebuilds_when_its_state_changes() {
-        let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-        let tagged = Tagged { builds: Rc::new(Cell::new(0)), updater: Rc::default() };
+        let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let tagged = Tagged {
+            builds: Rc::new(Cell::new(0)),
+            updater: Rc::default(),
+        };
         let builds = tagged.builds.clone();
         let updater = tagged.updater.clone();
         let outer = AnimationController::new(Duration::from_millis(40), Curve::Linear);
         outer.forward_from_first_tick();
         let animated = AnimatedBuilder::new(outer.clone(), move |progress| {
-            let holder = aimer_container::Container::new().child(tagged.clone()).boxed();
+            let holder = aimer_container::Container::new()
+                .child(tagged.clone())
+                .boxed();
             if progress < 0.5 {
                 Column::new().children(vec![holder, spacer()]).boxed()
             } else {
@@ -316,23 +393,35 @@ mod moved_state {
         });
         let mut rows = vec![animated.boxed()];
         rows.extend((0..ROWS).map(|_| deep_row()));
-        let page = aimer_container::Container::new().color(Color::WHITE).child(Column::new().children(rows));
-        let mut app = AimerApp::start_headless_with(page, HeadlessOptions {
-            size: PhysicalSize::new(200, 800), scale_factor: 1.0,
-        });
+        let page = aimer_container::Container::new()
+            .color(Color::WHITE)
+            .child(Column::new().children(rows));
+        let mut app = AimerApp::start_headless_with(
+            page,
+            HeadlessOptions {
+                size: PhysicalSize::new(200, 800),
+                scale_factor: 1.0,
+            },
+        );
         app.pump_frames(4);
         // The animation ends partway through these, after which no frame is due.
         for _ in 0..8 {
             std::thread::sleep(Duration::from_millis(12));
             app.pump_frames(1);
         }
-        assert!(!outer.is_animating(), "the builder must have finished moving the element");
+        assert!(
+            !outer.is_animating(),
+            "the builder must have finished moving the element"
+        );
         app.pump_frames(3);
 
         let before = builds.get();
         let updater = updater.borrow().expect("the state was initialised");
         updater.set_state(|state| state.shade = 200);
         app.pump_frames(3);
-        assert!(builds.get() > before, "the moved element was not rebuilt after its state changed");
+        assert!(
+            builds.get() > before,
+            "the moved element was not rebuilt after its state changed"
+        );
     }
 }

@@ -1,18 +1,18 @@
 pub mod backend;
-pub mod custom_pipeline;
 pub mod compositor;
+pub mod custom_pipeline;
 #[doc(hidden)]
 pub mod damage_region;
 pub mod draw_cmd;
 pub mod draw_cmd_v2;
 pub mod font;
 pub mod frame;
-#[doc(hidden)]
-pub mod v2_frame_adapter;
 #[cfg(feature = "wgpu")]
 pub mod gpu_context;
 mod persistent_target;
 pub mod utilities;
+#[doc(hidden)]
+pub mod v2_frame_adapter;
 
 pub mod canvas;
 mod lru_map;
@@ -25,14 +25,13 @@ pub mod svg;
 #[cfg(target_arch = "wasm32")]
 pub mod wasm_fonts;
 
-pub use pipeline::{AntiAlias, image_pipeline, material, rect_pipeline, svg_pipeline, text_pipeline};
+pub use pipeline::{
+    AntiAlias, image_pipeline, material, rect_pipeline, svg_pipeline, text_pipeline,
+};
 
 pub use crate::text_pipeline::{glyph_atlas, glyph_rasterizer, text_layout};
 
 // ── Backend-generic public surface ─────────────────────────────────────────
-pub use backend::{GpuBackend, GpuLimits, GpuRenderPass};
-#[cfg(feature = "wgpu")]
-pub use backend::wgpu::WgpuBackend;
 #[cfg(all(feature = "native", not(feature = "wgpu"), target_os = "windows"))]
 pub use backend::dx12::Dx12Backend;
 #[cfg(all(
@@ -40,17 +39,20 @@ pub use backend::dx12::Dx12Backend;
     not(feature = "wgpu"),
     any(target_os = "linux", target_os = "android")
 ))]
-pub use backend::vulkan::{VulkanBackend, VulkanError, VulkanSurface, VulkanSurfaceFrame};
+pub use backend::opengl::{OpenGlBackend, OpenGlError, OpenGlSurface, OpenGlSurfaceFrame};
 #[cfg(all(
     feature = "native",
     not(feature = "wgpu"),
     any(target_os = "linux", target_os = "android")
 ))]
-pub use backend::opengl::{OpenGlBackend, OpenGlError, OpenGlSurface, OpenGlSurfaceFrame};
+pub use backend::vulkan::{VulkanBackend, VulkanError, VulkanSurface, VulkanSurfaceFrame};
 #[cfg(all(feature = "web", target_arch = "wasm32", not(feature = "wgpu")))]
 pub use backend::webgl::{WebGl2Backend, WebGl2Error, WebGl2TextureFormat, WebGl2TextureView};
 #[cfg(all(feature = "web", target_arch = "wasm32", not(feature = "wgpu")))]
 pub use backend::webgpu::{WebGpuBackend, WebGpuError, WebGpuTextureFormat, WebGpuTextureView};
+#[cfg(feature = "wgpu")]
+pub use backend::wgpu::WgpuBackend;
+pub use backend::{GpuBackend, GpuLimits, GpuRenderPass};
 pub use custom_pipeline::{CustomPipelineGeneric, RenderContextGeneric};
 #[cfg(feature = "wgpu")]
 pub use gpu_context::GpuDevice;
@@ -110,7 +112,11 @@ mod wgpu_api_test_adapter {
             }
         }
 
-        fn with_backend<R>(&mut self, queue: &wgpu::Queue, f: impl FnOnce(&WgpuBackend, &mut GenericRenderer<WgpuBackend>) -> R) -> R {
+        fn with_backend<R>(
+            &mut self,
+            queue: &wgpu::Queue,
+            f: impl FnOnce(&WgpuBackend, &mut GenericRenderer<WgpuBackend>) -> R,
+        ) -> R {
             if self.backend.is_none() {
                 self.backend = Some(WgpuBackend::new(self.device.clone(), queue.clone()));
             }
@@ -127,32 +133,100 @@ mod wgpu_api_test_adapter {
             )
         }
 
-        pub fn render(&mut self, _device: &wgpu::Device, queue: &wgpu::Queue, view: &wgpu::TextureView, width: u32, height: u32, is_srgb: bool, draw_list: &DrawList) {
-            self.with_backend(queue, |backend, renderer| renderer.render(backend, view, width, height, is_srgb, draw_list));
+        pub fn render(
+            &mut self,
+            _device: &wgpu::Device,
+            queue: &wgpu::Queue,
+            view: &wgpu::TextureView,
+            width: u32,
+            height: u32,
+            is_srgb: bool,
+            draw_list: &DrawList,
+        ) {
+            self.with_backend(queue, |backend, renderer| {
+                renderer.render(backend, view, width, height, is_srgb, draw_list)
+            });
         }
 
-        pub fn render_with_source_texture(&mut self, _device: &wgpu::Device, queue: &wgpu::Queue, view: &wgpu::TextureView, source: &wgpu::Texture, width: u32, height: u32, is_srgb: bool, draw_list: &DrawList) {
-            self.with_backend(queue, |backend, renderer| renderer.render_with_source_texture(backend, view, Some(source), width, height, is_srgb, draw_list));
+        pub fn render_with_source_texture(
+            &mut self,
+            _device: &wgpu::Device,
+            queue: &wgpu::Queue,
+            view: &wgpu::TextureView,
+            source: &wgpu::Texture,
+            width: u32,
+            height: u32,
+            is_srgb: bool,
+            draw_list: &DrawList,
+        ) {
+            self.with_backend(queue, |backend, renderer| {
+                renderer.render_with_source_texture(
+                    backend,
+                    view,
+                    Some(source),
+                    width,
+                    height,
+                    is_srgb,
+                    draw_list,
+                )
+            });
         }
 
-        pub fn render_packet(&mut self, _device: &wgpu::Device, queue: &wgpu::Queue, view: &wgpu::TextureView, packet: &FramePacket, is_srgb: bool) {
-            self.with_backend(queue, |backend, renderer| renderer.render_packet(backend, view, packet, is_srgb));
+        pub fn render_packet(
+            &mut self,
+            _device: &wgpu::Device,
+            queue: &wgpu::Queue,
+            view: &wgpu::TextureView,
+            packet: &FramePacket,
+            is_srgb: bool,
+        ) {
+            self.with_backend(queue, |backend, renderer| {
+                renderer.render_packet(backend, view, packet, is_srgb)
+            });
         }
 
-        pub fn render_packet_with_source_texture(&mut self, _device: &wgpu::Device, queue: &wgpu::Queue, view: &wgpu::TextureView, source: &wgpu::Texture, packet: &FramePacket, is_srgb: bool) {
-            self.with_backend(queue, |backend, renderer| renderer.render_packet_with_source_texture(backend, view, source, packet, is_srgb));
+        pub fn render_packet_with_source_texture(
+            &mut self,
+            _device: &wgpu::Device,
+            queue: &wgpu::Queue,
+            view: &wgpu::TextureView,
+            source: &wgpu::Texture,
+            packet: &FramePacket,
+            is_srgb: bool,
+        ) {
+            self.with_backend(queue, |backend, renderer| {
+                renderer.render_packet_with_source_texture(backend, view, source, packet, is_srgb)
+            });
         }
 
-        pub fn render_frame_with_metadata(&mut self, _device: &wgpu::Device, queue: &wgpu::Queue, view: &wgpu::TextureView, width: u32, height: u32, is_srgb: bool, draw_list: &DrawList, metadata: &FrameRenderMetadata) {
-            self.with_backend(queue, |backend, renderer| renderer.render_frame_with_metadata(backend, view, width, height, is_srgb, draw_list, metadata));
+        pub fn render_frame_with_metadata(
+            &mut self,
+            _device: &wgpu::Device,
+            queue: &wgpu::Queue,
+            view: &wgpu::TextureView,
+            width: u32,
+            height: u32,
+            is_srgb: bool,
+            draw_list: &DrawList,
+            metadata: &FrameRenderMetadata,
+        ) {
+            self.with_backend(queue, |backend, renderer| {
+                renderer.render_frame_with_metadata(
+                    backend, view, width, height, is_srgb, draw_list, metadata,
+                )
+            });
         }
 
         pub fn memory_stats(&self) -> RendererMemoryStats {
-            self.inner.as_ref().map_or_else(RendererMemoryStats::default, GenericRenderer::memory_stats)
+            self.inner
+                .as_ref()
+                .map_or_else(RendererMemoryStats::default, GenericRenderer::memory_stats)
         }
 
         pub fn compositor_stats(&self) -> CompositorStats {
-            self.inner.as_ref().map_or_else(CompositorStats::default, GenericRenderer::compositor_stats)
+            self.inner
+                .as_ref()
+                .map_or_else(CompositorStats::default, GenericRenderer::compositor_stats)
         }
     }
 
@@ -167,38 +241,85 @@ mod wgpu_api_test_adapter {
     }
 
     impl TextPipelineV2 {
-        pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat, _cache: Option<&wgpu::PipelineCache>, antialiasing: crate::AntiAlias) -> Self {
-            Self { device: device.clone(), format, antialiasing, backend: None, inner: None }
+        pub fn new(
+            device: &wgpu::Device,
+            format: wgpu::TextureFormat,
+            _cache: Option<&wgpu::PipelineCache>,
+            antialiasing: crate::AntiAlias,
+        ) -> Self {
+            Self {
+                device: device.clone(),
+                format,
+                antialiasing,
+                backend: None,
+                inner: None,
+            }
         }
 
-        fn with_backend<R>(&mut self, queue: &wgpu::Queue, f: impl FnOnce(&WgpuBackend, &mut GenericTextPipeline<WgpuBackend>) -> R) -> R {
+        fn with_backend<R>(
+            &mut self,
+            queue: &wgpu::Queue,
+            f: impl FnOnce(&WgpuBackend, &mut GenericTextPipeline<WgpuBackend>) -> R,
+        ) -> R {
             if self.backend.is_none() {
                 self.backend = Some(WgpuBackend::new(self.device.clone(), queue.clone()));
             }
             if self.inner.is_none() {
-                self.inner = Some(GenericTextPipeline::new(self.backend.as_ref().unwrap(), self.format, self.antialiasing));
+                self.inner = Some(GenericTextPipeline::new(
+                    self.backend.as_ref().unwrap(),
+                    self.format,
+                    self.antialiasing,
+                ));
             }
             f(self.backend.as_ref().unwrap(), self.inner.as_mut().unwrap())
         }
 
-        pub fn prepare(&mut self, _device: &wgpu::Device, queue: &wgpu::Queue, width: u32, height: u32, is_srgb: bool, requests: &[TextDrawRequest], decorations: &[TextDecorationDraw]) {
-            self.with_backend(queue, |backend, pipeline| pipeline.prepare(backend, width, height, is_srgb, requests, decorations));
+        pub fn prepare(
+            &mut self,
+            _device: &wgpu::Device,
+            queue: &wgpu::Queue,
+            width: u32,
+            height: u32,
+            is_srgb: bool,
+            requests: &[TextDrawRequest],
+            decorations: &[TextDecorationDraw],
+        ) {
+            self.with_backend(queue, |backend, pipeline| {
+                pipeline.prepare(backend, width, height, is_srgb, requests, decorations)
+            });
         }
 
-        pub fn prepare_profiled(&mut self, _device: &wgpu::Device, queue: &wgpu::Queue, width: u32, height: u32, is_srgb: bool, requests: &[TextDrawRequest], decorations: &[TextDecorationDraw]) -> TextPreparationProfile {
-            self.with_backend(queue, |backend, pipeline| pipeline.prepare_profiled(backend, width, height, is_srgb, requests, decorations))
+        pub fn prepare_profiled(
+            &mut self,
+            _device: &wgpu::Device,
+            queue: &wgpu::Queue,
+            width: u32,
+            height: u32,
+            is_srgb: bool,
+            requests: &[TextDrawRequest],
+            decorations: &[TextDecorationDraw],
+        ) -> TextPreparationProfile {
+            self.with_backend(queue, |backend, pipeline| {
+                pipeline.prepare_profiled(backend, width, height, is_srgb, requests, decorations)
+            })
         }
 
         pub fn frame_glyph_instances(&self) -> (usize, usize) {
-            self.inner.as_ref().map_or((0, 0), GenericTextPipeline::frame_glyph_instances)
+            self.inner
+                .as_ref()
+                .map_or((0, 0), GenericTextPipeline::frame_glyph_instances)
         }
 
         pub fn layout_cache_entries(&self) -> usize {
-            self.inner.as_ref().map_or(0, GenericTextPipeline::layout_cache_entries)
+            self.inner
+                .as_ref()
+                .map_or(0, GenericTextPipeline::layout_cache_entries)
         }
 
         pub fn has_postponed_preparation(&self) -> bool {
-            self.inner.as_ref().is_some_and(GenericTextPipeline::has_postponed_preparation)
+            self.inner
+                .as_ref()
+                .is_some_and(GenericTextPipeline::has_postponed_preparation)
         }
     }
 }
@@ -223,11 +344,11 @@ mod deferred_frame_uploads {
 
     use std::sync::Arc;
 
+    use super::wgpu_api_test_adapter::Renderer;
     use crate::damage_region::{DamageRect, DamageSet};
     use crate::draw_cmd::{DrawList, RetainedLayerContent};
     use crate::frame::FrameRenderMetadata;
-    use crate::pipeline::material::{MaterialKind, MaterialRequest, MATERIAL_PIPELINE_NAME};
-    use super::wgpu_api_test_adapter::Renderer;
+    use crate::pipeline::material::{MATERIAL_PIPELINE_NAME, MaterialKind, MaterialRequest};
     use crate::utilities::{Color, Rect};
     use aimer_utils::SyncFuture;
 
@@ -285,16 +406,8 @@ mod deferred_frame_uploads {
         let view = target.create_view(&Default::default());
 
         if capture_backdrop {
-            renderer.render_with_source_texture(
-                device,
-                queue,
-                &view,
-                &target,
-                SIZE,
-                SIZE,
-                false,
-                draw,
-            );
+            renderer
+                .render_with_source_texture(device, queue, &view, &target, SIZE, SIZE, false, draw);
         } else {
             renderer.render(device, queue, &view, SIZE, SIZE, false, draw);
         }
@@ -361,13 +474,7 @@ mod deferred_frame_uploads {
             Color::transparent(),
         );
         if let Some((rect, color)) = patch {
-            draw.fill_rect(
-                rect,
-                color,
-                [0.0; 4],
-                [0.0; 4],
-                Color::transparent(),
-            );
+            draw.fill_rect(rect, color, [0.0; 4], [0.0; 4], Color::transparent());
         }
         draw
     }
@@ -388,10 +495,7 @@ mod deferred_frame_uploads {
         material.border_color = [0.0, 0.0, 0.0, 0.0];
         material.corner_radii = [0.0; 4];
         material.shadow_color = [0.0, 0.0, 0.0, 0.0];
-        draw.draw_custom(
-            MATERIAL_PIPELINE_NAME,
-            material.encode_for_test(),
-        );
+        draw.draw_custom(MATERIAL_PIPELINE_NAME, material.encode_for_test());
         draw
     }
 
@@ -419,10 +523,7 @@ mod deferred_frame_uploads {
         material.border_color = [0.0, 0.0, 0.0, 0.0];
         material.corner_radii = [0.0; 4];
         material.shadow_color = [0.0, 0.0, 0.0, 0.0];
-        draw.draw_custom(
-            MATERIAL_PIPELINE_NAME,
-            material.encode_for_test(),
-        );
+        draw.draw_custom(MATERIAL_PIPELINE_NAME, material.encode_for_test());
         draw
     }
 
@@ -586,11 +687,7 @@ mod deferred_frame_uploads {
             eprintln!("skipping: no GPU adapter available");
             return;
         };
-        let mut renderer = Renderer::with_antialiasing(
-            &device,
-            FORMAT,
-            crate::AntiAlias::Msaa4x,
-        );
+        let mut renderer = Renderer::with_antialiasing(&device, FORMAT, crate::AntiAlias::Msaa4x);
 
         let red = render_and_read_with_capture(
             &device,
@@ -864,7 +961,11 @@ mod deferred_frame_uploads {
         // An empty frame draws nothing and must not disturb the retained buffers.
         let empty = DrawList::new();
         let blank = render_and_read(&device, &queue, &mut renderer, &empty);
-        assert_eq!(pixel(&blank, 2, 2)[3], 0, "an empty frame clears the target");
+        assert_eq!(
+            pixel(&blank, 2, 2)[3],
+            0,
+            "an empty frame clears the target"
+        );
 
         let frame = interleaved_frame(Color::red(), Color::green());
         let third = render_and_read(&device, &queue, &mut renderer, &frame);
@@ -890,13 +991,13 @@ mod resized_text_preparation {
 
     use std::sync::Arc;
 
+    use super::wgpu_api_test_adapter::TextPipelineV2;
     use crate::AntiAlias;
     use crate::font::{FontFamily, FontStyle};
     use crate::text_layout::TextHorizontalAlign;
     use crate::text_pipeline::{
         RichTextSpan, TextDrawRequest, TextOverflowMode, TextShadowRequest,
     };
-    use super::wgpu_api_test_adapter::TextPipelineV2;
     use crate::utilities::Rgba8;
     use aimer_utils::SyncFuture;
 
@@ -1077,7 +1178,15 @@ mod resized_text_preparation {
 
         // The first resize step pays the one-time canonicalization of the
         // document's layouts; none of the lines wrap at 398px.
-        pipeline.prepare(&device, &queue, 398, HEIGHT, false, &document(398, 0.0), &[]);
+        pipeline.prepare(
+            &device,
+            &queue,
+            398,
+            HEIGHT,
+            false,
+            &document(398, 0.0),
+            &[],
+        );
         prepare_until_settled(&mut pipeline, &device, &queue, 398, &document(398, 0.0));
         let after_first_step = pipeline.layout_cache_entries();
 
@@ -1110,7 +1219,15 @@ mod resized_text_preparation {
         prepare_until_settled(&mut pipeline, &device, &queue, 400, &document(400, 0.0));
 
         // The resize frame itself, then the settled frames after it.
-        pipeline.prepare(&device, &queue, 360, HEIGHT, false, &document(360, 0.0), &[]);
+        pipeline.prepare(
+            &device,
+            &queue,
+            360,
+            HEIGHT,
+            false,
+            &document(360, 0.0),
+            &[],
+        );
         prepare_until_settled(&mut pipeline, &device, &queue, 360, &document(360, 0.0));
         let (top_alpha, _) = pipeline.frame_glyph_instances();
         assert!(top_alpha > 0, "settled text must draw glyphs");
@@ -1154,11 +1271,11 @@ mod scrolled_text_culling {
 
     use std::sync::Arc;
 
+    use super::wgpu_api_test_adapter::TextPipelineV2;
     use crate::AntiAlias;
     use crate::font::{FontFamily, FontStyle};
     use crate::text_layout::TextHorizontalAlign;
     use crate::text_pipeline::{TextDrawRequest, TextOverflowMode};
-    use super::wgpu_api_test_adapter::TextPipelineV2;
     use crate::utilities::Rgba8;
     use aimer_utils::SyncFuture;
 
@@ -1258,12 +1375,7 @@ mod scrolled_text_culling {
         let document: Vec<_> = (0..visible_lines * 4).map(|i| line(i, 0.0)).collect();
 
         let mut head_only = pipeline(&device);
-        prepare_until_settled(
-            &mut head_only,
-            &device,
-            &queue,
-            &document[..visible_lines],
-        );
+        prepare_until_settled(&mut head_only, &device, &queue, &document[..visible_lines]);
         let (head_alpha, head_color) = head_only.frame_glyph_instances();
         assert!(head_alpha > 0, "the visible head must produce glyphs");
 
@@ -1296,9 +1408,7 @@ mod scrolled_text_culling {
 
         // Scroll to the bottom: a completely different set of lines is visible.
         let bottom_offset = (line_count - visible_lines) as f32 * LINE_HEIGHT;
-        let scrolled: Vec<_> = (0..line_count)
-            .map(|i| line(i, bottom_offset))
-            .collect();
+        let scrolled: Vec<_> = (0..line_count).map(|i| line(i, bottom_offset)).collect();
         pipeline.prepare(&device, &queue, WIDTH, HEIGHT, false, &scrolled, &[]);
         let (bottom_alpha, _) = pipeline.frame_glyph_instances();
 
@@ -1343,11 +1453,7 @@ mod generic_backend_tests {
             .ok()
     }
 
-    fn read_target(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        target: &wgpu::Texture,
-    ) -> Vec<u8> {
+    fn read_target(device: &wgpu::Device, queue: &wgpu::Queue, target: &wgpu::Texture) -> Vec<u8> {
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("generic-backend readback"),
             size: (SIZE * SIZE * 4) as u64,
@@ -1396,7 +1502,12 @@ mod generic_backend_tests {
     fn pixel(data: &[u8], x: u32, y: u32) -> [u8; 4] {
         let stride = SIZE as usize * 4;
         let offset = y as usize * stride + x as usize * 4;
-        [data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]
+        [
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+        ]
     }
 
     fn red_rect_instance() -> crate::rect_pipeline::RectInstance {
@@ -1431,11 +1542,8 @@ mod generic_backend_tests {
         use crate::backend::{GpuBackend, wgpu::WgpuBackend};
 
         let backend = WgpuBackend::new(device.clone(), queue.clone());
-        let mut rect = crate::rect_pipeline::RectPipeline::new(
-            &backend,
-            FORMAT,
-            crate::AntiAlias::Analytic,
-        );
+        let mut rect =
+            crate::rect_pipeline::RectPipeline::new(&backend, FORMAT, crate::AntiAlias::Analytic);
 
         let target = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("concrete rect control target"),
@@ -1506,11 +1614,8 @@ mod generic_backend_tests {
         let backend = WgpuBackend::new(device, queue);
 
         // Create rect pipeline through the generic (backend-driven) path.
-        let mut rect = crate::rect_pipeline::RectPipeline::new(
-            &backend,
-            FORMAT,
-            crate::AntiAlias::Analytic,
-        );
+        let mut rect =
+            crate::rect_pipeline::RectPipeline::new(&backend, FORMAT, crate::AntiAlias::Analytic);
 
         // Create an offscreen render target.
         let target = backend.create_texture(&crate::backend::TextureDescriptor {
@@ -1525,16 +1630,14 @@ mod generic_backend_tests {
                 crate::backend::TextureUsage::CopySrc,
             ],
         });
-        let target_view =
-            backend.create_texture_view(&target, "generic rect test target view");
+        let target_view = backend.create_texture_view(&target, "generic rect test target view");
 
         // Exact renderer lifecycle via generic methods:
         // begin_frame → push → pass/flush → end_frame → submit.
         rect.begin_frame(&backend, 1, SIZE, SIZE, false);
         rect.push(red_rect_instance());
 
-        let mut encoder =
-            backend.create_command_encoder("generic rect test encoder");
+        let mut encoder = backend.create_command_encoder("generic rect test encoder");
         {
             let mut pass = backend.begin_render_pass(
                 &mut encoder,
@@ -1583,10 +1686,8 @@ mod generic_backend_tests {
 
         let backend = WgpuBackend::new(device, queue);
 
-        let composite = crate::pipeline::frame_composite::FrameCompositePipeline::new(
-            &backend,
-            FORMAT,
-        );
+        let composite =
+            crate::pipeline::frame_composite::FrameCompositePipeline::new(&backend, FORMAT);
 
         // Source: solid red, readable as a texture binding + filled via write_texture.
         let source = backend.create_texture(&crate::backend::TextureDescriptor {
@@ -1781,12 +1882,11 @@ mod generic_backend_tests {
         let backend = WgpuBackend::new(device, queue);
 
         // Create image pipeline through the generic (backend-driven) path.
-        let mut image_pipeline =
-            crate::pipeline::image_pipeline::ImagePipeline::new(
-                &backend,
-                FORMAT,
-                crate::AntiAlias::Analytic,
-            );
+        let mut image_pipeline = crate::pipeline::image_pipeline::ImagePipeline::new(
+            &backend,
+            FORMAT,
+            crate::AntiAlias::Analytic,
+        );
 
         // Upload a solid-red 2x2 texture through the generic path.
         let red = [255u8, 0, 0, 255];
@@ -1794,8 +1894,7 @@ mod generic_backend_tests {
         for _ in 0..4 {
             tex_data.extend_from_slice(&red);
         }
-        let tex_id =
-            image_pipeline.upload_image(&backend, 2, 2, &tex_data);
+        let tex_id = image_pipeline.upload_image(&backend, 2, 2, &tex_data);
         assert!(image_pipeline.has_texture(tex_id));
         assert_eq!(image_pipeline.texture_count(), 1);
         // 2x2 RGBA8 = 16 bytes.
@@ -1814,8 +1913,7 @@ mod generic_backend_tests {
                 crate::backend::TextureUsage::CopySrc,
             ],
         });
-        let target_view =
-            backend.create_texture_view(&target, "generic image test target view");
+        let target_view = backend.create_texture_view(&target, "generic image test target view");
 
         // Exact renderer lifecycle via generic methods.
         image_pipeline.begin_frame(&backend, 1, SIZE, SIZE, false);
@@ -1831,8 +1929,7 @@ mod generic_backend_tests {
             source_premultiplied: 0.0,
         };
 
-        let mut encoder =
-            backend.create_command_encoder("generic image test encoder");
+        let mut encoder = backend.create_command_encoder("generic image test encoder");
         {
             let mut pass = backend.begin_render_pass(
                 &mut encoder,
@@ -1851,12 +1948,7 @@ mod generic_backend_tests {
             );
             // Concrete draw_batch is valid because
             // WgpuBackend::RenderPass == wgpu::RenderPass.
-            image_pipeline.draw_batch(
-                &backend,
-                &mut pass,
-                tex_id,
-                &[instance],
-            );
+            image_pipeline.draw_batch(&backend, &mut pass, tex_id, &[instance]);
         }
 
         image_pipeline.end_frame(&backend);
@@ -1883,12 +1975,11 @@ mod generic_backend_tests {
         use crate::backend::{GpuBackend, wgpu::WgpuBackend};
 
         let backend = WgpuBackend::new(device, queue);
-        let mut image_pipeline =
-            crate::pipeline::image_pipeline::ImagePipeline::new(
-                &backend,
-                FORMAT,
-                crate::AntiAlias::Analytic,
-            );
+        let mut image_pipeline = crate::pipeline::image_pipeline::ImagePipeline::new(
+            &backend,
+            FORMAT,
+            crate::AntiAlias::Analytic,
+        );
 
         let red = [255u8, 0, 0, 255];
         let tex_data = vec![red.to_vec(), red.to_vec(), red.to_vec(), red.to_vec()]
@@ -1916,12 +2007,11 @@ mod generic_backend_tests {
         use crate::backend::{GpuBackend, wgpu::WgpuBackend};
 
         let backend = WgpuBackend::new(device, queue);
-        let image_pipeline =
-            crate::pipeline::image_pipeline::ImagePipeline::new(
-                &backend,
-                FORMAT,
-                crate::AntiAlias::Analytic,
-            );
+        let image_pipeline = crate::pipeline::image_pipeline::ImagePipeline::new(
+            &backend,
+            FORMAT,
+            crate::AntiAlias::Analytic,
+        );
 
         // Create a placeholder texture and view.
         let tex = backend.create_texture(&crate::backend::TextureDescriptor {
@@ -1955,11 +2045,8 @@ mod generic_backend_tests {
         use std::sync::Arc;
 
         let backend = WgpuBackend::new(device.clone(), queue.clone());
-        let mut svg_pipeline = crate::svg_pipeline::SvgPipeline::new(
-            &backend,
-            FORMAT,
-            crate::AntiAlias::Analytic,
-        );
+        let mut svg_pipeline =
+            crate::svg_pipeline::SvgPipeline::new(&backend, FORMAT, crate::AntiAlias::Analytic);
 
         let scene = Arc::new(crate::svg::SvgScene {
             viewport: crate::svg::SvgViewport {
@@ -2087,11 +2174,8 @@ mod generic_backend_tests {
 
         let backend = WgpuBackend::new(device, queue);
 
-        let mut svg_pipeline = crate::svg_pipeline::SvgPipeline::new(
-            &backend,
-            FORMAT,
-            crate::AntiAlias::Analytic,
-        );
+        let mut svg_pipeline =
+            crate::svg_pipeline::SvgPipeline::new(&backend, FORMAT, crate::AntiAlias::Analytic);
 
         let parsed = crate::svg::parse_svg_document(
             br##"<svg width="10" height="10"><defs>
@@ -2136,11 +2220,9 @@ mod generic_backend_tests {
                 crate::backend::TextureUsage::CopySrc,
             ],
         });
-        let target_view =
-            backend.create_texture_view(&target, "generic svg test target view");
+        let target_view = backend.create_texture_view(&target, "generic svg test target view");
 
-        let mut encoder =
-            backend.create_command_encoder("generic svg encoder");
+        let mut encoder = backend.create_command_encoder("generic svg encoder");
         {
             let mut pass = backend.begin_render_pass(
                 &mut encoder,
@@ -2168,11 +2250,28 @@ mod generic_backend_tests {
         let clipped = pixel(&pixels, SIZE * 3 / 4, SIZE / 2);
         let patterned = pixel(&pixels, SIZE / 16, SIZE * 7 / 10);
         let pattern_gap = pixel(&pixels, SIZE * 3 / 16, SIZE * 7 / 10);
-        assert!(inside[0] > inside[2], "left side should retain the red gradient start: {inside:?}");
-        assert!(inside[2] > 0, "the gradient should vary across the painted path: {inside:?}");
-        assert_eq!(clipped, [0, 0, 0, 255], "the clip path should suppress the right half: {clipped:?}");
-        assert_eq!(patterned, [0, 255, 0, 255], "the pattern tile should paint the first half of its repeat: {patterned:?}");
-        assert!(pattern_gap[1] < 32 && pattern_gap[0] > 0 && pattern_gap[2] > 0, "the pattern gap should preserve the underlying gradient: {pattern_gap:?}");
+        assert!(
+            inside[0] > inside[2],
+            "left side should retain the red gradient start: {inside:?}"
+        );
+        assert!(
+            inside[2] > 0,
+            "the gradient should vary across the painted path: {inside:?}"
+        );
+        assert_eq!(
+            clipped,
+            [0, 0, 0, 255],
+            "the clip path should suppress the right half: {clipped:?}"
+        );
+        assert_eq!(
+            patterned,
+            [0, 255, 0, 255],
+            "the pattern tile should paint the first half of its repeat: {patterned:?}"
+        );
+        assert!(
+            pattern_gap[1] < 32 && pattern_gap[0] > 0 && pattern_gap[2] > 0,
+            "the pattern gap should preserve the underlying gradient: {pattern_gap:?}"
+        );
     }
 
     // ── MaterialPipeline ─────────────────────────────────────────────
@@ -2182,10 +2281,10 @@ mod generic_backend_tests {
     /// pixels (shader runs correctly).
     #[test]
     fn concrete_material_glass_renders_non_clear() {
-        use std::any::Any;
         use crate::backend::wgpu::WgpuBackend;
         use crate::custom_pipeline::{CustomPipelineGeneric, RenderContextGeneric};
         use crate::pipeline::material::{MaterialKind, MaterialPipeline, MaterialRequest};
+        use std::any::Any;
 
         let Some((device, queue)) = gpu() else {
             eprintln!("skipping: no GPU adapter available");
@@ -2196,10 +2295,8 @@ mod generic_backend_tests {
         let mut mat_pipeline = MaterialPipeline::new(&backend, FORMAT, crate::AntiAlias::Analytic);
 
         // Push a Glass request via the trait API (requests field is private).
-        let request = MaterialRequest::new(
-            MaterialKind::Glass,
-            [0.0, 0.0, SIZE as f32, SIZE as f32],
-        );
+        let request =
+            MaterialRequest::new(MaterialKind::Glass, [0.0, 0.0, SIZE as f32, SIZE as f32]);
         mat_pipeline.begin_frame();
         mat_pipeline.prepare_command(&request as &(dyn Any + Send));
 
@@ -2216,7 +2313,11 @@ mod generic_backend_tests {
 
         let target = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("WGPU generic material control target"),
-            size: wgpu::Extent3d { width: SIZE, height: SIZE, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: SIZE,
+                height: SIZE,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -2267,10 +2368,10 @@ mod generic_backend_tests {
     /// render_command (valid because WgpuBackend::RenderPass == wgpu::RenderPass).
     #[test]
     fn generic_material_glass_renders_non_clear() {
-        use std::any::Any;
         use crate::backend::{GpuBackend, wgpu::WgpuBackend};
         use crate::custom_pipeline::CustomPipelineGeneric;
         use crate::pipeline::material::{MaterialKind, MaterialPipeline, MaterialRequest};
+        use std::any::Any;
 
         let Some((device, queue)) = gpu() else {
             eprintln!("skipping: no GPU adapter available");
@@ -2279,14 +2380,11 @@ mod generic_backend_tests {
 
         let backend = WgpuBackend::new(device, queue);
 
-        let mut mat_pipeline =
-            MaterialPipeline::new(&backend, FORMAT, crate::AntiAlias::Analytic);
+        let mut mat_pipeline = MaterialPipeline::new(&backend, FORMAT, crate::AntiAlias::Analytic);
 
         // Push a Glass request via the trait API (requests field is private).
-        let request = MaterialRequest::new(
-            MaterialKind::Glass,
-            [0.0, 0.0, SIZE as f32, SIZE as f32],
-        );
+        let request =
+            MaterialRequest::new(MaterialKind::Glass, [0.0, 0.0, SIZE as f32, SIZE as f32]);
         mat_pipeline.begin_frame();
         mat_pipeline.prepare_command(&request as &(dyn Any + Send));
 
@@ -2355,11 +2453,11 @@ mod generic_backend_tests {
     /// produces correct pixels through the backend-driven pipeline path.
     #[test]
     fn generic_renderer_with_wgpu_backend_renders_fill_rect() {
+        use crate::WgpuBackend;
         use crate::draw_cmd::DrawList;
         use crate::gpu_context::GpuDevice;
         use crate::renderer::RendererImpl;
         use crate::utilities::{Color, Rect};
-        use crate::WgpuBackend;
 
         let Some((device, queue)) = gpu() else {
             eprintln!("skipping: no GPU adapter available");
@@ -2398,14 +2496,7 @@ mod generic_backend_tests {
         });
         let view = target.create_view(&Default::default());
 
-        renderer.render(
-            &backend,
-            &view,
-            SIZE,
-            SIZE,
-            false,
-            &draw,
-        );
+        renderer.render(&backend, &view, SIZE, SIZE, false, &draw);
 
         let pixels = read_target(backend.device(), backend.queue(), &target);
         let sample = pixel(&pixels, SIZE / 2, SIZE / 2);
@@ -2420,11 +2511,11 @@ mod generic_backend_tests {
     /// through the integrated renderer.
     #[test]
     fn generic_renderer_with_wgpu_backend_renders_image_and_text() {
+        use crate::WgpuBackend;
         use crate::draw_cmd::DrawList;
         use crate::gpu_context::GpuDevice;
         use crate::renderer::RendererImpl;
         use crate::utilities::{Color, Rect, Vec2d};
-        use crate::WgpuBackend;
         use std::sync::Arc;
 
         let Some((device, queue)) = gpu() else {

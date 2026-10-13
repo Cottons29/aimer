@@ -22,11 +22,20 @@ macro_rules! unsigned_add {
             output: &mut [$number],
         ) -> Result<(), LengthMismatch> {
             #[cfg(all(not(feature = "force-scalar"), target_arch = "aarch64"))]
-            { add_with::<$number, crate::backend::Neon, $lanes>(left, right, output) }
+            {
+                add_with::<$number, crate::backend::Neon, $lanes>(left, right, output)
+            }
             #[cfg(all(not(feature = "force-scalar"), target_arch = "x86_64"))]
-            { add_with::<$number, crate::backend::Sse2, $lanes>(left, right, output) }
-            #[cfg(any(feature = "force-scalar", not(any(target_arch = "aarch64", target_arch = "x86_64"))))]
-            { add_with::<$number, crate::backend::Scalar, 1>(left, right, output) }
+            {
+                add_with::<$number, crate::backend::Sse2, $lanes>(left, right, output)
+            }
+            #[cfg(any(
+                feature = "force-scalar",
+                not(any(target_arch = "aarch64", target_arch = "x86_64"))
+            ))]
+            {
+                add_with::<$number, crate::backend::Scalar, 1>(left, right, output)
+            }
         }
     };
 }
@@ -54,11 +63,19 @@ mod tests {
                             &left[offset..offset + len],
                             &right[offset..offset + len],
                             &mut output[offset..offset + len],
-                        ).unwrap();
+                        )
+                        .unwrap();
                         let expected: Vec<$number> = left[offset..offset + len]
-                            .iter().map(|x| x.checked_add(3).unwrap()).collect();
+                            .iter()
+                            .map(|x| x.checked_add(3).unwrap())
+                            .collect();
                         assert_eq!(&output[offset..offset + len], expected);
-                        assert!(output[..offset].iter().chain(&output[offset + len..]).all(|&x| x == 99));
+                        assert!(
+                            output[..offset]
+                                .iter()
+                                .chain(&output[offset + len..])
+                                .all(|&x| x == 99)
+                        );
                     }
                 }
             };
@@ -75,9 +92,14 @@ mod tests {
                     let left = vec![1 as $number; left_len];
                     let right = vec![2 as $number; right_len];
                     let mut output = vec![99 as $number; output_len];
-                    assert_eq!($add(&left, &right, &mut output), Err(super::LengthMismatch {
-                        left: left_len, right: right_len, output: output_len,
-                    }));
+                    assert_eq!(
+                        $add(&left, &right, &mut output),
+                        Err(super::LengthMismatch {
+                            left: left_len,
+                            right: right_len,
+                            output: output_len,
+                        })
+                    );
                     assert_eq!(output, vec![99; output_len]);
                 }
             };
@@ -125,11 +147,15 @@ mod tests {
         fn measure(mut run: impl FnMut()) -> f64 {
             const ROUNDS: usize = 31;
             const ITERATIONS: usize = 128;
-            for _ in 0..16 { run(); }
+            for _ in 0..16 {
+                run();
+            }
             let mut samples = [0.0; ROUNDS];
             for sample in &mut samples {
                 let start = Instant::now();
-                for _ in 0..ITERATIONS { run(); }
+                for _ in 0..ITERATIONS {
+                    run();
+                }
                 *sample = start.elapsed().as_secs_f64() * 1e9 / ITERATIONS as f64;
             }
             samples.sort_by(f64::total_cmp);

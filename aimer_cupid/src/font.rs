@@ -109,10 +109,7 @@ impl TextLanguage {
     /// assert_eq!(TextLanguage::from_tag("en-US"), None);
     /// ```
     pub fn from_tag(tag: &str) -> Option<Self> {
-        let primary = tag
-            .split(['-', '_'])
-            .next()
-            .unwrap_or_default();
+        let primary = tag.split(['-', '_']).next().unwrap_or_default();
         match primary.to_ascii_lowercase().as_str() {
             "zh" | "yue" | "nan" | "hak" | "wuu" => Some(Self::Chinese),
             "ja" => Some(Self::Japanese),
@@ -225,7 +222,10 @@ impl Display for FontError {
                 )
             }
             Self::VariantNotFound { weight, style, .. } => {
-                write!(formatter, "font variant {weight}/{style:?} is not registered")
+                write!(
+                    formatter,
+                    "font variant {weight}/{style:?} is not registered"
+                )
             }
             Self::HandleCollision => formatter.write_str("font family or face handle collision"),
         }
@@ -542,8 +542,14 @@ mod tests {
     #[test]
     fn checked_in_portable_replacement_fonts_have_owned_outline_data() {
         let assets: [(&str, &[u8]); 3] = [
-            ("GoogleSans-Regular", include_bytes!("../fonts/GoogleSans-Regular.ttf")),
-            ("JetBrainsMono-Regular", include_bytes!("../fonts/JetBrainsMono-Regular.ttf")),
+            (
+                "GoogleSans-Regular",
+                include_bytes!("../fonts/GoogleSans-Regular.ttf"),
+            ),
+            (
+                "JetBrainsMono-Regular",
+                include_bytes!("../fonts/JetBrainsMono-Regular.ttf"),
+            ),
             (
                 "NotoSansJP-VariableFont_wght",
                 include_bytes!("../fonts/NotoSansJP-VariableFont_wght.ttf"),
@@ -551,7 +557,10 @@ mod tests {
         ];
 
         for (name, bytes) in assets {
-            assert!(font_bytes_are_valid(bytes), "bundled {name} face is not valid");
+            assert!(
+                font_bytes_are_valid(bytes),
+                "bundled {name} face is not valid"
+            );
             let face = crate::pipeline::text_pipeline::aimer_font::SfntFace::from_bytes(bytes, 0)
                 .unwrap_or_else(|error| panic!("bundled {name} face is not readable: {error:?}"));
             assert!(
@@ -634,7 +643,11 @@ mod tests {
         assert_eq!(replacement.face_id, original.face_id);
         assert_ne!(replacement.bytes.as_ref(), original.bytes.as_ref());
 
-        assert!(FontRegistry::remove(family, FontWeight::Normal, FontStyle::Normal));
+        assert!(FontRegistry::remove(
+            family,
+            FontWeight::Normal,
+            FontStyle::Normal
+        ));
     }
 
     #[test]

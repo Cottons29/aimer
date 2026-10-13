@@ -17,30 +17,34 @@ pub fn overflow_behavior_example() -> impl Widget {
     let app_theme = theme::app_theme();
 
     Container::new()
-            .padding(LayoutSpacing::all(Spacing::Px(28)))
-            .color(app_theme.background_color)
-            .child(
-                Column::new()
-                    .gaps(LayoutSpacing::all(Spacing::Px(12)))
-                    .children([
-                        Text::new("OverflowBehavior")
-                            .text_style(
-                                TextStyle::new()
-                                    .font_size(28)
-                                    .font_weight(FontWeight::Bold)
-                                    .color(app_theme.on_background_color),
-                            )
-                            .boxed(),
-                        Text::new(
-                            "The same children are clipped, wrapped, or allowed outside the row.",
+        .padding(LayoutSpacing::all(Spacing::Px(28)))
+        .color(app_theme.background_color)
+        .child(
+            Column::new()
+                .gaps(LayoutSpacing::all(Spacing::Px(12)))
+                .children([
+                    Text::new("OverflowBehavior")
+                        .text_style(
+                            TextStyle::new()
+                                .font_size(28)
+                                .font_weight(FontWeight::Bold)
+                                .color(app_theme.on_background_color),
                         )
-                        .text_style(TextStyle::new().font_size(16).color(theme::muted_text(&app_theme)))
                         .boxed(),
-                        demo("Hidden", OverflowBehavior::Hidden, app_theme),
-                        demo("Wrap", OverflowBehavior::Wrap, app_theme),
-                        demo("Visible", OverflowBehavior::Visible, app_theme),
-                    ]),
-            )
+                    Text::new(
+                        "The same children are clipped, wrapped, or allowed outside the row.",
+                    )
+                    .text_style(
+                        TextStyle::new()
+                            .font_size(16)
+                            .color(theme::muted_text(&app_theme)),
+                    )
+                    .boxed(),
+                    demo("Hidden", OverflowBehavior::Hidden, app_theme),
+                    demo("Wrap", OverflowBehavior::Wrap, app_theme),
+                    demo("Visible", OverflowBehavior::Visible, app_theme),
+                ]),
+        )
 }
 
 pub fn start_overflow_behavior_example() {
@@ -52,7 +56,11 @@ fn demo(label: &'static str, overflow: OverflowBehavior, app_theme: ThemeData) -
         .gaps(LayoutSpacing::all(Spacing::Px(4)))
         .children([
             Text::new(label)
-                .text_style(TextStyle::new().font_size(14).color(theme::muted_text(&app_theme)))
+                .text_style(
+                    TextStyle::new()
+                        .font_size(14)
+                        .color(theme::muted_text(&app_theme)),
+                )
                 .boxed(),
             Container::new()
                 // .width(DEMO_WIDTH)
@@ -80,8 +88,11 @@ fn item(label: &'static str, app_theme: ThemeData) -> AnyWidget {
         .height(ITEM_HEIGHT)
         .color(app_theme.primary_color)
         .child(
-            Text::new(label)
-                .text_style(TextStyle::new().font_size(16).color(app_theme.on_primary_color)),
+            Text::new(label).text_style(
+                TextStyle::new()
+                    .font_size(16)
+                    .color(app_theme.on_primary_color),
+            ),
         )
         .boxed()
 }

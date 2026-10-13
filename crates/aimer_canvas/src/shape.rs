@@ -275,12 +275,8 @@ impl Canvas {
             Ok(scene) => scene,
             Err(_) => return ShapeDrawResult::Fallback(ShapeFallback::Skip),
         };
-        let destination = aimer_cupid::utilities::Rect::new(
-            0.0,
-            0.0,
-            viewport.width,
-            viewport.height,
-        );
+        let destination =
+            aimer_cupid::utilities::Rect::new(0.0, 0.0, viewport.width, viewport.height);
         if matches!(request.clip_policy(), ShapeClip::Bounds) {
             let Some((clip_pos, clip_size)) =
                 transformed_bounds(request.path().bounds(), request.transform_value())
@@ -335,8 +331,6 @@ fn transformed_bounds(
     }
     let width = max_x - min_x;
     let height = max_y - min_y;
-    (width.is_finite() && height.is_finite() && width >= 0.0 && height >= 0.0).then_some((
-        Vec2d { x: min_x, y: min_y },
-        ResolvedSize { width, height },
-    ))
+    (width.is_finite() && height.is_finite() && width >= 0.0 && height >= 0.0)
+        .then_some((Vec2d { x: min_x, y: min_y }, ResolvedSize { width, height }))
 }

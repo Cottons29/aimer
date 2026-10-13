@@ -22,10 +22,7 @@ pub struct RetainedRenderOperation {
 }
 
 pub(crate) enum RetainedRenderOperationKind {
-    OpacityGroupBegin {
-        element: u64,
-        opacity: f32,
-    },
+    OpacityGroupBegin { element: u64, opacity: f32 },
     LocalV2(RetainedV2Item),
     OpacityGroupEnd { element: u64 },
 }
@@ -90,14 +87,16 @@ impl RetainedRenderPlan {
     /// Returns the retained list revision for one local-v2 node, if submitted.
     #[doc(hidden)]
     pub fn local_v2_revision(&self, element: RenderNodeId) -> Option<u64> {
-        self.operations.iter().find_map(|operation| match &operation.kind {
-            RetainedRenderOperationKind::LocalV2(item) if item.element == element => {
-                Some(item.revision)
-            }
-            RetainedRenderOperationKind::OpacityGroupBegin { .. }
-            | RetainedRenderOperationKind::OpacityGroupEnd { .. }
-            | RetainedRenderOperationKind::LocalV2(_) => None,
-        })
+        self.operations
+            .iter()
+            .find_map(|operation| match &operation.kind {
+                RetainedRenderOperationKind::LocalV2(item) if item.element == element => {
+                    Some(item.revision)
+                }
+                RetainedRenderOperationKind::OpacityGroupBegin { .. }
+                | RetainedRenderOperationKind::OpacityGroupEnd { .. }
+                | RetainedRenderOperationKind::LocalV2(_) => None,
+            })
     }
 
     pub(crate) fn operations_for_region(
@@ -445,7 +444,12 @@ mod tests {
             scene,
         );
 
-        assert_eq!(packet.scene().map(crate::compositor::CompositorScene::target_size), Some((12, 8)));
+        assert_eq!(
+            packet
+                .scene()
+                .map(crate::compositor::CompositorScene::target_size),
+            Some((12, 8))
+        );
     }
 
     #[test]
@@ -465,8 +469,14 @@ mod tests {
         };
         let plan = RetainedRenderPlan::new(
             vec![
-                RetainedRenderPlan::local_v2_operation(item(left_node), DamageRect::new(0, 0, 8, 8)),
-                RetainedRenderPlan::local_v2_operation(item(right_node), DamageRect::new(16, 0, 8, 8)),
+                RetainedRenderPlan::local_v2_operation(
+                    item(left_node),
+                    DamageRect::new(0, 0, 8, 8),
+                ),
+                RetainedRenderPlan::local_v2_operation(
+                    item(right_node),
+                    DamageRect::new(16, 0, 8, 8),
+                ),
             ],
             true,
         );

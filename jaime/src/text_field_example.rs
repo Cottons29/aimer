@@ -1,9 +1,10 @@
- //! A focused showcase for Aimer's single-line text editor.
 
+//! A focused showcase for Aimer's single-line text editor.
+
+use aimer::input::TextEditingController;
+use aimer::input::input::{InputType, TextField};
 use aimer::style::*;
 use aimer::*;
-use aimer::input::input::{InputType, TextField};
-use aimer::input::TextEditingController;
 
 /// Starts the single-line text-field showcase.
 pub fn start_text_field_example() {
@@ -39,8 +40,7 @@ impl Widget for TextFieldExample {
         Container::new()
             .color(theme.background_color)
             .padding(LayoutSpacing::all(Spacing::Px(32)))
-            .child(
-                Column::new().children(vec![
+            .child(Column::new().children(vec![
                     Text::new("TextField")
                         .text_style(
                             TextStyle::new()
@@ -75,8 +75,7 @@ impl Widget for TextFieldExample {
                         .padding(LayoutSpacing::all(Spacing::Px(12)))
                         .on_submitted(|text: String| println!("Submitted: {text}"))
                         .boxed(),
-                ]),
-            )
+                ]))
             .to_element(ctx)
     }
 

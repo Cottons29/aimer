@@ -63,8 +63,8 @@ impl StatelessWidget for AnimatableExample {
         );
         let point = Point(0.0, 20.0).lerp(&Point(120.0, 80.0), 0.5);
         let state = LoadingState::Idle.lerp(&LoadingState::Message("Ready"), 0.75);
-        let geometry = Geometry::Point(Point(0.0, 10.0))
-            .lerp(&Geometry::Point(Point(100.0, 30.0)), 0.5);
+        let geometry =
+            Geometry::Point(Point(0.0, 10.0)).lerp(&Geometry::Point(Point(100.0, 30.0)), 0.5);
 
         Container::new()
             .color(theme.background_color)
@@ -74,9 +74,15 @@ impl StatelessWidget for AnimatableExample {
                     .vertical_alignment(BoxAlignment::Center)
                     .children([
                         Text::new("Derived Animatable values")
-                            .text_style(TextStyle::new().font_size(26).color(theme.on_background_color))
+                            .text_style(
+                                TextStyle::new()
+                                    .font_size(26)
+                                    .color(theme.on_background_color),
+                            )
                             .boxed(),
-                        SizedBox::new().height(20).boxed(),
+                        SizedBox::new()
+                            .height(20)
+                            .boxed(),
                         Container::new()
                             .width(Dimension::Px(style.width))
                             .height(Dimension::Px(56.0))
@@ -86,7 +92,9 @@ impl StatelessWidget for AnimatableExample {
                                 point.0, point.1,
                             )))
                             .boxed(),
-                        SizedBox::new().height(20).boxed(),
+                        SizedBox::new()
+                            .height(20)
+                            .boxed(),
                         Text::new(
                             "String, bool, and Option<T> fields in structs need a manual \
                              Animatable implementation; custom enum mappings are also manual.",
@@ -108,16 +116,21 @@ mod tests {
 
     #[test]
     fn example_covers_struct_tuple_discrete_and_fieldwise_values() {
-        assert_eq!(Point(0.0, 10.0).lerp(&Point(10.0, 30.0), 0.5), Point(5.0, 20.0));
+        assert_eq!(
+            Point(0.0, 10.0).lerp(&Point(10.0, 30.0), 0.5),
+            Point(5.0, 20.0)
+        );
         assert_eq!(
             LoadingState::Idle.lerp(&LoadingState::Message("ready"), 0.5),
             LoadingState::Message("ready")
         );
         assert_eq!(
-            Geometry::Point(Point(0.0, 4.0))
-                .lerp(&Geometry::Point(Point(8.0, 12.0)), 0.25),
+            Geometry::Point(Point(0.0, 4.0)).lerp(&Geometry::Point(Point(8.0, 12.0)), 0.25),
             Geometry::Point(Point(2.0, 6.0))
         );
-        assert_eq!(Geometry::Hidden.lerp(&Geometry::Hidden, 0.5), Geometry::Hidden);
+        assert_eq!(
+            Geometry::Hidden.lerp(&Geometry::Hidden, 0.5),
+            Geometry::Hidden
+        );
     }
 }

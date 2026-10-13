@@ -89,7 +89,10 @@ impl<'a> CallbackEvent<'a> {
         write_u64(&mut output, self.monotonic_timestamp);
         write_u64(&mut output, self.event_kind.value());
         write_version(&mut output, self.event_schema);
-        write_u32(&mut output, u32::from(self.widget_key.is_some()) * WIDGET_KEY_PRESENT);
+        write_u32(
+            &mut output,
+            u32::from(self.widget_key.is_some()) * WIDGET_KEY_PRESENT,
+        );
         write_u32(&mut output, self.payload.len() as u32);
         write_u32(&mut output, total_len as u32);
         write_u64(&mut output, 0);

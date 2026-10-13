@@ -28,7 +28,12 @@ pub(crate) fn tokens(ctx: &BuildContext) -> ThemeTokens {
         .unwrap_or_else(ThemeTokens::light)
 }
 
-pub(crate) fn surface_color(tokens: &ThemeTokens, hovered: bool, pressed: bool, disabled: bool) -> Color {
+pub(crate) fn surface_color(
+    tokens: &ThemeTokens,
+    hovered: bool,
+    pressed: bool,
+    disabled: bool,
+) -> Color {
     let mut color = tokens.colors.surface;
     if disabled {
         color = apply_state_layer(color, tokens.state.disabled);
@@ -159,7 +164,6 @@ impl LayoutElement for RawSelectionIndicator {
 }
 
 impl Drawable for RawSelectionIndicator {
-
     fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
         ctx.scale.is_finite()
             && ctx.scale > 0.0
@@ -173,8 +177,7 @@ impl Drawable for RawSelectionIndicator {
     fn paint_local_v2(&self, ctx: &BuildContext) {
         let canvas = Canvas::of(ctx);
         let (red, green, blue, alpha) = self.fill.to_rgba();
-        let (border_red, border_green, border_blue, border_alpha) =
-            self.border_color.to_rgba();
+        let (border_red, border_green, border_blue, border_alpha) = self.border_color.to_rgba();
         canvas.fill_rect_styled(
             Rect::new(0.0, 0.0, self.size, self.size),
             V2Color::rgba8(red, green, blue, alpha),
@@ -252,19 +255,20 @@ pub(crate) fn control_shell(
         children.push(error);
     }
     let body = Container::new()
-        .padding(LayoutSpacing::all(Spacing::Px(tokens.spacing.x_small as u32)))
+        .padding(LayoutSpacing::all(Spacing::Px(
+            tokens.spacing.x_small as u32,
+        )))
         .color(surface_color(tokens, hovered, pressed, disabled))
         .child(
             Column::new()
                 .horizontal_alignment(BoxAlignment::Start)
-                .gaps(LayoutSpacing::all(Spacing::Px(tokens.spacing.x_small as u32)))
+                .gaps(LayoutSpacing::all(Spacing::Px(
+                    tokens.spacing.x_small as u32,
+                )))
                 .children(children),
         );
     if disabled {
-        Opacity::new()
-            .opacity(1.0)
-            .child(body)
-            .boxed()
+        Opacity::new().opacity(1.0).child(body).boxed()
     } else {
         body.boxed()
     }

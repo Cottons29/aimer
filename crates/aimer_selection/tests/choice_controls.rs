@@ -14,7 +14,10 @@ fn checkbox_is_controlled_and_activates_from_pointer_and_space() {
         .with_value(CheckboxValue::Unchecked)
         .on_change(move |value| observed.borrow_mut().push(value));
 
-    assert_eq!(checkbox.handle_event(InputEvent::PointerDown), ControlAction::Pressed);
+    assert_eq!(
+        checkbox.handle_event(InputEvent::PointerDown),
+        ControlAction::Pressed
+    );
     assert!(checkbox.interaction_state().pressed());
     assert_eq!(
         checkbox.handle_event(InputEvent::PointerUp { inside: true }),
@@ -50,12 +53,21 @@ fn tri_state_disabled_and_semantics_are_observable_without_mutating_value() {
         .error("A decision is required")
         .on_change(move |value| observed.borrow_mut().push(value));
 
-    assert_eq!(checkbox.handle_event(InputEvent::KeyDown(Key::Enter)), ControlAction::Activated(CheckboxValue::Checked));
+    assert_eq!(
+        checkbox.handle_event(InputEvent::KeyDown(Key::Enter)),
+        ControlAction::Activated(CheckboxValue::Checked)
+    );
     assert_eq!(checkbox.current_value(), CheckboxValue::Indeterminate);
     assert_eq!(changes.borrow().as_slice(), &[CheckboxValue::Checked]);
 
-    assert_eq!(checkbox.handle_event(InputEvent::PointerDown), ControlAction::Pressed);
-    assert_eq!(checkbox.handle_event(InputEvent::PointerUp { inside: false }), ControlAction::Released);
+    assert_eq!(
+        checkbox.handle_event(InputEvent::PointerDown),
+        ControlAction::Pressed
+    );
+    assert_eq!(
+        checkbox.handle_event(InputEvent::PointerUp { inside: false }),
+        ControlAction::Released
+    );
     assert!(!checkbox.interaction_state().pressed());
 
     let semantics = checkbox.semantics();
@@ -68,8 +80,14 @@ fn tri_state_disabled_and_semantics_are_observable_without_mutating_value() {
     assert_eq!(semantics.error(), Some("A decision is required"));
 
     let mut disabled = Switch::new().with_value(true).disabled(true);
-    assert_eq!(disabled.handle_event(InputEvent::PointerDown), ControlAction::Ignored);
-    assert_eq!(disabled.handle_event(InputEvent::KeyDown(Key::Space)), ControlAction::Ignored);
+    assert_eq!(
+        disabled.handle_event(InputEvent::PointerDown),
+        ControlAction::Ignored
+    );
+    assert_eq!(
+        disabled.handle_event(InputEvent::KeyDown(Key::Space)),
+        ControlAction::Ignored
+    );
     assert_eq!(disabled.value(), true);
     assert!(!disabled.semantics().enabled());
 }
@@ -102,7 +120,10 @@ fn radio_group_is_exclusive_skips_disabled_options_and_retains_controlled_select
         .expect("the same option keys remain valid")
         .with_selected(Some(3))
         .with_focus_index(Some(2));
-    assert_eq!(rebuilt.handle_event(InputEvent::KeyDown(Key::Space)), ControlAction::Ignored);
+    assert_eq!(
+        rebuilt.handle_event(InputEvent::KeyDown(Key::Space)),
+        ControlAction::Ignored
+    );
     assert_eq!(rebuilt.activate_key("disabled"), ControlAction::Ignored);
     assert_eq!(rebuilt.activate_key("missing"), ControlAction::Ignored);
 
@@ -148,7 +169,10 @@ fn select_opens_navigates_selects_and_cancels_without_changing_controlled_value(
         .with_selected(Some(1))
         .on_change(move |value| observed.borrow_mut().push(value));
 
-    assert_eq!(select.handle_event(InputEvent::KeyDown(Key::Enter)), ControlAction::Opened);
+    assert_eq!(
+        select.handle_event(InputEvent::KeyDown(Key::Enter)),
+        ControlAction::Opened
+    );
     assert!(select.is_open());
     assert_eq!(select.focused_key(), Some("one"));
     assert_eq!(
@@ -162,8 +186,14 @@ fn select_opens_navigates_selects_and_cancels_without_changing_controlled_value(
     assert_eq!(select.selected(), Some(&1));
     assert_eq!(changes.borrow().as_slice(), &[3]);
 
-    assert_eq!(select.handle_event(InputEvent::KeyDown(Key::Space)), ControlAction::Opened);
-    assert_eq!(select.handle_event(InputEvent::KeyDown(Key::Escape)), ControlAction::Cancelled);
+    assert_eq!(
+        select.handle_event(InputEvent::KeyDown(Key::Space)),
+        ControlAction::Opened
+    );
+    assert_eq!(
+        select.handle_event(InputEvent::KeyDown(Key::Escape)),
+        ControlAction::Cancelled
+    );
     assert!(!select.is_open());
     assert_eq!(select.selected(), Some(&1));
     assert_eq!(changes.borrow().as_slice(), &[3]);
@@ -185,16 +215,25 @@ fn autocomplete_filters_by_query_and_reports_loading_error_and_query_callbacks()
         .loading(true)
         .error("Suggestions unavailable");
 
-    let visible_keys: Vec<_> = autocomplete.visible_options().map(|option| option.key()).collect();
+    let visible_keys: Vec<_> = autocomplete
+        .visible_options()
+        .map(|option| option.key())
+        .collect();
     assert_eq!(visible_keys, ["first", "second"]);
     assert_eq!(autocomplete.change_query("be"), Some("be".to_owned()));
     assert_eq!(autocomplete.query(), "al");
     assert_eq!(queries.borrow().as_slice(), &["be"]);
 
-    assert_eq!(autocomplete.handle_event(InputEvent::KeyDown(Key::ArrowDown)), ControlAction::Opened);
+    assert_eq!(
+        autocomplete.handle_event(InputEvent::KeyDown(Key::ArrowDown)),
+        ControlAction::Opened
+    );
     assert_eq!(autocomplete.select_key("first"), ControlAction::Ignored);
     let semantics = autocomplete.semantics();
-    assert_eq!(semantics.role(), aimer_selection::SemanticRole::Autocomplete);
+    assert_eq!(
+        semantics.role(),
+        aimer_selection::SemanticRole::Autocomplete
+    );
     assert!(semantics.busy());
     assert_eq!(semantics.expanded(), Some(true));
     assert_eq!(semantics.error(), Some("Suggestions unavailable"));
@@ -206,7 +245,13 @@ fn autocomplete_filters_by_query_and_reports_loading_error_and_query_callbacks()
         ])
         .expect("unique keys are valid")
         .with_query("al");
-    assert_eq!(autocomplete.handle_event(InputEvent::KeyDown(Key::Enter)), ControlAction::Opened);
-    assert_eq!(autocomplete.select_key("second"), ControlAction::Activated(2));
+    assert_eq!(
+        autocomplete.handle_event(InputEvent::KeyDown(Key::Enter)),
+        ControlAction::Opened
+    );
+    assert_eq!(
+        autocomplete.select_key("second"),
+        ControlAction::Activated(2)
+    );
     assert_eq!(autocomplete.selected(), None);
 }

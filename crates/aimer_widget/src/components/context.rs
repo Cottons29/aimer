@@ -9,6 +9,7 @@ use aimer_attribute::BoxConstraint;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_canvas::{CanvasContext, FrameCanvas};
+use aimer_color::prelude::Color;
 use aimer_cupid::draw_cmd_v2::CurrentBuildContext;
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::Handle;
@@ -107,6 +108,7 @@ pub struct BuildContextSnapshot {
     cursor_pos: Vec2d,
     box_constraint: BoxConstraint,
     visible_rect: Option<(f32, f32, f32, f32)>,
+    paint_background: Color,
     window: WindowHandle,
     async_handle: Handle,
     inherited_states: InheritedStates,
@@ -128,6 +130,7 @@ impl BuildContextSnapshot {
             cursor_pos: self.cursor_pos,
             box_constraint: self.box_constraint,
             visible_rect: self.visible_rect,
+            paint_background: self.paint_background,
             window: self.window.clone(),
             async_handle: self.async_handle.clone(),
             inherited_states: Rc::new(RefCell::new(self.inherited_states.clone())),
@@ -147,6 +150,9 @@ pub struct BuildContext<'a> {
     pub cursor_pos: Vec2d,
     pub box_constraint: BoxConstraint,
     pub visible_rect: Option<(f32, f32, f32, f32)>, // (x, y, width, height)
+    /// Declared solid surface behind this element; transparent means unknown.
+    #[doc(hidden)]
+    pub paint_background: Color,
     pub window: WindowHandle,
     #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
     pub async_handle: Handle,
@@ -156,6 +162,9 @@ pub struct BuildContext<'a> {
 }
 
 impl<'a> CanvasContext for BuildContext<'a> {
+    #[inline]
+    fn paint_background(&self) -> Color { self.paint_background }
+
     fn current_canvas_context(&self) -> CurrentBuildContext {
         self.get_state::<CurrentLocalV2PaintContext>()
             .map(|context| context.0.clone())
@@ -267,6 +276,7 @@ impl<'a> BuildContext<'a> {
             cursor_pos,
             box_constraint: BoxConstraint::default(),
             visible_rect: None,
+            paint_background: Color::Transparent,
             window,
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
             async_handle,
@@ -377,6 +387,7 @@ impl<'a> BuildContext<'a> {
             cursor_pos: Vec2d::default(),
             box_constraint: BoxConstraint::default(),
             visible_rect: None,
+            paint_background: Color::Transparent,
             window,
             #[cfg(not(target_arch = "wasm32"))]
             async_handle: BuildAsyncHandle::unavailable(),
@@ -451,6 +462,7 @@ impl<'a> BuildContext<'a> {
             cursor_pos: self.cursor_pos,
             box_constraint: self.box_constraint,
             visible_rect: self.visible_rect,
+            paint_background: self.paint_background,
             window: self.window.clone(),
             async_handle: self.async_handle.clone(),
             inherited_states: self.inherited_states.borrow().clone(),
@@ -483,6 +495,14 @@ impl<'a> BuildContext<'a> {
                     .0
                     .set_child_presentation_at(child_index, transform, opacity)
             })
+    }
+
+    /// Allows the current render node to escape all ancestor widget clips.
+    /// Descendant-owned clips remain local to those descendants.
+    #[doc(hidden)]
+    pub fn set_local_v2_clip_escape(&self, enabled: bool) -> bool {
+        self.get_state::<CurrentLocalV2PaintContext>()
+            .is_some_and(|context| context.0.set_clip_escape(enabled))
     }
 
     #[doc(hidden)]
@@ -693,6 +713,18 @@ mod tests {
             #[cfg(not(target_arch = "wasm32"))]
             dummy_async_handle(),
         )
+    }
+
+    #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
+    #[test]
+    fn paint_background_survives_cloning_and_animation_context_snapshots() {
+        let mut ctx = context();
+        assert_eq!(ctx.paint_background, Color::Transparent);
+        ctx.paint_background = Color::WHITE;
+        assert_eq!(ctx.clone().paint_background, Color::WHITE);
+        let snapshot = ctx.snapshot();
+        ctx.paint_background = Color::BLACK;
+        assert_eq!(snapshot.restore(ctx.canvas.clone()).paint_background, Color::WHITE);
     }
 
     #[cfg(feature = "portable-guest")]

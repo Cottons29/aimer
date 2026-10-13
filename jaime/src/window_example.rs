@@ -63,10 +63,14 @@ impl StatelessWidget for WindowShowcase {
 
         Container::new()
             .color(app_theme.background_color)
-            .child(Row::new().children([
-                sidebar(app_theme),
-                Expanded::new().child(library(app_theme)).boxed(),
-            ]))
+            .child(
+                Row::new().children([
+                    sidebar(app_theme),
+                    Expanded::new()
+                        .child(library(app_theme))
+                        .boxed(),
+                ]),
+            )
     }
 }
 
@@ -116,7 +120,11 @@ fn navigation_item(
 
     Container::new()
         .height(Dimension::Px(42.0))
-        .padding(LayoutSpacing::new().right(12).left(12))
+        .padding(
+            LayoutSpacing::new()
+                .right(12)
+                .left(12),
+        )
         .box_decoration(
             BoxDecoration::new()
                 .background_color(background)
@@ -132,7 +140,11 @@ fn navigation_item(
                         .child(
                             Text::new(icon)
                                 .text_align(TextAlign::MidCenter)
-                                .text_style(TextStyle::new().font_size(22).color(accent)),
+                                .text_style(
+                                    TextStyle::new()
+                                        .font_size(22)
+                                        .color(accent),
+                                ),
                         )
                         .boxed(),
                     Text::new(label)
@@ -155,7 +167,11 @@ fn navigation_item(
 fn section_label(label: &'static str, app_theme: ThemeData) -> AnyWidget {
     Container::new()
         .height(Dimension::Px(34.0))
-        .padding(LayoutSpacing::new().top(12).left(8))
+        .padding(
+            LayoutSpacing::new()
+                .top(12)
+                .left(8),
+        )
         .child(
             Text::new(label).text_style(
                 TextStyle::new()
@@ -217,13 +233,17 @@ fn library(app_theme: ThemeData) -> AnyWidget {
                 .left(32),
         )
         .color(app_theme.background_color)
-        .child(Column::new().children([
-            Expanded::new()
-                .child(Scrollable::new().child(library_content(app_theme)))
-                .boxed(),
-            SizedBox::new().height(14).boxed(),
-            player(app_theme),
-        ]))
+        .child(
+            Column::new().children([
+                Expanded::new()
+                    .child(Scrollable::new().child(library_content(app_theme)))
+                    .boxed(),
+                SizedBox::new()
+                    .height(14)
+                    .boxed(),
+                player(app_theme),
+            ]),
+        )
         .boxed()
 }
 
@@ -247,28 +267,47 @@ fn library_content(app_theme: ThemeData) -> AnyWidget {
             Container::new()
                 .height(Dimension::Px(166.0))
                 .child(
-                    Scrollable::new().axis(ScrollAxis::Horizontal).child(
-                        Row::new()
-                            .gaps(LayoutSpacing::all(Spacing::Px(18)))
-                            .children(
-                                STATIONS.map(|station| station_card(station, app_theme).boxed()),
-                            ),
-                    ),
+                    Scrollable::new()
+                        .axis(ScrollAxis::Horizontal)
+                        .child(
+                            Row::new()
+                                .gaps(LayoutSpacing::all(Spacing::Px(18)))
+                                .children(
+                                    STATIONS
+                                        .map(|station| station_card(station, app_theme).boxed()),
+                                ),
+                        ),
                 )
                 .boxed(),
             section_title("Latest Radio Episodes  ›", app_theme),
             episode_row(
-                ("TIME CRISIS", "The Dog Days Are Over", Color::Rgb(82, 96, 82)),
-                ("THE CREATIVE HOUR", "Side One, Track One", Color::Rgb(205, 211, 92)),
+                (
+                    "TIME CRISIS",
+                    "The Dog Days Are Over",
+                    Color::Rgb(82, 96, 82),
+                ),
+                (
+                    "THE CREATIVE HOUR",
+                    "Side One, Track One",
+                    Color::Rgb(205, 211, 92),
+                ),
                 app_theme,
             ),
-            SizedBox::new().height(14).boxed(),
+            SizedBox::new()
+                .height(14)
+                .boxed(),
             episode_row(
-                ("FIVE ON FRIDAYS", "Shout-Out to the Liars", Color::Rgb(226, 92, 42)),
+                (
+                    "FIVE ON FRIDAYS",
+                    "Shout-Out to the Liars",
+                    Color::Rgb(226, 92, 42),
+                ),
                 ("SOULECTION", "Episode 742", Color::Rgb(131, 75, 39)),
                 app_theme,
             ),
-            SizedBox::new().height(20).boxed(),
+            SizedBox::new()
+                .height(20)
+                .boxed(),
         ])
         .boxed()
 }
@@ -280,40 +319,42 @@ fn station_card(
     Container::new()
         .width(Dimension::Px(132.0))
         .height(Dimension::Px(150.0))
-        .child(Column::new().children([
-            Container::new()
-                .width(Dimension::Px(132.0))
-                .height(Dimension::Px(124.0))
-                .box_decoration(
-                    BoxDecoration::new()
-                        .background_color(app_theme.surface_color)
-                        .border_radius(22),
-                )
-                .child(
-                    Text::new(mark)
-                        .text_align(TextAlign::MidCenter)
-                        .text_style(
-                            TextStyle::new()
-                                .font_size(if mark.len() > 2 { 27 } else { 52 })
-                                .font_weight(FontWeight::Bold)
-                                .color(accent),
-                        ),
-                )
-                .boxed(),
-            Container::new()
-                .height(Dimension::Px(26.0))
-                .child(
-                    Text::new(name)
-                        .text_align(TextAlign::MidCenter)
-                        .text_style(
-                            TextStyle::new()
-                                .font_size(12)
-                                .font_weight(FontWeight::Value(500))
-                                .color(crate::theme::muted_text(&app_theme)),
-                        ),
-                )
-                .boxed(),
-        ]))
+        .child(
+            Column::new().children([
+                Container::new()
+                    .width(Dimension::Px(132.0))
+                    .height(Dimension::Px(124.0))
+                    .box_decoration(
+                        BoxDecoration::new()
+                            .background_color(app_theme.surface_color)
+                            .border_radius(22),
+                    )
+                    .child(
+                        Text::new(mark)
+                            .text_align(TextAlign::MidCenter)
+                            .text_style(
+                                TextStyle::new()
+                                    .font_size(if mark.len() > 2 { 27 } else { 52 })
+                                    .font_weight(FontWeight::Bold)
+                                    .color(accent),
+                            ),
+                    )
+                    .boxed(),
+                Container::new()
+                    .height(Dimension::Px(26.0))
+                    .child(
+                        Text::new(name)
+                            .text_align(TextAlign::MidCenter)
+                            .text_style(
+                                TextStyle::new()
+                                    .font_size(12)
+                                    .font_weight(FontWeight::Value(500))
+                                    .color(crate::theme::muted_text(&app_theme)),
+                            ),
+                    )
+                    .boxed(),
+            ]),
+        )
 }
 
 fn section_title(title: &'static str, app_theme: ThemeData) -> AnyWidget {
@@ -340,8 +381,12 @@ fn episode_row(
     Row::new()
         .gaps(LayoutSpacing::all(Spacing::Px(24)))
         .children([
-            Expanded::new().child(episode(left, app_theme)).boxed(),
-            Expanded::new().child(episode(right, app_theme)).boxed(),
+            Expanded::new()
+                .child(episode(left, app_theme))
+                .boxed(),
+            Expanded::new()
+                .child(episode(right, app_theme))
+                .boxed(),
         ])
         .boxed()
 }
@@ -389,7 +434,9 @@ fn episode(
                                                 .color(crate::theme::muted_text(&app_theme)),
                                         )
                                         .boxed(),
-                                    SizedBox::new().height(5).boxed(),
+                                    SizedBox::new()
+                                        .height(5)
+                                        .boxed(),
                                     Text::new(title)
                                         .text_style(
                                             TextStyle::new()
@@ -398,7 +445,9 @@ fn episode(
                                                 .color(app_theme.on_background_color),
                                         )
                                         .boxed(),
-                                    SizedBox::new().height(5).boxed(),
+                                    SizedBox::new()
+                                        .height(5)
+                                        .boxed(),
                                     Text::new("A new mix for your library.")
                                         .text_style(
                                             TextStyle::new()
@@ -424,7 +473,11 @@ fn episode(
 fn player(app_theme: ThemeData) -> AnyWidget {
     Container::new()
         .height(Dimension::Px(78.0))
-        .padding(LayoutSpacing::new().right(22).left(22))
+        .padding(
+            LayoutSpacing::new()
+                .right(22)
+                .left(22),
+        )
         .box_decoration(
             BoxDecoration::new()
                 .background_color(crate::theme::raised_surface(&app_theme))
@@ -473,7 +526,11 @@ fn player(app_theme: ThemeData) -> AnyWidget {
                         )
                         .boxed(),
                     Text::new("☷   ◉   🔊")
-                        .text_style(TextStyle::new().font_size(18).color(app_theme.on_surface_color))
+                        .text_style(
+                            TextStyle::new()
+                                .font_size(18)
+                                .color(app_theme.on_surface_color),
+                        )
                         .boxed(),
                 ]),
         )

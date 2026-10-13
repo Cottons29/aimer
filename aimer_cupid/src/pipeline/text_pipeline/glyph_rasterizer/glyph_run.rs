@@ -132,14 +132,16 @@ mod tests {
 
         for run in &runs {
             assert!(
-                run.keys
-                    .iter()
-                    .all(|key| key.font_id == run.font_id() && key.size_tenths
-                        == (run.font_size * 10.0) as u32),
+                run.keys.iter().all(|key| key.font_id == run.font_id()
+                    && key.size_tenths == (run.font_size * 10.0) as u32),
                 "one scaler draws one face at one size"
             );
         }
-        assert_eq!(runs.len(), 4, "two faces at two sizes cannot share a scaler");
+        assert_eq!(
+            runs.len(),
+            4,
+            "two faces at two sizes cannot share a scaler"
+        );
     }
 
     #[test]

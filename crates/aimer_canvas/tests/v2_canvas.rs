@@ -1,10 +1,10 @@
 use aimer_canvas::Canvas;
-use aimer_cupid::draw_cmd_v2::{DrawCommand, Rect, RenderTree};
+use aimer_canvas::{DrawShape, MaterialDrawRequest, MaterialKind, ShapeDrawResult};
 use aimer_cupid::draw_cmd_v2::RichTextSegment;
+use aimer_cupid::draw_cmd_v2::{DrawCommand, Rect, RenderTree};
 use aimer_cupid::font::TextLanguage;
 use aimer_cupid::text_pipeline::TextOverflowMode;
 use aimer_cupid::utilities::{Color, Mat3, Vec2d};
-use aimer_canvas::{DrawShape, MaterialDrawRequest, MaterialKind, ShapeDrawResult};
 use aimer_shape::{FillStyle, ShapeColor, ShapePath, ShapeSize};
 use std::sync::Arc;
 
@@ -24,8 +24,14 @@ fn canvas_commits_commands_to_its_element_local_list() {
 
     let child_list = tree.draw_list_snapshot(child).unwrap();
     assert_eq!(child_list.revision, 1);
-    assert!(matches!(child_list.commands[0], DrawCommand::FillRect { .. }));
-    assert!(matches!(child_list.commands[1], DrawCommand::DrawText { .. }));
+    assert!(matches!(
+        child_list.commands[0],
+        DrawCommand::FillRect { .. }
+    ));
+    assert!(matches!(
+        child_list.commands[1],
+        DrawCommand::DrawText { .. }
+    ));
     assert_eq!(tree.draw_list_revision(root).unwrap(), 0);
 }
 
@@ -47,7 +53,10 @@ fn try_finish_reports_invalid_scopes_and_drop_commits_valid_commands() {
     let after = tree.draw_list_snapshot(root).unwrap();
     assert_eq!(after.revision, before.revision);
     assert_eq!(after.commands.len(), before.commands.len());
-    assert!(matches!(after.commands.first(), Some(DrawCommand::FillRect { .. })));
+    assert!(matches!(
+        after.commands.first(),
+        Some(DrawCommand::FillRect { .. })
+    ));
     assert!(tree.dirty_elements().contains(&root));
 
     let dropped = Canvas::of(&context);
@@ -116,7 +125,10 @@ fn canvas_records_builtin_paint_commands_and_balanced_state_scopes() {
     assert_eq!(commands.len(), 16);
     assert!(matches!(commands[0], DrawCommand::FillRect { .. }));
     assert!(matches!(commands[1], DrawCommand::DrawRichText { .. }));
-    assert!(matches!(commands[2], DrawCommand::DrawTextDecoration { .. }));
+    assert!(matches!(
+        commands[2],
+        DrawCommand::DrawTextDecoration { .. }
+    ));
     assert!(matches!(commands[3], DrawCommand::DrawImage { .. }));
     assert!(matches!(commands[4], DrawCommand::DrawShadowRect { .. }));
     assert!(matches!(commands[10], DrawCommand::DrawText { .. }));

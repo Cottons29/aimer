@@ -62,18 +62,18 @@ pub(crate) fn move_right(value: &TextEditingValue, extend: bool) -> TextEditingV
         value.text()[selection.focus()..]
             .graphemes(true)
             .next()
-            .map_or(selection.focus(), |grapheme| selection.focus() + grapheme.len())
+            .map_or(selection.focus(), |grapheme| {
+                selection.focus() + grapheme.len()
+            })
     };
     moved_selection(value, target, extend)
 }
 
-pub(crate) fn update_composing(
-    value: &TextEditingValue,
-    preedit: &str,
-) -> TextEditingValue {
-    let range = value
-        .composing()
-        .map_or_else(|| value.selection().range(), |range| range.start()..range.end());
+pub(crate) fn update_composing(value: &TextEditingValue, preedit: &str) -> TextEditingValue {
+    let range = value.composing().map_or_else(
+        || value.selection().range(),
+        |range| range.start()..range.end(),
+    );
     let mut text = String::with_capacity(value.text().len() - range.len() + preedit.len());
     text.push_str(&value.text()[..range.start]);
     text.push_str(preedit);
@@ -86,11 +86,7 @@ pub(crate) fn update_composing(
     )
 }
 
-fn moved_selection(
-    value: &TextEditingValue,
-    target: usize,
-    extend: bool,
-) -> TextEditingValue {
+fn moved_selection(value: &TextEditingValue, target: usize, extend: bool) -> TextEditingValue {
     let selection = if extend {
         TextSelection::new(value.selection().anchor(), target)
     } else {
@@ -104,9 +100,7 @@ fn replace_range(
     range: std::ops::Range<usize>,
     replacement: &str,
 ) -> TextEditingValue {
-    let mut text = String::with_capacity(
-        value.text().len() - range.len() + replacement.len(),
-    );
+    let mut text = String::with_capacity(value.text().len() - range.len() + replacement.len());
     text.push_str(&value.text()[..range.start]);
     text.push_str(replacement);
     text.push_str(&value.text()[range.end..]);
@@ -124,7 +118,11 @@ fn limited_replacement(
         return replacement.to_owned();
     };
     let selected = value.text()[range.clone()].graphemes(true).count();
-    let retained = value.text().graphemes(true).count().saturating_sub(selected);
+    let retained = value
+        .text()
+        .graphemes(true)
+        .count()
+        .saturating_sub(selected);
     let available = max_length.saturating_sub(retained);
     replacement.graphemes(true).take(available).collect()
 }

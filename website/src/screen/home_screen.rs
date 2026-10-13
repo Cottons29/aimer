@@ -12,13 +12,13 @@ use aimer::{
     StatefulWidget, Text, Widget, widget, *,
 };
 
+#[cfg(test)]
+use crate::TEST_STATE_UPDATED;
 use crate::components::get_started_button::HoverableGetStartedButton;
 use crate::components::same_looking::SameLookingSection;
 #[cfg(test)]
 use crate::router::AppRouter;
 use crate::utils::{app_padding, is_mobile, mobile_title, resp_position};
-#[cfg(test)]
-use crate::TEST_STATE_UPDATED;
 
 pub static SHOW_ICON: AtomicBool = AtomicBool::new(true);
 

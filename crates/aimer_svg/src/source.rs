@@ -285,8 +285,8 @@ fn js_error(error: wasm_bindgen::JsValue) -> String {
 mod tests {
     #[test]
     fn load_failure_message_includes_error_without_dumping_memory_source() {
-        use std::sync::Arc;
         use super::{SvgSource, load_failure_message};
+        use std::sync::Arc;
 
         let source = SvgSource::Memory(Arc::from(b"<svg>secret bytes</svg>".as_slice()));
 
@@ -363,8 +363,8 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn native_file_load_reports_missing_venus_instead_of_blocking() {
-        use aimer_venus::Venus;
         use super::*;
+        use aimer_venus::Venus;
 
         Venus::uninstall();
         let directory = tempfile::tempdir().unwrap();
@@ -386,9 +386,9 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn native_network_source_loads_through_ureq() {
+        use super::*;
         use std::io::Write;
         use std::net::TcpListener;
-        use super::*;
 
         let body = br#"<svg width="11" height="13" xmlns="http://www.w3.org/2000/svg"><path d="M0 0h1v1z"/></svg>"#;
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -425,9 +425,9 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn native_network_source_reports_http_status_errors() {
+        use super::*;
         use std::io::Write;
         use std::net::TcpListener;
-        use super::*;
 
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
@@ -457,9 +457,9 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn native_network_source_reads_bodies_larger_than_ureq_convenience_limit() {
+        use super::*;
         use std::io::{Read, Write};
         use std::net::TcpListener;
-        use super::*;
 
         let body = vec![b' '; 10 * 1024 * 1024 + 1];
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();

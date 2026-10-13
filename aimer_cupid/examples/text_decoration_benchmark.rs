@@ -16,9 +16,7 @@ use std::time::{Duration, Instant};
 
 use aimer_cupid::AntiAlias;
 use aimer_cupid::backend::wgpu::WgpuBackend;
-use aimer_cupid::text_pipeline::{
-    TextDecorationDraw, TextPipelineV2, TextPreparationProfile,
-};
+use aimer_cupid::text_pipeline::{TextDecorationDraw, TextPipelineV2, TextPreparationProfile};
 use aimer_cupid::utilities::Rgba8;
 use aimer_utils::SyncFuture;
 
@@ -81,7 +79,10 @@ fn average_profile(samples: &[TextPreparationProfile]) -> TextPreparationProfile
         average.instance_build += sample.instance_build;
         average.instance_upload += sample.instance_upload;
     }
-    if let Some(count) = u32::try_from(samples.len()).ok().filter(|&count| count != 0) {
+    if let Some(count) = u32::try_from(samples.len())
+        .ok()
+        .filter(|&count| count != 0)
+    {
         average.total /= count;
         average.instance_build /= count;
         average.instance_upload /= count;
@@ -138,9 +139,7 @@ fn print_case(label: &str, durations: &mut [Duration], profiles: &[TextPreparati
     println!(
         "{label}: avg={average:?}, p50={p50:?}, p95={p95:?}, worst={worst:?}, \
          profiled_total={:?}, instance_build={:?}, instance_upload={:?}",
-        profile.total,
-        profile.instance_build,
-        profile.instance_upload,
+        profile.total, profile.instance_build, profile.instance_upload,
     );
 }
 

@@ -2,6 +2,10 @@ use aimer_attribute::Dimension;
 
 use crate::border::resolve_dim;
 
+/// Per-corner radii usable directly as a [`crate::Decoration`].
+/// Containers clip children to these radii and round their fallback background.
+/// Without a background this paints nothing; paint-only decoration wrappers
+/// do not apply child clipping. Zero radii still declare a rectangular clip.
 #[derive(Default, Clone, Copy, PartialEq, Debug)]
 pub struct BorderRadius {
     pub top_left: Dimension,
@@ -11,6 +15,19 @@ pub struct BorderRadius {
 }
 
 impl BorderRadius {
+
+    #[inline]
+    pub fn all(radius: impl Into<Dimension>) -> Self {
+        let radius = radius.into();
+        Self {
+            bottom_left: radius,
+            bottom_right:radius,
+            top_left: radius,
+            top_right: radius
+        }
+
+    }
+
     #[inline]
     pub fn new() -> Self {
         Self::default()

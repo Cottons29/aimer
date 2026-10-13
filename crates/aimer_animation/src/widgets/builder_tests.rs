@@ -3,8 +3,7 @@ use std::sync::OnceLock;
 use aimer_attribute::BoxConstraint;
 use aimer_widget::base::{BuildContext, ResolvedSize, Vec2d, WindowHandle};
 use aimer_widget::{
-    AnyElement, Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement,
-    Widget,
+    AnyElement, Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget,
 };
 
 use super::{Animated, AnimatedBuilder, AnimationEffect};
@@ -63,7 +62,6 @@ struct StableElement(f32);
 
 impl Drawable for StableElement {
     fn update(&self, _context: &BuildContext) {}
-
 }
 
 impl EventElement for StableElement {}
@@ -161,7 +159,7 @@ fn animated_builder_updates_its_child_while_preserving_retained_identity() {
         built_values.borrow_mut().push(value);
         StableLeaf(10.0 + value * 10.0)
     })
-        .to_element(&context);
+    .to_element(&context);
 
     element.update(&context);
     let mut original_child = None;
@@ -178,7 +176,10 @@ fn animated_builder_updates_its_child_while_preserving_retained_identity() {
     let mut rebuilt_child = None;
     element.visit_retained_v2_children(&mut |_, child| rebuilt_child = child.element_id());
     assert!(rebuilt_child.is_some());
-    assert_eq!(original_child, rebuilt_child, "reconciliation keeps the child's identity");
+    assert_eq!(
+        original_child, rebuilt_child,
+        "reconciliation keeps the child's identity"
+    );
     assert_eq!(element.computed_size(&context).width, 15.0);
     assert_eq!(*values.borrow(), [0.0, 0.5]);
 
@@ -187,7 +188,11 @@ fn animated_builder_updates_its_child_while_preserving_retained_identity() {
     let mut unchanged_child = None;
     element.visit_retained_v2_children(&mut |_, child| unchanged_child = child.element_id());
     assert_eq!(unchanged_child, rebuilt_child);
-    assert_eq!(*values.borrow(), [0.0, 0.5], "a stable value reuses its child");
+    assert_eq!(
+        *values.borrow(),
+        [0.0, 0.5],
+        "a stable value reuses its child"
+    );
 }
 
 #[test]

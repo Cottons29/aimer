@@ -317,10 +317,7 @@ mod tests {
         assert!(anim.started.iter().all(|&s| s));
     }
 
-    fn profile_collection_ticks(
-        name: &str,
-        mut tick: impl FnMut(AnimInstant) -> Vec<f32>,
-    ) {
+    fn profile_collection_ticks(name: &str, mut tick: impl FnMut(AnimInstant) -> Vec<f32>) {
         const MEASURED: usize = 2_048;
         const WARMUP: usize = 128;
         const ROUNDS: usize = 7;

@@ -4,16 +4,18 @@
 //! `aimer_picker`; the page itself does not own or mirror picker state.
 
 use aimer::macros::widget;
-use aimer::style::{BoxDecoration, FontWeight, LayoutSpacing, Spacing, TextStyle, Theme, ThemeData};
-use aimer::{
-    AimerApp, AnyWidget, BuildContext, Column, Container, Dimension, ScrollAxis, Scrollable,
-    StatelessWidget, Text, Widget,
-};
 use aimer::picker::{
     Calendar, CalendarView, ColorPicker, ColorPickerView, Date, DateBounds, DatePicker,
     DatePickerView, DateRangePolicy, DateSelectionMode, DateTime, DateTimePicker,
     DateTimePickerPolicy, DateTimePickerView, Hsva, TimeOfDay, TimePicker, TimePickerView,
     TimeZonePolicy,
+};
+use aimer::style::{
+    BoxDecoration, FontWeight, LayoutSpacing, Spacing, TextStyle, Theme, ThemeData,
+};
+use aimer::{
+    AimerApp, AnyWidget, BuildContext, Column, Container, Dimension, ScrollAxis, Scrollable,
+    StatelessWidget, Text, Widget,
 };
 
 use crate::theme;
@@ -200,27 +202,24 @@ fn calendar_model() -> Calendar {
     )
     .expect("example calendar policy is valid");
 
-    calendar.select(start).expect("example range start is valid");
-    calendar.select(end).expect("example range end is valid");
+    calendar
+        .select(start)
+        .expect("example range start is valid");
+    calendar
+        .select(end)
+        .expect("example range end is valid");
     calendar
 }
 
 fn date_picker_model() -> DatePicker {
-    DatePicker::try_new(
-        Some(example_date(2024, 5, 15)),
-        example_bounds(),
-    )
-    .expect("example date-picker policy is valid")
+    DatePicker::try_new(Some(example_date(2024, 5, 15)), example_bounds())
+        .expect("example date-picker policy is valid")
 }
 
 fn date_time_model(value: Option<DateTime>) -> DateTimePicker {
     let timezone = example_timezone();
-    let minimum = DateTime::try_new(
-        example_date(2024, 5, 1),
-        TimeOfDay::midnight(),
-        timezone,
-    )
-    .expect("example minimum is valid");
+    let minimum = DateTime::try_new(example_date(2024, 5, 1), TimeOfDay::midnight(), timezone)
+        .expect("example minimum is valid");
     let maximum = DateTime::try_new(
         example_date(2024, 6, 30),
         TimeOfDay::try_new(23, 59, 59, 0).expect("example maximum time is valid"),

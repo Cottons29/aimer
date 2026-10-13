@@ -31,8 +31,8 @@ use std::rc::Rc;
 use aimer_attribute::BoxConstraint;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
-use aimer_widget::base::BuildContext;
 use aimer_widget::ElementId;
+use aimer_widget::base::BuildContext;
 
 use crate::flex::FlexDirection;
 use crate::flex::children_source::ChildrenSource;
@@ -242,12 +242,7 @@ impl FlexLayout {
         };
 
         let mut child_ctx = ctx.clone();
-        let mut measured = Self::measure_children(
-            is_row,
-            max_cross,
-            children,
-            &mut child_ctx,
-        );
+        let mut measured = Self::measure_children(is_row, max_cross, children, &mut child_ctx);
         let has_flex = !measured.flex_weights.is_empty();
 
         // This phase only operates on contiguous scalar data. It deliberately
@@ -431,13 +426,7 @@ impl FlexLayout {
     /// so a container reports its scroll extent in `O(1)` and only the children
     /// a viewport exposes are ever touched. `cross` is the extent handed to every
     /// child across the axis, which is the container's own cross-axis maximum.
-    pub(crate) fn declared(
-        len: usize,
-        main: f32,
-        cross: f32,
-        is_row: bool,
-        gap_main: f32,
-    ) -> Self {
+    pub(crate) fn declared(len: usize, main: f32, cross: f32, is_row: bool, gap_main: f32) -> Self {
         Self::uniform(
             len,
             sized(main, cross, is_row),
@@ -459,12 +448,7 @@ impl FlexLayout {
     /// to be verified against the children a frame paints, and the container has
     /// to fall back to measuring when they disagree. See
     /// [`RawFlex::estimated_layout`](crate::flex::raw_flex::RawFlex).
-    pub(crate) fn estimated(
-        len: usize,
-        probe: ResolvedSize,
-        is_row: bool,
-        gap_main: f32,
-    ) -> Self {
+    pub(crate) fn estimated(len: usize, probe: ResolvedSize, is_row: bool, gap_main: f32) -> Self {
         Self::uniform(len, probe, is_row, gap_main, Origin::Estimated)
     }
 
@@ -534,10 +518,10 @@ impl FlexLayout {
                 stride: Some(stride),
                 len,
                 child_metadata: Vec::new(),
-            stamps: RefCell::new(Vec::new()),
-            unstable: Vec::new(),
-            log_cursor: Cell::new(0),
-            stable_positions: RefCell::new(None),
+                stamps: RefCell::new(Vec::new()),
+                unstable: Vec::new(),
+                log_cursor: Cell::new(0),
+                stable_positions: RefCell::new(None),
                 stable_children: false,
                 total: sized(saturate_f32(main_total), cross_max, is_row),
                 has_flex,
@@ -590,9 +574,7 @@ impl FlexLayout {
     /// unrelated element-tree generation change.
     #[inline]
     pub(crate) fn can_reuse_stable_children(&self) -> bool {
-        self.stable_children
-            && !self.has_flex
-            && self.child_metadata.len() == self.len
+        self.stable_children && !self.has_flex && self.child_metadata.len() == self.len
     }
 
     /// Brings a measured table across a change of the element-tree generation
@@ -697,8 +679,7 @@ impl FlexLayout {
                 return false;
             };
             let (id, generation) = self.child_metadata[index];
-            if child.id() != id || child.subtree_generation() != generation
-            {
+            if child.id() != id || child.subtree_generation() != generation {
                 return false;
             }
         }
@@ -1024,8 +1005,7 @@ impl CachedHitTestIndex {
         } else {
             let bin = ((main - self.min_main) / self.bin_height)
                 .floor()
-                .clamp(0.0, (HIT_TEST_BIN_COUNT - 1) as f32)
-                as usize;
+                .clamp(0.0, (HIT_TEST_BIN_COUNT - 1) as f32) as usize;
             let start = self.offsets[bin];
             let end = self.offsets[bin + 1];
             &self.children[start..end]
@@ -1325,12 +1305,10 @@ impl FlexLayoutCache {
         let bin_range = |start: f32, end: f32| {
             let first_bin = ((start - min_main) / bin_height)
                 .floor()
-                .clamp(0.0, (HIT_TEST_BIN_COUNT - 1) as f32)
-                as usize;
+                .clamp(0.0, (HIT_TEST_BIN_COUNT - 1) as f32) as usize;
             let last_bin = ((end - min_main) / bin_height)
                 .floor()
-                .clamp(0.0, (HIT_TEST_BIN_COUNT - 1) as f32)
-                as usize;
+                .clamp(0.0, (HIT_TEST_BIN_COUNT - 1) as f32) as usize;
             (first_bin, last_bin)
         };
 
@@ -1354,9 +1332,7 @@ impl FlexLayoutCache {
             return;
         }
 
-        let mut bins: Vec<Vec<usize>> = (0..HIT_TEST_BIN_COUNT)
-            .map(|_| Vec::new())
-            .collect();
+        let mut bins: Vec<Vec<usize>> = (0..HIT_TEST_BIN_COUNT).map(|_| Vec::new()).collect();
         let mut outside = Vec::new();
         for (offset, interval) in intervals.into_iter().enumerate() {
             let index = range.start + offset;
@@ -1399,12 +1375,12 @@ impl FlexLayoutCache {
     /// Returns indexed candidates in ascending child order, or `None` when the
     /// range has no usable sparse index and the exact fallback should run.
     #[inline]
-    pub(crate) fn hit_test_candidates(
-        &self,
-        range: &Range<usize>,
-        pos: Vec2d,
-    ) -> Option<&[usize]> {
-        unsafe { (&*self.hit_test_index.get()).as_ref()?.candidates(range, pos) }
+    pub(crate) fn hit_test_candidates(&self, range: &Range<usize>, pos: Vec2d) -> Option<&[usize]> {
+        unsafe {
+            (&*self.hit_test_index.get())
+                .as_ref()?
+                .candidates(range, pos)
+        }
     }
 }
 
@@ -1501,9 +1477,8 @@ mod tests {
     use std::time::Instant;
 
     use super::*;
-    use crate::flex::raw_flex::justify_distribution;
     use crate::flex::JustifyContent;
-
+    use crate::flex::raw_flex::justify_distribution;
 
     #[test]
     fn cached_layer_order_reuses_a_sorted_range() {
@@ -1562,7 +1537,10 @@ mod tests {
         const ROUNDS: usize = 7;
 
         let cases: [(&str, Vec<ResolvedSize>); 4] = [
-            ("uniform-256", (0..256).map(|_| sized(800.0, 20.0, false)).collect()),
+            (
+                "uniform-256",
+                (0..256).map(|_| sized(800.0, 20.0, false)).collect(),
+            ),
             (
                 "uniform-2048",
                 (0..2_048).map(|_| sized(800.0, 20.0, false)).collect(),
@@ -1585,9 +1563,7 @@ mod tests {
             let mut samples = Vec::with_capacity(ROUNDS);
             let mut checksum = 0.0;
             for _ in 0..ROUNDS {
-                let inputs: Vec<_> = (0..WARMUP + MEASURED)
-                    .map(|_| template.clone())
-                    .collect();
+                let inputs: Vec<_> = (0..WARMUP + MEASURED).map(|_| template.clone()).collect();
                 let mut inputs = inputs.into_iter();
 
                 for _ in 0..WARMUP {
@@ -1787,7 +1763,10 @@ mod tests {
 
     #[test]
     fn varying_visible_range_matches_the_uniform_result() {
-        let layout = column_of(&[(10.0, 100.0), (20.0, 100.0), (10.0, 100.0), (10.0, 100.0)], 0.0);
+        let layout = column_of(
+            &[(10.0, 100.0), (20.0, 100.0), (10.0, 100.0), (10.0, 100.0)],
+            0.0,
+        );
 
         assert_eq!(layout.visible_range(0.0, 150.0), 0..2);
         assert_eq!(layout.visible_range(150.0, 250.0), 1..3);
@@ -1876,7 +1855,10 @@ mod tests {
         let layout = column_of(&[(10.0, 80.0); 120_000], 30.0);
 
         assert_eq!(layout.offset(119_999), 119_999.0 * 110.0);
-        assert_eq!(layout.visible_range(13_199_890.0, 13_199_970.0), 119_999..120_000);
+        assert_eq!(
+            layout.visible_range(13_199_890.0, 13_199_970.0),
+            119_999..120_000
+        );
     }
 
     /// A hundred-thousand-row prediction with one 400px row somewhere inside it.
@@ -2013,10 +1995,7 @@ mod tests {
             5.0,
         );
         let heights = [50.0, 200.0, 300.0, 120.0, 200.0, 80.0];
-        let measured = column_of(
-            &heights.map(|height: f32| (10.0, height)),
-            5.0,
-        );
+        let measured = column_of(&heights.map(|height: f32| (10.0, height)), 5.0);
 
         for (index, height) in heights.iter().enumerate() {
             predicted.refine(

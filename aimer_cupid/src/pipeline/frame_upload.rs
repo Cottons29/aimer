@@ -86,7 +86,6 @@ impl<T: Pod> FrameUpload<T> {
         self.uploaded.extend_from_slice(current);
         self.buffer_lost = false;
     }
-
 }
 
 impl<T: Pod> FrameUpload<T> {
@@ -247,7 +246,9 @@ mod tests {
             let compare_p95 = compare_samples[(ROUNDS * 95).div_ceil(100) - 1];
             let copy_p50 = copy_samples[ROUNDS / 2];
             let copy_p95 = copy_samples[(ROUNDS * 95).div_ceil(100) - 1];
-            println!("{name}: compare p50 {compare_p50:.3} us, p95 {compare_p95:.3} us; copy p50 {copy_p50:.3} us, p95 {copy_p95:.3} us");
+            println!(
+                "{name}: compare p50 {compare_p50:.3} us, p95 {compare_p95:.3} us; copy p50 {copy_p50:.3} us, p95 {copy_p95:.3} us"
+            );
         }
 
         black_box(&mut checksum);

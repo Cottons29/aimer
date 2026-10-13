@@ -42,10 +42,7 @@ impl<'a> RetainedPickerCanvas<'a> {
     }
 }
 
-pub(crate) fn record_local_v2(
-    ctx: &BuildContext,
-    paint: impl FnOnce(&RetainedPickerCanvas<'_>),
-) {
+pub(crate) fn record_local_v2(ctx: &BuildContext, paint: impl FnOnce(&RetainedPickerCanvas<'_>)) {
     let canvas = Canvas::of(ctx);
     let painter = RetainedPickerCanvas::new(&canvas, ctx.scale);
     paint(&painter);
@@ -179,8 +176,8 @@ pub(crate) fn draw_calendar(
             y: origin.y + cells_top + row as f32 * cell_height,
         };
         let focused = has_focus && cell.date() == calendar.focused_date();
-        let range_interior = cell.is_selected()
-            && calendar.selection().is_range_interior(cell.date());
+        let range_interior =
+            cell.is_selected() && calendar.selection().is_range_interior(cell.date());
         let cell_color = if cell.is_selected() {
             if range_interior {
                 tokens.colors.primary.with_alpha(0.5)
@@ -465,7 +462,10 @@ pub(crate) fn draw_color_picker(
     let draft = picker.draft();
     let rgba = draft.to_rgba();
     ctx.fill_color_rect(
-        Vec2d { x: 0.0, y: 48.0 * scale },
+        Vec2d {
+            x: 0.0,
+            y: 48.0 * scale,
+        },
         ResolvedSize {
             width,
             height: 30.0 * scale,
@@ -502,7 +502,11 @@ pub(crate) fn draw_color_picker(
     }
     let channels = [
         (ColorChannel::Hue, "H", draft.hue().to_string()),
-        (ColorChannel::Saturation, "S", draft.saturation().to_string()),
+        (
+            ColorChannel::Saturation,
+            "S",
+            draft.saturation().to_string(),
+        ),
         (ColorChannel::Value, "V", draft.value().to_string()),
         (ColorChannel::Alpha, "A", draft.alpha().to_string()),
     ];
@@ -511,7 +515,10 @@ pub(crate) fn draw_color_picker(
         let disabled = channel == ColorChannel::Alpha && !picker.alpha_enabled();
         ctx.draw_text(
             &format!("{label} {value}"),
-            Vec2d { x: 2.0 * scale, y: (y + 8.0) * scale },
+            Vec2d {
+                x: 2.0 * scale,
+                y: (y + 8.0) * scale,
+            },
             tokens.typography.label.font_size * 0.8 * scale,
             if disabled {
                 apply_state_layer(tokens.colors.on_surface, tokens.state.disabled)
@@ -547,7 +554,10 @@ pub(crate) fn draw_time_picker(
     let body_top = body_top * scale;
     let wheel_top = body_top + super::TIME_WHEEL_CONTENT_TOP * scale;
     ctx.fill_color_rect(
-        Vec2d { x: 0.0, y: body_top },
+        Vec2d {
+            x: 0.0,
+            y: body_top,
+        },
         ResolvedSize {
             width,
             height: (wheel_bottom - body_top).max(0.0),

@@ -1,6 +1,6 @@
 use aimer_anteros::{
-    AbiStatus, AsyncCallbackEventView, CallbackEventView, GuestOperation, ManifestView,
-    ModelLimits, StateBundleView, WidgetDocumentView, MAX_GUEST_DIAGNOSTIC_BYTES,
+    AbiStatus, AsyncCallbackEventView, CallbackEventView, GuestOperation,
+    MAX_GUEST_DIAGNOSTIC_BYTES, ManifestView, ModelLimits, StateBundleView, WidgetDocumentView,
     capture_guest_panic,
 };
 use std::ops::{Deref, DerefMut};
@@ -175,10 +175,7 @@ impl<P: GuestProgram> GuestAdapter<P> {
     }
 
     /// Validates and dispatches one host-owned async completion document.
-    pub fn dispatch_async_event(
-        &mut self,
-        event: &[u8],
-    ) -> Result<Option<Vec<u8>>, GuestError> {
+    pub fn dispatch_async_event(&mut self, event: &[u8]) -> Result<Option<Vec<u8>>, GuestError> {
         let event = AsyncCallbackEventView::decode(event, self.limits.model)
             .map_err(GuestError::from_model)
             .map_err(|error| error.with_operation(GuestOperation::CallbackRebuild))?;
@@ -298,7 +295,8 @@ impl<P: GuestProgram> RawGuest<P> {
         scale_factor_bits: i64,
     ) -> Result<u32, GuestError> {
         self.reject_other_pending_outputs(true, true, true, true, false)?;
-        let width = u32::try_from(width).map_err(|_| GuestError::new(AbiStatus::InvalidArgument))?;
+        let width =
+            u32::try_from(width).map_err(|_| GuestError::new(AbiStatus::InvalidArgument))?;
         let height =
             u32::try_from(height).map_err(|_| GuestError::new(AbiStatus::InvalidArgument))?;
         let scale_factor = f64::from_bits(scale_factor_bits as u64);
@@ -571,15 +569,13 @@ impl<P: GuestProgram + Default> ExportedGuest<P> {
         operation_kind: GuestOperation,
         operation: impl FnOnce(&mut RawGuest<P>) -> Result<u32, GuestError>,
     ) -> i64 {
-        let guest = self
-            .inner
-            .get_or_init(|| {
-                RawGuest::new(P::default(), self.limits).map(|guest| {
-                    let queue = SegQueue::new();
-                    queue.push(guest);
-                    queue
-                })
-            });
+        let guest = self.inner.get_or_init(|| {
+            RawGuest::new(P::default(), self.limits).map(|guest| {
+                let queue = SegQueue::new();
+                queue.push(guest);
+                queue
+            })
+        });
         match guest {
             Ok(queue) => {
                 let Some(raw_guest) = queue.pop() else {
@@ -613,15 +609,13 @@ impl<P: GuestProgram + Default> ExportedGuest<P> {
         &self,
         operation: impl FnOnce(&mut RawGuest<P>) -> Result<u32, GuestError>,
     ) -> i64 {
-        let guest = self
-            .inner
-            .get_or_init(|| {
-                RawGuest::new(P::default(), self.limits).map(|guest| {
-                    let queue = SegQueue::new();
-                    queue.push(guest);
-                    queue
-                })
-            });
+        let guest = self.inner.get_or_init(|| {
+            RawGuest::new(P::default(), self.limits).map(|guest| {
+                let queue = SegQueue::new();
+                queue.push(guest);
+                queue
+            })
+        });
         match guest {
             Ok(queue) => {
                 let Some(raw_guest) = queue.pop() else {
@@ -641,15 +635,13 @@ impl<P: GuestProgram + Default> ExportedGuest<P> {
         &self,
         operation: impl FnOnce(&mut RawGuest<P>) -> Result<u32, GuestError>,
     ) -> i64 {
-        let guest = self
-            .inner
-            .get_or_init(|| {
-                RawGuest::new(P::default(), self.limits).map(|guest| {
-                    let queue = SegQueue::new();
-                    queue.push(guest);
-                    queue
-                })
-            });
+        let guest = self.inner.get_or_init(|| {
+            RawGuest::new(P::default(), self.limits).map(|guest| {
+                let queue = SegQueue::new();
+                queue.push(guest);
+                queue
+            })
+        });
         match guest {
             Ok(queue) => {
                 let Some(raw_guest) = queue.pop() else {
@@ -674,17 +666,14 @@ impl<P: GuestProgram + Default> ExportedGuest<P> {
     #[doc(hidden)]
     #[inline]
     pub fn initialize(&self, generation_id: i64) -> i64 {
-        self.with_guest(GuestOperation::Initialize, |guest| guest.initialize(generation_id))
+        self.with_guest(GuestOperation::Initialize, |guest| {
+            guest.initialize(generation_id)
+        })
     }
 
     #[doc(hidden)]
     #[inline]
-    pub fn set_window_metrics(
-        &self,
-        width: i32,
-        height: i32,
-        scale_factor_bits: i64,
-    ) -> i32 {
+    pub fn set_window_metrics(&self, width: i32, height: i32, scale_factor_bits: i64) -> i32 {
         let packed = self.with_guest(GuestOperation::Initialize, |guest| {
             guest.set_window_metrics(width, height, scale_factor_bits)
         });
@@ -704,13 +693,17 @@ impl<P: GuestProgram + Default> ExportedGuest<P> {
     #[doc(hidden)]
     #[inline]
     pub fn manifest(&self, pointer: i32, capacity: i32) -> i64 {
-        self.with_guest(GuestOperation::Manifest, |guest| guest.manifest(pointer, capacity))
+        self.with_guest(GuestOperation::Manifest, |guest| {
+            guest.manifest(pointer, capacity)
+        })
     }
 
     #[doc(hidden)]
     #[inline]
     pub fn build(&self, pointer: i32, capacity: i32) -> i64 {
-        self.with_guest(GuestOperation::Build, |guest| guest.build(pointer, capacity))
+        self.with_guest(GuestOperation::Build, |guest| {
+            guest.build(pointer, capacity)
+        })
     }
 
     #[doc(hidden)]
@@ -736,7 +729,9 @@ impl<P: GuestProgram + Default> ExportedGuest<P> {
     #[doc(hidden)]
     #[inline]
     pub fn poll_async(&self, pointer: i32, capacity: i32) -> i64 {
-        self.with_guest(GuestOperation::Build, |guest| guest.poll_async(pointer, capacity))
+        self.with_guest(GuestOperation::Build, |guest| {
+            guest.poll_async(pointer, capacity)
+        })
     }
 
     #[doc(hidden)]
@@ -755,12 +750,7 @@ impl<P: GuestProgram + Default> ExportedGuest<P> {
         output_capacity: i32,
     ) -> i64 {
         self.with_guest(GuestOperation::CallbackRebuild, |guest| {
-            guest.dispatch_async_event(
-                event_pointer,
-                event_length,
-                output_pointer,
-                output_capacity,
-            )
+            guest.dispatch_async_event(event_pointer, event_length, output_pointer, output_capacity)
         })
     }
 
@@ -775,7 +765,9 @@ impl<P: GuestProgram + Default> ExportedGuest<P> {
     #[doc(hidden)]
     #[inline]
     pub fn import_state(&self, pointer: i32, length: i32) -> i64 {
-        self.with_guest(GuestOperation::Import, |guest| guest.import_state(pointer, length))
+        self.with_guest(GuestOperation::Import, |guest| {
+            guest.import_state(pointer, length)
+        })
     }
 
     #[doc(hidden)]
@@ -810,8 +802,8 @@ fn pack_result(result: Result<u32, GuestError>) -> i64 {
 mod tests {
     use aimer_anteros::{
         AbiResult, CallbackEventView, GuestDiagnostic, GuestDiagnosticCategory, GuestOperation,
-        GuestPanicScope, ModelLimits, StateBundleView, Version, WidgetDocument, WidgetNode,
-        WidgetSchemaId, MAX_GUEST_DIAGNOSTIC_BYTES,
+        GuestPanicScope, MAX_GUEST_DIAGNOSTIC_BYTES, ModelLimits, StateBundleView, Version,
+        WidgetDocument, WidgetNode, WidgetSchemaId,
     };
 
     use super::*;
@@ -840,10 +832,7 @@ mod tests {
             Err(GuestError::new(AbiStatus::InternalError))
         }
 
-        fn import_state(
-            &mut self,
-            _state: &StateBundleView<'_>,
-        ) -> Result<(), GuestError> {
+        fn import_state(&mut self, _state: &StateBundleView<'_>) -> Result<(), GuestError> {
             Err(GuestError::new(AbiStatus::InternalError))
         }
     }
@@ -872,7 +861,11 @@ mod tests {
         assert_eq!(diagnostic.operation(), GuestOperation::Build);
         assert_eq!(diagnostic.category(), GuestDiagnosticCategory::Panic);
         assert_eq!(diagnostic.widget(), Some("TestWidget"));
-        assert!(diagnostic.message().contains("during build: guest build exploded"));
+        assert!(
+            diagnostic
+                .message()
+                .contains("during build: guest build exploded")
+        );
         assert!(diagnostic.location().is_some());
     }
 
@@ -896,10 +889,7 @@ mod tests {
             Ok(None)
         }
 
-        fn poll_async(
-            &mut self,
-            limits: ModelLimits,
-        ) -> Result<Option<Vec<u8>>, GuestError> {
+        fn poll_async(&mut self, limits: ModelLimits) -> Result<Option<Vec<u8>>, GuestError> {
             Ok(Some(widget_image(limits)))
         }
 
@@ -907,10 +897,7 @@ mod tests {
             Err(GuestError::new(AbiStatus::InternalError))
         }
 
-        fn import_state(
-            &mut self,
-            _state: &StateBundleView<'_>,
-        ) -> Result<(), GuestError> {
+        fn import_state(&mut self, _state: &StateBundleView<'_>) -> Result<(), GuestError> {
             Err(GuestError::new(AbiStatus::InternalError))
         }
     }
@@ -937,7 +924,10 @@ mod tests {
         let probe = AbiResult::from_packed(pack_result(guest.poll_async(0, 0))).unwrap();
         assert_eq!(probe.status(), AbiStatus::BufferTooSmall);
         assert!(probe.value() > 0);
-        assert_eq!(guest.pending_async.as_ref().map(Vec::len), Some(probe.value() as usize));
+        assert_eq!(
+            guest.pending_async.as_ref().map(Vec::len),
+            Some(probe.value() as usize)
+        );
 
         let retry_probe = AbiResult::from_packed(pack_result(guest.poll_async(0, 0))).unwrap();
         assert_eq!(retry_probe.status(), AbiStatus::BufferTooSmall);

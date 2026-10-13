@@ -54,8 +54,6 @@ impl Vec2d {
             y: self.y.abs(),
         }
     }
-
-
 }
 
 impl Vec2d {

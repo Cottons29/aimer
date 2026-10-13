@@ -1,10 +1,9 @@
 use core::arch::x86_64::{
-    __m128i, _mm_add_epi8, _mm_add_epi16, _mm_and_si128, _mm_andnot_si128,
-    _mm_cmpgt_epi8, _mm_cmpgt_epi16, _mm_loadu_si128, _mm_movemask_epi8,
-    _mm_or_si128, _mm_set1_epi8, _mm_set1_epi16, _mm_storeu_si128, _mm_xor_si128,
-    _mm_cmpeq_epi16, _mm_mulhi_epu16, _mm_mullo_epi16, _mm_packus_epi16,
-    _mm_setzero_si128, _mm_srli_epi16, _mm_sub_epi8, _mm_sub_epi16,
-    _mm_unpackhi_epi8, _mm_unpacklo_epi8,
+    __m128i, _mm_add_epi8, _mm_add_epi16, _mm_and_si128, _mm_andnot_si128, _mm_cmpeq_epi16,
+    _mm_cmpgt_epi8, _mm_cmpgt_epi16, _mm_loadu_si128, _mm_movemask_epi8, _mm_mulhi_epu16,
+    _mm_mullo_epi16, _mm_or_si128, _mm_packus_epi16, _mm_set1_epi8, _mm_set1_epi16,
+    _mm_setzero_si128, _mm_srli_epi16, _mm_storeu_si128, _mm_sub_epi8, _mm_sub_epi16,
+    _mm_unpackhi_epi8, _mm_unpacklo_epi8, _mm_xor_si128,
 };
 
 use super::Sse2;
@@ -23,13 +22,21 @@ impl Sse2 {
             let zero = _mm_setzero_si128();
             let factor = _mm_set1_epi16(255);
             let round = _mm_set1_epi16(1 << (SHIFT - 1));
-            let low = _mm_add_epi16(_mm_mullo_epi16(_mm_unpacklo_epi8(values, zero), factor), round);
-            let high = _mm_add_epi16(_mm_mullo_epi16(_mm_unpackhi_epi8(values, zero), factor), round);
+            let low = _mm_add_epi16(
+                _mm_mullo_epi16(_mm_unpacklo_epi8(values, zero), factor),
+                round,
+            );
+            let high = _mm_add_epi16(
+                _mm_mullo_epi16(_mm_unpackhi_epi8(values, zero), factor),
+                round,
+            );
             let mask = _mm_set1_epi16(255);
             // Mask after shifting so PACKUS preserves byte truncation even
             // when a caller supplies a count greater than the sample count.
-            let result = _mm_packus_epi16(_mm_and_si128(_mm_srli_epi16::<SHIFT>(low), mask),
-                _mm_and_si128(_mm_srli_epi16::<SHIFT>(high), mask));
+            let result = _mm_packus_epi16(
+                _mm_and_si128(_mm_srli_epi16::<SHIFT>(low), mask),
+                _mm_and_si128(_mm_srli_epi16::<SHIFT>(high), mask),
+            );
             _mm_storeu_si128(counts.as_mut_ptr().cast(), result);
         }
     }
@@ -104,16 +111,30 @@ macro_rules! impl_unsigned {
             fn select(mask: Self::Mask, yes: Self::Vector, no: Self::Vector) -> Self::Vector {
                 // SAFETY: SSE2 is baseline. Comparison masks have either all
                 // one or all zero bits in each lane.
-                unsafe {
-                    _mm_or_si128(_mm_and_si128(mask, yes), _mm_andnot_si128(mask, no))
-                }
+                unsafe { _mm_or_si128(_mm_and_si128(mask, yes), _mm_andnot_si128(mask, no)) }
             }
         }
     };
 }
 
-impl_unsigned!(u8, i8, 16, _mm_set1_epi8, _mm_add_epi8, _mm_sub_epi8, _mm_cmpgt_epi8);
-impl_unsigned!(u16, i16, 8, _mm_set1_epi16, _mm_add_epi16, _mm_sub_epi16, _mm_cmpgt_epi16);
+impl_unsigned!(
+    u8,
+    i8,
+    16,
+    _mm_set1_epi8,
+    _mm_add_epi8,
+    _mm_sub_epi8,
+    _mm_cmpgt_epi8
+);
+impl_unsigned!(
+    u16,
+    i16,
+    8,
+    _mm_set1_epi16,
+    _mm_add_epi16,
+    _mm_sub_epi16,
+    _mm_cmpgt_epi16
+);
 
 impl SimdMul<u8, 16> for Sse2 {
     #[inline(always)]
@@ -122,14 +143,23 @@ impl SimdMul<u8, 16> for Sse2 {
         // zero-extend both halves to u16 before multiplying.
         unsafe {
             let zero = _mm_setzero_si128();
-            let low = _mm_mullo_epi16(_mm_unpacklo_epi8(left, zero), _mm_unpacklo_epi8(right, zero));
-            let high = _mm_mullo_epi16(_mm_unpackhi_epi8(left, zero), _mm_unpackhi_epi8(right, zero));
+            let low = _mm_mullo_epi16(
+                _mm_unpacklo_epi8(left, zero),
+                _mm_unpacklo_epi8(right, zero),
+            );
+            let high = _mm_mullo_epi16(
+                _mm_unpackhi_epi8(left, zero),
+                _mm_unpackhi_epi8(right, zero),
+            );
             let upper_bits = _mm_or_si128(_mm_srli_epi16::<8>(low), _mm_srli_epi16::<8>(high));
             check_mul_overflow(_mm_movemask_epi8(_mm_cmpeq_epi16(upper_bits, zero)) != 0xffff);
             // PACKUS treats its input as signed and saturates. Mask to the
             // low byte first so it produces wrapping rather than saturation.
             let byte_mask = _mm_set1_epi16(255);
-            _mm_packus_epi16(_mm_and_si128(low, byte_mask), _mm_and_si128(high, byte_mask))
+            _mm_packus_epi16(
+                _mm_and_si128(low, byte_mask),
+                _mm_and_si128(high, byte_mask),
+            )
         }
     }
 }
@@ -141,7 +171,9 @@ impl SimdMul<u16, 8> for Sse2 {
         // product indicates overflow; MULLO retains the low sixteen bits.
         unsafe {
             let high = _mm_mulhi_epu16(left, right);
-            check_mul_overflow(_mm_movemask_epi8(_mm_cmpeq_epi16(high, _mm_setzero_si128())) != 0xffff);
+            check_mul_overflow(
+                _mm_movemask_epi8(_mm_cmpeq_epi16(high, _mm_setzero_si128())) != 0xffff,
+            );
             _mm_mullo_epi16(left, right)
         }
     }

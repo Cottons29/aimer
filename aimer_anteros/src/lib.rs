@@ -4,6 +4,8 @@
 mod abi;
 #[path = "portable/adapter.rs"]
 mod adapter;
+#[path = "protocol/async_callback.rs"]
+mod async_callback;
 #[path = "capability/capability.rs"]
 mod capability;
 #[path = "protocol/codec.rs"]
@@ -12,13 +14,11 @@ mod codec;
 mod diagnostic;
 #[path = "protocol/event.rs"]
 mod event;
-#[path = "protocol/async_callback.rs"]
-mod async_callback;
-#[path = "protocol/guest_panic.rs"]
-mod guest_panic;
 #[cfg(feature = "host-runtime")]
 #[path = "runtime/generation.rs"]
 mod generation;
+#[path = "protocol/guest_panic.rs"]
+mod guest_panic;
 #[path = "protocol/identity.rs"]
 mod identity;
 #[path = "protocol/manifest.rs"]
@@ -51,56 +51,49 @@ mod widget_schema;
 
 pub use abi::{AbiResult, AbiStatus, AbiVersion, CURRENT_ABI_VERSION, UnknownAbiStatus};
 pub use adapter::{AdapterError, NativeAdapter, WasmAdapter};
+pub use async_callback::{
+    ASYNC_CALLBACK_EVENT_FORMAT_VERSION, AsyncCallbackEvent, AsyncCallbackEventKind,
+    AsyncCallbackEventView, AsyncTaskId,
+};
+#[cfg(target_arch = "wasm32")]
+pub use capability::WasmCapabilityTransport;
 pub use capability::{
     CapabilityBindings, CapabilityCall, CapabilityCompletionToken, CapabilityDecoder,
     CapabilityDescriptor, CapabilityEncoder, CapabilityError, CapabilityGeneration,
     CapabilityLimits, CapabilityProvider, CapabilityRegistry, CapabilityRegistryError,
     CapabilityResult, CapabilityStagingClass, CapabilityTransport, GenerationId,
     PORTABLE_HTTP_CAPABILITY_ABI_MAJOR, PORTABLE_HTTP_CAPABILITY_NAME,
-    PORTABLE_HTTP_MAX_REQUEST_BYTES, PORTABLE_HTTP_MAX_RESPONSE_BYTES,
-    PORTABLE_HTTP_METHOD_GET, PORTABLE_HTTP_RESPONSE_OVERHEAD_BYTES,
-    StagedCapability, portable_http_capability_id, portable_http_contract_fingerprint,
-    portable_http_max_body_bytes,
-    capability_contract_fingerprint,
+    PORTABLE_HTTP_MAX_REQUEST_BYTES, PORTABLE_HTTP_MAX_RESPONSE_BYTES, PORTABLE_HTTP_METHOD_GET,
+    PORTABLE_HTTP_RESPONSE_OVERHEAD_BYTES, StagedCapability, capability_contract_fingerprint,
+    portable_http_capability_id, portable_http_contract_fingerprint, portable_http_max_body_bytes,
 };
-#[cfg(target_arch = "wasm32")]
-pub use capability::WasmCapabilityTransport;
 pub use codec::{
     CanonicalDecoder, CanonicalEncoder, DecodeError, DecodeLimits, EncodeError, EncodeLimits,
     Envelope, Version,
 };
 pub use diagnostic::{
     GuestDiagnostic, GuestDiagnosticCategory, GuestDiagnosticDecodeError,
-    GuestDiagnosticEncodeError, GuestOperation, GuestSourceLocation,
-    MAX_GUEST_DIAGNOSTIC_BYTES,
-};
-pub use guest_panic::{
-    GuestPanicContext, GuestPanicRecord, GuestPanicScope, capture_guest_panic,
+    GuestDiagnosticEncodeError, GuestOperation, GuestSourceLocation, MAX_GUEST_DIAGNOSTIC_BYTES,
 };
 pub use event::{CALLBACK_EVENT_FORMAT_VERSION, CallbackEvent, CallbackEventView};
-pub use async_callback::{
-    ASYNC_CALLBACK_EVENT_FORMAT_VERSION, AsyncCallbackEvent, AsyncCallbackEventKind,
-    AsyncCallbackEventView, AsyncTaskId,
-};
 #[cfg(feature = "host-runtime")]
 pub use generation::{
     AsyncCallbackError, CallbackBindingError, CallbackBindingSnapshot, Generation,
     GenerationAsyncLimits, GenerationCompletionToken, GenerationHandle, GenerationLimits,
     GenerationResource, GenerationResourceError, GenerationResourceKind,
 };
+pub use guest_panic::{GuestPanicContext, GuestPanicRecord, GuestPanicScope, capture_guest_panic};
 pub use identity::{IdentityKind, StableId128};
 pub use manifest::{
     ApplicationManifest, CapabilityPolicy, CapabilityRequirement, CapabilityRequirementView,
     CapabilityRequirements, ManifestView,
 };
-pub use materializer::{
-    WidgetFactory, WidgetMaterializeError, materialize_widget_tree,
-};
+pub use materializer::{WidgetFactory, WidgetMaterializeError, materialize_widget_tree};
 pub use model::{ModelError, ModelLimits};
 pub use portable_schema::{
-    AsyncCallbackSchemaMetadata, CallbackSchemaMetadata, ChildCardinality, PortableWidgetSchemaMetadata,
-    PortableWidgetSchemaMetadataError, PortableWidgetSchemaValidator, PropertyPresence,
-    PropertySchemaMetadata, PropertyValueKind, ValueSchemaMetadata,
+    AsyncCallbackSchemaMetadata, CallbackSchemaMetadata, ChildCardinality,
+    PortableWidgetSchemaMetadata, PortableWidgetSchemaMetadataError, PortableWidgetSchemaValidator,
+    PropertyPresence, PropertySchemaMetadata, PropertyValueKind, ValueSchemaMetadata,
     validate_portable_widget_schema_metadata,
 };
 #[cfg(feature = "host-runtime")]
@@ -112,8 +105,8 @@ pub use reload::{
 
 #[cfg(feature = "wasm-hot-reload")]
 pub use runtime::{
-    GuestInstance, ManifestImage, Runtime, RuntimeConfig, RuntimeError, RuntimeErrorKind, StateImage,
-    WidgetImage,
+    GuestInstance, ManifestImage, Runtime, RuntimeConfig, RuntimeError, RuntimeErrorKind,
+    StateImage, WidgetImage,
 };
 pub use schema_identity::{
     EventId, PropertyId, ValueTypeId, WidgetSchemaId, WidgetSchemaMetadata,
@@ -129,54 +122,28 @@ pub use state_transfer::{
     StateTransferError, StateTransferReport, StateTransferStage,
 };
 pub use widget_assembly::{
-    AssemblyErrorKind, WidgetAssemblyDocument, WidgetAssemblyError,
-    disassemble_widget_document,
+    AssemblyErrorKind, WidgetAssemblyDocument, WidgetAssemblyError, disassemble_widget_document,
 };
 pub use widget_ir::{
-    CallbackBinding, CallbackBindings, ChildIndices, PropertyValue, WidgetDocument,
-    WidgetDocumentView, WidgetNode, WidgetNodeView, WidgetProperties, WidgetProperty,
-    WidgetSchemaSupport, WIDGET_IR_FORMAT_VERSION,
+    CallbackBinding, CallbackBindings, ChildIndices, PropertyValue, WIDGET_IR_FORMAT_VERSION,
+    WidgetDocument, WidgetDocumentView, WidgetNode, WidgetNodeView, WidgetProperties,
+    WidgetProperty, WidgetSchemaSupport,
 };
 pub use widget_schema::{
     BOX_DECORATION_VALUE_MAXIMUM_ENCODED_BYTES, BOX_DECORATION_VALUE_NAME,
-    BOX_DECORATION_VALUE_VERSION, BUILTIN_PORTABLE_WIDGET_SCHEMAS,
-    BUILTIN_WIDGET_SCHEMA_VERSION, EVENT_BUTTON_DOUBLE_PRESS,
-    EVENT_BUTTON_DOUBLE_PRESS_NAME, EVENT_BUTTON_LONG_PRESS, EVENT_BUTTON_LONG_PRESS_NAME,
-    EVENT_BUTTON_PRESS, EVENT_BUTTON_PRESS_NAME, EVENT_BUTTON_RIGHT_PRESS,
-    EVENT_BUTTON_RIGHT_PRESS_NAME, PROPERTY_CONTAINER_COLOR, PROPERTY_CONTAINER_COLOR_NAME,
-    EVENT_GESTURE_DETECTOR_DRAG_END, EVENT_GESTURE_DETECTOR_DRAG_END_NAME,
-    EVENT_GESTURE_DETECTOR_DOUBLE_PRESS, EVENT_GESTURE_DETECTOR_DOUBLE_PRESS_NAME,
-    EVENT_GESTURE_DETECTOR_LONG_PRESS, EVENT_GESTURE_DETECTOR_LONG_PRESS_NAME,
-    EVENT_GESTURE_DETECTOR_RIGHT_TAP, EVENT_GESTURE_DETECTOR_RIGHT_TAP_NAME,
-    EVENT_GESTURE_DETECTOR_TAP, EVENT_GESTURE_DETECTOR_TAP_NAME,
-    EVENT_MOUSE_REGION_HOVER_ENTER, EVENT_MOUSE_REGION_HOVER_ENTER_NAME,
-    EVENT_MOUSE_REGION_HOVER_EXIT, EVENT_MOUSE_REGION_HOVER_EXIT_NAME,
-    PROPERTY_COLUMN_GAPS, PROPERTY_COLUMN_GAPS_NAME, PROPERTY_COLUMN_HORIZONTAL_ALIGNMENT,
-    PROPERTY_COLUMN_HORIZONTAL_ALIGNMENT_NAME, PROPERTY_COLUMN_JUSTIFY_CONTENT,
-    PROPERTY_COLUMN_JUSTIFY_CONTENT_NAME, PROPERTY_COLUMN_OVERFLOW, PROPERTY_COLUMN_OVERFLOW_NAME,
-    PROPERTY_COLUMN_VERTICAL_ALIGNMENT, PROPERTY_COLUMN_VERTICAL_ALIGNMENT_NAME,
-    PROPERTY_CONTAINER_HEIGHT, PROPERTY_CONTAINER_HEIGHT_NAME, PROPERTY_CONTAINER_MARGIN,
-    PROPERTY_CONTAINER_MARGIN_NAME, PROPERTY_CONTAINER_PADDING, PROPERTY_CONTAINER_PADDING_NAME,
-    PROPERTY_CONTAINER_BOX_DECORATION, PROPERTY_CONTAINER_BOX_DECORATION_NAME,
-    PROPERTY_CONTAINER_WIDTH, PROPERTY_CONTAINER_WIDTH_NAME, PROPERTY_SIZED_BOX_HEIGHT,
-    PROPERTY_SIZED_BOX_HEIGHT_NAME,
-    PROPERTY_SIZED_BOX_WIDTH, PROPERTY_SIZED_BOX_WIDTH_NAME, PROPERTY_TEXT_CONTENT,
-    PROPERTY_BUTTON_DECORATION, PROPERTY_BUTTON_DECORATION_NAME,
-    PROPERTY_TEXT_ALIGN, PROPERTY_TEXT_ALIGN_NAME, PROPERTY_TEXT_CONTENT_NAME, PROPERTY_TEXT_STYLE,
-    PROPERTY_TEXT_STYLE_NAME, PROPERTY_TEXT_LINE_HEIGHT, PROPERTY_TEXT_LINE_HEIGHT_NAME,
-    PROPERTY_TEXT_INDENT, PROPERTY_TEXT_INDENT_NAME, WIDGET_BUTTON,
-    WIDGET_BUTTON_NAME, WIDGET_COLUMN,
-    WIDGET_COLUMN_NAME, WIDGET_CONTAINER, WIDGET_CONTAINER_NAME, WIDGET_ROW, WIDGET_ROW_NAME,
-    PROPERTY_ROW_GAPS, PROPERTY_ROW_GAPS_NAME, PROPERTY_ROW_HORIZONTAL_ALIGNMENT,
-    PROPERTY_ROW_HORIZONTAL_ALIGNMENT_NAME, PROPERTY_ROW_JUSTIFY_CONTENT,
-    PROPERTY_ROW_JUSTIFY_CONTENT_NAME, PROPERTY_ROW_OVERFLOW, PROPERTY_ROW_OVERFLOW_NAME,
-    PROPERTY_ROW_VERTICAL_ALIGNMENT, PROPERTY_ROW_VERTICAL_ALIGNMENT_NAME,
-    WIDGET_SIZED_BOX, WIDGET_SIZED_BOX_NAME, WIDGET_TEXT, WIDGET_TEXT_NAME,
-    LAYOUT_SPACING_VALUE_MAXIMUM_ENCODED_BYTES, LAYOUT_SPACING_VALUE_NAME,
-    LAYOUT_SPACING_VALUE_VERSION, PROPERTY_PROVIDER_SCHEMA_VERSION,
-    PROPERTY_PROVIDER_SCHEMA_VERSION_NAME, PROPERTY_PROVIDER_TYPE, PROPERTY_PROVIDER_TYPE_NAME,
-    PROPERTY_PROVIDER_VALUE, PROPERTY_PROVIDER_VALUE_NAME, PROVIDER_VALUE_MAXIMUM_ENCODED_BYTES,
-    THEME_DATA_VALUE_MAXIMUM_ENCODED_BYTES, THEME_DATA_VALUE_NAME, THEME_DATA_VALUE_VERSION,
+    BOX_DECORATION_VALUE_VERSION, BUILTIN_PORTABLE_WIDGET_SCHEMAS, BUILTIN_WIDGET_SCHEMA_VERSION,
+    EVENT_BUTTON_DOUBLE_PRESS, EVENT_BUTTON_DOUBLE_PRESS_NAME, EVENT_BUTTON_LONG_PRESS,
+    EVENT_BUTTON_LONG_PRESS_NAME, EVENT_BUTTON_PRESS, EVENT_BUTTON_PRESS_NAME,
+    EVENT_BUTTON_RIGHT_PRESS, EVENT_BUTTON_RIGHT_PRESS_NAME, EVENT_GESTURE_DETECTOR_DOUBLE_PRESS,
+    EVENT_GESTURE_DETECTOR_DOUBLE_PRESS_NAME, EVENT_GESTURE_DETECTOR_DRAG_END,
+    EVENT_GESTURE_DETECTOR_DRAG_END_NAME, EVENT_GESTURE_DETECTOR_LONG_PRESS,
+    EVENT_GESTURE_DETECTOR_LONG_PRESS_NAME, EVENT_GESTURE_DETECTOR_RIGHT_TAP,
+    EVENT_GESTURE_DETECTOR_RIGHT_TAP_NAME, EVENT_GESTURE_DETECTOR_TAP,
+    EVENT_GESTURE_DETECTOR_TAP_NAME, EVENT_MOUSE_REGION_HOVER_ENTER,
+    EVENT_MOUSE_REGION_HOVER_ENTER_NAME, EVENT_MOUSE_REGION_HOVER_EXIT,
+    EVENT_MOUSE_REGION_HOVER_EXIT_NAME, LAYOUT_SPACING_VALUE_MAXIMUM_ENCODED_BYTES,
+    LAYOUT_SPACING_VALUE_NAME, LAYOUT_SPACING_VALUE_VERSION,
+    LINE_HEIGHT_VALUE_MAXIMUM_ENCODED_BYTES, LINE_HEIGHT_VALUE_NAME, LINE_HEIGHT_VALUE_VERSION,
     PROPERTY_ANIMATED_THEME_CURVE, PROPERTY_ANIMATED_THEME_CURVE_NAME,
     PROPERTY_ANIMATED_THEME_CURVE_X1, PROPERTY_ANIMATED_THEME_CURVE_X1_NAME,
     PROPERTY_ANIMATED_THEME_CURVE_X2, PROPERTY_ANIMATED_THEME_CURVE_X2_NAME,
@@ -185,24 +152,46 @@ pub use widget_schema::{
     PROPERTY_ANIMATED_THEME_DURATION_MILLIS, PROPERTY_ANIMATED_THEME_DURATION_MILLIS_NAME,
     PROPERTY_ANIMATED_THEME_MODE, PROPERTY_ANIMATED_THEME_MODE_NAME,
     PROPERTY_ANIMATED_THEME_SCHEMA_VERSION, PROPERTY_ANIMATED_THEME_SCHEMA_VERSION_NAME,
-    PROPERTY_ANIMATED_THEME_TYPE, PROPERTY_ANIMATED_THEME_TYPE_NAME,
-    PROPERTY_ANIMATED_THEME_VALUE, PROPERTY_ANIMATED_THEME_VALUE_NAME,
+    PROPERTY_ANIMATED_THEME_TYPE, PROPERTY_ANIMATED_THEME_TYPE_NAME, PROPERTY_ANIMATED_THEME_VALUE,
+    PROPERTY_ANIMATED_THEME_VALUE_NAME, PROPERTY_BUTTON_DECORATION,
+    PROPERTY_BUTTON_DECORATION_NAME, PROPERTY_COLUMN_GAPS, PROPERTY_COLUMN_GAPS_NAME,
+    PROPERTY_COLUMN_HORIZONTAL_ALIGNMENT, PROPERTY_COLUMN_HORIZONTAL_ALIGNMENT_NAME,
+    PROPERTY_COLUMN_JUSTIFY_CONTENT, PROPERTY_COLUMN_JUSTIFY_CONTENT_NAME,
+    PROPERTY_COLUMN_OVERFLOW, PROPERTY_COLUMN_OVERFLOW_NAME, PROPERTY_COLUMN_VERTICAL_ALIGNMENT,
+    PROPERTY_COLUMN_VERTICAL_ALIGNMENT_NAME, PROPERTY_CONTAINER_BOX_DECORATION,
+    PROPERTY_CONTAINER_BOX_DECORATION_NAME, PROPERTY_CONTAINER_COLOR,
+    PROPERTY_CONTAINER_COLOR_NAME, PROPERTY_CONTAINER_HEIGHT, PROPERTY_CONTAINER_HEIGHT_NAME,
+    PROPERTY_CONTAINER_MARGIN, PROPERTY_CONTAINER_MARGIN_NAME, PROPERTY_CONTAINER_PADDING,
+    PROPERTY_CONTAINER_PADDING_NAME, PROPERTY_CONTAINER_WIDTH, PROPERTY_CONTAINER_WIDTH_NAME,
+    PROPERTY_PROVIDER_SCHEMA_VERSION, PROPERTY_PROVIDER_SCHEMA_VERSION_NAME,
+    PROPERTY_PROVIDER_TYPE, PROPERTY_PROVIDER_TYPE_NAME, PROPERTY_PROVIDER_VALUE,
+    PROPERTY_PROVIDER_VALUE_NAME, PROPERTY_ROW_GAPS, PROPERTY_ROW_GAPS_NAME,
+    PROPERTY_ROW_HORIZONTAL_ALIGNMENT, PROPERTY_ROW_HORIZONTAL_ALIGNMENT_NAME,
+    PROPERTY_ROW_JUSTIFY_CONTENT, PROPERTY_ROW_JUSTIFY_CONTENT_NAME, PROPERTY_ROW_OVERFLOW,
+    PROPERTY_ROW_OVERFLOW_NAME, PROPERTY_ROW_VERTICAL_ALIGNMENT,
+    PROPERTY_ROW_VERTICAL_ALIGNMENT_NAME, PROPERTY_SIZED_BOX_HEIGHT,
+    PROPERTY_SIZED_BOX_HEIGHT_NAME, PROPERTY_SIZED_BOX_WIDTH, PROPERTY_SIZED_BOX_WIDTH_NAME,
+    PROPERTY_TEXT_ALIGN, PROPERTY_TEXT_ALIGN_NAME, PROPERTY_TEXT_CONTENT,
+    PROPERTY_TEXT_CONTENT_NAME, PROPERTY_TEXT_INDENT, PROPERTY_TEXT_INDENT_NAME,
+    PROPERTY_TEXT_LINE_HEIGHT, PROPERTY_TEXT_LINE_HEIGHT_NAME, PROPERTY_TEXT_STYLE,
+    PROPERTY_TEXT_STYLE_NAME, PROVIDER_VALUE_MAXIMUM_ENCODED_BYTES,
+    TEXT_STYLE_VALUE_MAXIMUM_ENCODED_BYTES, TEXT_STYLE_VALUE_NAME, TEXT_STYLE_VALUE_VERSION,
+    THEME_DATA_VALUE_MAXIMUM_ENCODED_BYTES, THEME_DATA_VALUE_NAME, THEME_DATA_VALUE_VERSION,
     THEME_VALUE_MAXIMUM_ENCODED_BYTES, WIDGET_ANIMATED_THEME, WIDGET_ANIMATED_THEME_NAME,
-    WIDGET_PROVIDER, WIDGET_PROVIDER_NAME, TEXT_STYLE_VALUE_MAXIMUM_ENCODED_BYTES,
-    TEXT_STYLE_VALUE_NAME, TEXT_STYLE_VALUE_VERSION, LINE_HEIGHT_VALUE_MAXIMUM_ENCODED_BYTES,
-    LINE_HEIGHT_VALUE_NAME, LINE_HEIGHT_VALUE_VERSION,
-    WIDGET_GESTURE_DETECTOR, WIDGET_GESTURE_DETECTOR_NAME, WIDGET_MOUSE_REGION,
-    WIDGET_MOUSE_REGION_NAME,
+    WIDGET_BUTTON, WIDGET_BUTTON_NAME, WIDGET_COLUMN, WIDGET_COLUMN_NAME, WIDGET_CONTAINER,
+    WIDGET_CONTAINER_NAME, WIDGET_GESTURE_DETECTOR, WIDGET_GESTURE_DETECTOR_NAME,
+    WIDGET_MOUSE_REGION, WIDGET_MOUSE_REGION_NAME, WIDGET_PROVIDER, WIDGET_PROVIDER_NAME,
+    WIDGET_ROW, WIDGET_ROW_NAME, WIDGET_SIZED_BOX, WIDGET_SIZED_BOX_NAME, WIDGET_TEXT,
+    WIDGET_TEXT_NAME,
 };
 
 #[cfg(test)]
 mod adapter_parity_tests {
     use crate::{
-        AdapterError, CallbackBinding, CallbackEvent, EventId, ModelLimits, NativeAdapter, PropertyId,
-        PropertyValue, StableId128, StateBundle, StateEntry, StatePolicy, Version, WIDGET_BUTTON,
-        WIDGET_TEXT, WasmAdapter, WidgetDocument, WidgetDocumentView, WidgetNode, WidgetProperty,
-        WidgetSchemaId,
-        EVENT_BUTTON_PRESS, PROPERTY_TEXT_CONTENT,
+        AdapterError, CallbackBinding, CallbackEvent, EVENT_BUTTON_PRESS, EventId, ModelLimits,
+        NativeAdapter, PROPERTY_TEXT_CONTENT, PropertyId, PropertyValue, StableId128, StateBundle,
+        StateEntry, StatePolicy, Version, WIDGET_BUTTON, WIDGET_TEXT, WasmAdapter, WidgetDocument,
+        WidgetDocumentView, WidgetNode, WidgetProperty, WidgetSchemaId,
     };
 
     const LIMITS: ModelLimits = ModelLimits::new(4_096, 32, 256, 256);
@@ -216,7 +205,10 @@ mod adapter_parity_tests {
     fn native_and_wasm_adapters_emit_identical_initial_images() {
         let native = NativeAdapter::new(LIMITS);
         let wasm = WasmAdapter::new(LIMITS);
-        let properties = [WidgetProperty::new(PropertyId::new(1), PropertyValue::StringRef(0))];
+        let properties = [WidgetProperty::new(
+            PropertyId::new(1),
+            PropertyValue::StringRef(0),
+        )];
         let callbacks = [CallbackBinding::new(
             EventId::new(1),
             Version::new(1, 0),
@@ -251,10 +243,7 @@ mod adapter_parity_tests {
         let native_event = native.encode_callback_event(event).unwrap();
         let native_state = native.encode_state_bundle(&state).unwrap();
 
-        assert_eq!(
-            write_widget_to_guest(&wasm, &document),
-            native_widget,
-        );
+        assert_eq!(write_widget_to_guest(&wasm, &document), native_widget,);
         assert_eq!(write_event_to_guest(&wasm, event), native_event);
         assert_eq!(write_state_to_guest(&wasm, &state), native_state);
         assert_eq!(&native_widget[..8], b"AWIR\x02\x00\x00\x00");
@@ -335,9 +324,8 @@ mod adapter_parity_tests {
             native_application.dispatch(event);
             wasm_application.dispatch(event);
 
-            let native_image = native_application.with_document(|document| {
-                native_adapter.encode_widget_document(document).unwrap()
-            });
+            let native_image = native_application
+                .with_document(|document| native_adapter.encode_widget_document(document).unwrap());
             let wasm_image = wasm_application
                 .with_document(|document| write_widget_to_guest(&wasm_adapter, document));
 
@@ -485,14 +473,8 @@ mod callback_generation_tests {
             CallbackBindingSnapshot::from_document(&replacement_view, 16).unwrap(),
         );
         let old_event = callback_event(41, 1, CALLBACK_ID, WIDGET_KEY, EVENT_KIND, EVENT_SCHEMA);
-        let replacement_event = callback_event(
-            42,
-            1,
-            CALLBACK_ID,
-            WIDGET_KEY,
-            EVENT_KIND,
-            EVENT_SCHEMA,
-        );
+        let replacement_event =
+            callback_event(42, 1, CALLBACK_ID, WIDGET_KEY, EVENT_KIND, EVENT_SCHEMA);
 
         let old_event = old_generation.validate_event(&old_event, LIMITS).unwrap();
         let replacement_event = replacement_generation
@@ -559,14 +541,7 @@ mod callback_generation_tests {
             GenerationId::new(42),
             CallbackBindingSnapshot::from_document(&view, 16).unwrap(),
         );
-        let event = callback_event(
-            42,
-            1,
-            CALLBACK_ID,
-            WIDGET_KEY,
-            EVENT_KIND,
-            EVENT_SCHEMA,
-        );
+        let event = callback_event(42, 1, CALLBACK_ID, WIDGET_KEY, EVENT_KIND, EVENT_SCHEMA);
 
         let error = generation.validate_event(&event, LIMITS).unwrap_err();
 
@@ -582,14 +557,7 @@ mod callback_generation_tests {
     fn callback_event_rejects_a_mismatched_widget_key() {
         let mut generation = generation(41);
         let wrong_key = StableId128::from_bytes([0x44; 16]);
-        let event = callback_event(
-            41,
-            1,
-            CALLBACK_ID,
-            wrong_key,
-            EVENT_KIND,
-            EVENT_SCHEMA,
-        );
+        let event = callback_event(41, 1, CALLBACK_ID, wrong_key, EVENT_KIND, EVENT_SCHEMA);
 
         let error = generation.validate_event(&event, LIMITS).unwrap_err();
 
@@ -631,14 +599,7 @@ mod callback_generation_tests {
     fn callback_event_rejects_a_wrong_event_schema() {
         let mut generation = generation(41);
         let wrong_schema = Version::new(2, 0);
-        let event = callback_event(
-            41,
-            1,
-            CALLBACK_ID,
-            WIDGET_KEY,
-            EVENT_KIND,
-            wrong_schema,
-        );
+        let event = callback_event(41, 1, CALLBACK_ID, WIDGET_KEY, EVENT_KIND, wrong_schema);
 
         let error = generation.validate_event(&event, LIMITS).unwrap_err();
 
@@ -655,14 +616,7 @@ mod callback_generation_tests {
     #[test]
     fn callback_event_sequence_cannot_be_consumed_twice() {
         let mut generation = generation(41);
-        let event = callback_event(
-            41,
-            7,
-            CALLBACK_ID,
-            WIDGET_KEY,
-            EVENT_KIND,
-            EVENT_SCHEMA,
-        );
+        let event = callback_event(41, 7, CALLBACK_ID, WIDGET_KEY, EVENT_KIND, EVENT_SCHEMA);
         generation.validate_event(&event, LIMITS).unwrap();
 
         let error = generation.validate_event(&event, LIMITS).unwrap_err();
@@ -679,14 +633,7 @@ mod callback_generation_tests {
     #[test]
     fn event_from_another_generation_is_rejected() {
         let mut generation = generation(41);
-        let event = callback_event(
-            40,
-            1,
-            CALLBACK_ID,
-            WIDGET_KEY,
-            EVENT_KIND,
-            EVENT_SCHEMA,
-        );
+        let event = callback_event(40, 1, CALLBACK_ID, WIDGET_KEY, EVENT_KIND, EVENT_SCHEMA);
 
         let error = generation.validate_event(&event, LIMITS).unwrap_err();
 
@@ -703,14 +650,7 @@ mod callback_generation_tests {
     fn retired_generation_rejects_new_callback_events() {
         let mut generation = generation(41);
         generation.retire();
-        let event = callback_event(
-            41,
-            1,
-            CALLBACK_ID,
-            WIDGET_KEY,
-            EVENT_KIND,
-            EVENT_SCHEMA,
-        );
+        let event = callback_event(41, 1, CALLBACK_ID, WIDGET_KEY, EVENT_KIND, EVENT_SCHEMA);
 
         let error = generation.validate_event(&event, LIMITS).unwrap_err();
 
@@ -731,10 +671,7 @@ mod callback_generation_tests {
         )
     }
 
-    fn widget_image(
-        generation_id: u64,
-        binding: Option<(StableId128, StableId128)>,
-    ) -> Vec<u8> {
+    fn widget_image(generation_id: u64, binding: Option<(StableId128, StableId128)>) -> Vec<u8> {
         let callbacks = binding
             .map(|(_, callback_id)| [CallbackBinding::new(EVENT_KIND, EVENT_SCHEMA, callback_id)]);
         let node = binding.map_or_else(
@@ -778,12 +715,12 @@ mod capability_registry_tests {
     use std::rc::Rc;
 
     use crate::{
-        AbiVersion, ApplicationManifest, CapabilityCall, CapabilityCompletionToken,
-        CapabilityDescriptor, CapabilityError, CapabilityGeneration, CapabilityLimits,
-        CapabilityPolicy, CapabilityProvider, CapabilityRegistry, CapabilityRegistryError,
-        CapabilityRequirement, CapabilityResult, CapabilityStagingClass, CapabilityTransport,
-        GenerationId, ManifestView, ModelLimits, StableId128, CALLBACK_EVENT_FORMAT_VERSION,
-        STATE_FORMAT_VERSION, WIDGET_IR_FORMAT_VERSION,
+        AbiVersion, ApplicationManifest, CALLBACK_EVENT_FORMAT_VERSION, CapabilityCall,
+        CapabilityCompletionToken, CapabilityDescriptor, CapabilityError, CapabilityGeneration,
+        CapabilityLimits, CapabilityPolicy, CapabilityProvider, CapabilityRegistry,
+        CapabilityRegistryError, CapabilityRequirement, CapabilityResult, CapabilityStagingClass,
+        CapabilityTransport, GenerationId, ManifestView, ModelLimits, STATE_FORMAT_VERSION,
+        StableId128, WIDGET_IR_FORMAT_VERSION,
     };
 
     const MODEL_LIMITS: ModelLimits = ModelLimits::new(512, 16, 64, 64);
@@ -888,12 +825,7 @@ mod capability_registry_tests {
         let mut registry = CapabilityRegistry::new(1);
         registry.register(provider(CAPABILITY_ID)).unwrap();
         let manifest = manifest(&[
-            requirement(
-                CAPABILITY_ID,
-                2,
-                CapabilityPolicy::Optional,
-                FINGERPRINT,
-            ),
+            requirement(CAPABILITY_ID, 2, CapabilityPolicy::Optional, FINGERPRINT),
             requirement(
                 OTHER_CAPABILITY_ID,
                 1,
@@ -909,13 +841,7 @@ mod capability_registry_tests {
             Err(CapabilityError::Unsupported)
         );
         assert_eq!(
-            bindings.invoke(CapabilityCall::new(
-                OTHER_CAPABILITY_ID,
-                1,
-                0,
-                &[],
-                8,
-            )),
+            bindings.invoke(CapabilityCall::new(OTHER_CAPABILITY_ID, 1, 0, &[], 8,)),
             Err(CapabilityError::Unsupported)
         );
     }
@@ -1152,8 +1078,7 @@ mod capability_registry_tests {
             _response_limit: u32,
         ) -> CapabilityResult<Vec<u8>> {
             self.invocations.set(self.invocations.get() + 1);
-            self.completion
-                .replace(Some(generation.completion_token()));
+            self.completion.replace(Some(generation.completion_token()));
             Ok(Vec::new())
         }
     }
@@ -1164,11 +1089,11 @@ mod capability_staging_tests {
     use std::rc::Rc;
 
     use crate::{
-        AbiVersion, ApplicationManifest, CapabilityCall, CapabilityDescriptor, CapabilityError,
-        CapabilityGeneration, CapabilityLimits, CapabilityPolicy, CapabilityProvider,
-        CapabilityRegistry, CapabilityRequirement, CapabilityResult, CapabilityStagingClass,
-        CapabilityTransport, GenerationId, ManifestView, ModelLimits, StableId128, StagedCapability,
-        CALLBACK_EVENT_FORMAT_VERSION, STATE_FORMAT_VERSION, WIDGET_IR_FORMAT_VERSION,
+        AbiVersion, ApplicationManifest, CALLBACK_EVENT_FORMAT_VERSION, CapabilityCall,
+        CapabilityDescriptor, CapabilityError, CapabilityGeneration, CapabilityLimits,
+        CapabilityPolicy, CapabilityProvider, CapabilityRegistry, CapabilityRequirement,
+        CapabilityResult, CapabilityStagingClass, CapabilityTransport, GenerationId, ManifestView,
+        ModelLimits, STATE_FORMAT_VERSION, StableId128, StagedCapability, WIDGET_IR_FORMAT_VERSION,
     };
 
     const MODEL_LIMITS: ModelLimits = ModelLimits::new(512, 16, 64, 64);
@@ -1247,7 +1172,10 @@ mod capability_staging_tests {
         bindings.retire();
 
         assert_eq!(counters.activated.get(), 0);
-        assert_eq!(bindings.invoke(call()), Err(CapabilityError::RetiredGeneration));
+        assert_eq!(
+            bindings.invoke(call()),
+            Err(CapabilityError::RetiredGeneration)
+        );
     }
 
     #[test]
@@ -1273,13 +1201,7 @@ mod capability_staging_tests {
     ) -> crate::CapabilityBindings {
         let mut registry = CapabilityRegistry::new(1);
         registry
-            .register_with_staging(
-                StagingProvider {
-                    counters,
-                    response,
-                },
-                staging,
-            )
+            .register_with_staging(StagingProvider { counters, response }, staging)
             .unwrap();
         registry
             .negotiate_generation(&manifest(), GenerationId::new(41))
@@ -1534,10 +1456,9 @@ mod generation_resources_tests {
 
     use crate::{
         AsyncCallbackError, AsyncCallbackEvent, AsyncCallbackEventKind, CallbackBinding,
-        CallbackBindingSnapshot, Generation, GenerationAsyncLimits, GenerationId,
-        GenerationLimits, GenerationResource, GenerationResourceError, GenerationResourceKind,
-        ModelLimits, StableId128, Version, WidgetDocument, WidgetDocumentView, WidgetNode,
-        WidgetSchemaId,
+        CallbackBindingSnapshot, Generation, GenerationAsyncLimits, GenerationId, GenerationLimits,
+        GenerationResource, GenerationResourceError, GenerationResourceKind, ModelLimits,
+        StableId128, Version, WidgetDocument, WidgetDocumentView, WidgetNode, WidgetSchemaId,
     };
     use aimer_venus::LocalScheduler;
 
@@ -1574,14 +1495,17 @@ mod generation_resources_tests {
             .validate_async_event(&event, MODEL_LIMITS)
             .unwrap();
         assert_eq!(generation.async_task_count(), 0);
-        assert!(generation.validate_async_event(&event, MODEL_LIMITS).is_err());
+        assert!(
+            generation
+                .validate_async_event(&event, MODEL_LIMITS)
+                .is_err()
+        );
     }
 
     #[test]
     fn generation_async_resource_limit_bounds_host_tasks() {
-        let mut generation = async_generation(41, LocalScheduler::new()).with_async_limits(
-            GenerationAsyncLimits::new(4, 8).with_max_retained_resources(0),
-        );
+        let mut generation = async_generation(41, LocalScheduler::new())
+            .with_async_limits(GenerationAsyncLimits::new(4, 8).with_max_retained_resources(0));
 
         assert_eq!(
             generation.register_async_task(CALLBACK_ID),
@@ -1597,16 +1521,14 @@ mod generation_resources_tests {
         let task_id = generation.register_async_task(CALLBACK_ID).unwrap();
         generation.retire();
 
-        let event = AsyncCallbackEvent::complete(
-            41,
-            1,
-            CALLBACK_ID,
-            task_id,
-            &[],
-        )
-        .encode(MODEL_LIMITS)
-        .unwrap();
-        assert!(generation.validate_async_event(&event, MODEL_LIMITS).is_err());
+        let event = AsyncCallbackEvent::complete(41, 1, CALLBACK_ID, task_id, &[])
+            .encode(MODEL_LIMITS)
+            .unwrap();
+        assert!(
+            generation
+                .validate_async_event(&event, MODEL_LIMITS)
+                .is_err()
+        );
         assert_eq!(generation.async_task_count(), 0);
         assert_eq!(scheduler.task_count(), 0);
     }
@@ -1614,11 +1536,7 @@ mod generation_resources_tests {
     #[test]
     fn retirement_releases_every_resource_kind_once() {
         let releases = Rc::new(Cell::new(0));
-        let mut generation = generation(
-            41,
-            LocalScheduler::new(),
-            GenerationLimits::new(4),
-        );
+        let mut generation = generation(41, LocalScheduler::new(), GenerationLimits::new(4));
         for kind in [
             GenerationResourceKind::Timer,
             GenerationResourceKind::Subscription,
@@ -1639,11 +1557,7 @@ mod generation_resources_tests {
     #[test]
     fn generation_resources_can_be_released_explicitly() {
         let releases = Rc::new(Cell::new(0));
-        let mut generation = generation(
-            41,
-            LocalScheduler::new(),
-            GenerationLimits::new(4),
-        );
+        let mut generation = generation(41, LocalScheduler::new(), GenerationLimits::new(4));
         let handle = generation
             .register_resource(
                 GenerationResourceKind::Timer,
@@ -1655,19 +1569,12 @@ mod generation_resources_tests {
         let error = generation.release_resource(handle).unwrap_err();
 
         assert_eq!(releases.get(), 1);
-        assert_eq!(
-            error,
-            GenerationResourceError::InvalidHandle { handle }
-        );
+        assert_eq!(error, GenerationResourceError::InvalidHandle { handle });
     }
 
     #[test]
     fn resource_registration_obeys_each_kind_limit() {
-        let mut generation = generation(
-            41,
-            LocalScheduler::new(),
-            GenerationLimits::new(1),
-        );
+        let mut generation = generation(41, LocalScheduler::new(), GenerationLimits::new(1));
         generation
             .register_resource(GenerationResourceKind::Request, TrackedResource::default())
             .unwrap();
@@ -1716,16 +1623,8 @@ mod generation_resources_tests {
     #[test]
     fn a_resource_handle_cannot_cross_generations() {
         let releases = Rc::new(Cell::new(0));
-        let mut owner = generation(
-            41,
-            LocalScheduler::new(),
-            GenerationLimits::new(4),
-        );
-        let mut replacement = generation(
-            42,
-            LocalScheduler::new(),
-            GenerationLimits::new(4),
-        );
+        let mut owner = generation(41, LocalScheduler::new(), GenerationLimits::new(4));
+        let mut replacement = generation(42, LocalScheduler::new(), GenerationLimits::new(4));
         let handle = owner
             .register_resource(
                 GenerationResourceKind::Subscription,
@@ -1749,11 +1648,7 @@ mod generation_resources_tests {
     #[test]
     fn late_completion_is_dropped_after_generation_retirement() {
         let delivered = Rc::new(Cell::new(false));
-        let mut generation = generation(
-            41,
-            LocalScheduler::new(),
-            GenerationLimits::new(4),
-        );
+        let mut generation = generation(41, LocalScheduler::new(), GenerationLimits::new(4));
         let completion = generation.completion_token();
         generation.retire();
 
@@ -1793,11 +1688,7 @@ mod generation_resources_tests {
     #[test]
     fn dropping_a_generation_releases_its_resources() {
         let releases = Rc::new(Cell::new(0));
-        let mut generation = generation(
-            41,
-            LocalScheduler::new(),
-            GenerationLimits::new(4),
-        );
+        let mut generation = generation(41, LocalScheduler::new(), GenerationLimits::new(4));
         generation
             .register_resource(
                 GenerationResourceKind::Timer,
@@ -1858,20 +1749,15 @@ mod generation_resources_tests {
 
     const CALLBACK_ID: StableId128 = StableId128::from_bytes([0x71; 16]);
 
-    fn async_generation(
-        generation_id: u64,
-        scheduler: Rc<LocalScheduler>,
-    ) -> Generation {
+    fn async_generation(generation_id: u64, scheduler: Rc<LocalScheduler>) -> Generation {
         let callbacks = [CallbackBinding::new_async(
             crate::EVENT_BUTTON_PRESS,
             Version::new(1, 0),
             Version::new(1, 0),
             CALLBACK_ID,
         )];
-        let nodes = [
-            WidgetNode::new(WidgetSchemaId::new(1), Version::new(1, 0))
-                .callbacks(&callbacks),
-        ];
+        let nodes =
+            [WidgetNode::new(WidgetSchemaId::new(1), Version::new(1, 0)).callbacks(&callbacks)];
         let image = WidgetDocument::new(generation_id, 1, 0, &nodes, &[], &[])
             .encode(MODEL_LIMITS)
             .unwrap();
@@ -1921,11 +1807,11 @@ mod guest_abi_tests {
     }
 
     use crate::{
-        AbiVersion, CapabilityDescriptor, CapabilityLimits, CapabilityProvider, CapabilityRegistry,
-        CapabilityResult, CapabilityStagingClass, GenerationId, GuestDiagnosticCategory,
-        GuestOperation, ModelLimits, Runtime, RuntimeConfig, RuntimeErrorKind, StableId128,
-        StateTransferCoordinator, StateTransferError, StateTransferStage, Version,
-        CALLBACK_EVENT_FORMAT_VERSION, STATE_FORMAT_VERSION, WIDGET_IR_FORMAT_VERSION,
+        AbiVersion, CALLBACK_EVENT_FORMAT_VERSION, CapabilityDescriptor, CapabilityLimits,
+        CapabilityProvider, CapabilityRegistry, CapabilityResult, CapabilityStagingClass,
+        GenerationId, GuestDiagnosticCategory, GuestOperation, ModelLimits, Runtime, RuntimeConfig,
+        RuntimeErrorKind, STATE_FORMAT_VERSION, StableId128, StateTransferCoordinator,
+        StateTransferError, StateTransferStage, Version, WIDGET_IR_FORMAT_VERSION,
     };
 
     const LIMITS: ModelLimits = ModelLimits::new(512, 16, 64, 64);
@@ -2039,11 +1925,16 @@ mod guest_abi_tests {
         assert_eq!(error.kind(), RuntimeErrorKind::GuestStatus);
         let diagnostic = error.diagnostic().unwrap();
         assert_eq!(diagnostic.operation(), GuestOperation::Build);
-        assert_eq!(diagnostic.category(), GuestDiagnosticCategory::UnsupportedWidget);
+        assert_eq!(
+            diagnostic.category(),
+            GuestDiagnosticCategory::UnsupportedWidget
+        );
         assert_eq!(diagnostic.widget(), Some("Container"));
-        assert!(error
-            .to_string()
-            .contains("aimer_build: unsupported widget Container at source"));
+        assert!(
+            error
+                .to_string()
+                .contains("aimer_build: unsupported widget Container at source")
+        );
     }
 
     #[test]
@@ -2055,9 +1946,11 @@ mod guest_abi_tests {
 
         assert_eq!(error.kind(), RuntimeErrorKind::GuestStatus);
         assert!(error.diagnostic().is_none());
-        assert!(error
-            .to_string()
-            .contains("aimer_build probe returned ApplicationError with length 0"));
+        assert!(
+            error
+                .to_string()
+                .contains("aimer_build probe returned ApplicationError with length 0")
+        );
     }
 
     #[test]
@@ -2069,9 +1962,11 @@ mod guest_abi_tests {
 
         assert_eq!(error.kind(), RuntimeErrorKind::GuestStatus);
         assert!(error.diagnostic().is_none());
-        assert!(error
-            .to_string()
-            .contains("aimer_build probe returned ApplicationError with length 0"));
+        assert!(
+            error
+                .to_string()
+                .contains("aimer_build probe returned ApplicationError with length 0")
+        );
     }
 
     #[test]
@@ -2101,7 +1996,10 @@ mod guest_abi_tests {
             .instantiate_with_capabilities(&module, &registry, LIMITS, GenerationId::new(41))
             .unwrap();
 
-        assert_eq!(guest.build(LIMITS).unwrap_err().kind(), RuntimeErrorKind::GuestStatus);
+        assert_eq!(
+            guest.build(LIMITS).unwrap_err().kind(),
+            RuntimeErrorKind::GuestStatus
+        );
 
         guest.activate();
 
@@ -2275,10 +2173,12 @@ mod guest_abi_tests {
         let module = guest_module::callback_state_guest();
         let mut guest = runtime.instantiate(&module).unwrap();
 
-        assert!(guest
-            .dispatch_event(CALLBACK_EVENT, LIMITS)
-            .unwrap()
-            .is_none());
+        assert!(
+            guest
+                .dispatch_event(CALLBACK_EVENT, LIMITS)
+                .unwrap()
+                .is_none()
+        );
         let state = guest.export_state(LIMITS).unwrap();
 
         assert_eq!(state.as_bytes(), EXPECTED_ASTA);
@@ -2314,8 +2214,14 @@ mod guest_abi_tests {
             .unwrap();
 
         assert_eq!(report.preserved_entries(), 1);
-        assert_eq!(candidate.export_state(LIMITS).unwrap().as_bytes(), old_before);
-        assert_eq!(previous.export_state(LIMITS).unwrap().as_bytes(), old_before);
+        assert_eq!(
+            candidate.export_state(LIMITS).unwrap().as_bytes(),
+            old_before
+        );
+        assert_eq!(
+            previous.export_state(LIMITS).unwrap().as_bytes(),
+            old_before
+        );
     }
 
     #[test]
@@ -2344,7 +2250,10 @@ mod guest_abi_tests {
                 ..
             }
         ));
-        assert_eq!(previous.export_state(LIMITS).unwrap().as_bytes(), old_before);
+        assert_eq!(
+            previous.export_state(LIMITS).unwrap().as_bytes(),
+            old_before
+        );
     }
 
     #[test]
@@ -2367,7 +2276,10 @@ mod guest_abi_tests {
             .unwrap_err();
 
         assert!(matches!(error, StateTransferError::VerificationMismatch));
-        assert_eq!(previous.export_state(LIMITS).unwrap().as_bytes(), old_before);
+        assert_eq!(
+            previous.export_state(LIMITS).unwrap().as_bytes(),
+            old_before
+        );
     }
 
     #[test]
@@ -2389,9 +2301,15 @@ mod guest_abi_tests {
             .unwrap();
 
         let state = candidate.export_state(LIMITS).unwrap();
-        assert_eq!(state.view().entry(0).unwrap().schema_version(), Version::new(3, 0));
+        assert_eq!(
+            state.view().entry(0).unwrap().schema_version(),
+            Version::new(3, 0)
+        );
         assert_eq!(state.view().entry(0).unwrap().payload(), &[0xA5]);
-        assert_eq!(report.migrated_state_ids(), &[StableId128::from_bytes([0x20; 16])]);
+        assert_eq!(
+            report.migrated_state_ids(),
+            &[StableId128::from_bytes([0x20; 16])]
+        );
         assert!(report.migration_fuel_consumed() > 0);
     }
 
@@ -2471,7 +2389,10 @@ mod guest_abi_tests {
                 ..
             }
         ));
-        assert_eq!(previous.export_state(LIMITS).unwrap().as_bytes(), old_before);
+        assert_eq!(
+            previous.export_state(LIMITS).unwrap().as_bytes(),
+            old_before
+        );
     }
 
     fn assert_migration_runtime_failure(
@@ -2501,7 +2422,10 @@ mod guest_abi_tests {
             } => assert_eq!(source.kind(), expected_kind),
             other => panic!("unexpected state transfer error: {other}"),
         }
-        assert_eq!(previous.export_state(LIMITS).unwrap().as_bytes(), old_before);
+        assert_eq!(
+            previous.export_state(LIMITS).unwrap().as_bytes(),
+            old_before
+        );
     }
 
     #[test]
@@ -2515,7 +2439,10 @@ mod guest_abi_tests {
         assert_eq!(manifest.as_bytes(), EXPECTED_AMNF);
         assert_eq!(manifest.view().minimum_abi(), AbiVersion::new(1, 0));
         assert_eq!(manifest.view().maximum_abi(), AbiVersion::new(1, 0));
-        assert_eq!(manifest.view().widget_ir_version(), WIDGET_IR_FORMAT_VERSION);
+        assert_eq!(
+            manifest.view().widget_ir_version(),
+            WIDGET_IR_FORMAT_VERSION
+        );
         assert_eq!(
             manifest.view().callback_event_version(),
             CALLBACK_EVENT_FORMAT_VERSION
@@ -2536,7 +2463,8 @@ mod guest_abi_tests {
 
     #[test]
     fn guest_instance_rejects_repeated_manifest_undersizing() {
-        let error = query_manifest_error(guest_module::repeated_undersized_manifest_guest(), 10_000);
+        let error =
+            query_manifest_error(guest_module::repeated_undersized_manifest_guest(), 10_000);
 
         assert_eq!(error.kind(), RuntimeErrorKind::GuestStatus);
     }
@@ -2726,9 +2654,7 @@ mod guest_abi_tests {
             .instantiate(&guest_module::callback_partial_widget_output_guest())
             .unwrap();
 
-        let error = guest
-            .dispatch_event(CALLBACK_EVENT, LIMITS)
-            .unwrap_err();
+        let error = guest.dispatch_event(CALLBACK_EVENT, LIMITS).unwrap_err();
 
         assert_eq!(error.kind(), RuntimeErrorKind::WidgetDocument);
     }
@@ -2940,12 +2866,16 @@ mod guest_diagnostics_tests {
         let decoded = GuestDiagnostic::decode(&encoded, MAX_GUEST_DIAGNOSTIC_BYTES).unwrap();
 
         assert_eq!(decoded, diagnostic);
-        assert!(decoded
-            .to_string()
-            .contains("aimer_build: property encoding Container"));
-        assert!(decoded
-            .to_string()
-            .contains("aimer.property:app::Container:decoration"));
+        assert!(
+            decoded
+                .to_string()
+                .contains("aimer_build: property encoding Container")
+        );
+        assert!(
+            decoded
+                .to_string()
+                .contains("aimer.property:app::Container:decoration")
+        );
 
         let mut malformed = encoded.clone();
         malformed[0] = b'X';
@@ -2954,11 +2884,10 @@ mod guest_diagnostics_tests {
             diagnostic.encode_with_limit(0),
             Err(crate::GuestDiagnosticEncodeError::InvalidLimit { maximum: 0 })
         ));
-        assert!(GuestDiagnostic::decode(
-            &encoded[..encoded.len() - 1],
-            MAX_GUEST_DIAGNOSTIC_BYTES,
-        )
-        .is_err());
+        assert!(
+            GuestDiagnostic::decode(&encoded[..encoded.len() - 1], MAX_GUEST_DIAGNOSTIC_BYTES,)
+                .is_err()
+        );
         assert!(GuestDiagnostic::decode(&encoded, encoded.len() - 1).is_err());
 
         let oversized = GuestDiagnostic::new(
@@ -2993,18 +2922,23 @@ mod guest_diagnostics_tests {
             Some("target/aimer-hot-reload/application/src/http_request_button.rs"),
         );
         assert_eq!(decoded.location().map(GuestSourceLocation::line), Some(117));
-        assert_eq!(decoded.location().map(GuestSourceLocation::column), Some(67));
-        assert!(decoded
-            .to_string()
-            .contains("target/aimer-hot-reload/application/src/http_request_button.rs:117:67"));
+        assert_eq!(
+            decoded.location().map(GuestSourceLocation::column),
+            Some(67)
+        );
+        assert!(
+            decoded
+                .to_string()
+                .contains("target/aimer-hot-reload/application/src/http_request_button.rs:117:67")
+        );
     }
 }
 #[cfg(test)]
 mod manifest_tests {
     use crate::{
-        AbiVersion, ApplicationManifest, CapabilityPolicy, CapabilityRequirement, ManifestView,
-        ModelError, ModelLimits, StableId128, Version, CALLBACK_EVENT_FORMAT_VERSION,
-        STATE_FORMAT_VERSION, WIDGET_IR_FORMAT_VERSION,
+        AbiVersion, ApplicationManifest, CALLBACK_EVENT_FORMAT_VERSION, CapabilityPolicy,
+        CapabilityRequirement, ManifestView, ModelError, ModelLimits, STATE_FORMAT_VERSION,
+        StableId128, Version, WIDGET_IR_FORMAT_VERSION,
     };
 
     const LIMITS: ModelLimits = ModelLimits::new(512, 16, 64, 64);
@@ -3091,18 +3025,8 @@ mod manifest_tests {
     #[test]
     fn application_manifest_rejects_duplicate_capability_ids() {
         let capabilities = [
-            CapabilityRequirement::new(
-                CAPABILITY_ID,
-                1,
-                CapabilityPolicy::Required,
-                FINGERPRINT,
-            ),
-            CapabilityRequirement::new(
-                CAPABILITY_ID,
-                2,
-                CapabilityPolicy::Optional,
-                [0x40; 32],
-            ),
+            CapabilityRequirement::new(CAPABILITY_ID, 1, CapabilityPolicy::Required, FINGERPRINT),
+            CapabilityRequirement::new(CAPABILITY_ID, 2, CapabilityPolicy::Optional, [0x40; 32]),
         ];
         let manifest = manifest_with_capabilities(&capabilities);
 
@@ -3125,12 +3049,7 @@ mod manifest_tests {
                 CapabilityPolicy::Required,
                 FINGERPRINT,
             ),
-            CapabilityRequirement::new(
-                CAPABILITY_ID,
-                1,
-                CapabilityPolicy::Optional,
-                [0x40; 32],
-            ),
+            CapabilityRequirement::new(CAPABILITY_ID, 1, CapabilityPolicy::Optional, [0x40; 32]),
         ];
         let manifest = manifest_with_capabilities(&capabilities);
 
@@ -3186,19 +3105,15 @@ mod manifest_tests {
 mod portable_schema_metadata_tests {
     use crate::{
         BUILTIN_PORTABLE_WIDGET_SCHEMAS, BUILTIN_WIDGET_SCHEMA_VERSION, CallbackSchemaMetadata,
-        ChildCardinality, EventId, ModelLimits, PortableWidgetSchemaMetadata, PropertyId,
+        ChildCardinality, EventId, ModelLimits, PROPERTY_CONTAINER_BOX_DECORATION,
+        PROPERTY_CONTAINER_COLOR, PROPERTY_CONTAINER_HEIGHT, PROPERTY_CONTAINER_MARGIN,
+        PROPERTY_CONTAINER_PADDING, PROPERTY_CONTAINER_WIDTH, PROPERTY_SIZED_BOX_HEIGHT,
+        PROPERTY_SIZED_BOX_WIDTH, PROPERTY_TEXT_ALIGN, PROPERTY_TEXT_CONTENT, PROPERTY_TEXT_INDENT,
+        PROPERTY_TEXT_LINE_HEIGHT, PROPERTY_TEXT_STYLE, PortableWidgetSchemaMetadata, PropertyId,
         PropertyPresence, PropertySchemaMetadata, PropertyValue, PropertyValueKind,
-        PROPERTY_CONTAINER_COLOR, PROPERTY_CONTAINER_HEIGHT,
-        PROPERTY_CONTAINER_WIDTH, PROPERTY_CONTAINER_PADDING, PROPERTY_CONTAINER_MARGIN,
-        PROPERTY_CONTAINER_BOX_DECORATION, PROPERTY_TEXT_ALIGN, PROPERTY_TEXT_CONTENT,
-        PROPERTY_TEXT_INDENT, PROPERTY_TEXT_LINE_HEIGHT,
-        PROPERTY_SIZED_BOX_HEIGHT, PROPERTY_SIZED_BOX_WIDTH, PROPERTY_TEXT_STYLE,
-        ValueSchemaMetadata, ValueTypeId,
-        Version, WIDGET_CONTAINER, WIDGET_SIZED_BOX, WIDGET_TEXT, WidgetDocument, WidgetNode,
-        WidgetProperty,
-        WidgetSchemaId, WidgetSchemaMetadata,
-        stable_schema_hash64,
-        validate_portable_widget_schema_metadata,
+        ValueSchemaMetadata, ValueTypeId, Version, WIDGET_CONTAINER, WIDGET_SIZED_BOX, WIDGET_TEXT,
+        WidgetDocument, WidgetNode, WidgetProperty, WidgetSchemaId, WidgetSchemaMetadata,
+        stable_schema_hash64, validate_portable_widget_schema_metadata,
     };
 
     #[test]
@@ -3325,27 +3240,21 @@ mod portable_schema_metadata_tests {
 
     #[test]
     fn newer_guest_can_target_the_oldest_permanent_host_schema_version() {
-        let validator = crate::PortableWidgetSchemaValidator::new(
-            &BUILTIN_PORTABLE_WIDGET_SCHEMAS,
-        )
-        .unwrap();
-        let future_property = PropertyId::from_canonical_name(
-            "aimer.property:aimer_text::Text:future_optional_hint",
-        );
+        let validator =
+            crate::PortableWidgetSchemaValidator::new(&BUILTIN_PORTABLE_WIDGET_SCHEMAS).unwrap();
+        let future_property =
+            PropertyId::from_canonical_name("aimer.property:aimer_text::Text:future_optional_hint");
         let properties = [
             WidgetProperty::new(PROPERTY_TEXT_CONTENT, PropertyValue::StringRef(0)),
             WidgetProperty::new(future_property, PropertyValue::Bool(true)).optional(),
         ];
-        let nodes = [WidgetNode::new(WIDGET_TEXT, BUILTIN_WIDGET_SCHEMA_VERSION)
-            .properties(&properties)];
+        let nodes =
+            [WidgetNode::new(WIDGET_TEXT, BUILTIN_WIDGET_SCHEMA_VERSION).properties(&properties)];
         let image = WidgetDocument::new(1, 1, 0, &nodes, &["newer guest"], &[])
             .encode(ModelLimits::new(4_096, 4, 16, 8))
             .unwrap();
-        let document = crate::WidgetDocumentView::decode(
-            &image,
-            ModelLimits::new(4_096, 4, 16, 8),
-        )
-        .unwrap();
+        let document =
+            crate::WidgetDocumentView::decode(&image, ModelLimits::new(4_096, 4, 16, 8)).unwrap();
 
         assert_eq!(BUILTIN_WIDGET_SCHEMA_VERSION, Version::new(1, 0));
         document.validate_schemas(&validator).unwrap();
@@ -3424,9 +3333,7 @@ mod portable_schema_metadata_tests {
         validate_portable_widget_schema_metadata(&[first, second]).unwrap();
     }
 
-    fn schema(
-        id: crate::WidgetSchemaId,
-    ) -> &'static PortableWidgetSchemaMetadata<'static> {
+    fn schema(id: crate::WidgetSchemaId) -> &'static PortableWidgetSchemaMetadata<'static> {
         BUILTIN_PORTABLE_WIDGET_SCHEMAS
             .iter()
             .find(|schema| schema.widget().id() == id)
@@ -3469,13 +3376,13 @@ mod portable_schema_metadata_tests {
 mod portable_schema_validation_tests {
     use crate::{
         AsyncCallbackSchemaMetadata, BUILTIN_PORTABLE_WIDGET_SCHEMAS, CallbackBinding,
-        CallbackSchemaMetadata, ChildCardinality,
-        EventId, ModelError, ModelLimits, PortableWidgetSchemaMetadata,
-        PortableWidgetSchemaMetadataError, PortableWidgetSchemaValidator, PropertyId, PropertyValue,
-        PropertyValueKind, StableId128, ValueSchemaMetadata, Version, WidgetDocument,
+        CallbackSchemaMetadata, ChildCardinality, EventId, ModelError, ModelLimits,
+        PROPERTY_TEXT_CONTENT, PortableWidgetSchemaMetadata, PortableWidgetSchemaMetadataError,
+        PortableWidgetSchemaValidator, PropertyId, PropertyValue, PropertyValueKind, StableId128,
+        ValueSchemaMetadata, Version, WIDGET_CONTAINER, WIDGET_TEXT, WidgetDocument,
         WidgetDocumentView, WidgetFactory, WidgetMaterializeError, WidgetNode, WidgetNodeView,
-        WidgetProperty, WidgetSchemaId, WidgetSchemaMetadata, WidgetSchemaSupport, WIDGET_CONTAINER,
-        WIDGET_TEXT, PROPERTY_TEXT_CONTENT, materialize_widget_tree,
+        WidgetProperty, WidgetSchemaId, WidgetSchemaMetadata, WidgetSchemaSupport,
+        materialize_widget_tree,
     };
 
     const LIMITS: ModelLimits = ModelLimits::new(8_192, 64, 256, 256).max_widget_depth(16);
@@ -3499,7 +3406,12 @@ mod portable_schema_validation_tests {
     #[test]
     fn rejects_missing_required_property_and_wrong_wire_kind() {
         assert_eq!(
-            validate(&[WidgetNode::new(WIDGET_TEXT, VERSION)], &[], &[], builtin_validator()),
+            validate(
+                &[WidgetNode::new(WIDGET_TEXT, VERSION)],
+                &[],
+                &[],
+                builtin_validator()
+            ),
             Err(ModelError::MissingWidgetProperty {
                 node: 0,
                 widget_type: WIDGET_TEXT,
@@ -3507,7 +3419,10 @@ mod portable_schema_validation_tests {
             })
         );
 
-        let properties = [WidgetProperty::new(PROPERTY_TEXT_CONTENT, PropertyValue::I64(1))];
+        let properties = [WidgetProperty::new(
+            PROPERTY_TEXT_CONTENT,
+            PropertyValue::I64(1),
+        )];
         assert_eq!(
             validate(
                 &[WidgetNode::new(WIDGET_TEXT, VERSION).properties(&properties)],
@@ -3603,7 +3518,9 @@ mod portable_schema_validation_tests {
         const EVENT_NAME: &str = "aimer.event:test::Action:on_run";
         const WIDGET_NAME: &str = "aimer.widget:test::Action";
         let event = EventId::from_canonical_name(EVENT_NAME);
-        let callbacks = [CallbackSchemaMetadata::from_canonical_name(EVENT_NAME, VERSION, 1)];
+        let callbacks = [CallbackSchemaMetadata::from_canonical_name(
+            EVENT_NAME, VERSION, 1,
+        )];
         let schemas = [PortableWidgetSchemaMetadata::new(
             WidgetSchemaMetadata::from_canonical_name(WIDGET_NAME, VERSION, VERSION),
             &[],
@@ -3702,7 +3619,12 @@ mod portable_schema_validation_tests {
         )];
         let widget = schemas[0].widget().id();
         let callback_id = StableId128::from_bytes([8; 16]);
-        let binding = [CallbackBinding::new_async(event, VERSION, VERSION, callback_id)];
+        let binding = [CallbackBinding::new_async(
+            event,
+            VERSION,
+            VERSION,
+            callback_id,
+        )];
 
         validate(
             &[WidgetNode::new(widget, VERSION).callbacks(&binding)],
@@ -3712,7 +3634,9 @@ mod portable_schema_validation_tests {
         )
         .unwrap();
 
-        let old_callbacks = [CallbackSchemaMetadata::from_canonical_name(EVENT_NAME, VERSION, 1)];
+        let old_callbacks = [CallbackSchemaMetadata::from_canonical_name(
+            EVENT_NAME, VERSION, 1,
+        )];
         let old_schemas = [PortableWidgetSchemaMetadata::new(
             WidgetSchemaMetadata::from_canonical_name(WIDGET_NAME, VERSION, VERSION),
             &[],
@@ -3746,9 +3670,7 @@ mod portable_schema_validation_tests {
             PropertyValueKind::BlobRef,
         )
         .with_value_schema(ValueSchemaMetadata::from_canonical_name(
-            VALUE_NAME,
-            VERSION,
-            3,
+            VALUE_NAME, VERSION, 3,
         ))];
         let schemas = [PortableWidgetSchemaMetadata::new(
             WidgetSchemaMetadata::from_canonical_name(WIDGET_NAME, VERSION, VERSION),
@@ -3894,8 +3816,8 @@ mod portable_schema_validation_tests {
 }
 #[cfg(test)]
 mod reload_transaction_tests {
-    use std::cell::RefCell;
     use std::cell::Cell;
+    use std::cell::RefCell;
     use std::rc::Rc;
 
     use crate::{
@@ -3911,7 +3833,10 @@ mod reload_transaction_tests {
         let mut coordinator = ReloadCoordinator::new(active).max_queued_events(3);
         let transaction = coordinator.begin_reload();
         coordinator
-            .stage_candidate(transaction, snapshot(2, "candidate-root", lifecycle.clone()))
+            .stage_candidate(
+                transaction,
+                snapshot(2, "candidate-root", lifecycle.clone()),
+            )
             .unwrap();
 
         assert_eq!(
@@ -3931,16 +3856,10 @@ mod reload_transaction_tests {
             .unwrap_err();
 
         assert_eq!(rejection.preflight_error(), Some(&"prepare failed"));
-        assert_eq!(
-            rejection.replay().unwrap().as_slice(),
-            &["first", "second"]
-        );
+        assert_eq!(rejection.replay().unwrap().as_slice(), &["first", "second"]);
         assert_eq!(coordinator.active().generation_id(), GenerationId::new(1));
         assert_eq!(coordinator.active().root(), &"old-root");
-        assert_eq!(
-            lifecycle.borrow().as_slice(),
-            ["candidate-retired"]
-        );
+        assert_eq!(lifecycle.borrow().as_slice(), ["candidate-retired"]);
         assert_eq!(
             rejection
                 .into_replay()
@@ -3978,10 +3897,9 @@ mod reload_transaction_tests {
                     Ok::<(), ()>(())
                 },
                 move |old, candidate| {
-                    observations.borrow_mut().push((
-                        old.generation_id().get(),
-                        candidate.generation_id().get(),
-                    ));
+                    observations
+                        .borrow_mut()
+                        .push((old.generation_id().get(), candidate.generation_id().get()));
                 },
             )
             .unwrap();
@@ -4004,7 +3922,10 @@ mod reload_transaction_tests {
             ReloadCoordinator::new(active);
         let transaction = coordinator.begin_reload();
         coordinator
-            .stage_candidate(transaction, snapshot(2, "new-root", Rc::new(RefCell::new(Vec::new()))))
+            .stage_candidate(
+                transaction,
+                snapshot(2, "new-root", Rc::new(RefCell::new(Vec::new()))),
+            )
             .unwrap();
         let preflight_calls = Cell::new(0_u32);
 
@@ -4041,10 +3962,8 @@ mod reload_transaction_tests {
         assert_ne!(first, second);
         assert_eq!(lifecycle.borrow().as_slice(), ["candidate-retired"]);
         assert_eq!(coordinator.queued_event_count(), 1);
-        let stale = coordinator.stage_candidate(
-            first,
-            snapshot(3, "also-stale", lifecycle.clone()),
-        );
+        let stale =
+            coordinator.stage_candidate(first, snapshot(3, "also-stale", lifecycle.clone()));
         assert!(matches!(
             stale,
             Err(ReloadTransactionError::Superseded { .. })
@@ -4178,10 +4097,7 @@ mod reload_transaction_tests {
                 RecordingResource(releases.clone()),
             )
             .unwrap();
-        let old_completion = coordinator
-            .active()
-            .generation()
-            .completion_token();
+        let old_completion = coordinator.active().generation().completion_token();
         let transaction = coordinator.begin_reload();
         coordinator
             .stage_candidate(transaction, snapshot(2, "new-root", lifecycle))
@@ -4316,9 +4232,7 @@ mod state_transfer_tests {
             .model_limits(LIMITS)
             .migration_fuel(8);
 
-        let prepared = coordinator
-            .prepare(&previous, &candidate_defaults)
-            .unwrap();
+        let prepared = coordinator.prepare(&previous, &candidate_defaults).unwrap();
 
         let transferred = StateBundleView::decode(prepared.as_bytes(), LIMITS).unwrap();
         assert_eq!(transferred.source_generation(), 4);
@@ -4351,9 +4265,7 @@ mod state_transfer_tests {
             .model_limits(LIMITS)
             .migration_fuel(8);
 
-        let prepared = coordinator
-            .prepare(&previous, &candidate_defaults)
-            .unwrap();
+        let prepared = coordinator.prepare(&previous, &candidate_defaults).unwrap();
 
         let transferred = StateBundleView::decode(prepared.as_bytes(), LIMITS).unwrap();
         assert_eq!(transferred.entry_count(), 0);
@@ -4410,9 +4322,7 @@ mod state_transfer_tests {
             ))
             .unwrap();
 
-        let prepared = coordinator
-            .prepare(&previous, &candidate_defaults)
-            .unwrap();
+        let prepared = coordinator.prepare(&previous, &candidate_defaults).unwrap();
 
         let transferred = StateBundleView::decode(prepared.as_bytes(), LIMITS).unwrap();
         assert_eq!(transferred.entry(0).unwrap().payload(), &[1, 2, 3]);
@@ -4459,9 +4369,7 @@ mod state_transfer_tests {
         let coordinator = StateTransferCoordinator::new()
             .model_limits(LIMITS)
             .migration_fuel(8);
-        let prepared = coordinator
-            .prepare(&previous, &candidate_defaults)
-            .unwrap();
+        let prepared = coordinator.prepare(&previous, &candidate_defaults).unwrap();
         let incorrect_payload = [8];
         let incorrect_entries = [StateEntry::new(
             SESSION_ID,
@@ -4712,14 +4620,16 @@ mod state_transfer_tests {
     }
 
     fn reject_migration(_payload: &[u8]) -> Result<Vec<u8>, StateMigrationFailure> {
-        Err(StateMigrationFailure::new("fixture migration rejected state"))
+        Err(StateMigrationFailure::new(
+            "fixture migration rejected state",
+        ))
     }
 }
 #[cfg(test)]
 mod widget_assembly_tests {
     use crate::{
-        AssemblyErrorKind, ModelError, ModelLimits, PropertyValue, WidgetAssemblyDocument, WidgetDocumentView,
-        disassemble_widget_document, stable_schema_hash64,
+        AssemblyErrorKind, ModelError, ModelLimits, PropertyValue, WidgetAssemblyDocument,
+        WidgetDocumentView, disassemble_widget_document, stable_schema_hash64,
     };
 
     const LIMITS: ModelLimits = ModelLimits::new(16_384, 128, 1_024, 1_024).max_widget_depth(32);
@@ -4760,7 +4670,11 @@ hello:
             stable_schema_hash64("aimer.widget:aimer_container::single_child::Container")
         );
         assert_eq!(
-            view.node(0).unwrap().properties().map(|property| property.value()).collect::<Vec<_>>(),
+            view.node(0)
+                .unwrap()
+                .properties()
+                .map(|property| property.value())
+                .collect::<Vec<_>>(),
             [
                 PropertyValue::F64(320.0),
                 PropertyValue::F64(180.0),
@@ -4799,11 +4713,17 @@ greeting:
 payload:
   BLOB 0x0001aaff
 "#;
-        let first = WidgetAssemblyDocument::parse(source, LIMITS).unwrap().encode().unwrap();
+        let first = WidgetAssemblyDocument::parse(source, LIMITS)
+            .unwrap()
+            .encode()
+            .unwrap();
         let first_view = WidgetDocumentView::decode(&first, LIMITS).unwrap();
 
         let text = disassemble_widget_document(&first_view);
-        let second = WidgetAssemblyDocument::parse(&text, LIMITS).unwrap().encode().unwrap();
+        let second = WidgetAssemblyDocument::parse(&text, LIMITS)
+            .unwrap()
+            .encode()
+            .unwrap();
 
         assert_eq!(second, first);
         assert!(text.contains("GENERATION 41\nREVISION 9"));
@@ -4827,10 +4747,22 @@ payload:
     #[test]
     fn rejects_malformed_syntax_missing_end_and_non_finite_float() {
         for (source, expected) in [
-            (SAMPLE.replace("NODE hash64", "WIDGET hash64"), AssemblyErrorKind::UnknownDirective),
-            (SAMPLE.replace("  END\n\nnode1:", "\nnode1:"), AssemblyErrorKind::MissingEnd),
-            (SAMPLE.replace("F64 320.0", "F64 NaN"), AssemblyErrorKind::NonFiniteFloat),
-            (SAMPLE.replace("STRING \"Hello\"", "STRING \"bad\\q\""), AssemblyErrorKind::InvalidEscape),
+            (
+                SAMPLE.replace("NODE hash64", "WIDGET hash64"),
+                AssemblyErrorKind::UnknownDirective,
+            ),
+            (
+                SAMPLE.replace("  END\n\nnode1:", "\nnode1:"),
+                AssemblyErrorKind::MissingEnd,
+            ),
+            (
+                SAMPLE.replace("F64 320.0", "F64 NaN"),
+                AssemblyErrorKind::NonFiniteFloat,
+            ),
+            (
+                SAMPLE.replace("STRING \"Hello\"", "STRING \"bad\\q\""),
+                AssemblyErrorKind::InvalidEscape,
+            ),
         ] {
             let error = WidgetAssemblyDocument::parse(&source, LIMITS).unwrap_err();
             assert_eq!(error.kind(), &expected);
@@ -4843,22 +4775,36 @@ payload:
         let error = WidgetAssemblyDocument::parse(&version, LIMITS).unwrap_err();
         assert_eq!(error.kind(), &AssemblyErrorKind::UnsupportedVersion);
 
-        let error = WidgetAssemblyDocument::parse(SAMPLE, ModelLimits::new(64, 1, 4, 1)).unwrap_err();
+        let error =
+            WidgetAssemblyDocument::parse(SAMPLE, ModelLimits::new(64, 1, 4, 1)).unwrap_err();
         assert_eq!(error.kind(), &AssemblyErrorKind::LimitExceeded);
     }
 
     #[test]
     fn encode_rejects_every_invalid_widget_topology() {
         for (source, expected) in [
-            (graph_source("node0", &[&[0]]), ModelError::WidgetCycle { node: 0 }),
-            (graph_source("node0", &[&[], &[]]), ModelError::UnreachableWidgetNode { node: 1 }),
+            (
+                graph_source("node0", &[&[0]]),
+                ModelError::WidgetCycle { node: 0 },
+            ),
+            (
+                graph_source("node0", &[&[], &[]]),
+                ModelError::UnreachableWidgetNode { node: 1 },
+            ),
             (
                 graph_source("node0", &[&[1, 1], &[]]),
-                ModelError::DuplicateWidgetChild { parent: 0, child: 1 },
+                ModelError::DuplicateWidgetChild {
+                    parent: 0,
+                    child: 1,
+                },
             ),
             (
                 graph_source("node0", &[&[1, 2], &[2], &[]]),
-                ModelError::MultipleWidgetParents { node: 2, first_parent: 0, second_parent: 1 },
+                ModelError::MultipleWidgetParents {
+                    node: 2,
+                    first_parent: 0,
+                    second_parent: 1,
+                },
             ),
         ] {
             let error = WidgetAssemblyDocument::parse(&source, LIMITS).unwrap_err();
@@ -4866,25 +4812,30 @@ payload:
         }
 
         let depth_limits = ModelLimits::new(16_384, 8, 32, 32).max_widget_depth(2);
-        let error = WidgetAssemblyDocument::parse(
-            &graph_source("node0", &[&[1], &[2], &[]]),
-            depth_limits,
-        )
-        .unwrap_err();
+        let error =
+            WidgetAssemblyDocument::parse(&graph_source("node0", &[&[1], &[2], &[]]), depth_limits)
+                .unwrap_err();
         assert_eq!(error.kind(), &AssemblyErrorKind::LimitExceeded);
         assert!(error.context().contains("depth 3 exceeds limit 2"));
     }
 
     #[test]
     fn disassembly_round_trips_under_the_same_tight_binary_byte_limit() {
-        let image = WidgetAssemblyDocument::parse(SAMPLE, LIMITS).unwrap().encode().unwrap();
-        let tight_limits = ModelLimits::new(image.len() as u32, 128, 1_024, 1_024).max_widget_depth(32);
+        let image = WidgetAssemblyDocument::parse(SAMPLE, LIMITS)
+            .unwrap()
+            .encode()
+            .unwrap();
+        let tight_limits =
+            ModelLimits::new(image.len() as u32, 128, 1_024, 1_024).max_widget_depth(32);
         let view = WidgetDocumentView::decode(&image, tight_limits).unwrap();
         let source = disassemble_widget_document(&view);
 
         assert!(source.len() > image.len());
         assert_eq!(
-            WidgetAssemblyDocument::parse(&source, tight_limits).unwrap().encode().unwrap(),
+            WidgetAssemblyDocument::parse(&source, tight_limits)
+                .unwrap()
+                .encode()
+                .unwrap(),
             image
         );
     }
@@ -4902,18 +4853,34 @@ node0:
   END
 SECTION DATA
 "#;
-        let image = WidgetAssemblyDocument::parse(source, LIMITS).unwrap().encode().unwrap();
+        let image = WidgetAssemblyDocument::parse(source, LIMITS)
+            .unwrap()
+            .encode()
+            .unwrap();
         let view = WidgetDocumentView::decode(&image, LIMITS).unwrap();
         let text = disassemble_widget_document(&view);
 
         assert!(text.contains("F64 0x0000000000000001"));
         assert!(text.contains("F64 0x7fefffffffffffff"));
         assert!(text.contains("F64 0x8000000000000000"));
-        assert_eq!(WidgetAssemblyDocument::parse(&text, LIMITS).unwrap().encode().unwrap(), image);
+        assert_eq!(
+            WidgetAssemblyDocument::parse(&text, LIMITS)
+                .unwrap()
+                .encode()
+                .unwrap(),
+            image
+        );
 
-        for bits in ["0x7ff0000000000000", "0xfff0000000000000", "0x7ff8000000000000"] {
-            let error = WidgetAssemblyDocument::parse(&source.replace("0x0000000000000001\n  PROP", &format!("{bits}\n  PROP")), LIMITS)
-                .unwrap_err();
+        for bits in [
+            "0x7ff0000000000000",
+            "0xfff0000000000000",
+            "0x7ff8000000000000",
+        ] {
+            let error = WidgetAssemblyDocument::parse(
+                &source.replace("0x0000000000000001\n  PROP", &format!("{bits}\n  PROP")),
+                LIMITS,
+            )
+            .unwrap_err();
             assert_eq!(error.kind(), &AssemblyErrorKind::NonFiniteFloat);
         }
     }
@@ -4921,9 +4888,15 @@ SECTION DATA
     #[test]
     fn rejects_missing_structure_invalid_identities_and_bad_references() {
         for (source, expected) in [
-            (SAMPLE.replace("ROOT node0\n", ""), AssemblyErrorKind::MissingRoot),
+            (
+                SAMPLE.replace("ROOT node0\n", ""),
+                AssemblyErrorKind::MissingRoot,
+            ),
             ("AWIR 2 0\n".to_owned(), AssemblyErrorKind::MissingSection),
-            (SAMPLE.split("SECTION DATA").next().unwrap().to_owned(), AssemblyErrorKind::MissingSection),
+            (
+                SAMPLE.split("SECTION DATA").next().unwrap().to_owned(),
+                AssemblyErrorKind::MissingSection,
+            ),
             (
                 SAMPLE.replace(
                     "hash64(\"aimer.widget:aimer_container::single_child::Container\")",
@@ -4931,30 +4904,43 @@ SECTION DATA
                 ),
                 AssemblyErrorKind::InvalidHex,
             ),
-            (SAMPLE.replace("  PROP hash64", "  KEY 0011\n  PROP hash64"), AssemblyErrorKind::InvalidIdentity),
             (
-                SAMPLE.replace("  PROP hash64", "  KEY 00112233445566778899aabbccddeefg\n  PROP hash64"),
-                AssemblyErrorKind::InvalidHex,
-            ),
-            (
-                SAMPLE.replace("  CHILD node1", "  CALLBACK 0x0000000000000001 1 0 0011\n  CHILD node1"),
+                SAMPLE.replace("  PROP hash64", "  KEY 0011\n  PROP hash64"),
                 AssemblyErrorKind::InvalidIdentity,
             ),
             (
-                SAMPLE.replace("STRREF hello", "STRREF payload").replace(
-                    "hello:\n  STRING \"Hello\"",
-                    "payload:\n  BLOB 0x00",
+                SAMPLE.replace(
+                    "  PROP hash64",
+                    "  KEY 00112233445566778899aabbccddeefg\n  PROP hash64",
                 ),
+                AssemblyErrorKind::InvalidHex,
+            ),
+            (
+                SAMPLE.replace(
+                    "  CHILD node1",
+                    "  CALLBACK 0x0000000000000001 1 0 0011\n  CHILD node1",
+                ),
+                AssemblyErrorKind::InvalidIdentity,
+            ),
+            (
+                SAMPLE
+                    .replace("STRREF hello", "STRREF payload")
+                    .replace("hello:\n  STRING \"Hello\"", "payload:\n  BLOB 0x00"),
                 AssemblyErrorKind::MissingReference,
             ),
-            (SAMPLE.replace("STRREF hello", "BLOBREF hello"), AssemblyErrorKind::MissingReference),
+            (
+                SAMPLE.replace("STRREF hello", "BLOBREF hello"),
+                AssemblyErrorKind::MissingReference,
+            ),
         ] {
             let error = WidgetAssemblyDocument::parse(&source, LIMITS).unwrap_err();
             assert_eq!(error.kind(), &expected, "source:\n{source}");
         }
 
         let blob_limits = ModelLimits::new(16_384, 128, 1_024, 1);
-        let source = SAMPLE.replace("STRING \"Hello\"", "BLOB 0x0001").replace("STRREF hello", "BLOBREF hello");
+        let source = SAMPLE
+            .replace("STRING \"Hello\"", "BLOB 0x0001")
+            .replace("STRREF hello", "BLOBREF hello");
         let error = WidgetAssemblyDocument::parse(&source, blob_limits).unwrap_err();
         assert_eq!(error.kind(), &AssemblyErrorKind::LimitExceeded);
     }
@@ -4975,8 +4961,8 @@ SECTION DATA
 #[cfg(test)]
 mod widget_graph_tests {
     use crate::{
-        ModelError, ModelLimits, StableId128, Version, WidgetDocument, WidgetDocumentView, WidgetNode,
-        WidgetSchemaId, WidgetSchemaSupport,
+        ModelError, ModelLimits, StableId128, Version, WidgetDocument, WidgetDocumentView,
+        WidgetNode, WidgetSchemaId, WidgetSchemaSupport,
     };
 
     const LIMITS: ModelLimits = ModelLimits::new(4_096, 64, 256, 256).max_widget_depth(16);
@@ -5004,7 +4990,8 @@ mod widget_graph_tests {
         let nodes = [
             WidgetNode::new(WidgetSchemaId::new(1), Version::new(1, 0)).children(&root_children),
             WidgetNode::new(WidgetSchemaId::new(2), Version::new(1, 0)).children(&branch_children),
-            WidgetNode::new(WidgetSchemaId::new(3), Version::new(1, 0)).children(&descendant_children),
+            WidgetNode::new(WidgetSchemaId::new(3), Version::new(1, 0))
+                .children(&descendant_children),
         ];
         let image = encode(&nodes);
 
@@ -5156,8 +5143,7 @@ mod widget_materializer_tests {
     use crate::{
         ModelError, ModelLimits, PropertyId, PropertyValue, Version, WidgetDocument,
         WidgetDocumentView, WidgetFactory, WidgetMaterializeError, WidgetNode, WidgetNodeView,
-        WidgetProperty, WidgetSchemaId, WidgetSchemaSupport,
-        materialize_widget_tree,
+        WidgetProperty, WidgetSchemaId, WidgetSchemaSupport, materialize_widget_tree,
     };
 
     const LIMITS: ModelLimits = ModelLimits::new(4_096, 64, 256, 256).max_widget_depth(16);
@@ -5203,7 +5189,10 @@ mod widget_materializer_tests {
 
     #[test]
     fn invalid_widget_properties_are_preflighted_before_any_headless_node_is_created() {
-        let properties = [WidgetProperty::new(PropertyId::new(99), PropertyValue::Bool(true))];
+        let properties = [WidgetProperty::new(
+            PropertyId::new(99),
+            PropertyValue::Bool(true),
+        )];
         let child_indices = [1];
         let nodes = [
             WidgetNode::new(WidgetSchemaId::new(1), Version::new(1, 0)).children(&child_indices),

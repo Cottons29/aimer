@@ -115,7 +115,11 @@ impl WindowRenderTree {
             .collect();
         self.drawn_unmapped = still_unmapped;
         for (element, debug_name) in aimer_widget::take_declined_paint_elements() {
-            if !self.declined_paint.iter().any(|seen| seen.element == element) {
+            if !self
+                .declined_paint
+                .iter()
+                .any(|seen| seen.element == element)
+            {
                 self.declined_paint.push(CensusElement {
                     element,
                     debug_name,

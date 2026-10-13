@@ -10,14 +10,14 @@
 //! W17 registers [`start_form_example`] in the shared showcase and exposes
 //! the `aimer_form` model through the umbrella crate.
 
+use aimer::input::TextEditingController;
+use aimer::input::button::Button;
+use aimer::input::input::{InputType, TextField};
 use aimer::macros::widget;
 use aimer::style::{
     BorderRadius, BorderSlice, BorderStyle, BoxBorder, BoxDecoration, FontWeight, LayoutSpacing,
     Spacing, TextAlign, TextStyle, Theme, ThemeData,
 };
-use aimer::input::button::Button;
-use aimer::input::input::{InputType, TextField};
-use aimer::input::TextEditingController;
 use aimer::{
     AimerApp, AnyWidget, BuildContext, Color, Column, Container, Dimension, FocusNode, Row, State,
     StateUpdater, StatefulWidget, Text, Widget,
@@ -126,9 +126,12 @@ impl FormExampleState {
                 self.last_submit = Some("Submitted — every field is valid.".to_owned());
             }
             SubmitResult::Rejected { first_error } => {
-                self.last_submit =
-                    Some(format!("Rejected — fix \"{first_error}\" (focus moved there)."));
-                let target = first_error.as_str().to_owned();
+                self.last_submit = Some(format!(
+                    "Rejected — fix \"{first_error}\" (focus moved there)."
+                ));
+                let target = first_error
+                    .as_str()
+                    .to_owned();
                 if let Some(focus) = self.focus_for(&target) {
                     focus.request_focus();
                 }
@@ -142,9 +145,12 @@ impl FormExampleState {
     /// be reset together.
     fn reset(&mut self) {
         self.form.reset();
-        self.email_controller.set_text(String::new());
-        self.password_controller.set_text(String::new());
-        self.amount_controller.set_text(String::new());
+        self.email_controller
+            .set_text(String::new());
+        self.password_controller
+            .set_text(String::new());
+        self.amount_controller
+            .set_text(String::new());
         self.last_submit = None;
     }
 
@@ -161,9 +167,19 @@ impl FormExampleState {
         let dirty = field.is_some_and(FormField::dirty);
         let error = field
             .filter(|field| field.touched())
-            .and_then(|field| field.errors().first())
-            .map(|error| error.message().to_owned());
-        let error_color = app_theme.primary_color.lighten(0.18);
+            .and_then(|field| {
+                field
+                    .errors()
+                    .first()
+            })
+            .map(|error| {
+                error
+                    .message()
+                    .to_owned()
+            });
+        let error_color = app_theme
+            .primary_color
+            .lighten(0.18);
         let (status, status_color) = match &error {
             Some(message) => (message.clone(), error_color),
             None if dirty => ("Edited".to_owned(), app_theme.primary_color),
@@ -208,7 +224,11 @@ impl FormExampleState {
                 BorderSlice::new()
                     .style(BorderStyle::Solid)
                     .stroke(1.0)
-                    .color(app_theme.primary_color.with_alpha(0.62)),
+                    .color(
+                        app_theme
+                            .primary_color
+                            .with_alpha(0.62),
+                    ),
             ))
             .border_radius(6);
 
@@ -233,7 +253,11 @@ impl FormExampleState {
                     .focus_node(focus)
                     .input_type(input_type)
                     .hint(label)
-                    .text_style(TextStyle::new().font_size(15).color(app_theme.on_surface_color))
+                    .text_style(
+                        TextStyle::new()
+                            .font_size(15)
+                            .color(app_theme.on_surface_color),
+                    )
                     .hint_style(
                         TextStyle::new()
                             .font_size(15)
@@ -242,17 +266,27 @@ impl FormExampleState {
                     .decoration(field_decoration)
                     .hover_decoration(hover_decoration)
                     .focus_decoration(focus_decoration)
-                    .selection_color(app_theme.primary_color.with_alpha(0.28))
+                    .selection_color(
+                        app_theme
+                            .primary_color
+                            .with_alpha(0.28),
+                    )
                     .padding(LayoutSpacing::all(Spacing::Px(10)))
                     .on_changed(move |value: String| {
                         changed_updater.set_state(move |state| {
-                            let _ = state.form.set_user_value(id, value);
+                            let _ = state
+                                .form
+                                .set_user_value(id, value);
                         });
                     })
                     .on_blur(move |_| {
                         blurred_updater.set_state(move |state| {
-                            let _ = state.form.mark_touched(id);
-                            let _ = state.form.validate_field(id);
+                            let _ = state
+                                .form
+                                .mark_touched(id);
+                            let _ = state
+                                .form
+                                .validate_field(id);
                         });
                     })
                     .on_submitted(move |_| {
@@ -260,7 +294,11 @@ impl FormExampleState {
                     })
                     .boxed(),
                 Text::new(status)
-                    .text_style(TextStyle::new().font_size(12).color(status_color))
+                    .text_style(
+                        TextStyle::new()
+                            .font_size(12)
+                            .color(status_color),
+                    )
                     .boxed(),
             ])
             .boxed()
@@ -285,24 +323,30 @@ impl State<FormExample> for FormExampleState {
         let email_field = self.field_section(
             "email",
             "Email",
-            self.email_controller.clone(),
-            self.email_focus.clone(),
+            self.email_controller
+                .clone(),
+            self.email_focus
+                .clone(),
             InputType::Email,
             app_theme,
         );
         let password_field = self.field_section(
             "password",
             "Password (min 8 characters)",
-            self.password_controller.clone(),
-            self.password_focus.clone(),
+            self.password_controller
+                .clone(),
+            self.password_focus
+                .clone(),
             InputType::Password,
             app_theme,
         );
         let amount_field = self.field_section(
             "amount",
             "Amount",
-            self.amount_controller.clone(),
-            self.amount_focus.clone(),
+            self.amount_controller
+                .clone(),
+            self.amount_focus
+                .clone(),
             InputType::Number,
             app_theme,
         );
@@ -321,7 +365,9 @@ impl State<FormExample> for FormExampleState {
             ])
             .boxed();
 
-        let status = self.last_submit.clone();
+        let status = self
+            .last_submit
+            .clone();
         let status_widget = status.map_or_else(
             || Text::new(String::new()).boxed(),
             |status| {
@@ -349,7 +395,9 @@ impl State<FormExample> for FormExampleState {
                                 .font_size(14)
                                 .font_weight(FontWeight::Bold)
                                 .color(if is_rejected {
-                                    app_theme.primary_color.lighten(0.18)
+                                    app_theme
+                                        .primary_color
+                                        .lighten(0.18)
                                 } else {
                                     app_theme.primary_color
                                 }),
@@ -436,7 +484,9 @@ fn action_button(
         .hover_decoration(
             BoxDecoration::new()
                 .background_color(if primary {
-                    app_theme.primary_color.lighten(0.08)
+                    app_theme
+                        .primary_color
+                        .lighten(0.08)
                 } else {
                     theme::raised_surface(&app_theme)
                 })
@@ -445,7 +495,9 @@ fn action_button(
         .press_decoration(
             BoxDecoration::new()
                 .background_color(if primary {
-                    app_theme.primary_color.darken(0.08)
+                    app_theme
+                        .primary_color
+                        .darken(0.08)
                 } else {
                     theme::recessed_surface(&app_theme)
                 })
@@ -454,7 +506,11 @@ fn action_button(
         .child(
             Container::new()
                 .height(Dimension::Px(32.0))
-                .padding(LayoutSpacing::new().left(14).right(14))
+                .padding(
+                    LayoutSpacing::new()
+                        .left(14)
+                        .right(14),
+                )
                 .child(
                     Text::new(label)
                         .text_align(TextAlign::MidCenter)
@@ -482,9 +538,18 @@ mod tests {
     #[test]
     fn submit_rejects_an_invalid_form_and_moves_focus_to_the_first_failure() {
         let mut state = FormExampleState::initial();
-        state.form.set_user_value("email", "not-an-email").unwrap();
-        state.form.set_user_value("password", "short").unwrap();
-        state.form.set_user_value("amount", "12.5").unwrap();
+        state
+            .form
+            .set_user_value("email", "not-an-email")
+            .unwrap();
+        state
+            .form
+            .set_user_value("password", "short")
+            .unwrap();
+        state
+            .form
+            .set_user_value("amount", "12.5")
+            .unwrap();
 
         state.submit();
 
@@ -499,22 +564,48 @@ mod tests {
         // this state-level unit test does not simulate. Checking the pending
         // request is what proves `submit` actually asked for focus rather than
         // only reporting which field failed.
-        assert!(state.email_focus.request().is_some());
-        assert!(state.password_focus.request().is_none());
-        assert!(state.amount_focus.request().is_none());
+        assert!(
+            state
+                .email_focus
+                .request()
+                .is_some()
+        );
+        assert!(
+            state
+                .password_focus
+                .request()
+                .is_none()
+        );
+        assert!(
+            state
+                .amount_focus
+                .request()
+                .is_none()
+        );
     }
 
     #[test]
     fn submit_accepts_a_fully_valid_form() {
         let mut state = FormExampleState::initial();
-        state.form.set_user_value("email", "ada@example.com").unwrap();
-        state.form.set_user_value("password", "correct-horse").unwrap();
-        state.form.set_user_value("amount", "12.5").unwrap();
+        state
+            .form
+            .set_user_value("email", "ada@example.com")
+            .unwrap();
+        state
+            .form
+            .set_user_value("password", "correct-horse")
+            .unwrap();
+        state
+            .form
+            .set_user_value("amount", "12.5")
+            .unwrap();
 
         state.submit();
 
         assert_eq!(
-            state.last_submit.as_deref(),
+            state
+                .last_submit
+                .as_deref(),
             Some("Submitted — every field is valid.")
         );
     }
@@ -526,25 +617,61 @@ mod tests {
         // accepted — matching the crate's separation of hints from
         // validation.
         let mut state = FormExampleState::initial();
-        state.form.set_user_value("amount", "not-a-number").unwrap();
-        let _ = state.form.mark_touched("amount");
-        let _ = state.form.validate_field("amount");
+        state
+            .form
+            .set_user_value("amount", "not-a-number")
+            .unwrap();
+        let _ = state
+            .form
+            .mark_touched("amount");
+        let _ = state
+            .form
+            .validate_field("amount");
 
-        assert!(!state.form.field("amount").unwrap().is_valid());
+        assert!(
+            !state
+                .form
+                .field("amount")
+                .unwrap()
+                .is_valid()
+        );
     }
 
     #[test]
     fn reset_clears_the_form_and_every_field_controller() {
         let mut state = FormExampleState::initial();
-        state.form.set_user_value("email", "ada@example.com").unwrap();
-        state.email_controller.set_text("ada@example.com");
+        state
+            .form
+            .set_user_value("email", "ada@example.com")
+            .unwrap();
+        state
+            .email_controller
+            .set_text("ada@example.com");
         state.submit();
 
         state.reset();
 
-        assert!(!state.form.field("email").unwrap().dirty());
-        assert!(!state.form.field("email").unwrap().touched());
-        assert_eq!(state.email_controller.value().text(), "");
+        assert!(
+            !state
+                .form
+                .field("email")
+                .unwrap()
+                .dirty()
+        );
+        assert!(
+            !state
+                .form
+                .field("email")
+                .unwrap()
+                .touched()
+        );
+        assert_eq!(
+            state
+                .email_controller
+                .value()
+                .text(),
+            ""
+        );
         assert_eq!(state.last_submit, None);
     }
 }

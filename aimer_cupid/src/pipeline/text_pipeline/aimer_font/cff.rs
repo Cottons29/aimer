@@ -12,8 +12,14 @@ const MAX_CFF_COORDINATE: f32 = 1.0e9;
 /// A lossless path command emitted by a Type 2 CFF/CFF2 charstring.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum CffPathCommand {
-    MoveTo { x: f32, y: f32 },
-    LineTo { x: f32, y: f32 },
+    MoveTo {
+        x: f32,
+        y: f32,
+    },
+    LineTo {
+        x: f32,
+        y: f32,
+    },
     CurveTo {
         control_1_x: f32,
         control_1_y: f32,
@@ -38,10 +44,7 @@ impl<'a> SfntFace<'a> {
     /// `Ok(None)` means the face has no PostScript outline table or the glyph
     /// ID is outside `maxp.numGlyphs`. CFF2 variation operators are rejected
     /// until the variable-font phase supplies normalized axis coordinates.
-    pub(crate) fn cff_outline(
-        &self,
-        glyph_id: u16,
-    ) -> Result<Option<CffGlyphOutline>, SfntError> {
+    pub(crate) fn cff_outline(&self, glyph_id: u16) -> Result<Option<CffGlyphOutline>, SfntError> {
         let (tag, table) = if let Some(table) = self.table(*b"CFF ") {
             (CFF_TAG, table)
         } else if let Some(table) = self.table(*b"CFF2") {
@@ -90,12 +93,7 @@ struct CffIndex<'a> {
 }
 
 impl<'a> CffIndex<'a> {
-    fn parse(
-        bytes: &'a [u8],
-        offset: usize,
-        cff2: bool,
-        tag: Tag,
-    ) -> Result<Self, SfntError> {
+    fn parse(bytes: &'a [u8], offset: usize, cff2: bool, tag: Tag) -> Result<Self, SfntError> {
         let reader = Reader::new(bytes);
         let count_width = if cff2 { 4 } else { 2 };
         let count = if cff2 {
@@ -204,10 +202,7 @@ impl<'a> CffFont<'a> {
             reader.range(header_size, top_dict_length)?;
             let global_offset = checked_add(header_size, top_dict_length)?;
             let global_subrs = CffIndex::parse(bytes, global_offset, true, tag)?;
-            (
-                reader.range(header_size, top_dict_length)?,
-                global_subrs,
-            )
+            (reader.range(header_size, top_dict_length)?, global_subrs)
         } else {
             if reader.u8(0)? != 1 {
                 return Err(malformed(tag));
@@ -225,20 +220,13 @@ impl<'a> CffFont<'a> {
         };
 
         let top_dict = parse_top_dict(top_dict_bytes, tag)?;
-        let charstrings_offset = top_dict
-            .charstrings_offset
-            .ok_or_else(|| malformed(tag))?;
+        let charstrings_offset = top_dict.charstrings_offset.ok_or_else(|| malformed(tag))?;
         let charstrings = CffIndex::parse(bytes, charstrings_offset, cff2, tag)?;
         if charstrings.len() != usize::from(metrics.num_glyphs) {
             return Err(malformed(tag));
         }
 
-        let top_local_subrs = parse_private_subrs(
-            bytes,
-            top_dict.private,
-            cff2,
-            tag,
-        )?;
+        let top_local_subrs = parse_private_subrs(bytes, top_dict.private, cff2, tag)?;
         let mut font_dicts = Vec::new();
         if let Some(fd_array_offset) = top_dict.fd_array_offset {
             let fd_array = CffIndex::parse(bytes, fd_array_offset, cff2, tag)?;
@@ -472,7 +460,8 @@ impl<'a> CffFont<'a> {
         let Some(program) = (if global {
             self.global_subrs.item(index)
         } else {
-            self.local_subrs(glyph_id).and_then(|subrs| subrs.item(index))
+            self.local_subrs(glyph_id)
+                .and_then(|subrs| subrs.item(index))
         }) else {
             return Err(malformed(self.tag));
         };
@@ -644,7 +633,11 @@ fn cubic_extrema(p0: f32, p1: f32, p2: f32, p3: f32) -> [Option<f32>; 2] {
     let b = 2.0 * (p0 - 2.0 * p1 + p2);
     let c = p1 - p0;
     if a.abs() < f32::EPSILON {
-        let root = if b.abs() < f32::EPSILON { None } else { Some(-c / b) };
+        let root = if b.abs() < f32::EPSILON {
+            None
+        } else {
+            Some(-c / b)
+        };
         return [root, None];
     }
     let discriminant = b * b - 4.0 * a * c;
@@ -652,8 +645,11 @@ fn cubic_extrema(p0: f32, p1: f32, p2: f32, p3: f32) -> [Option<f32>; 2] {
         return [None, None];
     }
     let square_root = discriminant.sqrt();
-    [Some((-b + square_root) / (2.0 * a)), Some((-b - square_root) / (2.0 * a))]
-        .map(|root| root.filter(|value| *value > 0.0 && *value < 1.0))
+    [
+        Some((-b + square_root) / (2.0 * a)),
+        Some((-b - square_root) / (2.0 * a)),
+    ]
+    .map(|root| root.filter(|value| *value > 0.0 && *value < 1.0))
 }
 
 fn cubic_value(p0: f32, p1: f32, p2: f32, p3: f32, t: f32) -> f32 {
@@ -710,7 +706,10 @@ fn consume_stems(state: &mut CharStringState, tag: Tag) -> Result<(), SfntError>
         return Err(malformed(tag));
     }
     let count = state.stack.len() / 2;
-    state.stem_count = state.stem_count.checked_add(count).ok_or_else(|| malformed(tag))?;
+    state.stem_count = state
+        .stem_count
+        .checked_add(count)
+        .ok_or_else(|| malformed(tag))?;
     if state.stem_count > MAX_CFF_STEMS {
         return Err(malformed(tag));
     }
@@ -988,7 +987,14 @@ fn alternating_curve_to(
                 index += 1;
             }
             let end_y = control_2_y + values[3];
-            (control_1_x, control_1_y, control_2_x, control_2_y, end_x, end_y)
+            (
+                control_1_x,
+                control_1_y,
+                control_2_x,
+                control_2_y,
+                end_x,
+                end_y,
+            )
         } else {
             let control_1_x = state.x;
             let control_1_y = state.y + values[0];
@@ -1000,7 +1006,14 @@ fn alternating_curve_to(
                 end_y += arguments[index];
                 index += 1;
             }
-            (control_1_x, control_1_y, control_2_x, control_2_y, end_x, end_y)
+            (
+                control_1_x,
+                control_1_y,
+                control_2_x,
+                control_2_y,
+                end_x,
+                end_y,
+            )
         };
         state.x = end_x;
         state.y = end_y;
@@ -1042,7 +1055,14 @@ fn hflex(state: &mut CharStringState, tag: Tag) -> Result<(), SfntError> {
         0.0,
     ];
     curve_arguments(state, &first, tag)?;
-    let second = [arguments[4], 0.0, arguments[5], -arguments[2], arguments[6], 0.0];
+    let second = [
+        arguments[4],
+        0.0,
+        arguments[5],
+        -arguments[2],
+        arguments[6],
+        0.0,
+    ];
     curve_arguments(state, &second, tag)?;
     Ok(())
 }
@@ -1053,7 +1073,14 @@ fn hflex1(state: &mut CharStringState, tag: Tag) -> Result<(), SfntError> {
     if arguments.len() != 9 {
         return Err(malformed(tag));
     }
-    let first = [arguments[0], arguments[1], arguments[2], arguments[3], arguments[4], 0.0];
+    let first = [
+        arguments[0],
+        arguments[1],
+        arguments[2],
+        arguments[3],
+        arguments[4],
+        0.0,
+    ];
     curve_arguments(state, &first, tag)?;
     let second = [
         arguments[5],
@@ -1185,12 +1212,16 @@ fn decode_dict_number(
         247..=250 => {
             let next = *bytes.get(*cursor).ok_or_else(|| malformed(tag))?;
             *cursor = checked_add(*cursor, 1)?;
-            Ok(f32::from(u16::from(first - 247) * 256 + u16::from(next) + 108))
+            Ok(f32::from(
+                u16::from(first - 247) * 256 + u16::from(next) + 108,
+            ))
         }
         251..=254 => {
             let next = *bytes.get(*cursor).ok_or_else(|| malformed(tag))?;
             *cursor = checked_add(*cursor, 1)?;
-            Ok(-f32::from(u16::from(first - 251) * 256 + u16::from(next) + 108))
+            Ok(-f32::from(
+                u16::from(first - 251) * 256 + u16::from(next) + 108,
+            ))
         }
         _ => Err(malformed(tag)),
     }
@@ -1257,58 +1288,69 @@ fn decode_real(bytes: &[u8], cursor: &mut usize, tag: Tag) -> Result<f32, SfntEr
 fn parse_top_dict(bytes: &[u8], tag: Tag) -> Result<TopDict, SfntError> {
     let mut result = TopDict::default();
     let mut operands = Vec::new();
-    parse_dict(bytes, tag, |operator, values| {
-        match operator {
-            15 | 16 | 24 => {}
-            17 => {
-                if values.len() != 1 {
-                    return Err(malformed(tag));
+    parse_dict(
+        bytes,
+        tag,
+        |operator, values| {
+            match operator {
+                15 | 16 | 24 => {}
+                17 => {
+                    if values.len() != 1 {
+                        return Err(malformed(tag));
+                    }
+                    result.charstrings_offset = Some(dict_offset(values[0], tag)?);
                 }
-                result.charstrings_offset = Some(dict_offset(values[0], tag)?);
-            }
-            18 => {
-                if values.len() != 2 {
-                    return Err(malformed(tag));
+                18 => {
+                    if values.len() != 2 {
+                        return Err(malformed(tag));
+                    }
+                    result.private =
+                        Some((dict_offset(values[0], tag)?, dict_offset(values[1], tag)?));
                 }
-                result.private = Some((dict_offset(values[0], tag)?, dict_offset(values[1], tag)?));
-            }
-            0x0c24 => {
-                if values.len() != 1 {
-                    return Err(malformed(tag));
+                0x0c24 => {
+                    if values.len() != 1 {
+                        return Err(malformed(tag));
+                    }
+                    result.fd_array_offset = Some(dict_offset(values[0], tag)?);
                 }
-                result.fd_array_offset = Some(dict_offset(values[0], tag)?);
-            }
-            0x0c25 => {
-                if values.len() != 1 {
-                    return Err(malformed(tag));
+                0x0c25 => {
+                    if values.len() != 1 {
+                        return Err(malformed(tag));
+                    }
+                    result.fd_select_offset = Some(dict_offset(values[0], tag)?);
                 }
-                result.fd_select_offset = Some(dict_offset(values[0], tag)?);
+                // ROS marks a CID-keyed font. The FDArray/FDSelect entries below
+                // already choose the correct private subroutines for each glyph;
+                // the registry, ordering, and supplement strings are metadata and
+                // do not affect outline decoding.
+                0x0c1e if values.len() != 3 => return Err(malformed(tag)),
+                0x0c1e => {}
+                _ => {}
             }
-            // ROS marks a CID-keyed font. The FDArray/FDSelect entries below
-            // already choose the correct private subroutines for each glyph;
-            // the registry, ordering, and supplement strings are metadata and
-            // do not affect outline decoding.
-            0x0c1e if values.len() != 3 => return Err(malformed(tag)),
-            0x0c1e => {}
-            _ => {}
-        }
-        Ok(())
-    }, &mut operands)
+            Ok(())
+        },
+        &mut operands,
+    )
     .map(|_| result)
 }
 
 fn parse_font_dict(bytes: &[u8], tag: Tag) -> Result<Option<(usize, usize)>, SfntError> {
     let mut private = None;
     let mut operands = Vec::new();
-    parse_dict(bytes, tag, |operator, values| {
-        if operator == 18 {
-            if values.len() != 2 {
-                return Err(malformed(tag));
+    parse_dict(
+        bytes,
+        tag,
+        |operator, values| {
+            if operator == 18 {
+                if values.len() != 2 {
+                    return Err(malformed(tag));
+                }
+                private = Some((dict_offset(values[0], tag)?, dict_offset(values[1], tag)?));
             }
-            private = Some((dict_offset(values[0], tag)?, dict_offset(values[1], tag)?));
-        }
-        Ok(())
-    }, &mut operands)?;
+            Ok(())
+        },
+        &mut operands,
+    )?;
     Ok(private)
 }
 
@@ -1325,15 +1367,20 @@ fn parse_private_subrs<'a>(
     let private_bytes = reader.range(offset, size)?;
     let mut subrs_offset = None;
     let mut operands = Vec::new();
-    parse_dict(private_bytes, tag, |operator, values| {
-        if operator == 19 {
-            if values.len() != 1 {
-                return Err(malformed(tag));
+    parse_dict(
+        private_bytes,
+        tag,
+        |operator, values| {
+            if operator == 19 {
+                if values.len() != 1 {
+                    return Err(malformed(tag));
+                }
+                subrs_offset = Some(dict_offset(values[0], tag)?);
             }
-            subrs_offset = Some(dict_offset(values[0], tag)?);
-        }
-        Ok(())
-    }, &mut operands)?;
+            Ok(())
+        },
+        &mut operands,
+    )?;
     let Some(relative_offset) = subrs_offset else {
         return Ok(None);
     };
@@ -1390,12 +1437,7 @@ fn dict_offset(value: f32, tag: Tag) -> Result<usize, SfntError> {
 }
 
 impl FdSelect {
-    fn parse(
-        bytes: &[u8],
-        offset: usize,
-        glyph_count: u16,
-        tag: Tag,
-    ) -> Result<Self, SfntError> {
+    fn parse(bytes: &[u8], offset: usize, glyph_count: u16, tag: Tag) -> Result<Self, SfntError> {
         let reader = Reader::new(bytes);
         let format = reader.u8(offset)?;
         let mut glyph_fds = Vec::with_capacity(usize::from(glyph_count));
@@ -1483,7 +1525,10 @@ mod tests {
             ..CharStringState::default()
         };
 
-        assert_eq!(roll(&mut state, CFF_TAG), Err(SfntError::MalformedTable(CFF_TAG)));
+        assert_eq!(
+            roll(&mut state, CFF_TAG),
+            Err(SfntError::MalformedTable(CFF_TAG))
+        );
     }
 
     #[test]

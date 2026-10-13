@@ -13,8 +13,7 @@ use std::time::Duration;
 use aimer::animation::layout::AnimatedLayout;
 use aimer::animation::{
     AnimatedPaint, AnimatedSwitcher, AnimationController, Curve, FadeTransition,
-    ImplicitAnimatedBuilder, MorphTransition, RotationTransition, ScaleTransition,
-    SlideTransition,
+    ImplicitAnimatedBuilder, MorphTransition, RotationTransition, ScaleTransition, SlideTransition,
 };
 use aimer::canvas::Canvas;
 use aimer::cupid::utilities::{Color as V2Color, Rect};
@@ -34,7 +33,9 @@ fn render_staying_retained<W: Widget + 'static>(
 ) {
     for frame in 0..frames {
         app.render_frame();
-        let census = app.paint_source_census().expect("a mounted page has a root");
+        let census = app
+            .paint_source_census()
+            .expect("a mounted page has a root");
         assert!(
             census.drawn_unmapped.is_empty(),
             "{what}: frame {frame} drew an element the tree does not know: {census:?}"
@@ -137,12 +138,8 @@ impl State<Page> for PageState {
         } else {
             ("first", Color::Rgb(255, 0, 0))
         };
-        AnimatedSwitcher::new(
-            Duration::from_millis(400),
-            Curve::Linear,
-            Swatch { color },
-        )
-        .child_key(key)
+        AnimatedSwitcher::new(Duration::from_millis(400), Curve::Linear, Swatch { color })
+            .child_key(key)
     }
 }
 

@@ -3,23 +3,21 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use crate::{CALENDAR_HEADER, CALENDAR_WEEKDAYS, PICKER_FIELD_HEIGHT, PICKER_FOOTER_HEIGHT};
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
-use aimer_widget::InteractionBounds;
-use aimer_events::element::{
-    ElementEvent, KeyAction, Modifiers, NamedKey, ScrollDeltaKind,
-};
+use aimer_events::element::{ElementEvent, KeyAction, Modifiers, NamedKey, ScrollDeltaKind};
 use aimer_events::pointer::{PointerButton, PointerInfo};
-use aimer_modal::{Anchor, AnchorHandle, Floating, FloatingAlign, FloatingSide, ModalController, OverflowPolicy};
+use aimer_modal::{
+    Anchor, AnchorHandle, Floating, FloatingAlign, FloatingSide, ModalController, OverflowPolicy,
+};
 use aimer_style::ThemeTokens;
+use aimer_widget::InteractionBounds;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
-    AnyElement, Drawable, Element, EventElement, EventResult, FocusNode, LayoutElement,
-    PointerKey, PortableWidget, Rebuildable, State, StatefulElement, StatefulWidget, StateUpdater,
+    AnyElement, Drawable, Element, EventElement, EventResult, FocusNode, LayoutElement, PointerKey,
+    PortableWidget, Rebuildable, State, StateUpdater, StatefulElement, StatefulWidget,
     VisitorElement, Widget,
-};
-use crate::{
-    CALENDAR_HEADER, CALENDAR_WEEKDAYS, PICKER_FIELD_HEIGHT, PICKER_FOOTER_HEIGHT,
 };
 
 use super::{
@@ -29,15 +27,15 @@ use super::{
     TimeOfDay, TimeZonePolicy,
 };
 use super::{paint, theme};
-mod widget_helpers;
 mod color;
-mod time_wheel;
 mod time;
+mod time_wheel;
+mod widget_helpers;
 pub use color::{ColorPickerView, ColorPickerViewState};
 pub use time::{TimePickerView, TimePickerViewState, TimeSelectionCallback};
 use time_wheel::{
-    column_at, row_at, scroll_steps, time_from_drag, time_from_row, time_from_scroll_steps,
-    TimeWheelDrag,
+    TimeWheelDrag, column_at, row_at, scroll_steps, time_from_drag, time_from_row,
+    time_from_scroll_steps,
 };
 use widget_helpers::{
     calendar_date_at, calendar_navigation, default_date, default_datetime_picker, format_datetime,
@@ -204,7 +202,10 @@ impl StatefulWidget for CalendarView {
 
     fn create_state(self) -> Self::State {
         let runtime = Rc::new(CalendarRuntime::new(self.calendar.clone()));
-        CalendarViewState { model: self, runtime }
+        CalendarViewState {
+            model: self,
+            runtime,
+        }
     }
 }
 impl State<CalendarView> for CalendarViewState {
@@ -229,7 +230,9 @@ impl State<CalendarView> for CalendarViewState {
 }
 impl Widget for CalendarView {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
-        StatefulElement::new_with_name(self, ctx, "CalendarView", None).0.boxed()
+        StatefulElement::new_with_name(self, ctx, "CalendarView", None)
+            .0
+            .boxed()
     }
 
     fn debug_name(&self) -> &'static str {
@@ -308,7 +311,14 @@ impl RawCalendar {
         };
         let date = {
             let calendar = self.runtime.calendar.borrow();
-            calendar_date_at(&calendar, Vec2d::default(), bounds.width, bounds.height, x, y)
+            calendar_date_at(
+                &calendar,
+                Vec2d::default(),
+                bounds.width,
+                bounds.height,
+                x,
+                y,
+            )
         };
         let Some(date) = date else {
             return EventResult::ignored();
@@ -436,7 +446,9 @@ impl Drawable for RawCalendar {
     }
 
     #[inline]
-    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+    fn retained_v2_interaction_disagreement(
+        &self,
+    ) -> Option<aimer_widget::InteractionDisagreement> {
         self.bounds.disagreement("RawCalendar")
     }
 
@@ -594,7 +606,10 @@ impl StatefulWidget for DatePickerView {
             anchor: AnchorHandle::new(),
             overlay_active: Cell::new(false),
         });
-        DatePickerViewState { model: self, runtime }
+        DatePickerViewState {
+            model: self,
+            runtime,
+        }
     }
 }
 impl State<DatePickerView> for DatePickerViewState {
@@ -620,7 +635,9 @@ impl State<DatePickerView> for DatePickerViewState {
 }
 impl Widget for DatePickerView {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
-        StatefulElement::new_with_name(self, ctx, "DatePickerView", None).0.boxed()
+        StatefulElement::new_with_name(self, ctx, "DatePickerView", None)
+            .0
+            .boxed()
     }
 
     fn debug_name(&self) -> &'static str {
@@ -759,7 +776,10 @@ impl RawDatePicker {
             let picker = self.runtime.picker.borrow();
             calendar_date_at(
                 picker.calendar(),
-                Vec2d { x: 0.0, y: origin_y },
+                Vec2d {
+                    x: 0.0,
+                    y: origin_y,
+                },
                 bounds.width,
                 calendar_height,
                 x,
@@ -788,7 +808,12 @@ impl RawDatePicker {
             return self.cancel(super::CancelReason::Escape);
         }
         if let Some(navigation) = calendar_navigation(key, modifiers) {
-            let changed = self.runtime.picker.borrow_mut().navigate(navigation).unwrap_or(false);
+            let changed = self
+                .runtime
+                .picker
+                .borrow_mut()
+                .navigate(navigation)
+                .unwrap_or(false);
             return if changed {
                 EventResult::consumed().with_redraw()
             } else {
@@ -924,7 +949,9 @@ impl Drawable for RawDatePicker {
     }
 
     #[inline]
-    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+    fn retained_v2_interaction_disagreement(
+        &self,
+    ) -> Option<aimer_widget::InteractionDisagreement> {
         self.bounds.disagreement("RawDatePicker")
     }
 
@@ -1122,7 +1149,10 @@ impl StatefulWidget for DateTimePickerView {
             anchor: AnchorHandle::new(),
             overlay_active: Cell::new(false),
         });
-        DateTimePickerViewState { model: self, runtime }
+        DateTimePickerViewState {
+            model: self,
+            runtime,
+        }
     }
 }
 impl State<DateTimePickerView> for DateTimePickerViewState {
@@ -1149,7 +1179,9 @@ impl State<DateTimePickerView> for DateTimePickerViewState {
 }
 impl Widget for DateTimePickerView {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
-        StatefulElement::new_with_name(self, ctx, "DateTimePickerView", None).0.boxed()
+        StatefulElement::new_with_name(self, ctx, "DateTimePickerView", None)
+            .0
+            .boxed()
     }
 
     fn debug_name(&self) -> &'static str {
@@ -1240,7 +1272,8 @@ impl RawDateTimePicker {
             super::DateSelectionMode::Single,
         )
         .map(|calendar| {
-            let mut calendar = calendar.with_disabled_dates(picker.disabled_dates().iter().copied());
+            let mut calendar =
+                calendar.with_disabled_dates(picker.disabled_dates().iter().copied());
             let _ = calendar.select(current.date());
             calendar
         })
@@ -1346,9 +1379,9 @@ impl RawDateTimePicker {
             let steps = if increase { 1 } else { -1 };
             let next = {
                 let picker = self.runtime.picker.borrow();
-                picker.draft().and_then(|current| {
-                    time_from_scroll_steps(current.time(), 3, steps, false)
-                })
+                picker
+                    .draft()
+                    .and_then(|current| time_from_scroll_steps(current.time(), 3, steps, false))
             };
             let Some(next) = next else {
                 return EventResult::consumed();
@@ -1380,12 +1413,15 @@ impl RawDateTimePicker {
             } as u8;
             let next_time = match field {
                 DateTimeField::Date => Ok(time),
-                DateTimeField::Hour =>
-                    TimeOfDay::try_new(next, time.minute(), time.second(), time.nanosecond()),
-                DateTimeField::Minute =>
-                    TimeOfDay::try_new(time.hour(), next, time.second(), time.nanosecond()),
-                DateTimeField::Second =>
-                    TimeOfDay::try_new(time.hour(), time.minute(), next, time.nanosecond()),
+                DateTimeField::Hour => {
+                    TimeOfDay::try_new(next, time.minute(), time.second(), time.nanosecond())
+                }
+                DateTimeField::Minute => {
+                    TimeOfDay::try_new(time.hour(), next, time.second(), time.nanosecond())
+                }
+                DateTimeField::Second => {
+                    TimeOfDay::try_new(time.hour(), time.minute(), next, time.nanosecond())
+                }
                 DateTimeField::Period => return EventResult::ignored(),
             };
             match next_time {
@@ -1568,7 +1604,13 @@ impl RawDateTimePicker {
         }
         if self.runtime.field.get() == DateTimeField::Date {
             if let Some(navigation) = calendar_navigation(key, modifiers) {
-                return if self.runtime.picker.borrow_mut().navigate(navigation).unwrap_or(false) {
+                return if self
+                    .runtime
+                    .picker
+                    .borrow_mut()
+                    .navigate(navigation)
+                    .unwrap_or(false)
+                {
                     EventResult::consumed().with_redraw()
                 } else {
                     EventResult::consumed()
@@ -1637,7 +1679,10 @@ impl EventElement for RawDateTimePicker {
                         let calendar = self.calendar();
                         let date = calendar_date_at(
                             &calendar,
-                            Vec2d { x: 0.0, y: PICKER_FIELD_HEIGHT },
+                            Vec2d {
+                                x: 0.0,
+                                y: PICKER_FIELD_HEIGHT,
+                            },
                             bounds.width,
                             bounds.height - PICKER_FIELD_HEIGHT - PICKER_FOOTER_HEIGHT,
                             x,
@@ -1751,7 +1796,9 @@ impl Drawable for RawDateTimePicker {
     }
 
     #[inline]
-    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+    fn retained_v2_interaction_disagreement(
+        &self,
+    ) -> Option<aimer_widget::InteractionDisagreement> {
         self.bounds.disagreement("RawDateTimePicker")
     }
 
@@ -1795,8 +1842,7 @@ impl Drawable for RawDateTimePicker {
                             y: PICKER_FIELD_HEIGHT * ctx.scale,
                         },
                         size.width,
-                        (size.height
-                            - (PICKER_FIELD_HEIGHT + PICKER_FOOTER_HEIGHT) * ctx.scale)
+                        (size.height - (PICKER_FIELD_HEIGHT + PICKER_FOOTER_HEIGHT) * ctx.scale)
                             .max(0.0),
                         self.runtime.focused.get(),
                         &self.tokens,
@@ -1854,7 +1900,6 @@ impl Widget for RawDateTimePicker {
         "RawDateTimePicker"
     }
 }
-
 
 fn color_slider_offset(index: usize, scale: f32) -> Vec2d {
     Vec2d {

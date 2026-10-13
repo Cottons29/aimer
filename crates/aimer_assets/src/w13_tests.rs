@@ -1,14 +1,17 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
-use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 
 use crossbeam::channel::{Receiver, unbounded};
 
 use super::{
-    AssetCacheConfig, AssetData, AssetErrorKind, AssetLoadOperation, AssetLoadPoll,
-    AssetManifest, AssetManager, AssetMetadata, AssetPolicy, AssetProgress, AssetRef,
-    AssetRequest, AssetResolver, AssetSource, DecodeProfile, Icon, IconContext, IconDirection,
-    IconSource, IconTheme, IconTint, ImageSource, LoadState,
+    AssetCacheConfig, AssetData, AssetErrorKind, AssetLoadOperation, AssetLoadPoll, AssetManager,
+    AssetManifest, AssetMetadata, AssetPolicy, AssetProgress, AssetRef, AssetRequest,
+    AssetResolver, AssetSource, DecodeProfile, Icon, IconContext, IconDirection, IconSource,
+    IconTheme, IconTint, ImageSource, LoadState,
 };
 
 #[derive(Debug)]
@@ -74,12 +77,14 @@ fn asset_ref() -> AssetRef {
 }
 
 fn ready(bytes: &'static [u8]) -> AssetLoadPoll {
-    AssetLoadPoll::Ready(AssetData::new(bytes.to_vec()).with_metadata(AssetMetadata::new(
-        Some("image/svg+xml"),
-        Some(16),
-        Some(16),
-        false,
-    )))
+    AssetLoadPoll::Ready(
+        AssetData::new(bytes.to_vec()).with_metadata(AssetMetadata::new(
+            Some("image/svg+xml"),
+            Some(16),
+            Some(16),
+            false,
+        )),
+    )
 }
 
 #[test]
@@ -108,8 +113,8 @@ fn source_identity_is_stable_and_includes_network_request_variants() {
     .unwrap();
     assert_ne!(first.id(), changed.id());
 
-    let legacy = AssetRef::from_image_source(&ImageSource::Asset("icons/check.svg".to_owned()))
-        .unwrap();
+    let legacy =
+        AssetRef::from_image_source(&ImageSource::Asset("icons/check.svg".to_owned())).unwrap();
     assert_eq!(legacy.source(), &AssetSource::bundled("icons/check.svg"));
 }
 
@@ -121,7 +126,9 @@ fn manifest_rejects_conflicting_identity_and_resolves_registered_sources() {
     assert_eq!(manifest.resolve(source.id()).unwrap(), &source);
 
     let conflicting = AssetRef::new(AssetSource::File(PathBuf::from("icons/check.svg"))).unwrap();
-    let error = manifest.register_with_id(source.id().clone(), conflicting).unwrap_err();
+    let error = manifest
+        .register_with_id(source.id().clone(), conflicting)
+        .unwrap_err();
     assert_eq!(error.kind(), AssetErrorKind::ManifestConflict);
 }
 
@@ -131,47 +138,65 @@ fn loading_is_deduplicated_and_publishes_progress_then_ready_cache_state() {
         AssetLoadPoll::Pending(AssetProgress::known(0.25).unwrap()),
         ready(b"svg"),
     ]]);
-    let mut manager = AssetManager::with_cache_config(
-        resolver.clone(),
-        AssetCacheConfig::new(4, 1024).unwrap(),
-    );
+    let mut manager =
+        AssetManager::with_cache_config(resolver.clone(), AssetCacheConfig::new(4, 1024).unwrap());
     let request = AssetRequest::new(asset_ref());
     let first = manager.request(request.clone()).unwrap();
     let second = manager.request(request).unwrap();
     assert_eq!(first, second);
     assert_eq!(resolver.starts(), 1);
 
-    assert!(matches!(manager.status(first).unwrap(), LoadState::Loading { .. }));
+    assert!(matches!(
+        manager.status(first).unwrap(),
+        LoadState::Loading { .. }
+    ));
     assert!(matches!(
         manager.poll(first).unwrap(),
         LoadState::Loading { progress, .. } if progress.fraction() == Some(0.25)
     ));
-    assert!(matches!(manager.poll(first).unwrap(), LoadState::Ready { stale: false, .. }));
+    assert!(matches!(
+        manager.poll(first).unwrap(),
+        LoadState::Ready { stale: false, .. }
+    ));
     assert_eq!(manager.cache_stats().entries(), 1);
 
     let cached = manager.request(AssetRequest::new(asset_ref())).unwrap();
-    assert!(matches!(manager.status(cached).unwrap(), LoadState::Ready { stale: false, .. }));
+    assert!(matches!(
+        manager.status(cached).unwrap(),
+        LoadState::Ready { stale: false, .. }
+    ));
     assert_eq!(resolver.starts(), 1);
 }
 
 #[test]
 fn errors_can_be_retried_and_cancellation_is_visible() {
     let resolver = ScriptedResolver::new([
-        vec![AssetLoadPoll::Failed(super::AssetError::resolver("offline"))],
+        vec![AssetLoadPoll::Failed(super::AssetError::resolver(
+            "offline",
+        ))],
         vec![ready(b"retry")],
         vec![AssetLoadPoll::Pending(AssetProgress::unknown())],
     ]);
     let mut manager = AssetManager::new(resolver.clone());
     let handle = manager.request(AssetRequest::new(asset_ref())).unwrap();
-    assert!(matches!(manager.poll(handle).unwrap(), LoadState::Error { .. }));
+    assert!(matches!(
+        manager.poll(handle).unwrap(),
+        LoadState::Error { .. }
+    ));
     manager.retry(handle).unwrap();
-    assert!(matches!(manager.poll(handle).unwrap(), LoadState::Ready { .. }));
+    assert!(matches!(
+        manager.poll(handle).unwrap(),
+        LoadState::Ready { .. }
+    ));
     assert_eq!(resolver.starts(), 2);
 
     let other = AssetRef::new(AssetSource::bundled("icons/other.svg")).unwrap();
     let cancelled = manager.request(AssetRequest::new(other)).unwrap();
     manager.cancel(cancelled).unwrap();
-    assert!(matches!(manager.status(cancelled).unwrap(), LoadState::Cancelled { .. }));
+    assert!(matches!(
+        manager.status(cancelled).unwrap(),
+        LoadState::Cancelled { .. }
+    ));
 }
 
 #[test]
@@ -181,10 +206,8 @@ fn cache_is_bounded_by_bytes_and_supports_invalidation_and_profile_variants() {
         vec![ready(b"5678")],
         vec![ready(b"9")],
     ]);
-    let mut manager = AssetManager::with_cache_config(
-        resolver,
-        AssetCacheConfig::new(2, 5).unwrap(),
-    );
+    let mut manager =
+        AssetManager::with_cache_config(resolver, AssetCacheConfig::new(2, 5).unwrap());
     let source = asset_ref();
     let first = manager.request(AssetRequest::new(source.clone())).unwrap();
     manager.poll(first).unwrap();
@@ -204,7 +227,9 @@ fn cache_is_bounded_by_bytes_and_supports_invalidation_and_profile_variants() {
 fn policy_rejects_unsafe_sources_and_can_return_stale_data_after_failure() {
     let resolver = ScriptedResolver::new([
         vec![ready(b"old")],
-        vec![AssetLoadPoll::Failed(super::AssetError::resolver("offline"))],
+        vec![AssetLoadPoll::Failed(super::AssetError::resolver(
+            "offline",
+        ))],
     ]);
     let mut manager = AssetManager::new(resolver);
     let old = AssetRequest::new(asset_ref()).version(1);
@@ -223,7 +248,9 @@ fn policy_rejects_unsafe_sources_and_can_return_stale_data_after_failure() {
     ));
 
     let unsafe_source = AssetRef::new(AssetSource::bundled("../private/key.pem")).unwrap();
-    let error = manager.request(AssetRequest::new(unsafe_source)).unwrap_err();
+    let error = manager
+        .request(AssetRequest::new(unsafe_source))
+        .unwrap_err();
     assert_eq!(error.kind(), AssetErrorKind::UnsafePath);
 
     let network = AssetRef::new(AssetSource::network(
@@ -242,9 +269,14 @@ fn policy_rejects_unsafe_sources_and_can_return_stale_data_after_failure() {
     assert_eq!(error.kind(), AssetErrorKind::NetworkOriginDenied);
 
     let strict = AssetPolicy::new().max_response_bytes(2).unwrap();
-    let mut strict_manager = AssetManager::with_policy(ScriptedResolver::new([vec![ready(b"123")]]), strict);
-    let handle = strict_manager.request(AssetRequest::new(asset_ref())).unwrap();
-    assert!(matches!(strict_manager.poll(handle).unwrap(), LoadState::Error { error, .. } if error.kind() == AssetErrorKind::ResourceLimit));
+    let mut strict_manager =
+        AssetManager::with_policy(ScriptedResolver::new([vec![ready(b"123")]]), strict);
+    let handle = strict_manager
+        .request(AssetRequest::new(asset_ref()))
+        .unwrap();
+    assert!(
+        matches!(strict_manager.poll(handle).unwrap(), LoadState::Error { error, .. } if error.kind() == AssetErrorKind::ResourceLimit)
+    );
 }
 
 #[test]

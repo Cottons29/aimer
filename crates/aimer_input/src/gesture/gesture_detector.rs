@@ -9,13 +9,13 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use aimer_widget::InteractionBounds;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use aimer_events::pointer::PointerEvent;
-use aimer_utils::AnimInstant;
 use aimer_macro::{PortableValue, PortableWidget};
+use aimer_utils::AnimInstant;
+use aimer_widget::InteractionBounds;
 use aimer_widget::base::{BuildContext, WindowHandle};
 use aimer_widget::{
     AnyElement, AnyWidget, Drawable, Element, EventElement, EventResult, EventTreeRole,
@@ -103,10 +103,7 @@ impl Default for GestureDetectorBehavior {
 /// ```
 #[allow(dead_code)]
 #[derive(PortableWidget)]
-#[portable_widget(
-    id = "aimer_input::GestureDetector",
-    schema_only
-)]
+#[portable_widget(id = "aimer_input::GestureDetector", schema_only)]
 pub struct GestureDetector<W = RequiredChild> {
     // The flat no-argument mirrors give the derive stable callback slots. The
     // aggregate handler set remains the native hot-path dispatch object.
@@ -447,7 +444,12 @@ impl<E: Element> EventElement for RawGestureDetector<E> {
 
         let output = {
             let mut state = self.state.borrow_mut();
-            recognize(&mut state, &pointer_event, AnimInstant::now(), self.handlers.mask())
+            recognize(
+                &mut state,
+                &pointer_event,
+                AnimInstant::now(),
+                self.handlers.mask(),
+            )
         };
 
         // A move that advanced nothing through an idle recognizer is a pure
@@ -540,7 +542,9 @@ impl<E: Element> Drawable for RawGestureDetector<E> {
     }
 
     #[inline]
-    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+    fn retained_v2_interaction_disagreement(
+        &self,
+    ) -> Option<aimer_widget::InteractionDisagreement> {
         self.cached_bounds.disagreement("GestureDetector")
     }
 
@@ -551,7 +555,6 @@ impl<E: Element> Drawable for RawGestureDetector<E> {
             .save(ctx.scale, abs_x, abs_y, child_size.width, child_size.height);
         self.child.sync_paint_geometry(ctx);
     }
-
 }
 
 impl<E: Element + 'static> Rebuildable for RawGestureDetector<E> {
@@ -597,9 +600,7 @@ impl<E: Element + 'static> Rebuildable for RawGestureDetector<E> {
 #[cfg(test)]
 mod tests {
     use aimer_events::pointer::{PointerButton, PointerInfo, PointerSource};
-    use aimer_widget::{
-        broadcast_event, dispatch_event, dispatch_focused_event, CaptureRequest,
-    };
+    use aimer_widget::{CaptureRequest, broadcast_event, dispatch_event, dispatch_focused_event};
 
     use super::*;
     use crate::gesture::state::Press;
@@ -697,7 +698,8 @@ mod tests {
             handlers: Rc::new(GestureHandlers::new()),
             state: RefCell::new(GestureState::default()),
             behavior,
-        }.boxed()
+        }
+        .boxed()
     }
 
     fn touch(x: f32, y: f32, id: u64) -> PointerInfo {
@@ -745,10 +747,7 @@ mod tests {
     #[test]
     fn child_event_behavior_defaults_to_pass_through_and_can_block() {
         let pass_through = GestureDetector::new().child(TestWidget);
-        assert_eq!(
-            pass_through.behavior,
-            GestureDetectorBehavior::PassThrough
-        );
+        assert_eq!(pass_through.behavior, GestureDetectorBehavior::PassThrough);
 
         let blocked = GestureDetector::new()
             .behavior(GestureDetectorBehavior::BlockChild)
@@ -788,8 +787,7 @@ mod tests {
             GestureDetectorBehavior::PassThrough,
             GestureDetectorBehavior::BlockChild,
         ] {
-            let detector =
-                recording_detector(behavior, Rc::new(std::cell::Cell::new(0)));
+            let detector = recording_detector(behavior, Rc::new(std::cell::Cell::new(0)));
 
             let mut visited = 0;
             detector.visit_children(&mut |_| visited += 1);
@@ -797,7 +795,10 @@ mod tests {
 
             let mut retained = 0;
             detector.visit_retained_v2_children(&mut |_, _| retained += 1);
-            assert_eq!(retained, 1, "{behavior:?} must expose its child to the render tree");
+            assert_eq!(
+                retained, 1,
+                "{behavior:?} must expose its child to the render tree"
+            );
         }
     }
 
@@ -994,7 +995,9 @@ mod tests {
         let node = tree.add_root(Rect::new(200.0, 200.0, 10.0, 10.0)).unwrap();
 
         detector.adopt_retained_v2_interaction_source(aimer_widget::InteractionSource::new(
-            tree, node, (50.0, 50.0),
+            tree,
+            node,
+            (50.0, 50.0),
         ));
 
         assert_eq!(
@@ -1096,8 +1099,14 @@ mod tests {
 
         let result = detector.on_event(&ElementEvent::PointerMove(hover));
 
-        assert!(!result.is_consumed(), "an idle hover move must fall through");
-        assert!(!result.needs_redraw(), "nothing changed, nothing to repaint");
+        assert!(
+            !result.is_consumed(),
+            "an idle hover move must fall through"
+        );
+        assert!(
+            !result.needs_redraw(),
+            "nothing changed, nothing to repaint"
+        );
         assert!(
             !detector.window.take_redraw_request(),
             "no frame may be scheduled for a move that advanced no gesture"
@@ -1116,6 +1125,9 @@ mod tests {
         let result = detector.on_event(&ElementEvent::PointerMove(touch(12.0, 12.0, 2)));
 
         assert!(result.is_consumed(), "a held press owns its moves");
-        assert!(result.needs_redraw(), "a live gesture keeps the frames coming");
+        assert!(
+            result.needs_redraw(),
+            "a live gesture keeps the frames coming"
+        );
     }
 }

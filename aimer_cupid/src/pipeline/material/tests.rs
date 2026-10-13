@@ -3,8 +3,11 @@ use super::*;
 #[test]
 fn light_edge_needs_no_backdrop_or_intermediate_budget() {
     let capabilities = MaterialCapabilities {
-        backdrop_sampling: false, distortion_sampling: false,
-        max_surface_dimension: 0, max_intermediate_pixels: 0, max_samples: 0,
+        backdrop_sampling: false,
+        distortion_sampling: false,
+        max_surface_dimension: 0,
+        max_intermediate_pixels: 0,
+        max_samples: 0,
     };
     let mut edge = MaterialRequest::new(MaterialKind::LightEdge, [0.0, 0.0, 8000.0, 40.0]);
     let plan = plan_material(edge, capabilities);
@@ -23,7 +26,10 @@ fn light_edge_needs_no_backdrop_or_intermediate_budget() {
             3 => edge.opacity = 0.0,
             _ => edge.bounds[2] = 0.0,
         }
-        assert_eq!(plan_material(edge, capabilities).path, MaterialRenderPath::Skip);
+        assert_eq!(
+            plan_material(edge, capabilities).path,
+            MaterialRenderPath::Skip
+        );
     }
 }
 
@@ -35,12 +41,25 @@ fn light_angle_packets_round_trip_normalize_and_preserve_legacy_decoding() {
     assert_eq!(bytes.len(), 256);
     assert_eq!(bytes[4], 3);
     assert_eq!(MaterialRequest::decode(&bytes), Ok(request));
-    for (value, expected) in [(f32::NAN, 225.0), (f32::INFINITY, 225.0), (-135.0, 225.0), (450.0, 90.0)] {
+    for (value, expected) in [
+        (f32::NAN, 225.0),
+        (f32::INFINITY, 225.0),
+        (-135.0, 225.0),
+        (450.0, 90.0),
+    ] {
         let mut invalid = bytes.clone();
         invalid[252..256].copy_from_slice(&value.to_le_bytes());
-        assert_eq!(MaterialRequest::decode(&invalid).unwrap().light_angle, expected);
+        assert_eq!(
+            MaterialRequest::decode(&invalid).unwrap().light_angle,
+            expected
+        );
     }
-    for kind in [MaterialKind::Glass, MaterialKind::Liquid, MaterialKind::BackdropFilter, MaterialKind::Magnification] {
+    for kind in [
+        MaterialKind::Glass,
+        MaterialKind::Liquid,
+        MaterialKind::BackdropFilter,
+        MaterialKind::Magnification,
+    ] {
         let original = MaterialRequest::new(kind, [1.0, 2.0, 80.0, 40.0]);
         for (version, length) in [(1, 244), (2, 252)] {
             let mut bytes = packet(original);
@@ -53,15 +72,24 @@ fn light_angle_packets_round_trip_normalize_and_preserve_legacy_decoding() {
 
 #[test]
 fn magnification_style_packet_v2_is_accepted() {
-    let mut bytes = packet(MaterialRequest::new(MaterialKind::Magnification, [3.0, 4.0, 80.0, 40.0]));
+    let mut bytes = packet(MaterialRequest::new(
+        MaterialKind::Magnification,
+        [3.0, 4.0, 80.0, 40.0],
+    ));
     bytes.truncate(244);
     bytes[4] = 2;
     bytes.extend_from_slice(&43u32.to_le_bytes());
     bytes.extend_from_slice(&0.6f32.to_le_bytes());
-    let decoded = MaterialRequest::decode(&bytes).expect("version 2 carries magnification styles and bulge strength");
+    let decoded = MaterialRequest::decode(&bytes)
+        .expect("version 2 carries magnification styles and bulge strength");
     assert_eq!(decoded.bounds, [3.0, 4.0, 80.0, 40.0]);
-    assert_eq!(decoded.magnification_style, MagnificationStyle::UNIFORM | MagnificationStyle::BULGE
-        | MagnificationStyle::HORIZONTAL | MagnificationStyle::LEFT);
+    assert_eq!(
+        decoded.magnification_style,
+        MagnificationStyle::UNIFORM
+            | MagnificationStyle::BULGE
+            | MagnificationStyle::HORIZONTAL
+            | MagnificationStyle::LEFT
+    );
     assert_eq!(decoded.bulge_strength, 0.6);
 }
 
@@ -122,7 +150,12 @@ fn packet(request: MaterialRequest) -> Vec<u8> {
 
 #[test]
 fn magnification_style_packets_preserve_legacy_and_reject_unknown_bits() {
-    for kind in [MaterialKind::Magnification, MaterialKind::Glass, MaterialKind::Liquid, MaterialKind::BackdropFilter] {
+    for kind in [
+        MaterialKind::Magnification,
+        MaterialKind::Glass,
+        MaterialKind::Liquid,
+        MaterialKind::BackdropFilter,
+    ] {
         let request = MaterialRequest::new(kind, [1.0, 2.0, 80.0, 40.0]);
         let mut bytes = packet(request);
         assert_eq!(bytes.len(), 256);
@@ -130,18 +163,38 @@ fn magnification_style_packets_preserve_legacy_and_reject_unknown_bits() {
         bytes[4] = 1;
         assert_eq!(MaterialRequest::decode(&bytes), Ok(request));
         bytes[4] = 2;
-        assert!(matches!(MaterialRequest::decode(&bytes), Err(MaterialDecodeError::InvalidLength { expected: 252, .. })));
+        assert!(matches!(
+            MaterialRequest::decode(&bytes),
+            Err(MaterialDecodeError::InvalidLength { expected: 252, .. })
+        ));
     }
-    let mut bytes = packet(MaterialRequest::new(MaterialKind::Magnification, [0.0, 0.0, 80.0, 40.0]));
+    let mut bytes = packet(MaterialRequest::new(
+        MaterialKind::Magnification,
+        [0.0, 0.0, 80.0, 40.0],
+    ));
     bytes[244..248].copy_from_slice(&(1u32 << 9).to_le_bytes());
-    assert_eq!(MaterialRequest::decode(&bytes), Err(MaterialDecodeError::InvalidMagnificationStyle));
+    assert_eq!(
+        MaterialRequest::decode(&bytes),
+        Err(MaterialDecodeError::InvalidMagnificationStyle)
+    );
     bytes[244..248].copy_from_slice(&MagnificationStyle::ALL.bits().to_le_bytes());
-    for (value, expected) in [(f32::NAN, 0.25), (f32::INFINITY, 0.25), (-1.0, 0.0), (2.0, 1.0)] {
+    for (value, expected) in [
+        (f32::NAN, 0.25),
+        (f32::INFINITY, 0.25),
+        (-1.0, 0.0),
+        (2.0, 1.0),
+    ] {
         bytes[248..252].copy_from_slice(&value.to_le_bytes());
-        assert_eq!(MaterialRequest::decode(&bytes).unwrap().bulge_strength, expected);
+        assert_eq!(
+            MaterialRequest::decode(&bytes).unwrap().bulge_strength,
+            expected
+        );
     }
     bytes[13] = 1;
-    assert_eq!(MaterialRequest::decode(&bytes), Err(MaterialDecodeError::NonZeroReserved));
+    assert_eq!(
+        MaterialRequest::decode(&bytes),
+        Err(MaterialDecodeError::NonZeroReserved)
+    );
 }
 
 #[test]
@@ -199,10 +252,16 @@ fn decoder_rejects_wrong_schema_headers() {
     let request = MaterialRequest::new(MaterialKind::Glass, [0.0, 0.0, 10.0, 10.0]);
     let mut bytes = packet(request);
     bytes[0] = b'X';
-    assert_eq!(MaterialRequest::decode(&bytes), Err(MaterialDecodeError::InvalidMagic));
+    assert_eq!(
+        MaterialRequest::decode(&bytes),
+        Err(MaterialDecodeError::InvalidMagic)
+    );
     bytes[0] = b'A';
     bytes[4] = 99;
-    assert_eq!(MaterialRequest::decode(&bytes), Err(MaterialDecodeError::UnsupportedVersion));
+    assert_eq!(
+        MaterialRequest::decode(&bytes),
+        Err(MaterialDecodeError::UnsupportedVersion)
+    );
 }
 
 #[test]
@@ -249,9 +308,15 @@ fn liquid_distortion_requires_capability_but_glass_does_not() {
         ..MaterialCapabilities::default()
     };
     let liquid = MaterialRequest::new(MaterialKind::Liquid, [0.0, 0.0, 20.0, 20.0]);
-    assert_eq!(plan_material(liquid, capabilities).path, MaterialRenderPath::Fallback);
+    assert_eq!(
+        plan_material(liquid, capabilities).path,
+        MaterialRenderPath::Fallback
+    );
     let glass = MaterialRequest::new(MaterialKind::Glass, [0.0, 0.0, 20.0, 20.0]);
-    assert_eq!(plan_material(glass, capabilities).path, MaterialRenderPath::Gpu);
+    assert_eq!(
+        plan_material(glass, capabilities).path,
+        MaterialRenderPath::Gpu
+    );
 }
 
 #[test]

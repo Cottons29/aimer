@@ -6,8 +6,8 @@
 
 use std::time::Duration;
 
-use aimer::animation::layout::AnimatedLayout;
 use aimer::animation::Curve;
+use aimer::animation::layout::AnimatedLayout;
 use aimer::style::*;
 use aimer::*;
 

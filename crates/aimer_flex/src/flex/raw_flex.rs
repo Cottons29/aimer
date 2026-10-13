@@ -4,16 +4,14 @@ use std::rc::Rc;
 use crate::flex::children_source::{ChildrenSource, EagerChildren};
 use crate::flex::flex_layout::{FlexLayout, FlexLayoutCache, LayerOrder};
 use crate::flex::flex_list::FlexList;
-use crate::flex::layout_transition::{
-    FlexGeometrySnapshot, FlexItemGeometry, FlexSnapshotError,
-};
+use crate::flex::layout_transition::{FlexGeometrySnapshot, FlexItemGeometry, FlexSnapshotError};
 use crate::flex::{BoxAlignment, FlexDirection, JustifyContent, OverflowBehavior};
+use aimer_animation::layout::LayoutGeometry;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_attribute::{BoxConstraint, Dimension};
 use aimer_style::LayoutSpacing;
 use aimer_widget::base::BuildContext;
-use aimer_animation::layout::LayoutGeometry;
 use aimer_widget::{
     AnyElement, AnyWidget, Drawable, Element, EventElement, EventTreeRole, LayoutCache,
     LayoutElement, Rebuildable, VisitorElement, Widget,
@@ -359,13 +357,8 @@ impl RawFlex {
                 })
                 .collect::<Result<Vec<_>, FlexSnapshotError>>()?;
             return FlexGeometrySnapshot::try_new_optional(
-                LayoutGeometry::try_new(
-                    0.0,
-                    0.0,
-                    layout.size.width,
-                    layout.size.height,
-                )
-                .map_err(|error| FlexSnapshotError::Keyed(error.into()))?,
+                LayoutGeometry::try_new(0.0, 0.0, layout.size.width, layout.size.height)
+                    .map_err(|error| FlexSnapshotError::Keyed(error.into()))?,
                 children,
             );
         }
@@ -380,27 +373,34 @@ impl RawFlex {
         let max_w = ctx.box_constraint.max_width;
         let max_h = ctx.box_constraint.max_height;
         let children = range
-            .map(|index| -> Result<Option<FlexItemGeometry>, FlexSnapshotError> {
-                let child = self
-                    .children
-                    .get(index)
-                    .ok_or(FlexSnapshotError::MissingKey)?;
-                let size = layout.size(index);
-                let main = distribution.0
-                    + layout.offset_f32(index)
-                    + distribution.1 * index as f32;
-                let (x, y) = if is_row {
-                    (main, align_offset(self.vertical_alignment, (max_h - size.height).max(0.0)))
-                } else {
-                    (align_offset(self.horizontal_alignment, (max_w - size.width).max(0.0)), main)
-                };
-                let geometry = LayoutGeometry::try_new(x, y, size.width, size.height)
-                    .map_err(|error| FlexSnapshotError::Keyed(error.into()))?;
-                Ok(child
-                    .reconciliation_key()
-                    .cloned()
-                    .map(|key| FlexItemGeometry::new(key, geometry)))
-            })
+            .map(
+                |index| -> Result<Option<FlexItemGeometry>, FlexSnapshotError> {
+                    let child = self
+                        .children
+                        .get(index)
+                        .ok_or(FlexSnapshotError::MissingKey)?;
+                    let size = layout.size(index);
+                    let main =
+                        distribution.0 + layout.offset_f32(index) + distribution.1 * index as f32;
+                    let (x, y) = if is_row {
+                        (
+                            main,
+                            align_offset(self.vertical_alignment, (max_h - size.height).max(0.0)),
+                        )
+                    } else {
+                        (
+                            align_offset(self.horizontal_alignment, (max_w - size.width).max(0.0)),
+                            main,
+                        )
+                    };
+                    let geometry = LayoutGeometry::try_new(x, y, size.width, size.height)
+                        .map_err(|error| FlexSnapshotError::Keyed(error.into()))?;
+                    Ok(child
+                        .reconciliation_key()
+                        .cloned()
+                        .map(|key| FlexItemGeometry::new(key, geometry)))
+                },
+            )
             .collect::<Result<Vec<_>, FlexSnapshotError>>()?;
 
         FlexGeometrySnapshot::try_new_optional(
@@ -416,10 +416,7 @@ impl RawFlex {
     /// tying the result to one visible rectangle. Dynamic-island painting is
     /// only enabled for eager children, so the complete order can be reused
     /// for the static prefix while the live context still culls dynamic rows.
-    fn prepare_paint_partition(
-        &self,
-        ctx: &BuildContext,
-    ) -> Option<(Rc<FlexLayout>, (f32, f32))> {
+    fn prepare_paint_partition(&self, ctx: &BuildContext) -> Option<(Rc<FlexLayout>, (f32, f32))> {
         let mut layout = self.flex_layout(ctx);
         let mut distribution = self.main_distribution(ctx, layout.total(), layout.len());
         let mut range = self.painted_range(ctx, &layout, distribution);
@@ -450,7 +447,6 @@ impl RawFlex {
         self.layout.set_painted(&range);
         Some((layout, distribution))
     }
-
 }
 
 /// How often one frame reconciles its table with the children it is about to
@@ -709,9 +705,9 @@ impl RawFlex {
         // representative either: it may carry one-off leading spacing. The
         // first viewport row is therefore the fallback in that case.
         let cold_probe = || {
-            let main_start = ctx.visible_rect.map(|(x, y, _, _)| {
-                if is_row { x } else { y }
-            });
+            let main_start = ctx
+                .visible_rect
+                .map(|(x, y, _, _)| if is_row { x } else { y });
             (main_start.is_some_and(|start| start > 0.0) && len > 1).then_some(1)
         };
         let index = self
@@ -835,7 +831,12 @@ impl RawFlex {
     /// Main-axis leading and inter-child space added by the container's
     /// justification.
     #[inline]
-    fn main_distribution(&self, ctx: &BuildContext, total: ResolvedSize, child_count: usize) -> (f32, f32) {
+    fn main_distribution(
+        &self,
+        ctx: &BuildContext,
+        total: ResolvedSize,
+        child_count: usize,
+    ) -> (f32, f32) {
         let (max_main, total_main, legacy_alignment) = if self.is_row() {
             (
                 ctx.box_constraint.max_width,
@@ -870,7 +871,11 @@ impl RawFlex {
         if self.overflow_behavior == OverflowBehavior::Wrap {
             return self.retained_wrapped_child_layout(ctx, child, child_ordinal);
         }
-        let index = self.children.live_start().unwrap_or(0).checked_add(child_ordinal)?;
+        let index = self
+            .children
+            .live_start()
+            .unwrap_or(0)
+            .checked_add(child_ordinal)?;
         if self.children.get(index)?.id() != child.id() {
             return None;
         }
@@ -881,9 +886,7 @@ impl RawFlex {
         }
         let child_size = layout.size(index);
         let distribution = self.main_distribution(ctx, layout.total(), layout.len());
-        let main = distribution.0
-            + layout.offset_f32(index)
-            + distribution.1 * index as f32;
+        let main = distribution.0 + layout.offset_f32(index) + distribution.1 * index as f32;
         let (offset_x, offset_y) = if self.is_row() {
             (
                 main,
@@ -1127,9 +1130,7 @@ impl Drawable for RawFlex {
             let child_size = layout.size(index);
             let c_w = child_size.width;
             let c_h = child_size.height;
-            let main = distribution.0
-                + layout.offset_f32(index)
-                + distribution.1 * index as f32;
+            let main = distribution.0 + layout.offset_f32(index) + distribution.1 * index as f32;
 
             let (offset_x, offset_y) = if is_row {
                 (
@@ -1182,7 +1183,6 @@ impl Drawable for RawFlex {
 
         ctx.canvas.restore();
     }
-
 }
 
 impl VisitorElement for RawFlex {
@@ -1260,11 +1260,7 @@ impl EventElement for RawFlex {
     /// paint order. Unknown bounds remain candidates so a child that has not
     /// published geometry cannot be accidentally made non-interactive.
     #[inline]
-    fn hit_test_children_at<'a>(
-        &'a self,
-        pos: Vec2d,
-        visitor: &mut dyn FnMut(&'a dyn Element),
-    ) {
+    fn hit_test_children_at<'a>(&'a self, pos: Vec2d, visitor: &mut dyn FnMut(&'a dyn Element)) {
         self.visit_painted_children_at(pos, false, visitor);
     }
 
@@ -1455,5 +1451,4 @@ impl LayoutElement for RawFlex {
         self.layout.invalidate();
         self.children.visit(&mut |child| child.invalidate_layout());
     }
-
 }

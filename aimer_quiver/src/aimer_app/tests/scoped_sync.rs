@@ -30,7 +30,11 @@ impl StatefulWidget for StatefulBox {
     type State = BoxState;
 
     fn create_state(self) -> BoxState {
-        BoxState { mode: 0, updaters: self.updaters, nested: self.nested }
+        BoxState {
+            mode: 0,
+            updaters: self.updaters,
+            nested: self.nested,
+        }
     }
 }
 
@@ -54,13 +58,23 @@ impl State<StatefulBox> for BoxState {
             // The same elements, a different size.
             2 => swatch(80.0, 20),
             // More elements than before.
-            3 => Column::new().children(vec![swatch(40.0, 20), swatch(40.0, 60)]).boxed(),
+            3 => Column::new()
+                .children(vec![swatch(40.0, 20), swatch(40.0, 60)])
+                .boxed(),
             // Two columns of the same shape whose first swatch differs in colour:
             // the change is below the rebuilt root, not in it.
-            5 => Column::new().children(vec![swatch(40.0, 30), swatch(40.0, 60)]).boxed(),
-            6 => Column::new().children(vec![swatch(40.0, 220), swatch(40.0, 60)]).boxed(),
+            5 => Column::new()
+                .children(vec![swatch(40.0, 30), swatch(40.0, 60)])
+                .boxed(),
+            6 => Column::new()
+                .children(vec![swatch(40.0, 220), swatch(40.0, 60)])
+                .boxed(),
             // A stateful element inside the stateful element.
-            _ if self.nested => StatefulBox { updaters: self.updaters.clone(), nested: false }.boxed(),
+            _ if self.nested => StatefulBox {
+                updaters: self.updaters.clone(),
+                nested: false,
+            }
+            .boxed(),
             _ => swatch(40.0, 120),
         }
     }
@@ -68,7 +82,9 @@ impl State<StatefulBox> for BoxState {
 
 impl Widget for StatefulBox {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
-        StatefulElement::new_with_name(self, ctx, "ScopedBox", None).0.boxed()
+        StatefulElement::new_with_name(self, ctx, "ScopedBox", None)
+            .0
+            .boxed()
     }
 }
 
@@ -80,7 +96,13 @@ struct Page {
 
 impl Widget for Page {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
-        let boxed = |nested| StatefulBox { updaters: self.updaters.clone(), nested }.boxed();
+        let boxed = |nested| {
+            StatefulBox {
+                updaters: self.updaters.clone(),
+                nested,
+            }
+            .boxed()
+        };
         let blue = || {
             SizedBox::new()
                 .width(Dimension::Px(30.0))
@@ -90,7 +112,9 @@ impl Widget for Page {
         };
         let mut rows = vec![
             boxed(false),
-            Row::new().children(vec![blue(), boxed(false), blue()]).boxed(),
+            Row::new()
+                .children(vec![blue(), boxed(false), blue()])
+                .boxed(),
             boxed(true),
         ];
         rows.extend((0..20).map(|_| {
@@ -116,8 +140,13 @@ impl Scene {
     fn new(scoped_sync_disabled: bool) -> Self {
         let updaters: Updaters = Rc::default();
         let mut app = AimerApp::start_headless_with(
-            Page { updaters: updaters.clone() },
-            HeadlessOptions { size: PhysicalSize::new(240, 300), scale_factor: 1.0 },
+            Page {
+                updaters: updaters.clone(),
+            },
+            HeadlessOptions {
+                size: PhysicalSize::new(240, 300),
+                scale_factor: 1.0,
+            },
         );
         app.app.render_tree.scoped_sync_disabled = scoped_sync_disabled;
         app.pump_frames(3);
@@ -155,7 +184,11 @@ impl Scene {
             element.visit_retained_v2_children(&mut |_, child| walk(child, app, out));
         }
         let mut out = Vec::new();
-        walk(self.app.app.widget_root.as_ref().expect("mounted").as_ref(), &self.app, &mut out);
+        walk(
+            self.app.app.widget_root.as_ref().expect("mounted").as_ref(),
+            &self.app,
+            &mut out,
+        );
         out
     }
 
@@ -189,13 +222,21 @@ fn run(steps: &[&[(usize, u8)]], scoped_sync_disabled: bool) -> (Vec<Layout>, (u
 /// they show the same layout after every step. Returns the scoped application's
 /// (full, scoped) synchronization counts gained over the steps.
 fn compare(steps: &[&[(usize, u8)]]) -> (u64, u64) {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     let (scoped_layouts, counts) = run(steps, false);
     let (full_layouts, reference) = run(steps, true);
     for (number, (scoped, full)) in scoped_layouts.iter().zip(&full_layouts).enumerate() {
-        assert_eq!(scoped, full, "after step {number} the scoped application diverged");
+        assert_eq!(
+            scoped, full,
+            "after step {number} the scoped application diverged"
+        );
     }
-    assert_eq!(reference.1, 0, "the reference application never takes the scoped path");
+    assert_eq!(
+        reference.1, 0,
+        "the reference application never takes the scoped path"
+    );
     counts
 }
 
@@ -203,7 +244,10 @@ fn compare(steps: &[&[(usize, u8)]]) -> (u64, u64) {
 fn a_repaint_only_rebuild_is_synchronized_in_place() {
     // Mode 0 and 1 differ only in colour.
     let (full, scoped) = compare(&[&[(0, 1)], &[(0, 0)], &[(1, 1)], &[(1, 0)]]);
-    assert!(scoped >= 4, "each rebuild takes the scoped path, saw {scoped} (full {full})");
+    assert!(
+        scoped >= 4,
+        "each rebuild takes the scoped path, saw {scoped} (full {full})"
+    );
     assert_eq!(full, 0, "and none needs a full synchronization");
 }
 
@@ -211,13 +255,19 @@ fn a_repaint_only_rebuild_is_synchronized_in_place() {
 fn a_rebuild_that_changes_size_falls_back_to_the_full_synchronization() {
     // Mode 2 is wider, so everything beside it moves.
     let (full, _) = compare(&[&[(1, 2)], &[(1, 0)]]);
-    assert!(full >= 2, "the layout change must be fully synchronized, saw {full}");
+    assert!(
+        full >= 2,
+        "the layout change must be fully synchronized, saw {full}"
+    );
 }
 
 #[test]
 fn a_rebuild_that_adds_elements_falls_back_to_the_full_synchronization() {
     let (full, _) = compare(&[&[(0, 3)], &[(0, 0)]]);
-    assert!(full >= 2, "new nodes must be fully synchronized, saw {full}");
+    assert!(
+        full >= 2,
+        "new nodes must be fully synchronized, saw {full}"
+    );
 }
 
 #[test]
@@ -263,7 +313,11 @@ impl StatefulWidget for PressableBox {
     type State = PressableState;
 
     fn create_state(self) -> PressableState {
-        PressableState { shade: 0, presses: self.presses, handle: self.handle }
+        PressableState {
+            shade: 0,
+            presses: self.presses,
+            handle: self.handle,
+        }
     }
 }
 
@@ -276,14 +330,22 @@ impl State<PressableBox> for PressableState {
         let presses = self.presses.clone();
         aimer_input::button::Button::new()
             .on_press(move || presses.set(presses.get() + 1))
-            .decoration(aimer_style::BoxDecoration::new().background_color(Color::Rgb(self.shade, 80, 80)))
-            .child(SizedBox::new().width(Dimension::Px(60.0)).height(Dimension::Px(30.0)))
+            .decoration(
+                aimer_style::BoxDecoration::new().background_color(Color::Rgb(self.shade, 80, 80)),
+            )
+            .child(
+                SizedBox::new()
+                    .width(Dimension::Px(60.0))
+                    .height(Dimension::Px(30.0)),
+            )
     }
 }
 
 impl Widget for PressableBox {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
-        StatefulElement::new_with_name(self, ctx, "PressableBox", None).0.boxed()
+        StatefulElement::new_with_name(self, ctx, "PressableBox", None)
+            .0
+            .boxed()
     }
 }
 
@@ -294,8 +356,14 @@ fn presses_after_rebuilds(index_patching: bool) -> (Vec<usize>, (u64, u64)) {
     let presses = Rc::new(Cell::new(0));
     let handle = Rc::new(RefCell::new(None));
     let mut app = AimerApp::start_headless_with(
-        PressableBox { presses: presses.clone(), handle: handle.clone() },
-        HeadlessOptions { size: PhysicalSize::new(200, 100), scale_factor: 1.0 },
+        PressableBox {
+            presses: presses.clone(),
+            handle: handle.clone(),
+        },
+        HeadlessOptions {
+            size: PhysicalSize::new(200, 100),
+            scale_factor: 1.0,
+        },
     );
     app.app.event_dispatcher.set_index_patching(index_patching);
     app.pump_frames(3);
@@ -305,13 +373,19 @@ fn presses_after_rebuilds(index_patching: bool) -> (Vec<usize>, (u64, u64)) {
         // each time, as it would for a user.
         for position in [(150.0, 80.0), (20.0, 15.0)] {
             app.send_window_event(WindowEvent::CursorMoved {
-                device_id: DeviceId::dummy(), position: PhysicalPosition::new(position.0, position.1),
+                device_id: DeviceId::dummy(),
+                position: PhysicalPosition::new(position.0, position.1),
             });
             app.pump_frames(1);
         }
-        for state in [winit::event::ElementState::Pressed, winit::event::ElementState::Released] {
+        for state in [
+            winit::event::ElementState::Pressed,
+            winit::event::ElementState::Released,
+        ] {
             app.send_window_event(WindowEvent::MouseInput {
-                device_id: DeviceId::dummy(), state, button: winit::event::MouseButton::Left,
+                device_id: DeviceId::dummy(),
+                state,
+                button: winit::event::MouseButton::Left,
             });
         }
         app.pump_frames(2);
@@ -329,14 +403,25 @@ fn presses_after_rebuilds(index_patching: bool) -> (Vec<usize>, (u64, u64)) {
 
 #[test]
 fn presses_reach_a_button_in_a_patched_subtree_exactly_as_they_do_after_a_rebuild() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     let (rebuilt_counts, rebuilt_work) = presses_after_rebuilds(false);
     let (patched_counts, patched_work) = presses_after_rebuilds(true);
 
-    assert_eq!(patched_counts, rebuilt_counts, "patching must not change which presses land");
-    assert!(patched_counts.last() > Some(&1), "the button must receive presses at all: {patched_counts:?}");
+    assert_eq!(
+        patched_counts, rebuilt_counts,
+        "patching must not change which presses land"
+    );
+    assert!(
+        patched_counts.last() > Some(&1),
+        "the button must receive presses at all: {patched_counts:?}"
+    );
     assert_eq!(rebuilt_work.1, 0, "the reference never patches");
-    assert!(patched_work.1 >= 6, "each rebuild patched the index, saw {patched_work:?}");
+    assert!(
+        patched_work.1 >= 6,
+        "each rebuild patched the index, saw {patched_work:?}"
+    );
     assert_eq!(patched_work.0, 1, "and only the first build created it");
 }
 
@@ -346,10 +431,7 @@ fn walks() -> (u64, u64) {
 }
 
 /// Like [`run`], with the walks and passes each step took.
-fn run_counted(
-    steps: &[&[(usize, u8)]],
-    incremental: bool,
-) -> (Vec<Layout>, Vec<(u64, u64)>) {
+fn run_counted(steps: &[&[(usize, u8)]], incremental: bool) -> (Vec<Layout>, Vec<(u64, u64)>) {
     let mut scene = Scene::new(!incremental);
     scene.app.set_incremental_sync(incremental);
     let mut layouts = vec![scene.layout()];
@@ -367,15 +449,23 @@ fn run_counted(
 /// Runs `steps` scoped and unscoped, asserts the layouts agree, and returns the
 /// scoped run's per-step (walks, passes).
 fn compare_counted(steps: &[&[(usize, u8)]]) -> Vec<(u64, u64)> {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     let (scoped_layouts, counts) = run_counted(steps, true);
     let (full_layouts, reference) = run_counted(steps, false);
     for (number, (scoped, full)) in scoped_layouts.iter().zip(&full_layouts).enumerate() {
-        assert_eq!(scoped, full, "after step {number} the scoped application diverged");
+        assert_eq!(
+            scoped, full,
+            "after step {number} the scoped application diverged"
+        );
     }
     // The reference walks the tree for every rebuild; the frame that follows a
     // state update with nothing left to do may still be an empty pass.
-    assert!(reference.iter().all(|&(walks, _)| walks >= 1), "the reference walks every time: {reference:?}");
+    assert!(
+        reference.iter().all(|&(walks, _)| walks >= 1),
+        "the reference walks every time: {reference:?}"
+    );
     counts
 }
 
@@ -384,9 +474,15 @@ fn state_updates_after_the_first_revisit_only_the_rebuilt_subtree() {
     // Mode 0 and 1 differ only in colour, so the shape and size never change.
     let counts = compare_counted(&[&[(0, 1)], &[(0, 0)], &[(0, 1)], &[(0, 0)]]);
 
-    assert!(counts[0].0 >= 1, "the first rebuild of an owner walks the tree: {counts:?}");
+    assert!(
+        counts[0].0 >= 1,
+        "the first rebuild of an owner walks the tree: {counts:?}"
+    );
     for (step, &(walks, passes)) in counts.iter().enumerate().skip(1) {
-        assert!(walks == 0 && passes >= 1, "step {step} should be passes only, got {counts:?}");
+        assert!(
+            walks == 0 && passes >= 1,
+            "step {step} should be passes only, got {counts:?}"
+        );
     }
 }
 
@@ -394,9 +490,15 @@ fn state_updates_after_the_first_revisit_only_the_rebuilt_subtree() {
 fn each_owner_is_captured_by_its_own_first_rebuild() {
     let counts = compare_counted(&[&[(0, 1)], &[(1, 1)], &[(0, 0)], &[(1, 0)]]);
 
-    assert!(counts[0].0 >= 1 && counts[1].0 >= 1, "both first rebuilds are full walks: {counts:?}");
+    assert!(
+        counts[0].0 >= 1 && counts[1].0 >= 1,
+        "both first rebuilds are full walks: {counts:?}"
+    );
     for step in [2, 3] {
-        assert!(counts[step].0 == 0 && counts[step].1 >= 1, "then each owner is cheap: {counts:?}");
+        assert!(
+            counts[step].0 == 0 && counts[step].1 >= 1,
+            "then each owner is cheap: {counts:?}"
+        );
     }
 }
 
@@ -406,7 +508,10 @@ fn a_frame_that_rebuilds_an_uncaptured_owner_walks_the_whole_tree() {
     let counts = compare_counted(&[&[(0, 1)], &[(0, 0)], &[(0, 1), (1, 1)]]);
 
     assert!(counts[1].0 == 0 && counts[1].1 >= 1, "{counts:?}");
-    assert!(counts[2].0 >= 1, "an owner with no captured context needs the full walk: {counts:?}");
+    assert!(
+        counts[2].0 >= 1,
+        "an owner with no captured context needs the full walk: {counts:?}"
+    );
 }
 
 #[test]
@@ -414,12 +519,17 @@ fn a_rebuild_that_changes_size_in_a_scoped_frame_falls_back() {
     let counts = compare_counted(&[&[(1, 1)], &[(1, 0)], &[(1, 2)], &[(1, 0)]]);
 
     assert!(counts[1].0 == 0 && counts[1].1 >= 1, "{counts:?}");
-    assert!(counts[2].0 >= 1, "growing the box moves its neighbours: {counts:?}");
+    assert!(
+        counts[2].0 >= 1,
+        "growing the box moves its neighbours: {counts:?}"
+    );
 }
 
 #[test]
 fn a_pointer_move_costs_one_full_walk_and_then_updates_are_cheap_again() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     let mut scene = Scene::new(false);
     scene.set_modes(&[(0, 1)]);
     let before = walks();
@@ -429,16 +539,24 @@ fn a_pointer_move_costs_one_full_walk_and_then_updates_are_cheap_again() {
     // Elements read the pointer while they are updated, so a pointer that moved
     // needs the whole tree, once. The walk refreshes what was captured.
     scene.app.send_window_event(WindowEvent::CursorMoved {
-        device_id: DeviceId::dummy(), position: PhysicalPosition::new(30.0, 30.0),
+        device_id: DeviceId::dummy(),
+        position: PhysicalPosition::new(30.0, 30.0),
     });
     scene.app.pump_frames(2);
     let before = walks();
     scene.set_modes(&[(0, 1)]);
-    assert!(walks().0 > before.0, "the first update after a pointer move walks the tree");
+    assert!(
+        walks().0 > before.0,
+        "the first update after a pointer move walks the tree"
+    );
 
     let before = walks();
     scene.set_modes(&[(0, 0)]);
-    assert_eq!(walks().0, before.0, "and the next is scoped again, with nothing recaptured");
+    assert_eq!(
+        walks().0,
+        before.0,
+        "and the next is scoped again, with nothing recaptured"
+    );
     assert!(walks().1 > before.1);
 }
 
@@ -447,13 +565,22 @@ fn owners_that_take_turns_rebuilding_all_stay_cheap() {
     // Two clocks ticking at different rates: each tick must not cost the other
     // its captured context.
     let counts = compare_counted(&[
-        &[(0, 1)], &[(1, 1)], &[(0, 0)], &[(1, 0)],
-        &[(0, 1)], &[(1, 1)], &[(0, 0)], &[(1, 0)],
+        &[(0, 1)],
+        &[(1, 1)],
+        &[(0, 0)],
+        &[(1, 0)],
+        &[(0, 1)],
+        &[(1, 1)],
+        &[(0, 0)],
+        &[(1, 0)],
     ]);
 
     // Each owner's first rebuild captures it; after both have, every tick is a pass.
     for (step, &(walks, passes)) in counts.iter().enumerate().skip(2) {
-        assert!(walks == 0 && passes >= 1, "step {step} should be passes only, got {counts:?}");
+        assert!(
+            walks == 0 && passes >= 1,
+            "step {step} should be passes only, got {counts:?}"
+        );
     }
 }
 
@@ -466,16 +593,31 @@ fn child_revision(scene: &Scene, name: &str, nth: usize) -> u64 {
         element.visit_children(&mut |child| collect(child, name, out));
     }
     let mut owners = Vec::new();
-    collect(scene.app.app.widget_root.as_ref().unwrap().as_ref(), name, &mut owners);
+    collect(
+        scene.app.app.widget_root.as_ref().unwrap().as_ref(),
+        name,
+        &mut owners,
+    );
     let mut child = None;
     owners[nth].visit_children(&mut |c| child = Some(c.id()));
-    let node = scene.app.app.render_node_for_element(child.unwrap()).expect("child node");
-    scene.app.app.render_tree().draw_list_revision(node).unwrap()
+    let node = scene
+        .app
+        .app
+        .render_node_for_element(child.unwrap())
+        .expect("child node");
+    scene
+        .app
+        .app
+        .render_tree()
+        .draw_list_revision(node)
+        .unwrap()
 }
 
 #[test]
 fn a_scoped_state_frame_re_records_the_rebuilt_paint() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     let mut scene = Scene::new(false);
     scene.set_modes(&[(0, 1)]);
     let (walks_before, passes_before) = walks();
@@ -484,7 +626,10 @@ fn a_scoped_state_frame_re_records_the_rebuilt_paint() {
     for mode in [0u8, 1, 0, 1] {
         scene.set_modes(&[(0, mode)]);
         let now = child_revision(&scene, "ScopedBox", 0);
-        assert!(now > revision, "mode {mode}: the rebuilt box was not re-recorded ({revision} -> {now})");
+        assert!(
+            now > revision,
+            "mode {mode}: the rebuilt box was not re-recorded ({revision} -> {now})"
+        );
         revision = now;
     }
 
@@ -495,7 +640,9 @@ fn a_scoped_state_frame_re_records_the_rebuilt_paint() {
 
 #[test]
 fn a_scoped_state_frame_re_records_paint_below_the_rebuilt_root() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     // The root of the rebuild is the column; its first swatch is what changes.
     fn swatch_revision(scene: &Scene) -> u64 {
         fn collect<'a>(element: &'a dyn Element, out: &mut Vec<&'a dyn Element>) {
@@ -505,7 +652,10 @@ fn a_scoped_state_frame_re_records_paint_below_the_rebuilt_root() {
             element.visit_children(&mut |child| collect(child, out));
         }
         let mut owners = Vec::new();
-        collect(scene.app.app.widget_root.as_ref().unwrap().as_ref(), &mut owners);
+        collect(
+            scene.app.app.widget_root.as_ref().unwrap().as_ref(),
+            &mut owners,
+        );
         let mut column = None;
         owners[0].visit_children(&mut |c| column = Some(c));
         let mut swatch = None;
@@ -514,8 +664,17 @@ fn a_scoped_state_frame_re_records_paint_below_the_rebuilt_root() {
                 swatch = Some(c.id());
             }
         });
-        let node = scene.app.app.render_node_for_element(swatch.unwrap()).expect("swatch node");
-        scene.app.app.render_tree().draw_list_revision(node).unwrap()
+        let node = scene
+            .app
+            .app
+            .render_node_for_element(swatch.unwrap())
+            .expect("swatch node");
+        scene
+            .app
+            .app
+            .render_tree()
+            .draw_list_revision(node)
+            .unwrap()
     }
 
     let mut scene = Scene::new(false);
@@ -527,7 +686,10 @@ fn a_scoped_state_frame_re_records_paint_below_the_rebuilt_root() {
     for mode in [5u8, 6, 5, 6] {
         scene.set_modes(&[(0, mode)]);
         let now = swatch_revision(&scene);
-        assert!(now > revision, "mode {mode}: the swatch below the root was not re-recorded");
+        assert!(
+            now > revision,
+            "mode {mode}: the swatch below the root was not re-recorded"
+        );
         revision = now;
     }
 
@@ -538,7 +700,9 @@ fn a_scoped_state_frame_re_records_paint_below_the_rebuilt_root() {
 
 #[test]
 fn a_synchronous_state_update_keeps_its_full_frame() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     let mut scene = Scene::new(false);
     scene.set_modes(&[(0, 1)]);
     scene.set_modes(&[(0, 0)]);
@@ -551,6 +715,9 @@ fn a_synchronous_state_update_keeps_its_full_frame() {
     scene.app.pump_frames(3);
 
     let (walks_after, passes_after) = walks();
-    assert!(walks_after > walks_before, "a direct set_state walks the whole tree");
+    assert!(
+        walks_after > walks_before,
+        "a direct set_state walks the whole tree"
+    );
     assert_eq!(passes_after, passes_before, "and takes no pass");
 }

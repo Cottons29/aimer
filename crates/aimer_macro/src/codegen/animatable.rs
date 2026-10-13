@@ -71,9 +71,7 @@ pub(crate) fn generate_animatable_impl(
             }
             match enum_policy(&input.attrs)? {
                 EnumPolicy::Discrete => generate_discrete_enum_impl(&input, data, animation_path),
-                EnumPolicy::Fieldwise => {
-                    generate_fieldwise_enum_impl(&input, data, animation_path)
-                }
+                EnumPolicy::Fieldwise => generate_fieldwise_enum_impl(&input, data, animation_path),
             }
         }
         Data::Union(_) => Err(syn::Error::new_spanned(
@@ -111,9 +109,9 @@ fn enum_policy(attributes: &[Attribute]) -> syn::Result<EnumPolicy> {
             } else if meta.path.is_ident("fieldwise") {
                 EnumPolicy::Fieldwise
             } else {
-                return Err(meta.error(
-                    "unsupported Animatable policy; expected `discrete` or `fieldwise`",
-                ));
+                return Err(
+                    meta.error("unsupported Animatable policy; expected `discrete` or `fieldwise`")
+                );
             };
             if meta.input.peek(syn::Token![=]) || meta.input.peek(syn::token::Paren) {
                 return Err(meta.error("Animatable policies do not accept values"));
@@ -186,12 +184,9 @@ fn generate_fieldwise_enum_impl(
     for variant in &data.variants {
         for field in &variant.fields {
             let ty = &field.ty;
-            generics
-                .make_where_clause()
-                .predicates
-                .push(parse_quote!(
-                    #ty: #animation_path::Animatable + ::core::clone::Clone
-                ));
+            generics.make_where_clause().predicates.push(parse_quote!(
+                #ty: #animation_path::Animatable + ::core::clone::Clone
+            ));
         }
     }
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
@@ -276,9 +271,10 @@ fn clone_variant_arm(variant: &syn::Variant) -> TokenStream {
     let variant_name = &variant.ident;
     match &variant.fields {
         Fields::Named(fields) => {
-            let names = fields.named.iter().map(|field| {
-                field.ident.as_ref().expect("named fields have identifiers")
-            });
+            let names = fields
+                .named
+                .iter()
+                .map(|field| field.ident.as_ref().expect("named fields have identifiers"));
             let cloned_names = names.clone();
             quote! {
                 Self::#variant_name { #(#names,)* } => Self::#variant_name {

@@ -71,8 +71,8 @@ impl Animatable for u8 {
 }
 impl Animatable for Color {
     fn lerp(&self, other: &Self, t: f32) -> Self {
-        let rgba= self.to_rgba();
-        let rgba2= other.to_rgba();
+        let rgba = self.to_rgba();
+        let rgba2 = other.to_rgba();
 
         let red = rgba.0.lerp(&rgba2.0, t);
         let green = rgba.1.lerp(&rgba2.1, t);
@@ -314,10 +314,7 @@ mod tests {
         let other_point = Shape::Point(12.0, 20.0);
         assert_eq!(point.lerp(&other_point, 0.5), Shape::Point(10.0, 16.0));
 
-        assert_eq!(
-            small.lerp(&large, -1.0),
-            Shape::Circle { radius: -6.0 }
-        );
+        assert_eq!(small.lerp(&large, -1.0), Shape::Circle { radius: -6.0 });
         let nan = small.lerp(&large, f32::NAN);
         assert!(matches!(nan, Shape::Circle { radius } if radius.is_nan()));
         assert_eq!(small.lerp(&point, f32::NAN), Shape::Point(8.0, 12.0));

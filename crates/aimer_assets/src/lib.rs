@@ -4,14 +4,13 @@ mod asset_manager;
 mod icon;
 
 pub use asset_manager::{
-    AnimationPolicy, AssetCacheConfig, AssetCacheKey, AssetData, AssetError, AssetErrorKind, AssetId,
-    AssetIdError, AssetLoadOperation, AssetLoadPoll, AssetManifest, AssetMetadata,
-    AssetOperation, AssetPolicy, AssetProgress, AssetRef, AssetRequest, AssetResolver,
-    AssetSource, AssetManager, CacheStats, DecodeProfile, LoadHandle, LoadState,
+    AnimationPolicy, AssetCacheConfig, AssetCacheKey, AssetData, AssetError, AssetErrorKind,
+    AssetId, AssetIdError, AssetLoadOperation, AssetLoadPoll, AssetManager, AssetManifest,
+    AssetMetadata, AssetOperation, AssetPolicy, AssetProgress, AssetRef, AssetRequest,
+    AssetResolver, AssetSource, CacheStats, DecodeProfile, LoadHandle, LoadState,
 };
 pub use icon::{
-    Icon, IconContext, IconDirection, IconError, IconSource, IconTheme, IconTint,
-    ResolvedIcon,
+    Icon, IconContext, IconDirection, IconError, IconSource, IconTheme, IconTint, ResolvedIcon,
 };
 
 pub mod font {
@@ -91,10 +90,7 @@ pub trait ImageProvider: Clone + Debug {
     /// image remains eligible for v2 drawing only while the current renderer
     /// still has the texture ID returned by `get_image`.
     #[doc(hidden)]
-    fn retained_image_resource(
-        &self,
-        _ctx: &BuildContext,
-    ) -> Option<Arc<ImageResource>> {
+    fn retained_image_resource(&self, _ctx: &BuildContext) -> Option<Arc<ImageResource>> {
         None
     }
 }

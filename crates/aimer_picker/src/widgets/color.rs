@@ -3,27 +3,27 @@ use std::rc::Rc;
 
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
-use aimer_widget::InteractionBounds;
 use aimer_events::element::{ElementEvent, KeyAction, Modifiers, NamedKey};
 use aimer_events::pointer::PointerButton;
 use aimer_modal::{
     Anchor, AnchorHandle, Floating, FloatingAlign, FloatingSide, ModalController, OverflowPolicy,
 };
 use aimer_style::ThemeTokens;
+use aimer_widget::InteractionBounds;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
     AnyElement, Drawable, Element, EventElement, EventResult, FocusNode, LayoutElement,
-    PortableWidget, Rebuildable, State, StatefulElement, StatefulWidget, StateUpdater,
+    PortableWidget, Rebuildable, State, StateUpdater, StatefulElement, StatefulWidget,
     VisitorElement, Widget,
 };
 
-use crate::{CancelReason, PICKER_FIELD_HEIGHT, PICKER_FOOTER_HEIGHT};
+use super::widget_helpers::{color_sliders, format_rgba};
 use super::{
-    ColorChannel, ColorError, ColorKey, ColorPicker, ColorPickerSemantics,
-    ColorSelectionCallback, Hsva, PickerOutcome,
+    ColorChannel, ColorError, ColorKey, ColorPicker, ColorPickerSemantics, ColorSelectionCallback,
+    Hsva, PickerOutcome,
 };
 use super::{paint, theme};
-use super::widget_helpers::{color_sliders, format_rgba};
+use crate::{CancelReason, PICKER_FIELD_HEIGHT, PICKER_FOOTER_HEIGHT};
 
 /// A retained keyboard-accessible color picker with swatch support.
 ///
@@ -149,7 +149,10 @@ impl StatefulWidget for ColorPickerView {
             anchor: AnchorHandle::new(),
             overlay_active: Cell::new(false),
         });
-        ColorPickerViewState { model: self, runtime }
+        ColorPickerViewState {
+            model: self,
+            runtime,
+        }
     }
 }
 
@@ -179,7 +182,9 @@ impl State<ColorPickerView> for ColorPickerViewState {
 
 impl Widget for ColorPickerView {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
-        StatefulElement::new_with_name(self, ctx, "ColorPickerView", None).0.boxed()
+        StatefulElement::new_with_name(self, ctx, "ColorPickerView", None)
+            .0
+            .boxed()
     }
 
     fn debug_name(&self) -> &'static str {
@@ -379,7 +384,6 @@ impl RawColorPicker {
         }
         EventResult::ignored()
     }
-
 }
 
 impl VisitorElement for RawColorPicker {
@@ -536,7 +540,9 @@ impl Drawable for RawColorPicker {
     }
 
     #[inline]
-    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+    fn retained_v2_interaction_disagreement(
+        &self,
+    ) -> Option<aimer_widget::InteractionDisagreement> {
         self.bounds.disagreement("RawColorPicker")
     }
 

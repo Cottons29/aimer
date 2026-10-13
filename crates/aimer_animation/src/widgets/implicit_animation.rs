@@ -6,15 +6,14 @@ use std::time::Duration;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
-use aimer_widget::base::*;
-use aimer_widget::{
-    AnyElement, Drawable, Element, EventElement, EventResult, Key, LayoutElement,
-    Rebuildable, State, StateUpdater, StatefulElement, StatefulWidget,
-    VisitorElement, Widget,
-    carry_element_state,
-};
 #[cfg(feature = "portable-guest")]
 use aimer_widget::AnyWidget;
+use aimer_widget::base::*;
+use aimer_widget::{
+    AnyElement, Drawable, Element, EventElement, EventResult, Key, LayoutElement, Rebuildable,
+    State, StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
+    carry_element_state,
+};
 
 use crate::control::controller::AnimationController;
 use crate::local_cell::LocalCell;
@@ -62,10 +61,10 @@ where
         let progress = if self.duration.is_zero() {
             1.0
         } else {
-            (now.duration_since(started_at).as_secs_f32() / self.duration.as_secs_f32())
-                .min(1.0)
+            (now.duration_since(started_at).as_secs_f32() / self.duration.as_secs_f32()).min(1.0)
         };
-        self.begin.lerp(&self.target, self.curve.transform(progress))
+        self.begin
+            .lerp(&self.target, self.curve.transform(progress))
     }
 
     fn update(&mut self, target: T, duration: Duration, curve: Curve) -> (T, bool) {
@@ -229,10 +228,8 @@ where
         self,
         ctx: &mut aimer_widget::portable::PortableBuildContext,
         source: aimer_widget::portable::SourceFingerprint,
-    ) -> Result<
-        aimer_widget::portable::PortableNodeId,
-        aimer_widget::portable::PortableBuildError,
-    > {
+    ) -> Result<aimer_widget::portable::PortableNodeId, aimer_widget::portable::PortableBuildError>
+    {
         let slot = ctx.slot_for(self.widget_key.as_ref(), source);
         let value = self.value;
         let duration = self.duration;
@@ -388,7 +385,11 @@ impl<T: Animatable + Clone + PartialEq + 'static> ImplicitAnimatedElement<T> {
             self.current.with_mut(|current| *current = value.clone());
             let new_child = (self.builder)(&value, ctx);
             aimer_widget::preserving_dirty_paths(|| {
-                carry_element_state(unsafe { &*self.child.get() }.as_ref(), new_child.as_ref(), ctx)
+                carry_element_state(
+                    unsafe { &*self.child.get() }.as_ref(),
+                    new_child.as_ref(),
+                    ctx,
+                )
             });
             unsafe { *self.child.get() = new_child };
         }
@@ -420,7 +421,6 @@ impl<T: Animatable + Clone + PartialEq + 'static> Drawable for ImplicitAnimatedE
 
     #[inline]
     fn paint_local_v2(&self, _ctx: &BuildContext) {}
-
 }
 
 impl<T: Animatable + Clone + PartialEq + 'static> VisitorElement for ImplicitAnimatedElement<T> {
@@ -610,11 +610,11 @@ mod tests {
     #[cfg(feature = "portable-guest")]
     #[test]
     fn portable_lowering_emits_the_current_built_child() {
-        use aimer_widget::portable::{
-            PortableBuildContext, PortableLimits, PortableWidgetLimits, SourceFingerprint,
-            PortableWidgetSchema,
-        };
         use aimer_widget::portable::__anteros::WidgetDocumentView;
+        use aimer_widget::portable::{
+            PortableBuildContext, PortableLimits, PortableWidgetLimits, PortableWidgetSchema,
+            SourceFingerprint,
+        };
         use aimer_widget::{ErrorWidget, PortableWidget};
 
         let mut context = PortableBuildContext::new(
@@ -648,11 +648,11 @@ mod tests {
     #[cfg(feature = "portable-guest")]
     #[test]
     fn portable_target_changes_request_guest_animation_frames() {
+        use aimer_widget::ErrorWidget;
+        use aimer_widget::PortableWidget;
         use aimer_widget::portable::{
             PortableBuildContext, PortableLimits, PortableWidgetLimits, SourceFingerprint,
         };
-        use aimer_widget::ErrorWidget;
-        use aimer_widget::PortableWidget;
 
         let mut context = PortableBuildContext::new(
             1,
@@ -661,9 +661,8 @@ mod tests {
             PortableLimits::new(8, 16, 64, 128, 1_024),
         )
         .unwrap();
-        let source = SourceFingerprint::new(aimer_widget::portable::StableId128::from_bytes([
-            8; 16
-        ]));
+        let source =
+            SourceFingerprint::new(aimer_widget::portable::StableId128::from_bytes([8; 16]));
 
         let first = ImplicitAnimatedBuilder::new(
             0.0_f32,
@@ -693,7 +692,8 @@ mod tests {
     #[test]
     fn portable_animation_state_interpolates_at_frame_times() {
         let start = AnimInstant::now();
-        let mut state = PortableAnimationState::new(0.0_f32, Duration::from_millis(100), Curve::Linear);
+        let mut state =
+            PortableAnimationState::new(0.0_f32, Duration::from_millis(100), Curve::Linear);
 
         assert_eq!(
             state.update_at(0.0, Duration::from_millis(100), Curve::Linear, start),

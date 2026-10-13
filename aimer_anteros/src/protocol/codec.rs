@@ -127,7 +127,10 @@ impl fmt::Display for EncodeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::PayloadTooLarge { length } => {
-                write!(formatter, "payload length {length} exceeds the envelope limit")
+                write!(
+                    formatter,
+                    "payload length {length} exceeds the envelope limit"
+                )
             }
             Self::DocumentTooLarge { length, limit } => {
                 write!(formatter, "document length {length} exceeds limit {limit}")
@@ -248,7 +251,8 @@ impl CanonicalEncoder {
             });
         }
         self.reserve_field(4, length)?;
-        self.output.extend_from_slice(&(length as u32).to_le_bytes());
+        self.output
+            .extend_from_slice(&(length as u32).to_le_bytes());
         self.output.extend_from_slice(value.as_bytes());
         Ok(())
     }
@@ -303,9 +307,7 @@ impl CanonicalEncoder {
                 limit: self.limits.max_collection_entries,
             });
         }
-        let byte_length = count
-            .checked_mul(16)
-            .ok_or(EncodeError::LengthOverflow)?;
+        let byte_length = count.checked_mul(16).ok_or(EncodeError::LengthOverflow)?;
         self.reserve_field(4, byte_length)?;
 
         let mut seen = HashSet::with_capacity(count);
@@ -496,11 +498,10 @@ impl<'a> Envelope<'a> {
 
     /// Encodes the envelope into its canonical little-endian representation.
     pub fn encode(&self) -> Result<Vec<u8>, EncodeError> {
-        let payload_len = u32::try_from(self.payload.len()).map_err(|_| {
-            EncodeError::PayloadTooLarge {
+        let payload_len =
+            u32::try_from(self.payload.len()).map_err(|_| EncodeError::PayloadTooLarge {
                 length: self.payload.len(),
-            }
-        })?;
+            })?;
         let mut encoded = Vec::with_capacity(ENVELOPE_HEADER_LEN + self.payload.len());
         encoded.extend_from_slice(&self.magic);
         encoded.extend_from_slice(&self.version.major.to_le_bytes());
@@ -562,10 +563,7 @@ mod tests {
 
         assert_eq!(encoded, [5, 0, 0, 0, b'A', b'i', b'm', b'e', b'r']);
 
-        let mut decoder = crate::CanonicalDecoder::new(
-            &encoded,
-            DecodeLimits::new(64, 4, 32),
-        );
+        let mut decoder = crate::CanonicalDecoder::new(&encoded, DecodeLimits::new(64, 4, 32));
         assert_eq!(decoder.read_str().unwrap(), "Aimer");
         assert_eq!(decoder.finish(), Ok(()));
     }
@@ -613,10 +611,7 @@ mod tests {
 
         assert_eq!(encoded, [2, 0, 0, 0, 0x11, 0x22, 0x33, 0x44]);
 
-        let mut decoder = crate::CanonicalDecoder::new(
-            &encoded,
-            DecodeLimits::new(64, 4, 32),
-        );
+        let mut decoder = crate::CanonicalDecoder::new(&encoded, DecodeLimits::new(64, 4, 32));
         assert_eq!(
             decoder.read_fixed_collection(2).unwrap(),
             (2, [0x11, 0x22, 0x33, 0x44].as_slice())
@@ -689,10 +684,7 @@ mod tests {
             ]
         );
 
-        let mut decoder = crate::CanonicalDecoder::new(
-            &encoded,
-            DecodeLimits::new(64, 4, 32),
-        );
+        let mut decoder = crate::CanonicalDecoder::new(&encoded, DecodeLimits::new(64, 4, 32));
         assert_eq!(decoder.read_unique_stable_ids().unwrap(), identities);
         assert_eq!(decoder.finish(), Ok(()));
     }
@@ -785,10 +777,8 @@ mod tests {
     #[test]
     fn fixed_collection_decoding_rejects_byte_length_overflow() {
         let encoded = u32::MAX.to_le_bytes();
-        let mut decoder = crate::CanonicalDecoder::new(
-            &encoded,
-            DecodeLimits::new(64, u32::MAX, 32),
-        );
+        let mut decoder =
+            crate::CanonicalDecoder::new(&encoded, DecodeLimits::new(64, u32::MAX, 32));
 
         assert_eq!(
             decoder.read_fixed_collection(16),
@@ -799,8 +789,7 @@ mod tests {
     #[test]
     fn fixed_collection_decoding_rejects_oversized_counts_before_reading_entries() {
         let encoded = 2_u32.to_le_bytes();
-        let mut decoder =
-            crate::CanonicalDecoder::new(&encoded, DecodeLimits::new(64, 1, 32));
+        let mut decoder = crate::CanonicalDecoder::new(&encoded, DecodeLimits::new(64, 1, 32));
 
         assert_eq!(
             decoder.read_fixed_collection(16),
@@ -811,8 +800,7 @@ mod tests {
     #[test]
     fn string_decoding_rejects_invalid_utf8() {
         let encoded = [2, 0, 0, 0, 0xC3, 0x28];
-        let mut decoder =
-            crate::CanonicalDecoder::new(&encoded, DecodeLimits::new(64, 4, 32));
+        let mut decoder = crate::CanonicalDecoder::new(&encoded, DecodeLimits::new(64, 4, 32));
 
         assert_eq!(decoder.read_str(), Err(DecodeError::InvalidUtf8));
     }
@@ -823,8 +811,7 @@ mod tests {
         let mut encoded = Vec::from(2_u32.to_le_bytes());
         encoded.extend_from_slice(&duplicate);
         encoded.extend_from_slice(&duplicate);
-        let mut decoder =
-            crate::CanonicalDecoder::new(&encoded, DecodeLimits::new(64, 4, 32));
+        let mut decoder = crate::CanonicalDecoder::new(&encoded, DecodeLimits::new(64, 4, 32));
 
         assert_eq!(
             decoder.read_unique_stable_ids(),

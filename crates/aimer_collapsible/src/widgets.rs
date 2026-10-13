@@ -14,8 +14,8 @@ use aimer_widget::InteractionBounds;
 use aimer_widget::base::{BuildContext, ResolvedSize, Vec2d};
 use aimer_widget::{
     AnyElement, AnyWidget, ChildBuilder, Drawable, Element, EventElement, EventResult,
-    EventTreeRole, LayoutElement, PortableWidget, Rebuildable, RequiredChild,
-    State, StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
+    EventTreeRole, LayoutElement, PortableWidget, Rebuildable, RequiredChild, State, StateUpdater,
+    StatefulElement, StatefulWidget, VisitorElement, Widget,
 };
 
 use crate::key_relay::KeyRelay;
@@ -53,7 +53,10 @@ fn chevron(theme: ThemeData, controller: AnimationController) -> AnyWidget {
 
 #[inline]
 fn animation_progress(value: f32) -> f32 {
-    value.is_finite().then_some(value.clamp(0.0, 1.0)).unwrap_or(0.0)
+    value
+        .is_finite()
+        .then_some(value.clamp(0.0, 1.0))
+        .unwrap_or(0.0)
 }
 
 #[inline]
@@ -131,11 +134,7 @@ impl AnimatedCollapseElement {
     }
 
     #[inline]
-    fn child_context<'a>(
-        &self,
-        ctx: &BuildContext<'a>,
-        natural: ResolvedSize,
-    ) -> BuildContext<'a> {
+    fn child_context<'a>(&self, ctx: &BuildContext<'a>, natural: ResolvedSize) -> BuildContext<'a> {
         let mut child_ctx = ctx.clone();
         child_ctx.parent_size = natural;
         child_ctx.box_constraint.min_width = 0.0;
@@ -207,7 +206,9 @@ impl Drawable for AnimatedCollapseElement {
     }
 
     #[inline]
-    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+    fn retained_v2_interaction_disagreement(
+        &self,
+    ) -> Option<aimer_widget::InteractionDisagreement> {
         self.bounds.disagreement("AnimatedCollapse")
     }
 
@@ -305,9 +306,9 @@ impl Drawable for AnimatedCollapseElement {
             height: collapsed_height(natural.height, progress),
         };
         self.update_bounds(ctx, size);
-        self.child.sync_paint_geometry(&self.child_context(ctx, natural));
+        self.child
+            .sync_paint_geometry(&self.child_context(ctx, natural));
     }
-
 }
 
 impl VisitorElement for AnimatedCollapseElement {
@@ -727,7 +728,7 @@ impl<H: Widget + 'static, B: Widget + 'static> Widget for CollapsibleList<H, B> 
 impl<H: Widget + 'static, B: Widget + 'static> PortableWidget for CollapsibleList<H, B> {}
 
 impl<H: Widget + 'static, B: Widget + 'static> State<CollapsibleList<H, B>>
-for CollapsibleListState<H, B>
+    for CollapsibleListState<H, B>
 {
     fn init_state(&mut self, updater: StateUpdater<Self>) {
         self.updater = updater;
@@ -751,12 +752,14 @@ for CollapsibleListState<H, B>
         let updater = self.updater;
         let header = Container::new()
             .padding(list_edge_padding())
-            .child(Row::new()
-                .vertical_alignment(BoxAlignment::Center)
-                .children([
-                    Expanded::new().child(self.header.clone()).boxed(),
-                    chevron(theme, self.chevron_controller.clone()),
-                ]))
+            .child(
+                Row::new()
+                    .vertical_alignment(BoxAlignment::Center)
+                    .children([
+                        Expanded::new().child(self.header.clone()).boxed(),
+                        chevron(theme, self.chevron_controller.clone()),
+                    ]),
+            )
             .boxed();
         // The toggle owns the whole header hit region, so an interactive
         // descendant cannot intercept its pointer or focus events.
@@ -782,7 +785,7 @@ for CollapsibleListState<H, B>
                         .padding(list_edge_padding())
                         .child(self.body.clone()),
                 )
-                    .boxed(),
+                .boxed(),
             );
         }
         Column::new().children(children)

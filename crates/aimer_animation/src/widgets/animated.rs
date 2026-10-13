@@ -7,8 +7,8 @@ use aimer_events::window::request_animation_frame;
 use aimer_widget::base::*;
 use aimer_widget::{
     AnyElement, CompositorAnimationDecision, CompositorAnimationFrame, CompositorTransform,
-    Drawable, Element, EventElement, EventResult, LayoutElement, Rebuildable,
-    RequiredChild, VisitorElement, Widget,
+    Drawable, Element, EventElement, EventResult, LayoutElement, Rebuildable, RequiredChild,
+    VisitorElement, Widget,
 };
 
 use crate::control::controller::AnimationController;
@@ -54,12 +54,7 @@ impl AnimationEffect {
                 from_y,
                 to_x,
                 to_y,
-            } => {
-                from_x.is_finite()
-                    && from_y.is_finite()
-                    && to_x.is_finite()
-                    && to_y.is_finite()
-            }
+            } => from_x.is_finite() && from_y.is_finite() && to_x.is_finite() && to_y.is_finite(),
             Self::SlideX { from, to } | Self::SlideY { from, to } => {
                 from.is_finite() && to.is_finite()
             }
@@ -80,10 +75,7 @@ impl AnimationEffect {
                 from_y,
                 to_x,
                 to_y,
-            } => {
-                Self::lerp(from_x, to_x, t).is_finite()
-                    && Self::lerp(from_y, to_y, t).is_finite()
-            }
+            } => Self::lerp(from_x, to_x, t).is_finite() && Self::lerp(from_y, to_y, t).is_finite(),
             Self::SlideX { from, to } | Self::SlideY { from, to } => {
                 Self::lerp(from, to, t).is_finite()
             }
@@ -291,7 +283,6 @@ impl Drawable for AnimatedElement {
             CompositorAnimationDecision::Live(frame)
         }
     }
-
 }
 
 impl AnimatedElement {

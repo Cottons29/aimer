@@ -397,12 +397,22 @@ float4 light_edge(float2 pixel) {
     float radius = min(selected_radius(point, material.radii), min(half_size.x, half_size.y));
     float2 q = abs(point) - half_size + float2(radius, radius);
     float2 outer = max(q, float2(0.0, 0.0));
+    // Smooth only the lighting normal across straight/curved joins. Keep
+    // the exact SDF for coverage; limiting the blend to flat spans preserves circles.
+    float2 blend = min(float2(material.detail.w, material.detail.w), max(half_size - float2(radius, radius), float2(0.0, 0.0)));
+    float2 join = max(blend - abs(q), float2(0.0, 0.0));
+    float2 lighting_outer = outer + join * join / max(4.0 * blend, float2(0.0001, 0.0001));
     float2 outward = q.x > q.y ? float2(1.0, 0.0) : float2(0.0, 1.0);
-    if (dot(outer, outer) > 0.0) outward = normalize(outer);
+    if (dot(lighting_outer, lighting_outer) > 0.0) outward = normalize(lighting_outer);
     outward *= sign(point);
     float distance = length(outer) + min(max(q.x, q.y), 0.0) - radius;
-    float coverage = max(sdf_alpha(distance) - sdf_alpha(distance + material.detail.w), 0.0);
-    float facing = pow(max(dot(outward, material.effect.zw), 0.0), 2.4);
+    // A cubic inward falloff has no solid band or abrupt inner boundary.
+    // Grazing light narrows the bevel; the opposite side catches a weaker reflection.
+    float alignment = dot(outward, material.effect.zw);
+    float width = max(material.detail.w * (0.35 + 0.65 * abs(alignment)), 0.0001);
+    float remaining = 1.0 - clamp(max(-distance, 0.0) / width, 0.0, 1.0);
+    float coverage = sdf_alpha(distance) * remaining * remaining * remaining;
+    float facing = pow(abs(alignment), 2.4) * (alignment >= 0.0 ? 1.0 : material.light.w);
     float alpha = clamp(coverage * facing * material.detail.x * material.border_color.a
         * material.effect.y * clip_alpha(pixel), 0.0, 1.0);
     float3 rgb = material.border_color.rgb;

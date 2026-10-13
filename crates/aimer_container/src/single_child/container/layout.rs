@@ -256,9 +256,14 @@ impl<T: Element, D: Decoration> LayoutElement for RawContainer<T, D> {
             return Some((start, end));
         };
         Some((
-            Vec2d { x: start.x.min(child_start.x), y: start.y.min(child_start.y) },
-            Vec2d { x: end.x.max(child_end.x), y: end.y.max(child_end.y) },
+            Vec2d {
+                x: start.x.min(child_start.x),
+                y: start.y.min(child_start.y),
+            },
+            Vec2d {
+                x: end.x.max(child_end.x),
+                y: end.y.max(child_end.y),
+            },
         ))
     }
 }
-

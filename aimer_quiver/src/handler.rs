@@ -7,15 +7,15 @@ pub mod census;
 pub mod event_handler;
 /// The file drag the window is currently under.
 pub(crate) mod file_drag;
-pub mod scroll_classifier;
-pub mod scroll_utils;
-mod scoped_sync;
-pub(crate) mod user_events;
 mod native_input;
 #[cfg(not(target_arch = "wasm32"))]
 mod render_worker;
+mod scoped_sync;
+pub mod scroll_classifier;
+pub mod scroll_utils;
 #[cfg(any(target_os = "ios", test))]
 mod uikit_frame;
+pub(crate) mod user_events;
 /// Gesture segmentation for the phase-less browser wheel stream.
 ///
 /// Compiled for the web target only; the `test` predicate keeps the logic
@@ -36,6 +36,11 @@ use crate::handler::scroll_classifier::DualScroller;
 use crate::handler::user_events::handle_user_event;
 use crate::render_ctx::AimerRenderContext;
 use crate::window_attr::WindowAttr;
+#[cfg(feature = "wasm-hot-reload")]
+use aimer_anteros::{
+    ReloadCommit, ReloadCommitError, ReloadCoordinator, ReloadEventDisposition,
+    ReloadEventOverflow, ReloadGuest, ReloadSnapshot, ReloadTransactionError, ReloadTransactionId,
+};
 use aimer_attribute::BoxConstraint;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
@@ -45,22 +50,19 @@ use aimer_cupid::draw_cmd_v2::{
     RenderOp, RenderPaintSource, RenderTree, RenderTreeError,
 };
 use aimer_cupid::frame::{Frame, FramePacket, FrameRenderMetadata};
-use aimer_venus::Venus;
 use aimer_rubick::{UiAllocator, UiMemory};
-use aimer_widget::base::{BuildContext, WindowHandle};
-use aimer_widget::{begin_event_frame, AnyElement, Element, ElementChangeKind, ElementId, ElementNodeMap, ElementInvalidationBatch, EventDispatcher, EventResult, Widget, CALLED};
-use std::any::Any;
-use std::cell::Cell;
-use std::rc::Rc;
 use aimer_utils::debug;
-#[cfg(feature = "wasm-hot-reload")]
-use aimer_anteros::{
-    ReloadCommit, ReloadCommitError, ReloadCoordinator, ReloadEventDisposition,
-    ReloadEventOverflow, ReloadGuest, ReloadSnapshot, ReloadTransactionError,
-    ReloadTransactionId,
+use aimer_venus::Venus;
+use aimer_widget::base::{BuildContext, WindowHandle};
+use aimer_widget::{
+    AnyElement, CALLED, Element, ElementChangeKind, ElementId, ElementInvalidationBatch,
+    ElementNodeMap, EventDispatcher, EventResult, Widget, begin_event_frame,
 };
 #[cfg(feature = "wasm-hot-reload")]
 use aimer_widget::{ReconciliationPlanError, plan_element_reconciliation};
+use std::any::Any;
+use std::cell::Cell;
+use std::rc::Rc;
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::Runtime;
 use winit::application::ApplicationHandler;
@@ -72,8 +74,6 @@ use winit::event_loop::ActiveEventLoop;
 use winit::monitor::MonitorHandle;
 #[allow(unused)]
 use winit::window::{self, Fullscreen, Window, WindowAttributes, WindowId};
-#[cfg(target_os = "android")]
-use aimer_utils::debug;
 
 pub(crate) type StartupHook = Box<dyn FnOnce() -> Box<dyn Any>>;
 
@@ -92,10 +92,7 @@ pub struct ReloadCommand<G: ReloadGuest, R> {
 impl<G: ReloadGuest, R> ReloadCommand<G, R> {
     /// Creates a command from a coordinator-issued transaction and candidate.
     #[inline]
-    pub const fn new(
-        transaction: ReloadTransactionId,
-        candidate: ReloadSnapshot<G, R>,
-    ) -> Self {
+    pub const fn new(transaction: ReloadTransactionId, candidate: ReloadSnapshot<G, R>) -> Self {
         Self {
             transaction,
             candidate,
@@ -127,8 +124,7 @@ impl<G: ReloadGuest, R, E> HeadlessReloadHost<G, R, E> {
         request_frame: impl Fn() + 'static,
     ) -> Self {
         Self {
-            coordinator: ReloadCoordinator::new(active)
-                .max_queued_events(max_queued_events),
+            coordinator: ReloadCoordinator::new(active).max_queued_events(max_queued_events),
             pending_command: None,
             request_frame: Box::new(request_frame),
         }
@@ -573,6 +569,16 @@ impl WindowRenderTree {
         &self,
         invalidations: &ElementInvalidationBatch,
     ) -> bool {
+        // A rebuild whose source is not tracked cannot say which elements it
+        // touches, but it does not have to: every element it reconciles is
+        // marked for a new recording, each recording that differs from the last
+        // damages its own node (`DrawListWriter::commit`), and nodes added or
+        // removed damage themselves in the render-tree sync. Nothing a rebuild
+        // changes escapes those three, so the target need not be repainted whole.
+        //
+        // An element that went missing or whose identity could not be resolved
+        // is the case they cannot see, and stays on the full path. So does any
+        // change that is not a plain rebuild.
         let mut found_unbounded_state = false;
         for invalidation in invalidations
             .records()
@@ -582,26 +588,6 @@ impl WindowRenderTree {
             if invalidation.change != ElementChangeKind::Unknown
                 || invalidation.stale_id
                 || invalidation.removed
-            {
-                return false;
-            }
-            let Some(element) = invalidation.element_id else {
-                return false;
-            };
-            if !invalidation
-                .affected_path
-                .as_deref()
-                .is_some_and(|path| path.contains(&element))
-            {
-                return false;
-            }
-            let Some(render_node) = self.node_for_element(element) else {
-                return false;
-            };
-            if !self
-                .tree
-                .subtree_uses_only_local_v2(render_node)
-                .unwrap_or(false)
             {
                 return false;
             }
@@ -718,8 +704,8 @@ fn child_base_context<'c>(
             only_child_size = Some(child.content_size(ctx));
         }
     });
-    let is_transparent = retained_children == 1
-        && only_child_size.is_some_and(|child| child == size);
+    let is_transparent =
+        retained_children == 1 && only_child_size.is_some_and(|child| child == size);
     if is_transparent {
         child_base_ctx.box_constraint = ctx.box_constraint;
         child_base_ctx.parent_size = ctx.parent_size;
@@ -814,9 +800,17 @@ fn collect_render_tree_nodes<'element, 'context>(
             debug_name: element.debug_name(),
         });
         (
-            if bounds_valid { bounds } else { RenderRect::new(0.0, 0.0, 0.0, 0.0) },
+            if bounds_valid {
+                bounds
+            } else {
+                RenderRect::new(0.0, 0.0, 0.0, 0.0)
+            },
             clip.map(|clip| {
-                if render_rect_is_valid(&clip) { clip } else { RenderRect::new(0.0, 0.0, 0.0, 0.0) }
+                if render_rect_is_valid(&clip) {
+                    clip
+                } else {
+                    RenderRect::new(0.0, 0.0, 0.0, 0.0)
+                }
             }),
         )
     };
@@ -908,20 +902,22 @@ fn record_new_local_v2_paints<'element, 'context>(
             return false;
         };
         aimer_widget::set_rebuild_source_path(node.element, &node.element_path);
-        let resolved = node.context.with_local_v2_paint_context(paint_context, |ctx| {
-            // A child created during drawing missed the normal mapped-node
-            // state pass. Cached pixels must not appear at default opacity
-            // before their animation's first sample is applied.
-            if !node.element.sync_local_v2_state(ctx) {
-                return false;
-            }
-            if tree.needs_recording(node.render_node).unwrap_or(true)
-                || node.element.local_v2_paint_needs_recording(ctx)
-            {
-                node.element.paint_local_v2(ctx);
-            }
-            true
-        });
+        let resolved = node
+            .context
+            .with_local_v2_paint_context(paint_context, |ctx| {
+                // A child created during drawing missed the normal mapped-node
+                // state pass. Cached pixels must not appear at default opacity
+                // before their animation's first sample is applied.
+                if !node.element.sync_local_v2_state(ctx) {
+                    return false;
+                }
+                if tree.needs_recording(node.render_node).unwrap_or(true)
+                    || node.element.local_v2_paint_needs_recording(ctx)
+                {
+                    node.element.paint_local_v2(ctx);
+                }
+                true
+            });
         if !resolved {
             return false;
         }
@@ -1185,7 +1181,6 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
             need_redraw = true;
         }
 
-
         // Animation ticks first, so the values the tree is about to be built
         // from are this frame's; then every resolved effect, drained to
         // exhaustion. Both happen after the input above and before the build
@@ -1230,8 +1225,7 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
             && !had_pending_resize
             && self.pending_widget.is_none()
             && self.frame_request_reason.get() != Some(FrameRequestKind::Full)
-            && aimer_widget::rebuild_invalidation_generation()
-            == preparation.rebuild_generation
+            && aimer_widget::rebuild_invalidation_generation() == preparation.rebuild_generation
             && aimer_widget::layout_invalidation_generation() == preparation.layout_generation
     }
 
@@ -1312,7 +1306,11 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
                 .map_or(self.window_scale, |window| window.scale_factor());
             let refresh_millihertz = self
                 .native_window()
-                .and_then(|window| window.current_monitor().or_else(|| window.primary_monitor()))
+                .and_then(|window| {
+                    window
+                        .current_monitor()
+                        .or_else(|| window.primary_monitor())
+                })
                 .and_then(|monitor| monitor.refresh_rate_millihertz());
             aimer_utils::debug!(
                 "[frame-stats] frames={} build={:.2}ms encode={:.2}ms present={:.2}ms cpu-frame-samples={} cpu-frame={:.2}ms cpu-frame-p95<={:.2}ms cpu-frame-p95-saturated={} gpu-frame-samples={} gpu-frame={:.2}ms gpu-frame-p95<={:.2}ms gpu-frame-p95-saturated={} ui={:.2}ms ui-p95<={:.2}ms queue={:.2}ms acquire={:.2}ms target={}x{}px scale={:.3} refresh-millihz={:?} nodes/frame={:.1} commands/frame={:.1} retained-layers/frame={:.1} text/frame={:.1} image-draws/frame={:.1} image-uploads/frame={:.1} text-cache-hit/frame={:.1} text-cache-miss/frame={:.1} rebuild-visits/frame={:.1} rebuild-pruned/frame={:.1} stateful-checks/frame={:.1} stateless-checks/frame={:.1} stateful-builds/frame={:.1} stateless-builds/frame={:.1} layout/frame={:.1} hit-test/frame={:.1} paint/frame={:.1} root-draw/frame={:.1} scroll-events/frame={:.1} scroll-steps/frame={:.1} smoothing-steps/frame={:.1} state-updates/frame={:.1} invalidations-queued/frame={:.1} invalidations-coalesced/frame={:.1} element-index-lookups/frame={:.1} stale-element-ids/frame={:.1} scroll-offset-updates/frame={:.1} redraw-requests/frame={:.1} frame-ready-accepted={} frame-ready-coalesced={} display-ticks={}",
@@ -1517,7 +1515,10 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
     ) -> (f32, DamageSet) {
         let allocator = self.ui_allocator.clone();
         #[cfg(debug_assertions)]
-        let debug_started = self.debug_overlay.is_visible().then(aimer_utils::AnimInstant::now);
+        let debug_started = self
+            .debug_overlay
+            .is_visible()
+            .then(aimer_utils::AnimInstant::now);
         let result = allocator.scope(|| self.draw_scoped(canvas, width, height));
         #[cfg(debug_assertions)]
         if let Some(started) = debug_started {
@@ -1640,11 +1641,9 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
                             texture_epoch_before,
                             self.cursor_pos,
                         ))
-                    && self.window_render_tree.is_synchronized_apart_from_replacements(
-                        root,
-                        (width, height),
-                        self.scale,
-                    )
+                    && self
+                        .window_render_tree
+                        .is_synchronized_apart_from_replacements(root, (width, height), self.scale)
             }
             None => false,
         };
@@ -1788,23 +1787,33 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
         let rebuild_changed = keepalive_net_rebuild_generation_before
             != aimer_widget::rebuild_invalidation_generation()
                 .wrapping_sub(aimer_widget::rebuild_keepalive_count());
-        let layout_or_texture_changed =
-            layout_generation_before != aimer_widget::layout_invalidation_generation()
-                || texture_epoch_before != build_ctx.canvas.texture_cache_epoch();
-        if layout_or_texture_changed || (rebuild_changed && damage.is_empty()) {
+        let layout_or_texture_changed = layout_generation_before
+            != aimer_widget::layout_invalidation_generation()
+            || texture_epoch_before != build_ctx.canvas.texture_cache_epoch();
+        // A rebuild that left damage in the retained tree has said what it
+        // changed: each element that recorded something different, and each node
+        // added, moved or removed, damaged its own bounds. Only a rebuild that
+        // left no footprint anywhere is unaccounted for.
+        let rebuild_unaccounted = rebuild_changed
+            && damage.is_empty()
+            && !self.window_render_tree.tree.has_pending_damage();
+        if layout_or_texture_changed || rebuild_unaccounted {
             // Layout and texture changes can affect paint outside a retained
             // owner's footprint. Keep those transitions on the correctness-
             // first full-target path until every producer has a precise
-            // footprint contract. A clean rebuild epoch is safe to keep empty
-            // because the retained owner already marked its old/new bounds.
+            // footprint contract.
             damage.mark_full();
         }
 
         if self.scale.is_finite() && self.scale > 0.0 {
             #[cfg(debug_assertions)]
             if let Err(error) = self.debug_overlay.prepare(
-                &self.window_render_tree.tree, width, height, self.scale,
-                &self.ui_allocator, self.cursor_pos,
+                &self.window_render_tree.tree,
+                width,
+                height,
+                self.scale,
+                &self.ui_allocator,
+                self.cursor_pos,
             ) {
                 aimer_utils::error!("debug overlay recording failed: {error:?}");
             }
@@ -1842,10 +1851,7 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
             // direct plan only needs the nodes that can affect this frame's
             // dirty regions. Culling before adaptation avoids snapshotting and
             // lowering every clean local list on every frame.
-            let mut render_operations = self
-                .window_render_tree
-                .tree
-                .render_order(&render_damage);
+            let mut render_operations = self.window_render_tree.tree.render_order(&render_damage);
             // The renderer draws a frame that holds a custom-pipeline draw from
             // scratch, from the operations in front of it, and leaves its
             // persistent target stale. A plan culled to a small damage holds
@@ -1866,10 +1872,7 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
             {
                 render_damage.clear();
                 render_damage.push(full_target);
-                render_operations = self
-                    .window_render_tree
-                    .tree
-                    .render_order(&render_damage);
+                render_operations = self.window_render_tree.tree.render_order(&render_damage);
             }
             self.window_render_tree.drew_custom_pipeline =
                 operations_use_custom_pipeline(&render_operations);
@@ -1877,14 +1880,8 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
                 operations: render_operations,
                 damage: render_damage,
             };
-            let adapter_metadata = FrameRenderMetadata::new(
-                self.scale,
-                0,
-                0,
-                0,
-                0,
-                DamageSet::new(width, height),
-            );
+            let adapter_metadata =
+                FrameRenderMetadata::new(self.scale, 0, 0, 0, 0, DamageSet::new(width, height));
             let mut legacy_frame = Frame::new(inner_canvas.take_draw_list(), width, height);
             match FramePacket::prepare_v2_direct_render_plan(
                 &render_frame,
@@ -1963,7 +1960,9 @@ pub(crate) fn run_startup_hooks(
     startup_resources.extend(startup_hooks.drain(..).map(|hook| hook()));
 }
 
-impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent> for AimerApplicationHandler<W> {
+impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent>
+    for AimerApplicationHandler<W>
+{
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         run_startup_hooks(&mut self.startup_hooks, &mut self.startup_resources);
         if self.window.is_none() {
@@ -2090,6 +2089,11 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent> for Aimer
     }
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: AimerNativePlatformEvent) {
+        if matches!(event, AimerNativePlatformEvent::ShutdownRequested) {
+            // `exiting` follows, which tells the app's services to finish.
+            _event_loop.exit();
+            return;
+        }
         #[cfg(not(target_arch = "wasm32"))]
         if matches!(event, AimerNativePlatformEvent::RenderWorkerReady) {
             self.deliver_render_completions(_event_loop);
@@ -2099,15 +2103,26 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent> for Aimer
         #[cfg(target_os = "ios")]
         handle_user_event(self, event, |app, _kind| app.render(_event_loop));
         #[cfg(not(target_os = "ios"))]
-        handle_user_event(self, event, crate::handler::user_events::request_window_redraw);
+        handle_user_event(
+            self,
+            event,
+            crate::handler::user_events::request_window_redraw,
+        );
     }
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
+        // First, while the app is still fully alive: on a mobile OS this is the
+        // last warning before the process can be killed, and state that has not
+        // reached storage by the time this returns may be lost.
+        aimer_venus::notify_lifecycle(aimer_venus::Lifecycle::Background);
         #[cfg(not(target_arch = "wasm32"))]
         self.render_ctx.suspend();
     }
 
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        // Every way out of the loop ends here: a window close, a quit command,
+        // and the platform's own terminate notification.
+        aimer_venus::notify_lifecycle(aimer_venus::Lifecycle::Exit);
         #[cfg(not(target_arch = "wasm32"))]
         self.render_ctx.suspend();
     }
@@ -2215,7 +2230,9 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         {
             self.deliver_render_completions(event_loop);
             // Admission precedes animation/layout and damage consumption.
-            if !self.admit_render_frame() { return; }
+            if !self.admit_render_frame() {
+                return;
+            }
         }
         let kind = self.take_frame_request_reason();
         let preparation = self.begin_frame();
@@ -2250,13 +2267,11 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         let (render_ctx, mut drawer) = self.split_for_frame(window);
 
         #[cfg(target_arch = "wasm32")]
-        let outcome = render_ctx.render_frame_packet(move |canvas, width, height| {
-            drawer.draw(canvas, width, height)
-        });
+        let outcome = render_ctx
+            .render_frame_packet(move |canvas, width, height| drawer.draw(canvas, width, height));
         #[cfg(not(target_arch = "wasm32"))]
-        let outcome = render_ctx.render_frame_packet(move |canvas, width, height| {
-            drawer.draw(canvas, width, height)
-        });
+        let outcome = render_ctx
+            .render_frame_packet(move |canvas, width, height| drawer.draw(canvas, width, height));
         #[cfg(all(target_os = "windows", feature = "native", not(feature = "wgpu")))]
         if outcome.is_presented() && self.show_window_after_first_frame {
             if let Some(window) = self.native_window() {
@@ -2297,10 +2312,10 @@ mod tests {
 
     use super::census::CensusElement;
     use super::{WindowRenderTree, record_new_local_v2_paints, run_startup_hooks};
-    use aimer_container::Container;
-    use aimer_attribute::size::{ResolvedSize, Size};
     use aimer_attribute::Dimension;
     use aimer_attribute::position::Vec2d;
+    use aimer_attribute::size::{ResolvedSize, Size};
+    use aimer_container::Container;
     use aimer_cupid::draw_cmd_v2::{Rect, RenderOp, RenderPaintSource};
     use aimer_flex::Column;
     use aimer_scroll::{ScrollController, Scrollable};
@@ -2330,7 +2345,10 @@ mod tests {
         }
 
         fn size(&self) -> Option<Size> {
-            Some(Size::new(Dimension::Px(self.width.get()), Dimension::Px(12.0)))
+            Some(Size::new(
+                Dimension::Px(self.width.get()),
+                Dimension::Px(12.0),
+            ))
         }
     }
 
@@ -2533,7 +2551,6 @@ mod tests {
     }
 
     impl Drawable for V2PaintLeaf {
-
         fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
             true
         }
@@ -2548,7 +2565,6 @@ mod tests {
             );
             canvas.finish();
         }
-
     }
 
     impl Widget for V2PaintLeaf {
@@ -2747,10 +2763,7 @@ mod tests {
             scale,
             Vec2d::ZERO,
             Vec2d::ZERO,
-            WindowHandle::headless(
-                winit::dpi::PhysicalSize::new(100, 80),
-                f64::from(scale),
-            ),
+            WindowHandle::headless(winit::dpi::PhysicalSize::new(100, 80), f64::from(scale)),
             runtime.handle().clone(),
         );
         (runtime, context)
@@ -2797,16 +2810,11 @@ mod tests {
             aimer_widget::begin_paint_frame(100, 80);
             let tree = window_tree.tree.clone();
             let element_nodes = window_tree.element_nodes.clone();
-            aimer_widget::with_v2_render_tree_context(
-                tree,
-                element_nodes,
-                Some(root_id),
-                || {
-                    context.canvas.save();
-                    root.update(context);
-                    context.canvas.restore();
-                },
-            );
+            aimer_widget::with_v2_render_tree_context(tree, element_nodes, Some(root_id), || {
+                context.canvas.save();
+                root.update(context);
+                context.canvas.restore();
+            });
             let sync = window_tree
                 .sync(Some(root), context, (100, 80), context.scale)
                 .expect("refresh the scroll render tree after drawing");
@@ -3019,10 +3027,12 @@ mod tests {
         let mut window_tree = WindowRenderTree::default();
         draw_v2_until_tree_is_current(&root, &context, &mut window_tree);
 
-        assert!(window_tree
-            .paint_source_census(root.as_ref())
-            .drawn_unmapped
-            .is_empty());
+        assert!(
+            window_tree
+                .paint_source_census(root.as_ref())
+                .drawn_unmapped
+                .is_empty()
+        );
     }
 
     #[test]
@@ -3048,8 +3058,12 @@ mod tests {
             .sync(Some(&root), &context, (100, 80), 1.0)
             .expect("a single bad node must not fail the sync");
 
-        let root_node = window_tree.node_for_element(root_id).expect("the parent is mapped");
-        let leaf_node = window_tree.node_for_element(leaf_id).expect("the bad node is still mapped");
+        let root_node = window_tree
+            .node_for_element(root_id)
+            .expect("the parent is mapped");
+        let leaf_node = window_tree
+            .node_for_element(leaf_id)
+            .expect("the bad node is still mapped");
         assert!(window_tree.tree.element_bounds(root_node).is_ok());
         // It paints nothing visible: its bounds collapse to an empty rectangle.
         let bounds = window_tree.tree.element_bounds(leaf_node).unwrap();
@@ -3079,9 +3093,11 @@ mod tests {
         let mut window_tree = WindowRenderTree::default();
 
         // A zero scale cannot be rendered at all.
-        assert!(window_tree
-            .sync(Some(&broken), &context, (100, 80), 0.0)
-            .is_err());
+        assert!(
+            window_tree
+                .sync(Some(&broken), &context, (100, 80), 0.0)
+                .is_err()
+        );
         // A failed sync sends the whole frame down the legacy repaint path, so
         // the reason must be visible rather than swallowed.
         assert_eq!(
@@ -3101,9 +3117,7 @@ mod tests {
             .sync(Some(&healthy), &context, (100, 80), 1.0)
             .unwrap();
         assert_eq!(
-            window_tree
-                .paint_source_census(healthy.as_ref())
-                .sync_error,
+            window_tree.paint_source_census(healthy.as_ref()).sync_error,
             None
         );
     }
@@ -3219,7 +3233,9 @@ mod tests {
         let mut leaf_y = None;
         while let Some(element) = pending.pop() {
             if element.debug_name() == "V2PaintLeaf" {
-                let node = window_tree.node_for_element(element.id()).expect("leaf is mapped");
+                let node = window_tree
+                    .node_for_element(element.id())
+                    .expect("leaf is mapped");
                 leaf_y = Some(window_tree.tree.element_bounds(node).unwrap().y);
             }
             element.visit_retained_v2_children(&mut |_, child| pending.push(child));
@@ -3274,12 +3290,22 @@ mod tests {
         draw_v2_until_tree_is_current(&root, &context, &mut window_tree);
 
         let node_of = |id| window_tree.node_for_element(id).expect("mapped");
-        let container_bounds = window_tree.tree.element_bounds(node_of(container_id)).unwrap();
+        let container_bounds = window_tree
+            .tree
+            .element_bounds(node_of(container_id))
+            .unwrap();
         let mut leaf_bounds = None;
         let mut pending = vec![root.as_ref() as &dyn Element];
         while let Some(element) = pending.pop() {
-            if element.debug_name() == "V2PaintLeaf" && element.pos() != Some(Vec2d { x: 70.0, y: 0.0 }) {
-                leaf_bounds = Some(window_tree.tree.element_bounds(node_of(element.id())).unwrap());
+            if element.debug_name() == "V2PaintLeaf"
+                && element.pos() != Some(Vec2d { x: 70.0, y: 0.0 })
+            {
+                leaf_bounds = Some(
+                    window_tree
+                        .tree
+                        .element_bounds(node_of(element.id()))
+                        .unwrap(),
+                );
             }
             element.visit_retained_v2_children(&mut |_, child| pending.push(child));
         }
@@ -3289,7 +3315,11 @@ mod tests {
         assert!(container_bounds.width > 60.0, "{container_bounds:?}");
         // ... but the child sits at the layout box's origin, which is the
         // origin of the container's *layout* box (0, 0), not of the larger node.
-        assert_eq!((leaf_bounds.x, leaf_bounds.y), (0.0, 0.0), "{leaf_bounds:?}");
+        assert_eq!(
+            (leaf_bounds.x, leaf_bounds.y),
+            (0.0, 0.0),
+            "{leaf_bounds:?}"
+        );
     }
 
     #[test]
@@ -3309,13 +3339,16 @@ mod tests {
             .to_element(&context);
         let container_id = container.id();
         let root = V2PaintTreeRoot {
-            children: [container, aimer_widget::Element::boxed(V2PaintLeaf {
-                position: Vec2d { x: 70.0, y: 0.0 },
-                width: 10.0,
-                height: 10.0,
-                color: Color::GREEN,
-                paints: Rc::new(Cell::new(0)),
-            })],
+            children: [
+                container,
+                aimer_widget::Element::boxed(V2PaintLeaf {
+                    position: Vec2d { x: 70.0, y: 0.0 },
+                    width: 10.0,
+                    height: 10.0,
+                    color: Color::GREEN,
+                    paints: Rc::new(Cell::new(0)),
+                }),
+            ],
         }
         .boxed();
         let mut window_tree = WindowRenderTree::default();
@@ -3323,10 +3356,16 @@ mod tests {
 
         let audit = window_tree.bounds_audit(root.as_ref());
 
-        assert!(audit.compared >= 1, "a sized container publishes a rectangle: {audit:?}");
+        assert!(
+            audit.compared >= 1,
+            "a sized container publishes a rectangle: {audit:?}"
+        );
         assert_eq!(audit.unmapped, 0);
         assert!(
-            audit.mismatches.iter().all(|mismatch| mismatch.element != container_id),
+            audit
+                .mismatches
+                .iter()
+                .all(|mismatch| mismatch.element != container_id),
             "a fixed-size container's cached box is its render node: {audit:?}"
         );
     }
@@ -3474,18 +3513,18 @@ mod tests {
             [aimer_cupid::draw_cmd_v2::DrawCommand::FillRect { color, .. }]
                 if (color.r, color.g, color.b, color.a) == (0, 0, 255, 255)
         ));
-        let child_clip = retained_tree
-            .render_all()
-            .into_iter()
-            .find_map(|operation| match operation {
-                RenderOp::Draw(item) if item.element == child_node => Some(item.clip),
-                RenderOp::Draw(_) | RenderOp::BeginOpacityGroup { .. } | RenderOp::EndOpacityGroup { .. } => None,
-            });
+        let child_clip =
+            retained_tree
+                .render_all()
+                .into_iter()
+                .find_map(|operation| match operation {
+                    RenderOp::Draw(item) if item.element == child_node => Some(item.clip),
+                    RenderOp::Draw(_)
+                    | RenderOp::BeginOpacityGroup { .. }
+                    | RenderOp::EndOpacityGroup { .. } => None,
+                });
         assert_eq!(child_clip, Some(Some(Rect::new(0.0, 0.0, 30.0, 20.0))));
-        assert_eq!(
-            retained_tree.draw_list_revision(sibling_node).unwrap(),
-            1
-        );
+        assert_eq!(retained_tree.draw_list_revision(sibling_node).unwrap(), 1);
 
         retained_tree.invalidate_paint(container_node).unwrap();
         draw_frame();
@@ -3601,13 +3640,19 @@ mod tests {
         );
 
         let damage = window_tree.tree.take_damage();
-        assert!(!damage.is_empty(), "scrolling must damage the retained viewport");
-        assert!(damage.iter().all(|rect| {
-            rect.x >= 0.0
-                && rect.y >= 0.0
-                && rect.x + rect.width <= 100.0
-                && rect.y + rect.height <= 80.0
-        }), "scroll damage escaped the viewport: {damage:?}");
+        assert!(
+            !damage.is_empty(),
+            "scrolling must damage the retained viewport"
+        );
+        assert!(
+            damage.iter().all(|rect| {
+                rect.x >= 0.0
+                    && rect.y >= 0.0
+                    && rect.x + rect.width <= 100.0
+                    && rect.y + rect.height <= 80.0
+            }),
+            "scroll damage escaped the viewport: {damage:?}"
+        );
         assert!(child_paints.get() >= 1);
     }
 
@@ -3643,7 +3688,10 @@ mod tests {
         let mut window_tree = WindowRenderTree::default();
 
         let initial_draws = draw_v2_until_tree_is_current(&root, &context, &mut window_tree);
-        assert_eq!(initial_draws, 1, "initial virtual rows draw in the first frame");
+        assert_eq!(
+            initial_draws, 1,
+            "initial virtual rows draw in the first frame"
+        );
 
         let initial_rows = find_element_ids(root.as_ref(), "V2PaintLeaf");
         assert!(!initial_rows.is_empty(), "the viewport materializes rows");
@@ -3656,19 +3704,31 @@ mod tests {
                     .expect("each materialized row has a retained render node")
             })
             .collect::<Vec<_>>();
-        assert!(initial_render_nodes.iter().all(|node| {
-            window_tree.tree.paint_source(*node) == Ok(RenderPaintSource::LocalV2)
-                && window_tree.tree.draw_list_revision(*node) == Ok(1)
-        }), "newly materialized rows record v2 paint in the first frame");
+        assert!(
+            initial_render_nodes.iter().all(|node| {
+                window_tree.tree.paint_source(*node) == Ok(RenderPaintSource::LocalV2)
+                    && window_tree.tree.draw_list_revision(*node) == Ok(1)
+            }),
+            "newly materialized rows record v2 paint in the first frame"
+        );
         window_tree.tree.take_damage();
 
         controller.jump_to(Vec2d { x: 0.0, y: 400.0 });
         let scrolled_draws = draw_v2_until_tree_is_current(&root, &context, &mut window_tree);
-        assert_eq!(scrolled_draws, 1, "new virtual rows draw in the scroll frame");
+        assert_eq!(
+            scrolled_draws, 1,
+            "new virtual rows draw in the scroll frame"
+        );
 
         let updated_rows = find_element_ids(root.as_ref(), "V2PaintLeaf");
-        assert!(!updated_rows.is_empty(), "the scrolled viewport materializes rows");
-        assert!(updated_rows.len() < 32, "scrolling must not materialize the full list");
+        assert!(
+            !updated_rows.is_empty(),
+            "the scrolled viewport materializes rows"
+        );
+        assert!(
+            updated_rows.len() < 32,
+            "scrolling must not materialize the full list"
+        );
         let updated_render_nodes = updated_rows
             .iter()
             .map(|element| {
@@ -3677,16 +3737,21 @@ mod tests {
                     .expect("each scrolled row has a retained render node")
             })
             .collect::<Vec<_>>();
-        assert!(updated_render_nodes.iter().all(|node| {
-            window_tree.tree.paint_source(*node) == Ok(RenderPaintSource::LocalV2)
-                && window_tree.tree.draw_list_revision(*node) == Ok(1)
-        }), "newly visible rows record v2 paint in the scroll frame");
+        assert!(
+            updated_render_nodes.iter().all(|node| {
+                window_tree.tree.paint_source(*node) == Ok(RenderPaintSource::LocalV2)
+                    && window_tree.tree.draw_list_revision(*node) == Ok(1)
+            }),
+            "newly visible rows record v2 paint in the scroll frame"
+        );
         let visible_render_items = window_tree
             .tree
             .render_all()
             .into_iter()
             .filter_map(|operation| match operation {
-                RenderOp::Draw(item) => Some((item.element, item.paint_source, item.bounds, item.clip)),
+                RenderOp::Draw(item) => {
+                    Some((item.element, item.paint_source, item.bounds, item.clip))
+                }
                 RenderOp::BeginOpacityGroup { .. } | RenderOp::EndOpacityGroup { .. } => None,
             })
             .collect::<Vec<_>>();
@@ -3704,10 +3769,12 @@ mod tests {
             element.visit_children(&mut |child| pending.push(child));
         }
         assert!(
-            visible_render_items.iter().any(|(render_node, paint_source, _, _)| {
-                updated_render_nodes.contains(render_node)
-                    && *paint_source == RenderPaintSource::LocalV2
-            }),
+            visible_render_items
+                .iter()
+                .any(|(render_node, paint_source, _, _)| {
+                    updated_render_nodes.contains(render_node)
+                        && *paint_source == RenderPaintSource::LocalV2
+                }),
             "the scroll frame plan includes visible virtualized v2 rows: items={visible_render_items:?}, sources={render_sources:?}, row_nodes={updated_render_nodes:?}"
         );
         assert_ne!(
@@ -3715,20 +3782,27 @@ mod tests {
             "scrolling advances the virtualized row window"
         );
         assert_eq!(
-            window_tree.tree.element_bounds(
-                window_tree.node_for_element(scroll_element).unwrap()
-            ).unwrap(),
+            window_tree
+                .tree
+                .element_bounds(window_tree.node_for_element(scroll_element).unwrap())
+                .unwrap(),
             Rect::new(0.0, 0.0, 100.0, 80.0)
         );
 
         let damage = window_tree.tree.take_damage();
-        assert!(!damage.is_empty(), "virtualized scrolling damages the viewport");
-        assert!(damage.iter().all(|rect| {
-            rect.x >= 0.0
-                && rect.y >= 0.0
-                && rect.x + rect.width <= 100.0
-                && rect.y + rect.height <= 80.0
-        }), "virtualized row damage escaped the viewport: damage={damage:?}, sources={render_sources:?}, items={visible_render_items:?}");
+        assert!(
+            !damage.is_empty(),
+            "virtualized scrolling damages the viewport"
+        );
+        assert!(
+            damage.iter().all(|rect| {
+                rect.x >= 0.0
+                    && rect.y >= 0.0
+                    && rect.x + rect.width <= 100.0
+                    && rect.y + rect.height <= 80.0
+            }),
+            "virtualized row damage escaped the viewport: damage={damage:?}, sources={render_sources:?}, items={visible_render_items:?}"
+        );
     }
 
     #[test]

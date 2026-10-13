@@ -102,9 +102,9 @@
 //!
 //! [`PointerKey`]: aimer_widget::PointerKey
 
+mod auto_scroll;
 mod draggable;
 mod drop_zone;
-mod auto_scroll;
 mod file_drop;
 mod overlay;
 mod reorder;
@@ -113,12 +113,12 @@ mod target;
 #[cfg(test)]
 mod test_support;
 
-pub use crate::draggable::{Draggable, DragStartMode};
-pub use crate::drop_zone::DropZone;
 pub use crate::auto_scroll::{
     AutoScrollEdges, AutoScrollPolicy, AutoScrollPolicyError, AutoScrollStep, AutoScroller,
     ScrollTarget, ScrollViewport,
 };
+pub use crate::draggable::{DragStartMode, Draggable};
+pub use crate::drop_zone::DropZone;
 pub use crate::file_drop::{
     FileDropEntry, FileDropOutcome, FileDropPolicy, FileDropRejectReason, FileDropRejection,
     ValidatedFileDrop,

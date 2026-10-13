@@ -123,7 +123,10 @@ fn builder_rejects_malformed_non_finite_zero_length_and_excessive_paths() {
             ],
             arc_limits,
         ),
-        Err(ShapeError::CoordinateOutOfRange { field: "extent", .. })
+        Err(ShapeError::CoordinateOutOfRange {
+            field: "extent",
+            ..
+        })
     ));
 }
 
@@ -152,10 +155,12 @@ fn paint_validation_hit_testing_and_fit_are_bounded() {
         Some(&stroke)
     ));
     assert!(StrokeStyle::new(f32::NAN, ShapeColor::BLACK).is_err());
-    assert!(StrokeStyle::new(1.0, ShapeColor::BLACK)
-        .unwrap()
-        .with_dash([1.0, 0.0], 0.0)
-        .is_err());
+    assert!(
+        StrokeStyle::new(1.0, ShapeColor::BLACK)
+            .unwrap()
+            .with_dash([1.0, 0.0], 0.0)
+            .is_err()
+    );
     assert!(matches!(
         DashSettings::with_limit([], 0.0, aimer_shape::DEFAULT_MAX_DASH_SEGMENTS + 1),
         Err(aimer_shape::PaintError::InvalidDashLimit { .. })

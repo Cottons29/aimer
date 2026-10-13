@@ -15,22 +15,17 @@ mod tooltip;
 
 pub use clock::{Clock, ManualClock, SystemClock};
 pub use overlay::{
-    Announcer, Announcement, AnnouncementPriority, DismissReason, FocusTarget, OverlayHost,
-    OverlayId, OverlayKind, OverlayLifecycle, OverlayModality, OverlayRequest, OverlaySide,
-    OverflowPolicy, PlacementAlign, PlacementSpec, Rect, ResolvedPlacement, Size,
-    resolve_placement,
+    Announcement, AnnouncementPriority, Announcer, DismissReason, FocusTarget, OverflowPolicy,
+    OverlayHost, OverlayId, OverlayKind, OverlayLifecycle, OverlayModality, OverlayRequest,
+    OverlaySide, PlacementAlign, PlacementSpec, Rect, ResolvedPlacement, Size, resolve_placement,
 };
 pub use progress::{
     MotionPolicy, ProgressError, ProgressIndicator, ProgressSemantics, ProgressState, Spinner,
     SpinnerError,
 };
-pub use toast::{
-    Snackbar, Toast, ToastAction, ToastId, ToastKind, ToastQueue, ToastQueueEvent,
-};
-pub use tooltip::{
-    Tooltip, TooltipController, TooltipEvent, TooltipTouch, TouchPolicy,
-};
 pub use status::{FeedbackSlot, StatusBanner, StatusKind};
+pub use toast::{Snackbar, Toast, ToastAction, ToastId, ToastKind, ToastQueue, ToastQueueEvent};
+pub use tooltip::{Tooltip, TooltipController, TooltipEvent, TooltipTouch, TouchPolicy};
 
 #[cfg(test)]
 mod tests {

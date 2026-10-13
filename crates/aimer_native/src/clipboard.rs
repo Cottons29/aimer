@@ -34,19 +34,19 @@
 
 use std::fmt::{Display, Formatter};
 
-#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
-mod desktop_clipboard;
 #[cfg(target_os = "android")]
 mod android_clipboard;
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+mod desktop_clipboard;
 #[cfg(target_os = "ios")]
 mod ios_clipboard;
 #[cfg(all(target_arch = "wasm32", not(aimer_portable_guest)))]
 mod web_clipboard;
 
-#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
-use desktop_clipboard as platform;
 #[cfg(target_os = "android")]
 use android_clipboard as platform;
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+use desktop_clipboard as platform;
 #[cfg(target_os = "ios")]
 use ios_clipboard as platform;
 #[cfg(all(target_arch = "wasm32", not(aimer_portable_guest)))]

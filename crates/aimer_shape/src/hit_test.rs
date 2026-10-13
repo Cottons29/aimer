@@ -34,11 +34,18 @@ impl ShapeHitTest {
         match self {
             Self::None => false,
             Self::Bounds => path.bounds().contains(point),
-            Self::Fill => fill.is_some_and(|fill| fill.validate().is_ok() && fill_contains(path, point, fill.rule)),
-            Self::Stroke => stroke.is_some_and(|stroke| stroke.validate().is_ok() && stroke_contains(path, point, stroke)),
+            Self::Fill => fill.is_some_and(|fill| {
+                fill.validate().is_ok() && fill_contains(path, point, fill.rule)
+            }),
+            Self::Stroke => stroke.is_some_and(|stroke| {
+                stroke.validate().is_ok() && stroke_contains(path, point, stroke)
+            }),
             Self::FillOrStroke => {
-                fill.is_some_and(|fill| fill.validate().is_ok() && fill_contains(path, point, fill.rule))
-                    || stroke.is_some_and(|stroke| stroke.validate().is_ok() && stroke_contains(path, point, stroke))
+                fill.is_some_and(|fill| {
+                    fill.validate().is_ok() && fill_contains(path, point, fill.rule)
+                }) || stroke.is_some_and(|stroke| {
+                    stroke.validate().is_ok() && stroke_contains(path, point, stroke)
+                })
             }
         }
     }
@@ -91,7 +98,15 @@ fn stroke_contains(path: &ShapePath, point: Point, stroke: &StrokeStyle) -> bool
             let segment_start = distance_along;
             let segment_end = distance_along + length;
             if stroke.dash().is_solid() {
-                if segment_distance(point, *a, *b, radius, stroke.line_cap, polyline.closed || index > 0, polyline.closed || index + 2 < polyline.points.len()) {
+                if segment_distance(
+                    point,
+                    *a,
+                    *b,
+                    radius,
+                    stroke.line_cap,
+                    polyline.closed || index > 0,
+                    polyline.closed || index + 2 < polyline.points.len(),
+                ) {
                     return true;
                 }
             } else if dashed_segment_contains(

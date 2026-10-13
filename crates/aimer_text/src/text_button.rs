@@ -3,8 +3,8 @@ use std::time::Duration;
 
 use aimer_events::element::ElementEvent;
 use aimer_events::pointer::PointerSource;
-use aimer_macro::PortableWidget;
 use aimer_events::window::request_animation_frame;
+use aimer_macro::PortableWidget;
 use aimer_style::{TextOverflow, TextStyle};
 use aimer_utils::AnimInstant;
 use aimer_utils::callback::{CallbackExecutor, VoidCallback};
@@ -40,10 +40,7 @@ use crate::text_source::TextSource;
 ///                                           .on_press(|| println!("open"));
 /// ```
 #[derive(Clone, PortableWidget)]
-#[portable_widget(
-    id = "aimer_text::TextButton",
-    schema_only
-)]
+#[portable_widget(id = "aimer_text::TextButton", schema_only)]
 pub struct TextButton {
     disabled: bool,
     label: TextSource,
@@ -371,7 +368,11 @@ impl RawTextButton {
     fn local_v2_text<'a>(
         &self,
         ctx: &BuildContext<'a>,
-    ) -> Option<(RawTextWidget, BuildContext<'a>, aimer_attribute::ResolvedSize)> {
+    ) -> Option<(
+        RawTextWidget,
+        BuildContext<'a>,
+        aimer_attribute::ResolvedSize,
+    )> {
         let normal = self.text_layout_for(ctx, false);
         if normal.0.text_style.text_shadow.is_some()
             || normal.0.text_style.background_color.is_some()
@@ -552,7 +553,10 @@ impl LayoutElement for RawTextButton {
 
 impl Drawable for RawTextButton {
     /// The button hit-tests its text block: the widest line by the full height.
-    fn retained_v2_interaction_size(&self, ctx: &BuildContext) -> Option<aimer_attribute::ResolvedSize> {
+    fn retained_v2_interaction_size(
+        &self,
+        ctx: &BuildContext,
+    ) -> Option<aimer_attribute::ResolvedSize> {
         let (_, _, size, line_widths, _) = self.text_layout(ctx);
         Some(aimer_attribute::ResolvedSize {
             width: line_widths.iter().copied().fold(0.0, f32::max),
@@ -566,7 +570,9 @@ impl Drawable for RawTextButton {
     }
 
     #[inline]
-    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+    fn retained_v2_interaction_disagreement(
+        &self,
+    ) -> Option<aimer_widget::InteractionDisagreement> {
         self.bounds.block.disagreement("TextButton")
     }
 
@@ -598,7 +604,6 @@ impl Drawable for RawTextButton {
             .expect("TextButton v2 support must be checked before painting");
         text.paint_local_v2(&text_ctx);
     }
-
 }
 
 impl Rebuildable for RawTextButton {}
@@ -609,7 +614,7 @@ mod tests {
     use std::rc::Rc;
 
     use aimer_attribute::{BoxConstraint, ResolvedSize, Vec2d};
-    
+
     use aimer_events::pointer::{PointerButton, PointerInfo};
     use aimer_style::TextDecoration;
     use aimer_widget::base::WindowHandle;
@@ -724,7 +729,10 @@ mod tests {
         assert!(
             !button
                 .on_event(&ElementEvent::PointerDown(PointerInfo::mouse(
-                    Vec2d { x: intrinsic.width + 1.0, y: intrinsic.height / 2.0 },
+                    Vec2d {
+                        x: intrinsic.width + 1.0,
+                        y: intrinsic.height / 2.0
+                    },
                     PointerButton::Primary,
                 )))
                 .is_consumed()
@@ -750,7 +758,10 @@ mod tests {
         assert!(
             !button
                 .on_event(&ElementEvent::PointerDown(PointerInfo::mouse(
-                    Vec2d { x: 31.0, y: size.height / 2.0 },
+                    Vec2d {
+                        x: 31.0,
+                        y: size.height / 2.0
+                    },
                     PointerButton::Primary,
                 )))
                 .is_consumed()
@@ -774,7 +785,10 @@ mod tests {
         assert!(
             button
                 .on_event(&ElementEvent::PointerDown(PointerInfo::mouse(
-                    Vec2d { x: 1.0, y: size.height - 1.0 },
+                    Vec2d {
+                        x: 1.0,
+                        y: size.height - 1.0
+                    },
                     PointerButton::Primary,
                 )))
                 .is_consumed()
@@ -782,7 +796,10 @@ mod tests {
         assert!(
             !button
                 .on_event(&ElementEvent::PointerDown(PointerInfo::mouse(
-                    Vec2d { x: size.width - 1.0, y: size.height - 1.0 },
+                    Vec2d {
+                        x: size.width - 1.0,
+                        y: size.height - 1.0
+                    },
                     PointerButton::Primary,
                 )))
                 .is_consumed()
@@ -832,9 +849,8 @@ mod tests {
         let (mut ctx, _canvas) = context_with_canvas(300.0);
         ctx.cursor_pos = Vec2d { x: 1.0, y: 1.0 };
         let button = raw_button(
-            TextButton::new("Open").hover_style(
-                TextStyle::default().text_decoration(TextDecoration::Underline),
-            ),
+            TextButton::new("Open")
+                .hover_style(TextStyle::default().text_decoration(TextDecoration::Underline)),
         );
 
         button.layout(&ctx);
@@ -911,10 +927,12 @@ mod tests {
                 "aimer.event:aimer_text::TextButton:on_double_press",
             ]
         );
-        assert!(schema
-            .callbacks()
-            .iter()
-            .all(|callback| callback.async_schema().is_some()));
+        assert!(
+            schema
+                .callbacks()
+                .iter()
+                .all(|callback| callback.async_schema().is_some())
+        );
     }
 
     #[cfg(feature = "portable-guest")]
@@ -923,11 +941,11 @@ mod tests {
         use std::cell::Cell;
 
         use aimer_anteros::WidgetDocumentView;
-        use aimer_widget::portable::{
-            PortableBuildContext, PortableLimits, PortableWidgetLimits, SourceFingerprint,
-            StableId128, PortableWidgetSchema,
-        };
         use aimer_widget::PortableWidget;
+        use aimer_widget::portable::{
+            PortableBuildContext, PortableLimits, PortableWidgetLimits, PortableWidgetSchema,
+            SourceFingerprint, StableId128,
+        };
 
         let calls = Rc::new(Cell::new(0_u8));
         let press_calls = Rc::clone(&calls);
@@ -992,11 +1010,11 @@ mod tests {
     #[test]
     fn text_button_async_callback_uses_the_reflected_async_route() {
         use aimer_anteros::WidgetDocumentView;
+        use aimer_widget::PortableWidget;
         use aimer_widget::portable::{
             PortableBuildContext, PortableCallbackStart, PortableLimits, PortableWidgetLimits,
             SourceFingerprint, StableId128,
         };
-        use aimer_widget::PortableWidget;
 
         let mut context = PortableBuildContext::new(
             1,
@@ -1021,9 +1039,8 @@ mod tests {
             .callbacks()
             .next()
             .expect("the configured async callback is reflected");
-        let callback_id = aimer_widget::portable::StableId128::from_bytes(
-            *binding.callback_id().as_bytes(),
-        );
+        let callback_id =
+            aimer_widget::portable::StableId128::from_bytes(*binding.callback_id().as_bytes());
 
         assert!(binding.is_async());
         assert!(matches!(
@@ -1080,7 +1097,9 @@ mod tests {
         // not rounded up like plain text: normal and hover differ by a
         // fraction of a pixel, which must not push the button to a legacy
         // island.
-        let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
         let _guard = runtime.enter();
         let mut ctx = context(300.0);
         ctx.cursor_pos = Vec2d { x: -1.0, y: -1.0 };
@@ -1091,7 +1110,9 @@ mod tests {
 
     #[test]
     fn a_hovered_underlined_button_paints_locally() {
-        let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
         let _guard = runtime.enter();
         let ctx = context(300.0);
         let button = underline_on_hover_button();
@@ -1104,7 +1125,9 @@ mod tests {
 
     #[test]
     fn a_hover_style_that_resizes_the_label_paints_the_state_the_button_is_in() {
-        let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
         let _guard = runtime.enter();
         let ctx = context(300.0);
         let button = raw_button(
@@ -1115,12 +1138,14 @@ mod tests {
         button.layout(&ctx);
 
         let font_size = |button: &RawTextButton| {
-            record_local_v2(button, &ctx).iter().find_map(|command| match command {
-                aimer_cupid::draw_cmd_v2::DrawCommand::DrawText { font_size, .. } => {
-                    Some(*font_size)
-                }
-                _ => None,
-            })
+            record_local_v2(button, &ctx)
+                .iter()
+                .find_map(|command| match command {
+                    aimer_cupid::draw_cmd_v2::DrawCommand::DrawText { font_size, .. } => {
+                        Some(*font_size)
+                    }
+                    _ => None,
+                })
         };
         // The node's bounds follow the state, so the label is painted in it
         // rather than left blank because the two states differ in size.

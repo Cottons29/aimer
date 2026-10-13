@@ -196,24 +196,41 @@ impl fmt::Display for ModelError {
                 version.minor()
             ),
             Self::Truncated { needed, actual } => {
-                write!(formatter, "portable model needs {needed} bytes but has {actual}")
+                write!(
+                    formatter,
+                    "portable model needs {needed} bytes but has {actual}"
+                )
             }
             Self::LengthMismatch { declared, actual } => write!(
                 formatter,
                 "portable model declares {declared} bytes but has {actual}"
             ),
-            Self::LengthOverflow => formatter.write_str("portable model length arithmetic overflowed"),
+            Self::LengthOverflow => {
+                formatter.write_str("portable model length arithmetic overflowed")
+            }
             Self::DocumentTooLarge { length, limit } => {
-                write!(formatter, "portable model length {length} exceeds limit {limit}")
+                write!(
+                    formatter,
+                    "portable model length {length} exceeds limit {limit}"
+                )
             }
             Self::CollectionTooLarge { count, limit } => {
-                write!(formatter, "portable collection count {count} exceeds limit {limit}")
+                write!(
+                    formatter,
+                    "portable collection count {count} exceeds limit {limit}"
+                )
             }
             Self::StringTooLarge { length, limit } => {
-                write!(formatter, "portable string length {length} exceeds limit {limit}")
+                write!(
+                    formatter,
+                    "portable string length {length} exceeds limit {limit}"
+                )
             }
             Self::BlobTooLarge { length, limit } => {
-                write!(formatter, "portable blob length {length} exceeds limit {limit}")
+                write!(
+                    formatter,
+                    "portable blob length {length} exceeds limit {limit}"
+                )
             }
             Self::InvalidUtf8 => formatter.write_str("portable string is not valid UTF-8"),
             Self::RootOutOfBounds { root, node_count } => write!(
@@ -239,13 +256,19 @@ impl fmt::Display for ModelError {
                 "widget node {node} is owned by parents {first_parent} and {second_parent}"
             ),
             Self::WidgetCycle { node } => {
-                write!(formatter, "widget graph contains a cycle through node {node}")
+                write!(
+                    formatter,
+                    "widget graph contains a cycle through node {node}"
+                )
             }
             Self::UnreachableWidgetNode { node } => {
                 write!(formatter, "widget node {node} is unreachable from the root")
             }
             Self::WidgetDepthExceeded { depth, limit } => {
-                write!(formatter, "widget graph depth {depth} exceeds limit {limit}")
+                write!(
+                    formatter,
+                    "widget graph depth {depth} exceeds limit {limit}"
+                )
             }
             Self::UnsupportedWidgetSchema {
                 node,

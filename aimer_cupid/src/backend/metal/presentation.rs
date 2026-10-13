@@ -78,7 +78,10 @@ impl MetalSurfaceFrame {
     /// Returns the drawable texture dimensions in pixels.
     #[inline]
     pub fn size(&self) -> (u32, u32) {
-        (self.texture.0.width() as u32, self.texture.0.height() as u32)
+        (
+            self.texture.0.width() as u32,
+            self.texture.0.height() as u32,
+        )
     }
 
     /// Borrows the backend texture for source-texture rendering and copies.
@@ -109,7 +112,9 @@ impl MetalSurfaceFrame {
             let _render_submission = backend.wait_for_render_submission();
             drawable.present();
         } else {
-            let command_buffer = backend.queue.commandBuffer()
+            let command_buffer = backend
+                .queue
+                .commandBuffer()
                 .expect("the command queue to hand out a presentation command buffer");
             command_buffer.presentDrawable(drawable);
             command_buffer.commit();
@@ -122,9 +127,12 @@ impl MetalBackend {
         // An empty buffer need not carry the drawable's rendering dependency.
         // Wait on the actual producer before joining UIKit's CA transaction.
         // Release the upload/submit lock before waiting on the GPU scheduler.
-        let command_buffer = self.queue_state.lock()
+        let command_buffer = self
+            .queue_state
+            .lock()
             .expect("Metal upload queue mutex is not poisoned")
-            .last_submission.take()?;
+            .last_submission
+            .take()?;
         command_buffer.waitUntilScheduled();
         Some(command_buffer)
     }
@@ -154,23 +162,39 @@ mod tests {
         let view = backend.create_texture_view(&texture, "presentation regression view");
         for _ in 0..2 {
             let mut encoder = backend.create_command_encoder("actual frame rendering");
-            backend.begin_render_pass(&mut encoder, &RenderPassDescriptor {
-                label: None,
-                color_attachments: &[RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: crate::backend::Operations { load: LoadOp::Clear([0.0; 4]), store: StoreOp::Store },
-                }],
-                depth_stencil_attachment: None,
-            });
+            backend.begin_render_pass(
+                &mut encoder,
+                &RenderPassDescriptor {
+                    label: None,
+                    color_attachments: &[RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: crate::backend::Operations {
+                            load: LoadOp::Clear([0.0; 4]),
+                            store: StoreOp::Store,
+                        },
+                    }],
+                    depth_stencil_attachment: None,
+                },
+            );
             let rendered = encoder.command_buffer.clone();
             backend.submit(encoder);
-            let waited = backend.wait_for_render_submission().expect("render submission");
-            assert_eq!(Retained::as_ptr(&waited), Retained::as_ptr(&rendered),
-                "presentation must synchronize with the rendering buffer, not an empty barrier");
-            assert!(matches!(waited.status(), MTLCommandBufferStatus::Scheduled
-                | MTLCommandBufferStatus::Completed));
+            let waited = backend
+                .wait_for_render_submission()
+                .expect("render submission");
+            assert_eq!(
+                Retained::as_ptr(&waited),
+                Retained::as_ptr(&rendered),
+                "presentation must synchronize with the rendering buffer, not an empty barrier"
+            );
+            assert!(matches!(
+                waited.status(),
+                MTLCommandBufferStatus::Scheduled | MTLCommandBufferStatus::Completed
+            ));
         }
-        assert!(backend.wait_for_render_submission().is_none(), "do not reuse an older frame's submission");
+        assert!(
+            backend.wait_for_render_submission().is_none(),
+            "do not reuse an older frame's submission"
+        );
     }
 }

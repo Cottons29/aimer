@@ -3,8 +3,8 @@ use std::collections::{HashSet, VecDeque};
 use std::rc::Rc;
 
 use aimer_animation::AnimInstant;
-use aimer_canvas::Canvas;
 use aimer_attribute::size::{ResolvedSize, Size};
+use aimer_canvas::Canvas;
 use aimer_events::element::ElementEvent;
 use aimer_events::window::request_animation_frame;
 use aimer_macro::Rebuildable;
@@ -12,8 +12,8 @@ use aimer_widget::base::BuildContext;
 use aimer_widget::focus::FocusTrap;
 use aimer_widget::{
     AnyElement, Drawable, Element, EventDispatcher, EventElement, EventResult, EventTreeRole,
-    LayoutElement, PointerKey, Rebuildable as RebuildableTrait, RequiredChild, VisitorElement, Widget, broadcast_event,
-    dispatch_focused_event,
+    LayoutElement, PointerKey, Rebuildable as RebuildableTrait, RequiredChild, VisitorElement,
+    Widget, broadcast_event, dispatch_focused_event,
 };
 
 use crate::ModalAnimation;
@@ -127,7 +127,11 @@ impl OverlayLayer {
         CONTENTS.with(|contents| {
             contents.items_mut().push(HostedContent {
                 id,
-                element: OverlayFollower { child: element, position }.boxed(),
+                element: OverlayFollower {
+                    child: element,
+                    position,
+                }
+                .boxed(),
             });
         });
         aimer_widget::notify_hosted_element_tree_changed();
@@ -658,10 +662,11 @@ impl EventElement for RawModalOverlay {
             // topmost modal directly so an anchored wheel can consume a
             // trackpad or mouse-wheel frame instead of the page beneath
             // it. Pointer events still use normal hit testing/capture.
-            return self.forward_child_redraw(entries.last().map_or_else(
-                EventResult::ignored,
-                |entry| dispatch_focused_event(entry.element.as_ref(), event),
-            ));
+            return self.forward_child_redraw(
+                entries.last().map_or_else(EventResult::ignored, |entry| {
+                    dispatch_focused_event(entry.element.as_ref(), event)
+                }),
+            );
         }
         if matches!(
             event,
@@ -671,10 +676,11 @@ impl EventElement for RawModalOverlay {
                 ..
             }
         ) {
-            return self.forward_child_redraw(entries.last().map_or_else(
-                EventResult::ignored,
-                |entry| entry.element.on_event(event),
-            ));
+            return self.forward_child_redraw(
+                entries
+                    .last()
+                    .map_or_else(EventResult::ignored, |entry| entry.element.on_event(event)),
+            );
         }
         let pointer = event_pointer_key(event);
         if let Some(pointer) = pointer
@@ -762,10 +768,7 @@ impl VisitorElement for RawModalOverlay {
         }
     }
 
-    fn visit_retained_v2_children<'a>(
-        &'a self,
-        visitor: &mut dyn FnMut(usize, &'a dyn Element),
-    ) {
+    fn visit_retained_v2_children<'a>(&'a self, visitor: &mut dyn FnMut(usize, &'a dyn Element)) {
         let entries = self.entries.entries();
         for (index, entry) in entries.iter().enumerate() {
             visitor(index, entry.element.as_ref());
@@ -918,7 +921,10 @@ impl ModalTimeline {
     }
 
     pub(crate) fn is_active(&self) -> bool {
-        matches!(self.phase, TimelinePhase::Entering { .. } | TimelinePhase::Exiting { .. })
+        matches!(
+            self.phase,
+            TimelinePhase::Entering { .. } | TimelinePhase::Exiting { .. }
+        )
     }
 
     fn begin_exit(&mut self, animated: bool) {
@@ -1121,8 +1127,7 @@ mod tests {
     use aimer_widget::focus::{FocusNode, FocusTrap, active_focus_trap};
     use aimer_widget::{
         CaptureRequest, Drawable, Element, EventDispatcher, EventElement, EventResult,
-        EventTreeRole,
-        LayoutElement, PointerKey, Rebuildable, VisitorElement,
+        EventTreeRole, LayoutElement, PointerKey, Rebuildable, VisitorElement,
     };
 
     use super::{HostedModal, ModalId, ModalTimeline, dispatch_hosted_event};
@@ -1231,7 +1236,11 @@ mod tests {
         position.set(Vec2d { x: 50.0, y: 60.0 });
         let mut moved = None;
         overlay.visit_retained_v2_children(&mut |_, child| moved = child.pos());
-        assert_eq!(moved, Some(Vec2d { x: 50.0, y: 60.0 }), "the place is read each time");
+        assert_eq!(
+            moved,
+            Some(Vec2d { x: 50.0, y: 60.0 }),
+            "the place is read each time"
+        );
 
         let mut routed = 0;
         overlay.visit_children(&mut |_| routed += 1);
@@ -1300,10 +1309,12 @@ mod tests {
 
     #[test]
     fn a_hosted_entry_confines_focus_until_it_is_dismissed() {
-        let entry = trapping_entry(CapturingModalElement {
-            events: Rc::new(Cell::new(0)),
-        }
-        .boxed());
+        let entry = trapping_entry(
+            CapturingModalElement {
+                events: Rc::new(Cell::new(0)),
+            }
+            .boxed(),
+        );
 
         assert_eq!(
             active_focus_trap(),
@@ -1468,7 +1479,11 @@ mod tests {
         let _ = dispatcher.dispatch(host.as_ref(), inside, &down);
         assert!(dispatcher.is_captured(pointer));
         assert_eq!(modal_events.get(), 1);
-        assert_eq!(app_events.get(), 0, "the modal overlay stays above app content");
+        assert_eq!(
+            app_events.get(),
+            0,
+            "the modal overlay stays above app content"
+        );
 
         let move_event = ElementEvent::PointerMove(PointerInfo::new(
             outside,

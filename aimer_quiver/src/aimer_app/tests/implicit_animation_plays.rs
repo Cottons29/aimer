@@ -28,7 +28,11 @@ impl StatefulWidget for Root {
     type State = RootState;
 
     fn create_state(self) -> RootState {
-        RootState { target: 0.0, values: self.values, updater: self.updater }
+        RootState {
+            target: 0.0,
+            values: self.values,
+            updater: self.updater,
+        }
     }
 }
 
@@ -69,7 +73,9 @@ impl State<Root> for RootState {
 
 impl Widget for Root {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
-        StatefulElement::new_with_name(self, ctx, "ImplicitRoot", None).0.boxed()
+        StatefulElement::new_with_name(self, ctx, "ImplicitRoot", None)
+            .0
+            .boxed()
     }
 }
 
@@ -77,17 +83,28 @@ impl aimer_widget::PortableWidget for Root {}
 
 #[test]
 fn an_implicit_animation_moves_through_its_in_between_values() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     let values = Rc::new(RefCell::new(Vec::new()));
     let updater = Rc::new(RefCell::new(None));
     let mut app = AimerApp::start_headless_with(
-        Root { values: values.clone(), updater: updater.clone() },
-        HeadlessOptions { size: PhysicalSize::new(300, 400), scale_factor: 1.0 },
+        Root {
+            values: values.clone(),
+            updater: updater.clone(),
+        },
+        HeadlessOptions {
+            size: PhysicalSize::new(300, 400),
+            scale_factor: 1.0,
+        },
     );
     app.pump_frames(4);
     values.borrow_mut().clear();
 
-    updater.borrow().expect("initialised").set_state(|state| state.target = 1.0);
+    updater
+        .borrow()
+        .expect("initialised")
+        .set_state(|state| state.target = 1.0);
     let end = std::time::Instant::now() + Duration::from_millis(500);
     while std::time::Instant::now() < end {
         std::thread::sleep(Duration::from_millis(8));
@@ -95,7 +112,14 @@ fn an_implicit_animation_moves_through_its_in_between_values() {
     }
 
     let seen = values.borrow();
-    let between = seen.iter().filter(|value| **value > 0.05 && **value < 0.95).count();
+    let between = seen
+        .iter()
+        .filter(|value| **value > 0.05 && **value < 0.95)
+        .count();
     assert!(between >= 5, "the animation jumped: it built with {seen:?}");
-    assert_eq!(seen.last().copied(), Some(1.0), "the animation must end on its target");
+    assert_eq!(
+        seen.last().copied(),
+        Some(1.0),
+        "the animation must end on its target"
+    );
 }

@@ -321,10 +321,7 @@ impl<'a> CallbackSchemaMetadata<'a> {
 
     /// Declares the versioned async callback capability for this event slot.
     #[inline]
-    pub const fn with_async_schema(
-        mut self,
-        async_schema: AsyncCallbackSchemaMetadata,
-    ) -> Self {
+    pub const fn with_async_schema(mut self, async_schema: AsyncCallbackSchemaMetadata) -> Self {
         self.async_schema = Some(async_schema);
         self
     }
@@ -521,10 +518,10 @@ impl<'a> PortableWidgetSchemaValidator<'a> {
             .chain(self.additional_schemas)
             .copied()
             .find(|schema| {
-            let widget = schema.widget();
-            widget.id() == widget_type
-                && version_at_least(version, widget.min_version())
-                && version_at_least(widget.max_version(), version)
+                let widget = schema.widget();
+                widget.id() == widget_type
+                    && version_at_least(version, widget.min_version())
+                    && version_at_least(widget.max_version(), version)
             })
     }
 }
@@ -835,7 +832,10 @@ pub enum PortableWidgetSchemaMetadataError<'a> {
 
 impl fmt::Display for PortableWidgetSchemaMetadataError<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "invalid portable widget schema metadata: {self:?}")
+        write!(
+            formatter,
+            "invalid portable widget schema metadata: {self:?}"
+        )
     }
 }
 
@@ -875,11 +875,13 @@ fn validate_properties(
     for (index, property) in schema.properties.iter().copied().enumerate() {
         let derived = PropertyId::from_canonical_name(property.canonical_name);
         if property.id != derived {
-            return Err(PortableWidgetSchemaMetadataError::PropertyIdentityNameMismatch {
-                declared: property.id,
-                derived,
-                canonical_name: property.canonical_name,
-            });
+            return Err(
+                PortableWidgetSchemaMetadataError::PropertyIdentityNameMismatch {
+                    declared: property.id,
+                    derived,
+                    canonical_name: property.canonical_name,
+                },
+            );
         }
         match (property.value_kind, property.value_schema) {
             (PropertyValueKind::BlobRef, None) => {
@@ -915,11 +917,13 @@ fn validate_value_schema<'a>(
 ) -> Result<(), PortableWidgetSchemaMetadataError<'a>> {
     let derived = ValueTypeId::from_canonical_name(value.canonical_name);
     if value.id != derived {
-        return Err(PortableWidgetSchemaMetadataError::ValueIdentityNameMismatch {
-            declared: value.id,
-            derived,
-            canonical_name: value.canonical_name,
-        });
+        return Err(
+            PortableWidgetSchemaMetadataError::ValueIdentityNameMismatch {
+                declared: value.id,
+                derived,
+                canonical_name: value.canonical_name,
+            },
+        );
     }
     if value.maximum_encoded_bytes == 0 {
         return Err(PortableWidgetSchemaMetadataError::EmptyValuePayload { value: value.id });
@@ -933,11 +937,13 @@ fn validate_callbacks(
     for (index, callback) in schema.callbacks.iter().copied().enumerate() {
         let derived = EventId::from_canonical_name(callback.canonical_name);
         if callback.id != derived {
-            return Err(PortableWidgetSchemaMetadataError::CallbackIdentityNameMismatch {
-                declared: callback.id,
-                derived,
-                canonical_name: callback.canonical_name,
-            });
+            return Err(
+                PortableWidgetSchemaMetadataError::CallbackIdentityNameMismatch {
+                    declared: callback.id,
+                    derived,
+                    canonical_name: callback.canonical_name,
+                },
+            );
         }
         if callback.maximum_bindings == 0 {
             return Err(PortableWidgetSchemaMetadataError::EmptyCallbackSlot {
@@ -974,21 +980,29 @@ fn validate_schema_pair<'a>(
         return Ok(());
     }
     for property in first.properties {
-        if second.properties.iter().any(|other| other.id == property.id) {
-            return Err(PortableWidgetSchemaMetadataError::PropertyRegistrationConflict {
-                property: property.id,
-                first_widget: first.widget.id(),
-                second_widget: second.widget.id(),
-            });
+        if second
+            .properties
+            .iter()
+            .any(|other| other.id == property.id)
+        {
+            return Err(
+                PortableWidgetSchemaMetadataError::PropertyRegistrationConflict {
+                    property: property.id,
+                    first_widget: first.widget.id(),
+                    second_widget: second.widget.id(),
+                },
+            );
         }
     }
     for callback in first.callbacks {
         if second.callbacks.iter().any(|other| other.id == callback.id) {
-            return Err(PortableWidgetSchemaMetadataError::CallbackRegistrationConflict {
-                callback: callback.id,
-                first_widget: first.widget.id(),
-                second_widget: second.widget.id(),
-            });
+            return Err(
+                PortableWidgetSchemaMetadataError::CallbackRegistrationConflict {
+                    callback: callback.id,
+                    first_widget: first.widget.id(),
+                    second_widget: second.widget.id(),
+                },
+            );
         }
     }
     Ok(())

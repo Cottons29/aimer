@@ -13,6 +13,7 @@ pub(super) enum ExampleId {
     Pickers,
     Feedback,
     Navigation,
+    NavigationTransitions,
     RoutingContext,
     Animatable,
     DataView,
@@ -25,6 +26,7 @@ pub(super) enum ExampleId {
     BackdropFilter,
     Magnification,
     LightEdge,
+    MultiDecorationBox,
     Storage,
     CustomShape,
     AnimatedLayout,
@@ -74,6 +76,7 @@ pub(super) const EXAMPLES: &[ExampleId] = &[
     ExampleId::Pickers,
     ExampleId::Feedback,
     ExampleId::Navigation,
+    ExampleId::NavigationTransitions,
     ExampleId::RoutingContext,
     ExampleId::Animatable,
     ExampleId::DataView,
@@ -86,6 +89,7 @@ pub(super) const EXAMPLES: &[ExampleId] = &[
     ExampleId::BackdropFilter,
     ExampleId::Magnification,
     ExampleId::LightEdge,
+    ExampleId::MultiDecorationBox,
     ExampleId::Storage,
     ExampleId::CustomShape,
     ExampleId::AnimatedLayout,
@@ -152,6 +156,7 @@ pub(super) const EXAMPLE_CATEGORIES: &[ExampleCategory] = &[
         label: "Navigation",
         examples: &[
             ExampleId::Navigation,
+            ExampleId::NavigationTransitions,
             ExampleId::RoutingContext,
             ExampleId::Floating,
             ExampleId::Modal,
@@ -203,6 +208,7 @@ pub(super) const EXAMPLE_CATEGORIES: &[ExampleCategory] = &[
             ExampleId::BackdropFilter,
             ExampleId::Magnification,
             ExampleId::LightEdge,
+            ExampleId::MultiDecorationBox,
             ExampleId::CustomShape,
             ExampleId::SystemTheme,
             ExampleId::AnimatedTheme,
@@ -239,6 +245,7 @@ impl ExampleId {
             Self::Pickers => "Pickers",
             Self::Feedback => "Feedback and overlays",
             Self::Navigation => "Navigation widgets",
+            Self::NavigationTransitions => "Navigation transitions",
             Self::RoutingContext => "Route-child context",
             Self::Animatable => "Derived Animatable values",
             Self::DataView => "Data views",
@@ -251,6 +258,7 @@ impl ExampleId {
             Self::BackdropFilter => "Backdrop filter",
             Self::Magnification => "Magnification",
             Self::LightEdge => "Light edge",
+            Self::MultiDecorationBox => "Multi decoration box",
             Self::Storage => "Durable storage",
             Self::CustomShape => "Custom shapes",
             Self::AnimatedLayout => "Animated layout",
@@ -302,7 +310,7 @@ impl ExampleId {
             Self::Forms => "⌨",
             Self::Pickers => "▣",
             Self::Feedback => "!",
-            Self::Navigation | Self::RoutingContext => "⌘",
+            Self::Navigation | Self::NavigationTransitions | Self::RoutingContext => "⌘",
             Self::Animatable => "◈",
             Self::DataView => "▤",
             Self::DndCompletion => "✥",
@@ -314,6 +322,7 @@ impl ExampleId {
             Self::BackdropFilter => "▧",
             Self::Magnification => "⊕",
             Self::LightEdge => "◒",
+            Self::MultiDecorationBox => "▱",
             Self::Storage => "▣",
             Self::AnimatedLayout => "↗",
             Self::TextProperties
@@ -358,6 +367,7 @@ impl ExampleId {
             Self::Pickers => "pickers",
             Self::Feedback => "feedback",
             Self::Navigation => "navigation",
+            Self::NavigationTransitions => "navigation-transitions",
             Self::RoutingContext => "routing-context",
             Self::Animatable => "animatable",
             Self::DataView => "data-view",
@@ -370,6 +380,7 @@ impl ExampleId {
             Self::BackdropFilter => "backdrop-filter",
             Self::Magnification => "magnification",
             Self::LightEdge => "light-edge",
+            Self::MultiDecorationBox => "multi-decoration-box",
             Self::Storage => "storage",
             Self::CustomShape => "custom-shape",
             Self::AnimatedLayout => "animated-layout",
@@ -435,6 +446,9 @@ impl ExampleId {
             Self::Navigation => {
                 "Navigate tabs and route-backed pages with keyboard-friendly state."
             }
+            Self::NavigationTransitions => {
+                "Compare zoom, cross-fade, dynamic selection, view levels, and persistent shell outlets."
+            }
             Self::RoutingContext => {
                 "Keep providers available across direct and Shell/Outlet route children."
             }
@@ -470,6 +484,9 @@ impl ExampleId {
             }
             Self::LightEdge => {
                 "Turn a glass highlight around rounded corners and adjust its width, strength, and shape."
+            }
+            Self::MultiDecorationBox => {
+                "Layer a background and light edge using typed builders or runtime collections."
             }
             Self::Storage => {
                 "Exercise namespaced preferences through the deterministic memory storage adapter."
@@ -526,4 +543,3 @@ impl ExampleId {
         }
     }
 }
-

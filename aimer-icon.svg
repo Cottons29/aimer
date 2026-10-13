@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img"
+     aria-labelledby="title desc">
+    <title id="title">Aimer</title>
+    <desc id="desc">A letter A built from two crossing strokes, with a pencil woven through as its crossbar.</desc>
+    <path fill="#E5484D" d="M388.3 379 L410.9 427.48 A32 32 0 0 1 395.43 470 A32 32 0 0 1 352.9 454.52 L317.68 379 Z M363.12 325 L238.51 57.78 A32 32 0 0 0 195.99 42.3 A32 32 0 0 0 180.51 84.83 L292.5 325 Z M249.38 260.92 L159.1 454.52 A32 32 0 0 1 116.57 470 A32 32 0 0 1 101.1 427.48 L214.07 185.2 Z M297.93 156.8 L331.49 84.83 A32 32 0 0 0 316.01 42.3 A32 32 0 0 0 273.49 57.78 L262.62 81.08 Z"/>
+    <path fill="#E5484D" stroke="#E5484D" stroke-width="3" stroke-linejoin="round" d="M90.1 337 H73 Q64 337 64 346 V358 Q64 367 73 367 H90.1 Z M96.1 337 L112 337 L112 367 L96.1 367 Z M228.8 337 L397.9 337 L397.9 367 L214.81 367 Z M118 359.28 L118 337 L128.39 337 Z M403.9 337 L426.1 344.55 L426.1 359.45 L403.9 367 Z M432.1 346.59 L448 352 L432.1 357.41 Z"/>
+</svg>

@@ -3,8 +3,8 @@ use std::time::Duration;
 use aimer::animation::{AnimationController, Curve, RotationTransition};
 use aimer::style::{FontWeight, TextAlign, TextStyle};
 use aimer::{
-    AimerApp, BoxAlignment, Column, Container, Dimension, SizedBox, Svg, SvgDocument,
-    SvgError, Text, Widget,
+    AimerApp, BoxAlignment, Column, Container, Dimension, SizedBox, Svg, SvgDocument, SvgError,
+    Text, Widget,
 };
 
 use crate::theme;
@@ -41,27 +41,29 @@ pub fn loading_animation_example() -> impl Widget {
             .height(Dimension::Px(LOADING_ICON_SIZE));
 
     Container::new()
-            .width(Dimension::Percent(100.0))
-            .height(Dimension::Percent(100.0))
-            .color(app_theme.background_color)
-            .child(
-                Column::new()
-                    .horizontal_alignment(BoxAlignment::Center)
-                    .vertical_alignment(BoxAlignment::Center)
-                    .children(vec![
-                        RotationTransition::new(controller, icon).boxed(),
-                        SizedBox::new().height(16).boxed(),
-                        Text::new("Loading...")
-                            .text_align(TextAlign::MidCenter)
-                            .text_style(
-                                TextStyle::new()
-                                    .font_size(24)
-                                    .font_weight(FontWeight::Bold)
-                                    .color(app_theme.on_background_color),
-                            )
-                            .boxed(),
-                    ]),
-            )
+        .width(Dimension::Percent(100.0))
+        .height(Dimension::Percent(100.0))
+        .color(app_theme.background_color)
+        .child(
+            Column::new()
+                .horizontal_alignment(BoxAlignment::Center)
+                .vertical_alignment(BoxAlignment::Center)
+                .children(vec![
+                    RotationTransition::new(controller, icon).boxed(),
+                    SizedBox::new()
+                        .height(16)
+                        .boxed(),
+                    Text::new("Loading...")
+                        .text_align(TextAlign::MidCenter)
+                        .text_style(
+                            TextStyle::new()
+                                .font_size(24)
+                                .font_weight(FontWeight::Bold)
+                                .color(app_theme.on_background_color),
+                        )
+                        .boxed(),
+                ]),
+        )
 }
 
 pub fn start_loading_animation_example() {

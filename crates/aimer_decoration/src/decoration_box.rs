@@ -1,15 +1,15 @@
 use std::cell::Cell;
 
 mod backdrop_filter;
-mod magnification;
 mod light_edge;
+mod magnification;
+pub use backdrop_filter::BackdropFilter;
 pub use light_edge::LightEdge;
 pub use magnification::{Magnification, MagnificationStyle};
-pub use backdrop_filter::BackdropFilter;
 
+use crate::{BoxDecoration, Decoration};
 use aimer_attribute::{ResolvedSize, Size, Vec2d};
 use aimer_canvas::Canvas;
-use crate::{BoxDecoration, Decoration};
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
     AnyElement, AnyWidget, Drawable, Element, EventElement, EventTreeRole, LayoutElement,
@@ -54,7 +54,10 @@ impl DecorationBox {
     /// Finish with [`DecorationBox::child`] or [`DecorationBox::box_child`].
     #[inline]
     pub fn new() -> Self {
-        Self { decoration: BoxDecoration::new(), child: RequiredChild }
+        Self {
+            decoration: BoxDecoration::new(),
+            child: RequiredChild,
+        }
     }
 }
 
@@ -62,13 +65,19 @@ impl<D: Decoration> DecorationBox<D> {
     /// Replaces the decoration, preserving its concrete type without boxing.
     #[inline]
     pub fn decoration<E: Decoration>(self, decoration: E) -> DecorationBox<E> {
-        DecorationBox { decoration, child: self.child }
+        DecorationBox {
+            decoration,
+            child: self.child,
+        }
     }
 
     /// Attaches the required child and completes the builder.
     #[inline]
     pub fn child<W: Widget>(self, child: W) -> DecorationBox<D, W> {
-        DecorationBox { decoration: self.decoration, child }
+        DecorationBox {
+            decoration: self.decoration,
+            child,
+        }
     }
 
     /// Attaches a child and erases the completed widget's concrete type.
@@ -85,12 +94,7 @@ impl<D: Decoration + 'static, W: Widget> PortableWidget for DecorationBox<D, W> 
 
 impl<D: Decoration + 'static, W: Widget> Widget for DecorationBox<D, W> {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
-        RawDecorationBox {
-            decoration: self.decoration,
-            child: self.child.to_element(ctx),
-            recorded: Cell::new(None),
-        }
-        .boxed()
+        decoration_element(self.decoration, self.child, ctx, "DecorationBox")
     }
 
     fn debug_name(&self) -> &'static str {
@@ -98,15 +102,32 @@ impl<D: Decoration + 'static, W: Widget> Widget for DecorationBox<D, W> {
     }
 }
 
+pub(super) fn decoration_element<D: Decoration + 'static, W: Widget>(
+    decoration: D,
+    child: W,
+    ctx: &BuildContext,
+    name: &'static str,
+) -> AnyElement {
+    RawDecorationBox {
+        decoration,
+        child: child.to_element(ctx),
+        recorded: Cell::new(None),
+        name,
+    }
+    .boxed()
+}
+
 struct RawDecorationBox<D> {
     decoration: D,
     child: AnyElement,
     recorded: Cell<Option<PaintKey>>,
+    name: &'static str,
 }
 
 #[derive(Clone, Copy, PartialEq)]
 struct PaintKey {
     revision: u64,
+    background: aimer_color::prelude::Color,
     geometry: Option<PaintGeometry>,
 }
 
@@ -119,33 +140,69 @@ struct PaintGeometry {
 impl PaintGeometry {
     #[inline]
     fn logical_size(self) -> ResolvedSize {
-        ResolvedSize { width: self.size.width / self.scale, height: self.size.height / self.scale }
+        ResolvedSize {
+            width: self.size.width / self.scale,
+            height: self.size.height / self.scale,
+        }
     }
 }
 
 impl<D: Decoration> RawDecorationBox<D> {
+    #[inline]
+    fn with_child_paint_context<R>(
+        &self,
+        ctx: &BuildContext,
+        callback: impl FnOnce(&BuildContext) -> R,
+    ) -> R {
+        let background = aimer_canvas::composite_background(
+            self.decoration.background_color(),
+            ctx.paint_background,
+        );
+        if background == ctx.paint_background {
+            return callback(ctx);
+        }
+        let mut child_ctx = ctx.clone();
+        child_ctx.paint_background = background;
+        callback(&child_ctx)
+    }
+
     fn paint_geometry(&self, ctx: &BuildContext) -> Option<PaintGeometry> {
         if !ctx.scale.is_finite() || ctx.scale <= 0.0 {
             return None;
         }
-        let geometry = PaintGeometry { size: self.child.computed_size(ctx), scale: ctx.scale };
+        let geometry = PaintGeometry {
+            size: self.child.computed_size(ctx),
+            scale: ctx.scale,
+        };
         let logical = geometry.logical_size();
-        (geometry.size.width.is_finite() && geometry.size.height.is_finite()
-            && geometry.size.width >= 0.0 && geometry.size.height >= 0.0
-            && logical.width.is_finite() && logical.height.is_finite()
-            && logical.width >= 0.0 && logical.height >= 0.0)
+        (geometry.size.width.is_finite()
+            && geometry.size.height.is_finite()
+            && geometry.size.width >= 0.0
+            && geometry.size.height >= 0.0
+            && logical.width.is_finite()
+            && logical.height.is_finite()
+            && logical.width >= 0.0
+            && logical.height >= 0.0)
             .then_some(geometry)
     }
 
     fn paint_outsets(&self, geometry: PaintGeometry) -> [f32; 4] {
-        self.decoration.paint_outsets(geometry.logical_size(), geometry.scale)
-            .map(|outset| if outset.is_finite() { outset.max(0.0) } else { 0.0 })
+        self.decoration
+            .paint_outsets(geometry.logical_size(), geometry.scale)
+            .map(|outset| {
+                if outset.is_finite() {
+                    outset.max(0.0)
+                } else {
+                    0.0
+                }
+            })
     }
 
     #[inline]
     fn paint_key(&self, ctx: &BuildContext) -> PaintKey {
         PaintKey {
             revision: self.decoration.revision(),
+            background: ctx.paint_background,
             geometry: self.paint_geometry(ctx),
         }
     }
@@ -155,12 +212,12 @@ impl<D: Decoration> Rebuildable for RawDecorationBox<D> {}
 
 impl<D: Decoration> Drawable for RawDecorationBox<D> {
     fn update(&self, ctx: &BuildContext) {
-        self.child.update(ctx);
+        self.with_child_paint_context(ctx, |child_ctx| self.child.update(child_ctx));
     }
 
     #[inline]
     fn sync_paint_geometry(&self, ctx: &BuildContext) {
-        self.child.sync_paint_geometry(ctx);
+        self.with_child_paint_context(ctx, |child_ctx| self.child.sync_paint_geometry(child_ctx));
     }
 
     fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
@@ -175,7 +232,8 @@ impl<D: Decoration> Drawable for RawDecorationBox<D> {
             let [left, top, _, _] = self.paint_outsets(geometry);
             // The render node starts at the outer paint corner. Offset only
             // our commands; the retained walker compensates the child's origin.
-            self.decoration.paint(&canvas, Vec2d { x: left, y: top }, size, geometry.scale);
+            self.decoration
+                .paint_layer(&canvas, Vec2d { x: left, y: top }, size, geometry.scale);
         }
         canvas.finish();
         self.recorded.set(Some(key));
@@ -187,13 +245,17 @@ impl<D: Decoration> Drawable for RawDecorationBox<D> {
     }
 
     fn retained_v2_bounds(&self, ctx: &BuildContext) -> Option<ResolvedSize> {
-        Some(self.paint_geometry(ctx).map_or(ResolvedSize::default(), |geometry| geometry.size))
+        Some(
+            self.paint_geometry(ctx)
+                .map_or(ResolvedSize::default(), |geometry| geometry.size),
+        )
     }
 
     fn retained_v2_paint_outsets(&self, ctx: &BuildContext) -> Option<[f32; 4]> {
-        Some(self.paint_geometry(ctx).map_or([0.0; 4], |geometry| {
-            self.paint_outsets(geometry)
-        }))
+        Some(
+            self.paint_geometry(ctx)
+                .map_or([0.0; 4], |geometry| self.paint_outsets(geometry)),
+        )
     }
 
     fn retained_v2_child_context<'a>(
@@ -203,7 +265,14 @@ impl<D: Decoration> Drawable for RawDecorationBox<D> {
     ) -> Option<BuildContext<'a>> {
         // Paint bounds can be larger than content size, but must never feed
         // back into the child's constraints or parent size.
-        std::ptr::eq(child, self.child.as_ref()).then(|| ctx.clone())
+        std::ptr::eq(child, self.child.as_ref()).then(|| {
+            let mut child_ctx = ctx.clone();
+            child_ctx.paint_background = aimer_canvas::composite_background(
+                self.decoration.background_color(),
+                ctx.paint_background,
+            );
+            child_ctx
+        })
     }
 }
 
@@ -226,7 +295,7 @@ impl<D: Decoration> VisitorElement for RawDecorationBox<D> {
     }
 
     fn debug_name(&self) -> &'static str {
-        "DecorationBox"
+        self.name
     }
 }
 

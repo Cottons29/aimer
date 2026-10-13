@@ -27,7 +27,10 @@ pub mod __private {
 pub use aimer_attribute::BoxConstraint;
 pub use style::alignment::{ColumnAlignment, RowAlignment};
 // Compatibility exports; decoration types are owned by aimer_decoration.
-pub use aimer_decoration::{BorderRadius, BorderSlice, BorderStyle, BoxBorder, BoxDecoration, BoxOutline, BoxShadow, ShadowSide, Stroke};
+pub use aimer_decoration::{
+    BorderRadius, BorderSlice, BorderStyle, BoxBorder, BoxDecoration, BoxOutline, BoxShadow,
+    ShadowSide, Stroke,
+};
 pub use style::box_fit::BoxFit;
 pub use style::layout_spacing::{LayoutSpacing, Spacing};
 // text export

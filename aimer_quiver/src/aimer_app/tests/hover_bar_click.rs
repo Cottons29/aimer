@@ -39,7 +39,11 @@ impl StatefulWidget for Screen {
     type State = ScreenState;
 
     fn create_state(self) -> ScreenState {
-        ScreenState { hovered: false, counters: self.counters, updater: self.updater }
+        ScreenState {
+            hovered: false,
+            counters: self.counters,
+            updater: self.updater,
+        }
     }
 }
 
@@ -63,17 +67,33 @@ impl State<Screen> for ScreenState {
                 Curve::EaseInOut,
                 move |_opacity| {
                     let counters = counters.clone();
-                    aimer_container::Container::new().height(60).color(Color::Rgb(60, 40, 40)).child(
-                        Row::new().children(vec![
-                            Button::new()
-                                .on_press(move || counters.taps.set(counters.taps.get() + 1))
-                                .decoration(aimer_style::BoxDecoration::new().background_color(Color::Rgb(90, 60, 60)))
-                                .hover_decoration(aimer_style::BoxDecoration::new().background_color(Color::Rgb(240, 100, 70)))
-                                .child(SizedBox::new().width(Dimension::Px(60.0)).height(Dimension::Px(40.0)))
-                                .boxed(),
-                            SizedBox::new().width(Dimension::Px(100.0)).height(Dimension::Px(10.0)).boxed(),
-                        ]),
-                    )
+                    aimer_container::Container::new()
+                        .height(60)
+                        .color(Color::Rgb(60, 40, 40))
+                        .child(
+                            Row::new().children(vec![
+                                Button::new()
+                                    .on_press(move || counters.taps.set(counters.taps.get() + 1))
+                                    .decoration(
+                                        aimer_style::BoxDecoration::new()
+                                            .background_color(Color::Rgb(90, 60, 60)),
+                                    )
+                                    .hover_decoration(
+                                        aimer_style::BoxDecoration::new()
+                                            .background_color(Color::Rgb(240, 100, 70)),
+                                    )
+                                    .child(
+                                        SizedBox::new()
+                                            .width(Dimension::Px(60.0))
+                                            .height(Dimension::Px(40.0)),
+                                    )
+                                    .boxed(),
+                                SizedBox::new()
+                                    .width(Dimension::Px(100.0))
+                                    .height(Dimension::Px(10.0))
+                                    .boxed(),
+                            ]),
+                        )
                 },
             ));
 
@@ -87,28 +107,45 @@ impl State<Screen> for ScreenState {
             })
             .collect();
         aimer_space::Stack::new().children(vec![
-            aimer_space::Positioned::new().layer(3).top(0).box_child(bar),
-            Scrollable::new().child(Column::new().children(rows)).boxed(),
+            aimer_space::Positioned::new()
+                .layer(3)
+                .top(0)
+                .box_child(bar),
+            Scrollable::new()
+                .child(Column::new().children(rows))
+                .boxed(),
         ])
     }
 }
 
 impl Widget for Screen {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
-        StatefulElement::new_with_name(self, ctx, "HoverBarScreen", None).0.boxed()
+        StatefulElement::new_with_name(self, ctx, "HoverBarScreen", None)
+            .0
+            .boxed()
     }
 }
 
 impl aimer_widget::PortableWidget for Screen {}
 
 fn start() -> (HeadlessAimerApp<impl Widget + 'static>, Rc<Counters>) {
-    let counters = Rc::new(Counters { builds: Cell::new(0), taps: Cell::new(0) });
+    let counters = Rc::new(Counters {
+        builds: Cell::new(0),
+        taps: Cell::new(0),
+    });
     let mut app = AimerApp::start_headless_with(
-        Screen { counters: counters.clone(), updater: Rc::new(RefCell::new(None)) },
-        HeadlessOptions { size: PhysicalSize::new(200, 240), scale_factor: 1.0 },
+        Screen {
+            counters: counters.clone(),
+            updater: Rc::new(RefCell::new(None)),
+        },
+        HeadlessOptions {
+            size: PhysicalSize::new(200, 240),
+            scale_factor: 1.0,
+        },
     );
     app.send_window_event(WindowEvent::CursorMoved {
-        device_id: DeviceId::dummy(), position: PhysicalPosition::new(-10.0, -10.0),
+        device_id: DeviceId::dummy(),
+        position: PhysicalPosition::new(-10.0, -10.0),
     });
     app.pump_frames(3);
     (app, counters)
@@ -116,14 +153,17 @@ fn start() -> (HeadlessAimerApp<impl Widget + 'static>, Rc<Counters>) {
 
 fn move_to<W: Widget + 'static>(app: &mut HeadlessAimerApp<W>, x: f64, y: f64) {
     app.send_window_event(WindowEvent::CursorMoved {
-        device_id: DeviceId::dummy(), position: PhysicalPosition::new(x, y),
+        device_id: DeviceId::dummy(),
+        position: PhysicalPosition::new(x, y),
     });
 }
 
 fn click<W: Widget + 'static>(app: &mut HeadlessAimerApp<W>) {
     for state in [ElementState::Pressed, ElementState::Released] {
         app.send_window_event(WindowEvent::MouseInput {
-            device_id: DeviceId::dummy(), state, button: MouseButton::Left,
+            device_id: DeviceId::dummy(),
+            state,
+            button: MouseButton::Left,
         });
         app.pump_frames(1);
     }
@@ -140,7 +180,9 @@ fn run_for<W: Widget + 'static>(app: &mut HeadlessAimerApp<W>, millis: u64) {
 
 #[test]
 fn resting_on_the_back_button_lets_the_window_go_idle() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     let (mut app, counters) = start();
 
     move_to(&mut app, 30.0, 25.0);
@@ -149,31 +191,53 @@ fn resting_on_the_back_button_lets_the_window_go_idle() {
     // The fade is over. A window with nothing to do asks for no more frames.
     let builds = counters.builds.get();
     let frames = app.pump_frames(10);
-    assert_eq!(frames, 0, "the window is still drawing frames with nothing changing");
-    assert_eq!(counters.builds.get(), builds, "the screen is still rebuilding");
-    assert!(builds < 10, "the screen was built {builds} times for one hover");
+    assert_eq!(
+        frames, 0,
+        "the window is still drawing frames with nothing changing"
+    );
+    assert_eq!(
+        counters.builds.get(),
+        builds,
+        "the screen is still rebuilding"
+    );
+    assert!(
+        builds < 10,
+        "the screen was built {builds} times for one hover"
+    );
 }
 
 #[test]
 fn the_back_button_can_be_clicked_while_the_bar_fades_in() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     let (mut app, counters) = start();
 
     move_to(&mut app, 30.0, 25.0);
     app.pump_frames(1);
     click(&mut app);
 
-    assert_eq!(counters.taps.get(), 1, "a click on the button right after hovering it did nothing");
+    assert_eq!(
+        counters.taps.get(),
+        1,
+        "a click on the button right after hovering it did nothing"
+    );
 }
 
 #[test]
 fn the_back_button_can_be_clicked_once_the_bar_has_settled() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     let (mut app, counters) = start();
 
     move_to(&mut app, 30.0, 25.0);
     run_for(&mut app, 600);
     click(&mut app);
 
-    assert_eq!(counters.taps.get(), 1, "a click on the settled button did nothing");
+    assert_eq!(
+        counters.taps.get(),
+        1,
+        "a click on the settled button did nothing"
+    );
 }

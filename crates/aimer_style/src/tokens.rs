@@ -381,11 +381,9 @@ impl ThemeTokenVariants {
         match variant {
             ThemeVariant::Light => self.light,
             ThemeVariant::Dark => self.dark.unwrap_or(self.light),
-            ThemeVariant::HighContrast => self.high_contrast.unwrap_or_else(|| {
-                self.dark
-                    .unwrap_or(self.light)
-                    .high_contrast_fallback()
-            }),
+            ThemeVariant::HighContrast => self
+                .high_contrast
+                .unwrap_or_else(|| self.dark.unwrap_or(self.light).high_contrast_fallback()),
         }
     }
 }
@@ -709,11 +707,7 @@ impl DensityTokens {
             0.0
         };
         let scaled = content * scale;
-        let scaled = if scaled.is_finite() {
-            scaled
-        } else {
-            f32::MAX
-        };
+        let scaled = if scaled.is_finite() { scaled } else { f32::MAX };
         scaled.max(minimum)
     }
 
@@ -1471,8 +1465,7 @@ pub fn apply_state_layer(base: Color, state: ComponentState) -> Color {
     }
 
     let channel = |state: u8, base: u8| {
-        ((state as f32 * state_alpha
-            + base as f32 * base_alpha * (1.0 - state_alpha))
+        ((state as f32 * state_alpha + base as f32 * base_alpha * (1.0 - state_alpha))
             / output_alpha)
             .round()
             .clamp(0.0, 255.0) as u8
@@ -1625,7 +1618,10 @@ mod tests {
         let standard = MotionTokens::standard();
         let reduced = MotionTokens::reduced();
 
-        assert_eq!(standard.effective_duration_ms(MotionDuration::Standard), 200.0);
+        assert_eq!(
+            standard.effective_duration_ms(MotionDuration::Standard),
+            200.0
+        );
         assert_eq!(reduced.duration_ms(MotionDuration::Standard), 200.0);
         assert_eq!(reduced.effective_duration_ms(MotionDuration::Standard), 0.0);
     }

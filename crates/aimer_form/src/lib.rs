@@ -645,10 +645,7 @@ impl Form {
     }
 
     /// Validates one field and returns its new state.
-    pub fn validate_field(
-        &mut self,
-        id: impl AsRef<str>,
-    ) -> Result<ValidationState, FormError> {
+    pub fn validate_field(&mut self, id: impl AsRef<str>) -> Result<ValidationState, FormError> {
         self.field_mut(id).map(FormField::validate)
     }
 
@@ -717,8 +714,7 @@ impl Form {
         &mut self,
         id: impl AsRef<str>,
     ) -> Result<AsyncValidationRequest, FormError> {
-        self.field_mut(id)
-            .map(FormField::begin_async_validation)
+        self.field_mut(id).map(FormField::begin_async_validation)
     }
 
     /// Applies an asynchronous result, ignoring stale results safely.
@@ -871,14 +867,16 @@ mod tests {
         assert!(form.submitted());
         assert!(form.field("email").unwrap().touched());
         assert!(form.field("name").unwrap().touched());
-        assert_eq!(form.first_error_focus_target().unwrap().as_str(), "email-focus");
+        assert_eq!(
+            form.first_error_focus_target().unwrap().as_str(),
+            "email-focus"
+        );
     }
 
     #[test]
     fn stale_async_results_cannot_replace_a_newer_user_value() {
         let mut form = Form::new();
-        form.add_field(FormField::new("username", "old"))
-            .unwrap();
+        form.add_field(FormField::new("username", "old")).unwrap();
 
         let old_request = form.begin_async_validation("username").unwrap();
         assert_eq!(
@@ -900,8 +898,7 @@ mod tests {
 
         let new_request = form.begin_async_validation("username").unwrap();
         assert_eq!(
-            form.resolve_async_validation(&new_request, Ok(()))
-                .unwrap(),
+            form.resolve_async_validation(&new_request, Ok(())).unwrap(),
             AsyncValidationResolution::Applied
         );
         assert!(form.field("username").unwrap().is_valid());
@@ -927,7 +924,9 @@ mod tests {
 
     #[test]
     fn utility_validators_cover_boundaries_without_inventing_input_validity() {
-        let mut field = FormField::new("amount", "").validator(required()).validator(number());
+        let mut field = FormField::new("amount", "")
+            .validator(required())
+            .validator(number());
         assert_eq!(field.validate(), ValidationState::Invalid);
 
         field.set_value("0");

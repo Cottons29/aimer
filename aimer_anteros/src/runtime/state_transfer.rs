@@ -2,12 +2,12 @@ use std::borrow::Cow;
 use std::error::Error;
 use std::fmt;
 
+#[cfg(feature = "wasm-hot-reload")]
+use crate::runtime::{GuestInstance, RuntimeError};
 use crate::{
     ModelError, ModelLimits, StableId128, StateBundle, StateBundleView, StateEntry, StatePolicy,
     Version,
 };
-#[cfg(feature = "wasm-hot-reload")]
-use crate::runtime::{GuestInstance, RuntimeError};
 
 /// Coordinates bounded state preparation for one candidate generation.
 ///
@@ -112,7 +112,11 @@ impl StateTransferCoordinator {
                 .is_some_and(|entry| entry.state_id() < candidate_entry.state_id())
             {
                 let missing = previous_entries.next().unwrap();
-                acknowledge_removed_state(missing.state_id(), missing.policy(), &mut reset_state_ids)?;
+                acknowledge_removed_state(
+                    missing.state_id(),
+                    missing.policy(),
+                    &mut reset_state_ids,
+                )?;
             }
 
             let payload = if previous_entries
@@ -358,18 +362,20 @@ impl StateTransferCoordinator {
         let limits = self
             .model_limits
             .ok_or(StateTransferError::MissingModelLimits)?;
-        let previous_state = previous
-            .export_state(limits)
-            .map_err(|source| StateTransferError::Runtime {
-                stage: StateTransferStage::ExportPrevious,
-                source,
-            })?;
-        let candidate_defaults = candidate
-            .export_state(limits)
-            .map_err(|source| StateTransferError::Runtime {
-                stage: StateTransferStage::ExportCandidateDefaults,
-                source,
-            })?;
+        let previous_state =
+            previous
+                .export_state(limits)
+                .map_err(|source| StateTransferError::Runtime {
+                    stage: StateTransferStage::ExportPrevious,
+                    source,
+                })?;
+        let candidate_defaults =
+            candidate
+                .export_state(limits)
+                .map_err(|source| StateTransferError::Runtime {
+                    stage: StateTransferStage::ExportCandidateDefaults,
+                    source,
+                })?;
         let prepared = if candidate.supports_state_migration()
             && schema_migration_required(previous_state.view(), candidate_defaults.view())
         {
@@ -384,8 +390,7 @@ impl StateTransferCoordinator {
                 candidate_defaults.as_bytes(),
                 migrated.as_bytes(),
             )?;
-            prepared.report.migration_fuel_consumed =
-                candidate.last_migration_fuel_consumed();
+            prepared.report.migration_fuel_consumed = candidate.last_migration_fuel_consumed();
             prepared
         } else {
             self.prepare(previous_state.as_bytes(), candidate_defaults.as_bytes())?
@@ -396,12 +401,13 @@ impl StateTransferCoordinator {
                 stage: StateTransferStage::ImportCandidate,
                 source,
             })?;
-        let verification = candidate
-            .export_state(limits)
-            .map_err(|source| StateTransferError::Runtime {
-                stage: StateTransferStage::ExportVerification,
-                source,
-            })?;
+        let verification =
+            candidate
+                .export_state(limits)
+                .map_err(|source| StateTransferError::Runtime {
+                    stage: StateTransferStage::ExportVerification,
+                    source,
+                })?;
         self.verify(&prepared, verification.as_bytes())?;
         Ok(prepared.into_report())
     }
@@ -767,7 +773,9 @@ impl From<ModelError> for StateTransferError {
 impl fmt::Display for StateTransferError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::MissingModelLimits => formatter.write_str("state transfer model limits are not configured"),
+            Self::MissingModelLimits => {
+                formatter.write_str("state transfer model limits are not configured")
+            }
             Self::Model(error) => write!(formatter, "invalid state document: {error}"),
             Self::ApplicationMismatch {
                 previous,
@@ -789,7 +797,10 @@ impl fmt::Display for StateTransferError {
                 "duplicate migration source for state {state_id:?}, schema {schema_id:?}, version {version:?}"
             ),
             Self::ZeroMigrationFuel { state_id } => {
-                write!(formatter, "migration for state {state_id:?} has zero fuel cost")
+                write!(
+                    formatter,
+                    "migration for state {state_id:?} has zero fuel cost"
+                )
             }
             Self::MigrationFuelExhausted {
                 state_id,
@@ -800,17 +811,22 @@ impl fmt::Display for StateTransferError {
                 "migration for state {state_id:?} requires {required} fuel but {remaining} remains"
             ),
             Self::MigrationFailed { state_id, source } => {
-                write!(formatter, "migration for state {state_id:?} failed: {source}")
+                write!(
+                    formatter,
+                    "migration for state {state_id:?} failed: {source}"
+                )
             }
-            Self::VerificationMismatch => formatter.write_str(
-                "candidate state verification export does not match the imported state",
-            ),
+            Self::VerificationMismatch => formatter
+                .write_str("candidate state verification export does not match the imported state"),
             Self::MigrationOutputMismatch => formatter.write_str(
                 "candidate migration output does not match the target state declaration",
             ),
             #[cfg(feature = "wasm-hot-reload")]
             Self::Runtime { stage, source } => {
-                write!(formatter, "state transfer failed during {stage:?}: {source}")
+                write!(
+                    formatter,
+                    "state transfer failed during {stage:?}: {source}"
+                )
             }
         }
     }

@@ -35,6 +35,21 @@ pub trait Route: Clone + 'static {
         Self: Sized;
     fn format(&self) -> String;
 
+    /// Selects this page's navigation effect, or inherits its host's fallback.
+    /// On pop, the departing page selects the effect. Returning `Disabled`
+    /// suppresses even an explicitly configured host fallback.
+    fn navigation_transition(&self) -> crate::TransitionChoice<Self> {
+        crate::TransitionChoice::Inherit
+    }
+
+    /// The explicit hierarchy level used by [`crate::ViewLevelTransitions`].
+    /// URL segments and parameter values do not affect this level.
+    fn view_level(&self) -> u32 { 0 }
+
+    /// Identifies a persistent shell boundary. Routes sharing a non-empty key
+    /// update their shell outlet without animating the surrounding frame.
+    fn shell_key(&self) -> Option<&'static str> { None }
+
     /// A stable, developer-facing name for this route (e.g. `"user"`), used by
     /// `NavigatorController::push_named`. Defaults to `None` for routes that do
     /// not opt into named navigation.

@@ -5,18 +5,23 @@ mod fixtures;
 mod pixels;
 #[path = "magnification/styles.rs"]
 mod styles;
-use fixtures::*;
-use aimer::cupid::{WgpuBackend, renderer::Renderer, frame::FramePacket};
+use aimer::cupid::{WgpuBackend, frame::FramePacket, renderer::Renderer};
 use aimer_utils::SyncFuture;
+use fixtures::*;
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 #[test]
 fn magnification_composable_styles() {
     let (device, queue) = gpu().expect("GPU for magnification style validation");
     let backend = WgpuBackend::new(device.clone(), queue.clone());
-    for aa in [aimer::cupid::AntiAlias::Analytic, aimer::cupid::AntiAlias::Msaa4x] {
+    for aa in [
+        aimer::cupid::AntiAlias::Analytic,
+        aimer::cupid::AntiAlias::Msaa4x,
+    ] {
         let mut renderer = Renderer::with_antialiasing(&backend, FORMAT, aa);
-        styles::styles_match_sampling_and_preserve_disabled_axes(|packet| render_packet_and_read(&device, &queue, &backend, &mut renderer, packet));
+        styles::styles_match_sampling_and_preserve_disabled_axes(|packet| {
+            render_packet_and_read(&device, &queue, &backend, &mut renderer, packet)
+        });
     }
 }
 
@@ -24,9 +29,14 @@ fn magnification_composable_styles() {
 fn magnification_centered_zoom_depth_and_alpha() {
     let (device, queue) = gpu().expect("GPU for magnification validation");
     let backend = WgpuBackend::new(device.clone(), queue.clone());
-    for aa in [aimer::cupid::AntiAlias::Analytic, aimer::cupid::AntiAlias::Msaa4x] {
+    for aa in [
+        aimer::cupid::AntiAlias::Analytic,
+        aimer::cupid::AntiAlias::Msaa4x,
+    ] {
         let mut renderer = Renderer::with_antialiasing(&backend, FORMAT, aa);
-        pixels::centered_zoom_depth_and_alpha(|packet| render_packet_and_read(&device, &queue, &backend, &mut renderer, packet));
+        pixels::centered_zoom_depth_and_alpha(|packet| {
+            render_packet_and_read(&device, &queue, &backend, &mut renderer, packet)
+        });
     }
 }
 
@@ -35,7 +45,9 @@ fn magnification_rounded_clip_foreground_and_fresh_capture() {
     let (device, queue) = gpu().expect("GPU for magnification validation");
     let backend = WgpuBackend::new(device.clone(), queue.clone());
     let mut renderer = Renderer::new(&backend, FORMAT);
-    pixels::rounded_clip_foreground_and_fresh_capture(|packet| render_packet_and_read(&device, &queue, &backend, &mut renderer, packet));
+    pixels::rounded_clip_foreground_and_fresh_capture(|packet| {
+        render_packet_and_read(&device, &queue, &backend, &mut renderer, packet)
+    });
 }
 
 #[test]
@@ -43,7 +55,9 @@ fn magnification_corner_refraction() {
     let (device, queue) = gpu().expect("GPU for magnification validation");
     let backend = WgpuBackend::new(device.clone(), queue.clone());
     let mut renderer = Renderer::new(&backend, FORMAT);
-    pixels::rounded_corner_uses_device_space_normal(|packet| render_packet_and_read(&device, &queue, &backend, &mut renderer, packet));
+    pixels::rounded_corner_uses_device_space_normal(|packet| {
+        render_packet_and_read(&device, &queue, &backend, &mut renderer, packet)
+    });
 }
 
 #[test]
@@ -51,7 +65,9 @@ fn magnification_wide_action_bar() {
     let (device, queue) = gpu().expect("GPU for wide magnification validation");
     let backend = WgpuBackend::new(device.clone(), queue.clone());
     let mut renderer = Renderer::new(&backend, FORMAT);
-    pixels::wide_action_bar_magnifies_backdrop(|packet| render_packet_and_read(&device, &queue, &backend, &mut renderer, packet));
+    pixels::wide_action_bar_magnifies_backdrop(|packet| {
+        render_packet_and_read(&device, &queue, &backend, &mut renderer, packet)
+    });
 }
 
 #[test]
@@ -59,16 +75,23 @@ fn magnification_nested_filters_and_budget_fallback() {
     let (device, queue) = gpu().expect("GPU for magnification validation");
     let backend = WgpuBackend::new(device.clone(), queue.clone());
     let mut renderer = Renderer::new(&backend, FORMAT);
-    pixels::nested_filters_and_budget_fallback(|packet| render_packet_and_read(&device, &queue, &backend, &mut renderer, packet));
+    pixels::nested_filters_and_budget_fallback(|packet| {
+        render_packet_and_read(&device, &queue, &backend, &mut renderer, packet)
+    });
 }
 
 #[test]
 fn magnification_thick_rounded_corners_have_no_seam() {
     let (device, queue) = gpu().expect("GPU for rounded lens validation");
     let backend = WgpuBackend::new(device.clone(), queue.clone());
-    for aa in [aimer::cupid::AntiAlias::Analytic, aimer::cupid::AntiAlias::Msaa4x] {
+    for aa in [
+        aimer::cupid::AntiAlias::Analytic,
+        aimer::cupid::AntiAlias::Msaa4x,
+    ] {
         let mut renderer = Renderer::with_antialiasing(&backend, FORMAT, aa);
-        pixels::thick_rounded_corners_have_no_interior_normal_seam(|packet| render_packet_and_read(&device, &queue, &backend, &mut renderer, packet));
+        pixels::thick_rounded_corners_have_no_interior_normal_seam(|packet| {
+            render_packet_and_read(&device, &queue, &backend, &mut renderer, packet)
+        });
     }
 }
 
@@ -86,7 +109,6 @@ fn gpu() -> Option<(wgpu::Device, wgpu::Queue)> {
         .block()
         .ok()
 }
-
 
 fn render_packet_and_read(
     device: &wgpu::Device,
@@ -156,4 +178,3 @@ fn render_packet_and_read(
     readback.unmap();
     pixels
 }
-

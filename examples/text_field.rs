@@ -1,4 +1,4 @@
-use aimer::input::{input::InputType, input::TextField, TextEditingController};
+use aimer::input::{TextEditingController, input::InputType, input::TextField};
 use aimer::{AimerApp, FocusNode};
 
 fn main() {

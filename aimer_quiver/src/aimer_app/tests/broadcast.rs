@@ -13,11 +13,20 @@ struct BroadcastWidget {
 
 impl Widget for BroadcastWidget {
     fn to_element(self, _ctx: &BuildContext) -> AnyElement {
-        let children = (0..32).map(|_| BroadcastElement {
-            counts: self.counts.clone(),
-            children: Vec::new(),
-        }.boxed()).collect();
-        BroadcastElement { counts: self.counts, children }.boxed()
+        let children = (0..32)
+            .map(|_| {
+                BroadcastElement {
+                    counts: self.counts.clone(),
+                    children: Vec::new(),
+                }
+                .boxed()
+            })
+            .collect();
+        BroadcastElement {
+            counts: self.counts,
+            children,
+        }
+        .boxed()
     }
 }
 
@@ -47,14 +56,18 @@ impl EventElement for BroadcastElement {
 
     fn structural_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         for child in &self.children {
-            self.counts.structural_visits.set(self.counts.structural_visits.get() + 1);
+            self.counts
+                .structural_visits
+                .set(self.counts.structural_visits.get() + 1);
             visitor(child.as_ref());
         }
     }
 
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         for child in &self.children {
-            self.counts.event_visits.set(self.counts.event_visits.get() + 1);
+            self.counts
+                .event_visits
+                .set(self.counts.event_visits.get() + 1);
             visitor(child.as_ref());
         }
     }
@@ -76,7 +89,9 @@ impl Rebuildable for BroadcastElement {}
 #[test]
 fn window_focus_broadcast_reuses_the_application_event_tree() {
     let counts = Rc::new(BroadcastCounts::default());
-    let mut app = AimerApp::start_headless(BroadcastWidget { counts: counts.clone() });
+    let mut app = AimerApp::start_headless(BroadcastWidget {
+        counts: counts.clone(),
+    });
     app.render_frame();
     app.send_window_event(WindowEvent::Focused(true));
     counts.structural_visits.set(0);

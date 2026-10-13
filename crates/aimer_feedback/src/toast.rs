@@ -6,7 +6,7 @@ use aimer_widget::{AnyElement, PortableWidget, Widget};
 
 use super::clock::Clock;
 use super::overlay::{
-    Announcer, Announcement, AnnouncementPriority, DismissReason, OverlayHost, OverlayId,
+    Announcement, AnnouncementPriority, Announcer, DismissReason, OverlayHost, OverlayId,
     OverlayKind, OverlayModality, OverlayRequest,
 };
 
@@ -443,11 +443,7 @@ impl<C: Clock> ToastQueue<C> {
     }
 
     /// Dismisses the active toast through the overlay host.
-    pub fn dismiss_active<H: OverlayHost>(
-        &mut self,
-        host: &mut H,
-        reason: DismissReason,
-    ) -> bool {
+    pub fn dismiss_active<H: OverlayHost>(&mut self, host: &mut H, reason: DismissReason) -> bool {
         let Some(active) = self.active.as_ref() else {
             return false;
         };

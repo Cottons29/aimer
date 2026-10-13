@@ -1,5 +1,7 @@
 use aimer::canvas::{FrameCanvas, InnerCanvas};
-use aimer::cupid::draw_cmd_v2::{DrawCommand as V2DrawCommand, Rect, RenderOp, RenderPaintSource, RenderTree};
+use aimer::cupid::draw_cmd_v2::{
+    DrawCommand as V2DrawCommand, Rect, RenderOp, RenderPaintSource, RenderTree,
+};
 use aimer::widget::base::WindowHandle;
 use aimer::{BuildContext, Positioned, ResolvedSize, SizedBox, Transform, Vec2d, Widget};
 
@@ -36,8 +38,11 @@ fn child_transform(transform: Transform) -> Option<aimer::cupid::utilities::Mat3
 
     let tree = RenderTree::new();
     let root = tree.add_root(Rect::new(0.0, 0.0, 100.0, 100.0)).unwrap();
-    let child = tree.add_child(root, Rect::new(10.0, 10.0, 20.0, 20.0)).unwrap();
-    tree.set_paint_source(child, RenderPaintSource::LocalV2).unwrap();
+    let child = tree
+        .add_child(root, Rect::new(10.0, 10.0, 20.0, 20.0))
+        .unwrap();
+    tree.set_paint_source(child, RenderPaintSource::LocalV2)
+        .unwrap();
     tree.context(child)
         .unwrap()
         .begin_recording()
@@ -84,7 +89,10 @@ fn a_rotate_transform_rotates_the_positioned_child_node() {
         .expect("a rotated Positioned still paints through the render tree");
 
     assert!(transform.cols[0][0].abs() < 1e-5, "{transform:?}");
-    assert!((transform.cols[0][1].abs() - 1.0).abs() < 1e-5, "{transform:?}");
+    assert!(
+        (transform.cols[0][1].abs() - 1.0).abs() < 1e-5,
+        "{transform:?}"
+    );
 }
 
 #[test]

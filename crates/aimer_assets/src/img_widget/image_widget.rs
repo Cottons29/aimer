@@ -254,9 +254,7 @@ impl<P: ImageProvider> LayoutElement for RawImageWidget<P> {
 
 impl<P: ImageProvider> RawImageWidget<P> {
     fn cache_result(&self, result: ImageResult, ctx: &BuildContext) -> ImageResult {
-        let was_loading = unsafe {
-            matches!(&*self.cached_id.get(), Some(ImageResult::Loading))
-        };
+        let was_loading = unsafe { matches!(&*self.cached_id.get(), Some(ImageResult::Loading)) };
         if was_loading && result != ImageResult::Loading {
             // An async provider can finish after an AnimatedSwitcher has
             // stopped animating. Requesting a frame alone is insufficient in
@@ -385,12 +383,7 @@ impl<P: ImageProvider> RawImageWidget<P> {
                 .as_ref()
                 .map(|resource| (resource.intrinsic_width(), resource.intrinsic_height()))
                 .or_else(|| ctx.canvas.get_image_size(id));
-            image_paint_geometry(
-                target,
-                intrinsic_size,
-                self.fit,
-                self.scale,
-            )?
+            image_paint_geometry(target, intrinsic_size, self.fit, self.scale)?
         } else {
             let width = target.width * self.scale;
             let height = target.height * self.scale;
@@ -470,7 +463,10 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
             (geometry.pos.y + geometry.size.height - target.height).max(0.0),
         ]
         .map(|outset| outset / scale);
-        outsets.iter().any(|outset| *outset > 0.0).then_some(outsets)
+        outsets
+            .iter()
+            .any(|outset| *outset > 0.0)
+            .then_some(outsets)
     }
 
     fn paint_local_v2(&self, ctx: &BuildContext) {
@@ -514,7 +510,6 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
         }
         canvas.finish();
     }
-
 }
 
 #[cfg(test)]
@@ -522,9 +517,9 @@ mod tests {
     use std::cell::Cell;
     use std::rc::Rc;
 
+    use super::*;
     use aimer_container::ZeroSizedBox;
     use aimer_cupid::draw_cmd_v2::{DrawCommand, Rect, RenderPaintSource, RenderTree};
-    use super::*;
 
     #[derive(Clone, Debug)]
     struct LoadingThenError {
@@ -562,8 +557,7 @@ mod tests {
         use aimer_canvas::{FrameCanvas, InnerCanvas};
         use aimer_widget::base::WindowHandle;
 
-        static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> =
-            std::sync::OnceLock::new();
+        static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
         let runtime = RUNTIME.get_or_init(|| {
             tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -635,13 +629,8 @@ mod tests {
             height: 450.0,
         };
 
-        let geometry = image_paint_geometry(
-            target,
-            Some((2_170, 1_516)),
-            BoxFit::Contain,
-            1.0,
-        )
-        .expect("known image metadata produces paint geometry");
+        let geometry = image_paint_geometry(target, Some((2_170, 1_516)), BoxFit::Contain, 1.0)
+            .expect("known image metadata produces paint geometry");
 
         assert!((geometry.pos.x - 177.9353).abs() < 0.01);
         assert!(geometry.pos.y.abs() < 0.01);
@@ -741,14 +730,21 @@ mod tests {
                 && *image_rect == Rect::new(-8.0, 0.0, 32.0, 16.0)
                 && *recorded_id == texture_id
         ));
-        assert_eq!(calls.get(), 0, "v2 recording must not request or upload images");
+        assert_eq!(
+            calls.get(),
+            0,
+            "v2 recording must not request or upload images"
+        );
 
         tree.take_damage();
         tree.invalidate_paint(image_node).unwrap();
         let image_context = tree.context(image_node).unwrap();
         ctx.with_local_v2_paint_context(image_context, |ctx| image.paint_local_v2(ctx));
 
-        assert_eq!(tree.draw_list_revision(image_node).unwrap(), first_image.revision + 1);
+        assert_eq!(
+            tree.draw_list_revision(image_node).unwrap(),
+            first_image.revision + 1
+        );
         assert_eq!(tree.draw_list_revision(sibling_node).unwrap(), 1);
         assert_eq!(tree.take_damage(), vec![image_bounds]);
     }
@@ -851,13 +847,21 @@ mod tests {
         image.error_element = Some(ZeroSizedBox.to_element(&ctx));
         let count = |image: &RawImageWidget<LoadingThenError>| {
             let mut children = Vec::new();
-            image.visit_children(&mut |child| children.push(child as *const dyn Element as *const ()));
+            image.visit_children(&mut |child| {
+                children.push(child as *const dyn Element as *const ())
+            });
             children
         };
-        let loading = image.loading_element.as_ref().unwrap().as_ref() as *const dyn Element as *const ();
-        let error = image.error_element.as_ref().unwrap().as_ref() as *const dyn Element as *const ();
+        let loading =
+            image.loading_element.as_ref().unwrap().as_ref() as *const dyn Element as *const ();
+        let error =
+            image.error_element.as_ref().unwrap().as_ref() as *const dyn Element as *const ();
 
-        assert_eq!(count(&image), vec![loading], "an unsettled image shows its loading element");
+        assert_eq!(
+            count(&image),
+            vec![loading],
+            "an unsettled image shows its loading element"
+        );
         image.sync_local_v2_state(&ctx);
         assert_eq!(count(&image), vec![loading]);
         image.sync_local_v2_state(&ctx);

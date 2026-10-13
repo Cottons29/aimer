@@ -12,10 +12,7 @@ use aimer_widget::{
 use super::implementation::{GridAlignment, GridOverflow};
 
 #[derive(Clone, Copy, Debug, PartialEq, aimer_macro::PortableValue)]
-#[portable_value(
-    id = "aimer.value:aimer_grid::grid::GridTrack",
-    max_encoded_bytes = 32,
-)]
+#[portable_value(id = "aimer.value:aimer_grid::grid::GridTrack", max_encoded_bytes = 32)]
 pub enum GridTrack {
     #[portable_value(tag = 0)]
     Px(f32),
@@ -28,7 +25,7 @@ pub enum GridTrack {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, aimer_macro::PortableValue)]
 #[portable_value(
     id = "aimer.value:aimer_grid::grid::GridPlacement",
-    max_encoded_bytes = 128,
+    max_encoded_bytes = 128
 )]
 pub struct GridPlacement {
     pub row: Option<usize>,
@@ -692,13 +689,12 @@ impl RawGrid {
             max_width: cell_size.width,
             max_height: cell_size.height,
         };
-        let child_size = if horizontal == GridAlignment::Stretch
-            && vertical == GridAlignment::Stretch
-        {
-            cell_size
-        } else {
-            child.computed_size(&child_ctx)
-        };
+        let child_size =
+            if horizontal == GridAlignment::Stretch && vertical == GridAlignment::Stretch {
+                cell_size
+            } else {
+                child.computed_size(&child_ctx)
+            };
         let offset = Vec2d {
             x: alignment_offset(horizontal, cell_size.width, child_size.width),
             y: alignment_offset(vertical, cell_size.height, child_size.height),
@@ -747,15 +743,7 @@ impl Drawable for RawGrid {
             return false;
         }
         self.children.iter().enumerate().all(|(index, item)| {
-            let Some((
-                cell_pos,
-                offset,
-                child_ctx,
-                cell_size,
-                child_size,
-                render_size,
-                overflow,
-            )) =
+            let Some((cell_pos, offset, child_ctx, cell_size, child_size, render_size, overflow)) =
                 self.retained_child_layout(ctx, item.child.as_ref(), index)
             else {
                 return false;
@@ -776,7 +764,7 @@ impl Drawable for RawGrid {
                 render_size.height,
             ]
             .into_iter()
-                .all(f32::is_finite)
+            .all(f32::is_finite)
                 && cell_size.width >= 0.0
                 && cell_size.height >= 0.0
                 && cell_size.width <= 1_000_000.0
@@ -929,11 +917,7 @@ impl EventElement for RawGrid {
     /// A child that has not published bounds remains a candidate; unknown
     /// geometry must not make a custom grid child unreachable.
     #[inline]
-    fn hit_test_children_at<'a>(
-        &'a self,
-        pos: Vec2d,
-        visitor: &mut dyn FnMut(&'a dyn Element),
-    ) {
+    fn hit_test_children_at<'a>(&'a self, pos: Vec2d, visitor: &mut dyn FnMut(&'a dyn Element)) {
         for item in &self.children {
             if hit_test_contains(item.child.as_ref(), pos) {
                 visitor(item.child.as_ref());
@@ -1438,7 +1422,11 @@ mod tests {
     fn position_aware_hit_testing_prunes_offscreen_grid_children() {
         let grid = RawGrid {
             columns: vec![GridTrack::Px(100.0)],
-            rows: vec![GridTrack::Px(20.0), GridTrack::Px(20.0), GridTrack::Px(20.0)],
+            rows: vec![
+                GridTrack::Px(20.0),
+                GridTrack::Px(20.0),
+                GridTrack::Px(20.0),
+            ],
             column_gap: 0.0,
             row_gap: 0.0,
             horizontal_alignment: GridAlignment::Stretch,

@@ -6,22 +6,22 @@ mod pipeline;
 mod surface;
 mod trait_impl;
 
-pub use surface::{OpenGlSurface, OpenGlSurfaceFrame};
 pub use pipeline::{
     OpenGlBindGroup, OpenGlBindGroupLayout, OpenGlCommandEncoder, OpenGlPipelineLayout,
     OpenGlRenderPass, OpenGlRenderPipeline, OpenGlShaderModule,
 };
+pub use surface::{OpenGlSurface, OpenGlSurfaceFrame};
 
-use std::rc::Rc;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::ffi::CStr;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::backend::GpuLimits;
 
 use self::context::NativeContext;
-use self::gl::{GlFns, GLuint};
+use self::gl::{GLuint, GlFns};
 
 /// Texture formats supported by Cupid's desktop OpenGL renderer.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -48,7 +48,10 @@ pub struct OpenGlError {
 
 impl OpenGlError {
     pub(super) fn new(operation: &'static str, message: impl Into<String>) -> Self {
-        Self { operation, message: message.into() }
+        Self {
+            operation,
+            message: message.into(),
+        }
     }
 }
 
@@ -143,8 +146,14 @@ pub(super) struct OpenGlTextureViewInner {
 }
 
 pub(super) enum OpenGlViewTarget {
-    Surface { size: Cell<(u32, u32)> },
-    Texture { texture: OpenGlTexture, level: u32, layer: Option<u32> },
+    Surface {
+        size: Cell<(u32, u32)>,
+    },
+    Texture {
+        texture: OpenGlTexture,
+        level: u32,
+        layer: Option<u32>,
+    },
 }
 
 impl OpenGlTextureView {
@@ -214,10 +223,19 @@ impl OpenGlShared {
     }
 
     pub(super) fn set_capability(&self, capability: u32, enabled: bool) {
-        let changed = self.state.capabilities.borrow_mut().insert(capability, enabled) != Some(enabled);
+        let changed = self
+            .state
+            .capabilities
+            .borrow_mut()
+            .insert(capability, enabled)
+            != Some(enabled);
         if changed {
             unsafe {
-                if enabled { (self.gl.enable)(capability) } else { (self.gl.disable)(capability) }
+                if enabled {
+                    (self.gl.enable)(capability)
+                } else {
+                    (self.gl.disable)(capability)
+                }
             };
         }
     }
@@ -230,7 +248,12 @@ impl OpenGlShared {
 
     pub(super) fn bind_texture(&self, unit: u32, target: u32, texture: GLuint) {
         self.active_texture(unit);
-        let changed = self.state.textures.borrow_mut().insert((unit, target), texture) != Some(texture);
+        let changed = self
+            .state
+            .textures
+            .borrow_mut()
+            .insert((unit, target), texture)
+            != Some(texture);
         if changed {
             unsafe { (self.gl.bind_texture)(target, texture) };
         }
@@ -243,9 +266,20 @@ impl OpenGlShared {
         }
     }
 
-    pub(super) fn bind_uniform_buffer(&self, point: u32, buffer: GLuint, offset: isize, size: isize) {
+    pub(super) fn bind_uniform_buffer(
+        &self,
+        point: u32,
+        buffer: GLuint,
+        offset: isize,
+        size: isize,
+    ) {
         let binding = (buffer, offset, size);
-        let changed = self.state.uniform_buffers.borrow_mut().insert(point, binding) != Some(binding);
+        let changed = self
+            .state
+            .uniform_buffers
+            .borrow_mut()
+            .insert(point, binding)
+            != Some(binding);
         if changed {
             unsafe { (self.gl.bind_buffer_range)(gl::UNIFORM_BUFFER, point, buffer, offset, size) };
         }
@@ -273,15 +307,24 @@ impl OpenGlShared {
     }
 
     pub(super) fn invalidate_buffer(&self, buffer: GLuint) {
-        self.state.uniform_buffers.borrow_mut().retain(|_, (bound, _, _)| *bound != buffer);
+        self.state
+            .uniform_buffers
+            .borrow_mut()
+            .retain(|_, (bound, _, _)| *bound != buffer);
     }
 
     pub(super) fn invalidate_sampler(&self, sampler: GLuint) {
-        self.state.samplers.borrow_mut().retain(|_, bound| *bound != sampler);
+        self.state
+            .samplers
+            .borrow_mut()
+            .retain(|_, bound| *bound != sampler);
     }
 
     pub(super) fn invalidate_texture(&self, texture: GLuint) {
-        self.state.textures.borrow_mut().retain(|_, bound| *bound != texture);
+        self.state
+            .textures
+            .borrow_mut()
+            .retain(|_, bound| *bound != texture);
     }
 
     pub(super) fn invalidate_framebuffers_for(&self, texture: GLuint) {
@@ -289,11 +332,17 @@ impl OpenGlShared {
         let stale: Vec<_> = cache
             .iter()
             .filter_map(|(key, framebuffer)| {
-                key.attachments.iter().any(|attachment| attachment.1 == texture)
+                key.attachments
+                    .iter()
+                    .any(|attachment| attachment.1 == texture)
                     .then_some(*framebuffer)
             })
             .collect();
-        cache.retain(|key, _| !key.attachments.iter().any(|attachment| attachment.1 == texture));
+        cache.retain(|key, _| {
+            !key.attachments
+                .iter()
+                .any(|attachment| attachment.1 == texture)
+        });
         for framebuffer in stale {
             if self.state.read_framebuffer.get() == Some(framebuffer) {
                 self.state.read_framebuffer.set(None);
@@ -346,7 +395,9 @@ impl OpenGlBackend {
     pub fn new_headless() -> Result<Self, OpenGlError> {
         let context = NativeContext::new_headless()
             .map_err(|error| OpenGlError::new("create headless OpenGL context", error))?;
-        Ok(Self { shared: Self::shared_from_context(context)? })
+        Ok(Self {
+            shared: Self::shared_from_context(context)?,
+        })
     }
 
     fn shared_from_context(context: NativeContext) -> Result<Rc<OpenGlShared>, OpenGlError> {
@@ -367,25 +418,39 @@ impl OpenGlBackend {
             (gl.get_integerv)(gl::MAJOR_VERSION, &mut gl_major);
             (gl.get_integerv)(gl::MINOR_VERSION, &mut gl_minor);
             (gl.get_integerv)(gl::MAX_TEXTURE_SIZE, &mut max_texture_dimension_2d);
-            (gl.get_integerv)(gl::UNIFORM_BUFFER_OFFSET_ALIGNMENT, &mut min_uniform_buffer_offset_alignment);
+            (gl.get_integerv)(
+                gl::UNIFORM_BUFFER_OFFSET_ALIGNMENT,
+                &mut min_uniform_buffer_offset_alignment,
+            );
             (gl.get_integerv)(gl::MAX_TEXTURE_IMAGE_UNITS, &mut max_texture_units);
             (gl.get_integerv)(gl::MAX_VERTEX_ATTRIBS, &mut max_vertex_attributes);
-            (gl.get_integerv)(gl::MAX_UNIFORM_BUFFER_BINDINGS, &mut max_uniform_buffer_bindings);
+            (gl.get_integerv)(
+                gl::MAX_UNIFORM_BUFFER_BINDINGS,
+                &mut max_uniform_buffer_bindings,
+            );
         }
         if (gl_major, gl_minor) < (3, 3) {
-            let version = unsafe { CStr::from_ptr((gl.get_string)(gl::VERSION).cast()) }.to_string_lossy();
-            return Err(OpenGlError::new("validate OpenGL version", format!("OpenGL 3.3 Core is required; driver reports {version}")));
+            let version =
+                unsafe { CStr::from_ptr((gl.get_string)(gl::VERSION).cast()) }.to_string_lossy();
+            return Err(OpenGlError::new(
+                "validate OpenGL version",
+                format!("OpenGL 3.3 Core is required; driver reports {version}"),
+            ));
         }
         let gl_error = unsafe { (gl.get_error)() };
         if gl_error != gl::NO_ERROR {
-            return Err(OpenGlError::new("query OpenGL limits", format!("OpenGL reported error {gl_error:#x}")));
+            return Err(OpenGlError::new(
+                "query OpenGL limits",
+                format!("OpenGL reported error {gl_error:#x}"),
+            ));
         }
         let shared = Rc::new(OpenGlShared {
             context,
             gl,
             limits: GpuLimits {
                 max_texture_dimension_2d: max_texture_dimension_2d.max(1) as u32,
-                min_uniform_buffer_offset_alignment: min_uniform_buffer_offset_alignment.max(1) as u32,
+                min_uniform_buffer_offset_alignment: min_uniform_buffer_offset_alignment.max(1)
+                    as u32,
             },
             max_texture_units: max_texture_units.max(1) as u32,
             max_vertex_attributes: max_vertex_attributes.max(1) as u32,

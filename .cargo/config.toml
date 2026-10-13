@@ -1,9 +1,3 @@
-#
-#[target.wasm32-unknown-unknown]
-#rustflags = [
-#    "-C", "target-feature=+atomics,+bulk-memory",
-#]
-
 # web-sys keeps its WebGPU bindings behind this explicit opt-in because the
 # generated WebGPU WebIDL bindings are currently marked unstable.
 [target.wasm32-unknown-unknown]

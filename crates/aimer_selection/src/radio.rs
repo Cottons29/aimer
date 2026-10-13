@@ -337,27 +337,29 @@ impl<T> RadioGroup<T> {
                 }
             }
             InputEvent::KeyDown(key) if is_next_key(key) => {
-                self.move_focus(true).map_or(ControlAction::Ignored, |index| {
-                    match self.activate_index(index) {
-                        ControlAction::Ignored => ControlAction::FocusMoved(index),
-                        action => action,
-                    }
-                })
+                self.move_focus(true)
+                    .map_or(ControlAction::Ignored, |index| {
+                        match self.activate_index(index) {
+                            ControlAction::Ignored => ControlAction::FocusMoved(index),
+                            action => action,
+                        }
+                    })
             }
             InputEvent::KeyDown(key) if is_previous_key(key) => {
-                self.move_focus(false).map_or(ControlAction::Ignored, |index| {
-                    match self.activate_index(index) {
-                        ControlAction::Ignored => ControlAction::FocusMoved(index),
-                        action => action,
-                    }
-                })
+                self.move_focus(false)
+                    .map_or(ControlAction::Ignored, |index| {
+                        match self.activate_index(index) {
+                            ControlAction::Ignored => ControlAction::FocusMoved(index),
+                            action => action,
+                        }
+                    })
             }
-            InputEvent::KeyDown(Key::Home) => {
-                self.focus_edge(false).map_or(ControlAction::Ignored, ControlAction::FocusMoved)
-            }
-            InputEvent::KeyDown(Key::End) => {
-                self.focus_edge(true).map_or(ControlAction::Ignored, ControlAction::FocusMoved)
-            }
+            InputEvent::KeyDown(Key::Home) => self
+                .focus_edge(false)
+                .map_or(ControlAction::Ignored, ControlAction::FocusMoved),
+            InputEvent::KeyDown(Key::End) => self
+                .focus_edge(true)
+                .map_or(ControlAction::Ignored, ControlAction::FocusMoved),
             InputEvent::KeyDown(key) if is_activation_key(key) => {
                 let index = self.focused_index.or_else(|| self.first_available());
                 index.map_or(ControlAction::Ignored, |index| self.activate_index(index))
@@ -376,7 +378,9 @@ impl<T> RadioGroup<T> {
     }
 
     fn is_available(&self, index: usize) -> bool {
-        self.options.get(index).is_some_and(|option| !option.disabled())
+        self.options
+            .get(index)
+            .is_some_and(|option| !option.disabled())
     }
 
     fn first_available(&self) -> Option<usize> {
@@ -437,7 +441,12 @@ impl<T> RadioGroup<T> {
         let Some(option) = self.options.get(index) else {
             return ControlAction::Ignored;
         };
-        if option.disabled() || self.selected.as_ref().is_some_and(|selected| selected == option.value()) {
+        if option.disabled()
+            || self
+                .selected
+                .as_ref()
+                .is_some_and(|selected| selected == option.value())
+        {
             return ControlAction::Ignored;
         }
         emit_change(&self.on_change, option.value().clone())

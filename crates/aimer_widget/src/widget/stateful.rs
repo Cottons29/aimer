@@ -22,7 +22,6 @@ use super::state_slots::{
     StateSlotReadGuard, StateSlotResolutionError, StateStorage, StateUpdaterGeneration,
 };
 use crate::widget::recovery::{BuildPhase, PanicDiagnostic, recover_operation};
-#[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
 use crate::{
     AnyElement, Drawable, Element, EventElement, EventResult, EventTreeRole, LayoutElement,
     Rebuildable, VisitorElement, Widget,

@@ -142,8 +142,7 @@ impl SelectionParticipant {
     /// Replaces the selection with a range in this participant.
     #[inline]
     pub fn set_range(&self, anchor: usize, focus: usize) {
-        self.session
-            .set_local_range(&self.slot, anchor, focus);
+        self.session.set_local_range(&self.slot, anchor, focus);
     }
 
     /// Extends the active shared selection to an absolute pointer position.
@@ -172,13 +171,7 @@ impl SelectionParticipant {
 
     /// Opens the shared selection context menu at a secondary click.
     pub fn open_context_menu(&self, pos: Vec2d, pointer: PointerKey) -> bool {
-        ui::open_context_menu(
-            &self.session,
-            &self.slot,
-            &self.geometry,
-            pos,
-            pointer,
-        )
+        ui::open_context_menu(&self.session, &self.slot, &self.geometry, pos, pointer)
     }
 
     /// Offers the shared touch selection menu after a completed gesture.

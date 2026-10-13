@@ -198,8 +198,8 @@ mod tests {
         OverscrollHoldAction, apply_scroll_frame, device_gesture_in_flight, overscroll_hold_action,
         should_hold_overscroll_recovery,
     };
-    use crate::scrollable::controller::ScrollState;
     use crate::ScrollAxis;
+    use crate::scrollable::controller::ScrollState;
 
     #[test]
     fn only_a_terminating_scroll_phase_ends_the_device_gesture() {

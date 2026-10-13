@@ -54,7 +54,8 @@ fn an_unchanged_topology_is_not_resolved_again() {
 fn moving_a_node_replans_its_geometry_without_a_topology_change() {
     let (tree, [_, a, a1, _, _]) = sample();
     let before = tree.render_all();
-    tree.set_bounds(a, Rect::new(50.0, 40.0, 20.0, 20.0)).unwrap();
+    tree.set_bounds(a, Rect::new(50.0, 40.0, 20.0, 20.0))
+        .unwrap();
 
     let origin_of = |ops: &[RenderOp], id| {
         ops.iter().find_map(|op| match op {
@@ -121,11 +122,21 @@ fn reparenting_and_removing_nodes_through_a_structure_sync_is_planned() {
 fn planned_geometry_agrees_with_the_world_queries() {
     let tree = RenderTree::new();
     let root = tree.add_root(Rect::new(3.0, 5.0, 400.0, 300.0)).unwrap();
-    let plain = tree.add_child(root, Rect::new(7.0, 11.0, 90.0, 60.0)).unwrap();
-    let scaled = tree.add_child(root, Rect::new(120.0, 40.0, 80.0, 50.0)).unwrap();
-    let below_scaled = tree.add_child(scaled, Rect::new(4.0, 6.0, 30.0, 20.0)).unwrap();
-    let presented = tree.add_child(plain, Rect::new(2.0, 3.0, 40.0, 40.0)).unwrap();
-    let animated = tree.add_child(presented, Rect::new(1.0, 1.0, 20.0, 20.0)).unwrap();
+    let plain = tree
+        .add_child(root, Rect::new(7.0, 11.0, 90.0, 60.0))
+        .unwrap();
+    let scaled = tree
+        .add_child(root, Rect::new(120.0, 40.0, 80.0, 50.0))
+        .unwrap();
+    let below_scaled = tree
+        .add_child(scaled, Rect::new(4.0, 6.0, 30.0, 20.0))
+        .unwrap();
+    let presented = tree
+        .add_child(plain, Rect::new(2.0, 3.0, 40.0, 40.0))
+        .unwrap();
+    let animated = tree
+        .add_child(presented, Rect::new(1.0, 1.0, 20.0, 20.0))
+        .unwrap();
     {
         let mut inner = tree.draw_cmd.borrow_mut();
         inner.node_mut(scaled).unwrap().transform = Mat3::scale(1.5, 0.75);
@@ -285,7 +296,13 @@ fn a_tree_without_transforms_is_planned_without_general_rect_mapping() {
 /// and clip, they must describe the same geometry.
 #[test]
 fn planned_items_land_where_the_world_queries_put_them_on_whole_trees() {
-    for (seed, untransformed) in [(1, false), (8, false), (64, true), (512, true), (4096, true)] {
+    for (seed, untransformed) in [
+        (1, false),
+        (8, false),
+        (64, true),
+        (512, true),
+        (4096, true),
+    ] {
         let (tree, ids) = if untransformed {
             super::world_tests::untransformed_tree(seed, 120)
         } else {
@@ -294,11 +311,13 @@ fn planned_items_land_where_the_world_queries_put_them_on_whole_trees() {
         let inner = tree.draw_cmd.borrow();
         let mut drawn = 0;
         for operation in tree.render_all() {
-            let RenderOp::Draw(item) = operation else { continue };
+            let RenderOp::Draw(item) = operation else {
+                continue;
+            };
             drawn += 1;
-            let queried = inner
-                .world_bounds(item.element)
-                .unwrap_or_else(|| panic!("{:?} was planned but has no world bounds", item.element));
+            let queried = inner.world_bounds(item.element).unwrap_or_else(|| {
+                panic!("{:?} was planned but has no world bounds", item.element)
+            });
             for (planned, expected, what) in [
                 (item.bounds.x, queried.x, "x"),
                 (item.bounds.y, queried.y, "y"),
@@ -312,7 +331,11 @@ fn planned_items_land_where_the_world_queries_put_them_on_whole_trees() {
                 );
             }
         }
-        assert!(drawn > 0, "seed {seed} drew nothing out of {} nodes", ids.len());
+        assert!(
+            drawn > 0,
+            "seed {seed} drew nothing out of {} nodes",
+            ids.len()
+        );
     }
 }
 
@@ -350,10 +373,15 @@ fn paint_only_edits_leave_the_geometry_revision_alone() {
     let before = tree.geometry_revision();
 
     tree.invalidate_paint(a1).unwrap();
-    tree.set_paint_source(a, RenderPaintSource::LocalV2).unwrap();
+    tree.set_paint_source(a, RenderPaintSource::LocalV2)
+        .unwrap();
     tree.set_opacity(a, 0.5).unwrap();
 
-    assert_eq!(tree.geometry_revision(), before, "paint cannot move anything");
+    assert_eq!(
+        tree.geometry_revision(),
+        before,
+        "paint cannot move anything"
+    );
 }
 
 #[test]
@@ -376,19 +404,23 @@ fn geometry_is_derived_again_exactly_when_it_can_have_changed() {
     expect_run("a repaint does not move anything", &tree, false);
     tree.set_opacity(a, 0.5).unwrap();
     expect_run("an opacity change does not move anything", &tree, false);
-    tree.set_paint_source(b, RenderPaintSource::LocalV2).unwrap();
+    tree.set_paint_source(b, RenderPaintSource::LocalV2)
+        .unwrap();
     expect_run("a paint source does not move anything", &tree, false);
 
     tree.set_bounds(a, Rect::new(5.0, 5.0, 25.0, 25.0)).unwrap();
     expect_run("moving a node derives it again", &tree, true);
     expect_run("and then it is reused again", &tree, false);
-    tree.set_clip(a, Some(Rect::new(0.0, 0.0, 10.0, 10.0))).unwrap();
+    tree.set_clip(a, Some(Rect::new(0.0, 0.0, 10.0, 10.0)))
+        .unwrap();
     expect_run("a clip derives it again", &tree, true);
     tree.set_transform(a, Mat3::translate(3.0, 0.0)).unwrap();
     expect_run("a transform derives it again", &tree, true);
-    tree.set_compositor_animation(a, Mat3::translate(1.0, 1.0), 1.0, None).unwrap();
+    tree.set_compositor_animation(a, Mat3::translate(1.0, 1.0), 1.0, None)
+        .unwrap();
     expect_run("an animation derives it again", &tree, true);
-    tree.set_geometry(a1, Rect::new(2.0, 2.0, 20.0, 20.0), None).unwrap();
+    tree.set_geometry(a1, Rect::new(2.0, 2.0, 20.0, 20.0), None)
+        .unwrap();
     expect_run("set_geometry derives it again", &tree, true);
 
     tree.add_child(root, rect(60.0, 60.0)).unwrap();
@@ -410,7 +442,10 @@ fn a_reused_plan_always_equals_a_plan_derived_from_scratch() {
     for seed in [3, 19, 144, 2_718] {
         let (tree, ids) = super::world_tests::untransformed_tree(seed, 50);
         let mut rng = super::world_tests::Lcg(seed ^ 0x5eed);
-        assert_eq!(described(tree.render_all()), described(tree.render_all_from_scratch()));
+        assert_eq!(
+            described(tree.render_all()),
+            described(tree.render_all_from_scratch())
+        );
 
         for step in 0..60 {
             let id = ids[(rng.next() as usize) % ids.len()];
@@ -432,7 +467,9 @@ fn a_reused_plan_always_equals_a_plan_derived_from_scratch() {
                     "set_transform"
                 }
                 2 => {
-                    let clip = rng.chance(60).then(|| super::world_tests::random_clip(&mut rng));
+                    let clip = rng
+                        .chance(60)
+                        .then(|| super::world_tests::random_clip(&mut rng));
                     let _ = tree.set_clip(id, clip);
                     "set_clip"
                 }
@@ -453,7 +490,8 @@ fn a_reused_plan_always_equals_a_plan_derived_from_scratch() {
                         id,
                         super::world_tests::random_transform(&mut rng),
                         rng.range(0.0, 1.0),
-                        rng.chance(40).then(|| super::world_tests::random_clip(&mut rng)),
+                        rng.chance(40)
+                            .then(|| super::world_tests::random_clip(&mut rng)),
                     );
                     "set_compositor_animation"
                 }
@@ -465,7 +503,8 @@ fn a_reused_plan_always_equals_a_plan_derived_from_scratch() {
                     let _ = tree.set_geometry(
                         id,
                         Rect::new(rng.range(0.0, 50.0), rng.range(0.0, 50.0), 40.0, 40.0),
-                        rng.chance(50).then(|| super::world_tests::random_clip(&mut rng)),
+                        rng.chance(50)
+                            .then(|| super::world_tests::random_clip(&mut rng)),
                     );
                     "set_geometry"
                 }

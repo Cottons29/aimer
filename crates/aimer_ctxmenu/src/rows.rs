@@ -19,8 +19,8 @@ use aimer_attribute::{Bounds, ResolvedSize, Vec2d};
 use aimer_cupid::canvas::TextMetrics;
 use aimer_events::element::ElementEvent;
 use aimer_macro::{PortableWidget, Rebuildable};
-use aimer_widget::base::{BuildContext, WindowHandle};
 use aimer_widget::InteractionBounds;
+use aimer_widget::base::{BuildContext, WindowHandle};
 use aimer_widget::{
     AnyElement, Drawable, Element, EventElement, EventResult, LayoutElement, PointerKey,
     VisitorElement, Widget,
@@ -71,10 +71,12 @@ fn materialize_portable_context_menu_rows(
     children: Vec<aimer_widget::AnyWidget>,
 ) -> Result<aimer_widget::AnyWidget, aimer_widget::portable::PortableMaterializeError> {
     if !children.is_empty() {
-        return Err(aimer_widget::portable::PortableMaterializeError::InvalidChildCount {
-            expected: 0,
-            actual: children.len(),
-        });
+        return Err(
+            aimer_widget::portable::PortableMaterializeError::InvalidChildCount {
+                expected: 0,
+                actual: children.len(),
+            },
+        );
     }
 
     let shape: ContextMenuShape = aimer_widget::portable::required_materialized_property(
@@ -338,7 +340,8 @@ impl RawContextMenuRows {
     /// The room the rows need, in physical pixels.
     fn intrinsic_size(&self, ctx: &BuildContext) -> ResolvedSize {
         let scale = scale_of(ctx);
-        let (width, height) = geometry::content_size(self.shape, &self.style, &self.label_widths(ctx));
+        let (width, height) =
+            geometry::content_size(self.shape, &self.style, &self.label_widths(ctx));
         ResolvedSize {
             width: width * scale,
             height: height * scale,
@@ -352,12 +355,8 @@ impl RawContextMenuRows {
             || self.local_rows.borrow().len() != self.items.len();
         if needs_update {
             let widths = self.label_widths(ctx);
-            *self.local_rows.borrow_mut() = geometry::row_rects(
-                self.shape,
-                &self.style,
-                Vec2d { x: 0.0, y: 0.0 },
-                &widths,
-            );
+            *self.local_rows.borrow_mut() =
+                geometry::row_rects(self.shape, &self.style, Vec2d { x: 0.0, y: 0.0 }, &widths);
             self.geometry_scale.set(scale);
         }
         self.local_rows.borrow()
@@ -452,7 +451,6 @@ impl RawContextMenuRows {
         }
     }
 
-
     #[cfg(test)]
     pub(crate) fn place_for_test(&self, rows: Vec<Bounds>) {
         *self.rows.borrow_mut() = rows;
@@ -472,7 +470,9 @@ impl Drawable for RawContextMenuRows {
     }
 
     #[inline]
-    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+    fn retained_v2_interaction_disagreement(
+        &self,
+    ) -> Option<aimer_widget::InteractionDisagreement> {
         self.bounds.disagreement("ContextMenuRows")
     }
 
@@ -576,12 +576,7 @@ impl Drawable for RawContextMenuRows {
     )> {
         let rect = self.child_row_rect(ctx, child, child_index)?;
         Some((
-            aimer_cupid::draw_cmd_v2::Rect::new(
-                rect.x,
-                rect.y,
-                rect.width,
-                rect.height,
-            ),
+            aimer_cupid::draw_cmd_v2::Rect::new(rect.x, rect.y, rect.width, rect.height),
             None,
         ))
     }
@@ -641,7 +636,6 @@ impl RawContextMenuRow {
 }
 
 impl Drawable for RawContextMenuRow {
-
     fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
         let size = ctx.parent_size;
         scale_of(ctx).is_finite()
@@ -663,7 +657,9 @@ impl Drawable for RawContextMenuRow {
         let canvas = aimer_canvas::Canvas::of(ctx);
         if lit {
             let (red, green, blue, alpha) = self.style.highlight_color.to_rgba();
-            let [tl, tr, br, bl] = self.radii(scale, ctx.parent_size).map(|radius| radius / scale);
+            let [tl, tr, br, bl] = self
+                .radii(scale, ctx.parent_size)
+                .map(|radius| radius / scale);
             canvas.fill_rect_styled(
                 aimer_cupid::utilities::Rect::new(0.0, 0.0, size.width, size.height),
                 aimer_cupid::utilities::Color::rgba8(red, green, blue, alpha),
@@ -677,12 +673,7 @@ impl Drawable for RawContextMenuRow {
         if self.shape.is_horizontal() && self.index > 0 {
             let (red, green, blue, alpha) = self.style.separator_color.to_rgba();
             canvas.fill_rect(
-                aimer_cupid::utilities::Rect::new(
-                    0.0,
-                    size.height * 0.25,
-                    1.0,
-                    size.height * 0.5,
-                ),
+                aimer_cupid::utilities::Rect::new(0.0, size.height * 0.25, 1.0, size.height * 0.5),
                 [red, green, blue, alpha],
             );
         }
@@ -787,7 +778,8 @@ impl EventElement for RawContextMenuRows {
                 self.pressed_by.set(None);
                 let pressed = self.pressed.take();
                 let _ = self.request_row_repaint(self.sync_highlight());
-                if let Some(index) = pressed.filter(|index| self.enabled_at(info.pos) == Some(*index))
+                if let Some(index) =
+                    pressed.filter(|index| self.enabled_at(info.pos) == Some(*index))
                 {
                     self.choose(index);
                 }
@@ -948,7 +940,10 @@ mod tests {
 
     #[test]
     fn a_press_that_missed_the_rows_is_left_to_the_barrier() {
-        let element = rows(vec![ContextMenuItem::new("Copy")], ContextMenuDismiss::new());
+        let element = rows(
+            vec![ContextMenuItem::new("Copy")],
+            ContextMenuDismiss::new(),
+        );
 
         assert!(
             !element.on_event(&press(400.0, 400.0)).is_consumed(),
@@ -1055,10 +1050,9 @@ mod tests {
 mod portable_tests {
     use aimer_container::ZeroSizedBox;
     use aimer_widget::portable::{
-        __anteros::WidgetDocumentView,
-        linked_portable_native_widget_registrations, PortableBuildContext, PortableLimits,
-        PortableNativeWidget, PortableWidgetLimits, PortableWidgetSchema, SourceFingerprint,
-        StableId128,
+        __anteros::WidgetDocumentView, PortableBuildContext, PortableLimits, PortableNativeWidget,
+        PortableWidgetLimits, PortableWidgetSchema, SourceFingerprint, StableId128,
+        linked_portable_native_widget_registrations,
     };
     use aimer_widget::{PortableWidget, Widget};
 
@@ -1072,8 +1066,7 @@ mod portable_tests {
         PortableBuildContext::new(
             7,
             11,
-            PortableWidgetLimits::new(16, 32, 16, 16, 2_048, 16_384)
-                .with_max_blob_bytes(8_192),
+            PortableWidgetLimits::new(16, 32, 16, 16, 2_048, 16_384).with_max_blob_bytes(8_192),
             PortableLimits::new(16, 512, 2_048, 8_192, 16_384),
         )
         .unwrap()
@@ -1105,9 +1098,12 @@ mod portable_tests {
         assert_eq!(materialized.debug_name(), "ContextMenuRows");
 
         let schema = <ContextMenuRows as PortableWidgetSchema>::SCHEMA;
-        assert!(linked_portable_native_widget_registrations()
-            .iter()
-            .any(|registration| registration.supports(schema.widget().id(), schema.widget().min_version())));
+        assert!(
+            linked_portable_native_widget_registrations()
+                .iter()
+                .any(|registration| registration
+                    .supports(schema.widget().id(), schema.widget().min_version()))
+        );
     }
 
     #[test]
@@ -1127,10 +1123,12 @@ mod portable_tests {
                 node,
                 vec![ZeroSizedBox.boxed()],
             ),
-            Err(aimer_widget::portable::PortableMaterializeError::InvalidChildCount {
-                expected: 0,
-                actual: 1,
-            })
+            Err(
+                aimer_widget::portable::PortableMaterializeError::InvalidChildCount {
+                    expected: 0,
+                    actual: 1,
+                }
+            )
         ));
     }
 }

@@ -190,9 +190,7 @@ impl ClipChain {
         let mut effective = None;
         for clip in &self.clips {
             let bounds = clip.effective_bounds?;
-            effective = Some(effective.map_or(bounds, |parent| {
-                intersect_rect(parent, bounds)
-            }));
+            effective = Some(effective.map_or(bounds, |parent| intersect_rect(parent, bounds)));
         }
         effective
     }
@@ -683,16 +681,11 @@ impl CompositorScene {
                             end: command_index,
                         });
                     }
-                    let mut properties = SurfaceProperties::new(
-                        *rect,
-                        scene.surfaces.len() as u32,
-                    );
+                    let mut properties = SurfaceProperties::new(*rect, scene.surfaces.len() as u32);
                     properties.transform = transform;
                     properties.opacity = opacity;
-                    let surface = SurfaceNode::retained_layer(
-                        SurfaceId::from_raw(*layer_id),
-                        properties,
-                    );
+                    let surface =
+                        SurfaceNode::retained_layer(SurfaceId::from_raw(*layer_id), properties);
                     scene.surfaces.push(surface);
                     scene.items.push(SceneItem::Surface(surface));
                     command_segment_start = command_index + 1;
@@ -972,12 +965,7 @@ fn intersect_rect(left: Rect, right: Rect) -> Rect {
     let y = left.y.max(right.y);
     let right_edge = (left.x + left.width).min(right.x + right.width);
     let bottom_edge = (left.y + left.height).min(right.y + right.height);
-    Rect::new(
-        x,
-        y,
-        (right_edge - x).max(0.0),
-        (bottom_edge - y).max(0.0),
-    )
+    Rect::new(x, y, (right_edge - x).max(0.0), (bottom_edge - y).max(0.0))
 }
 
 fn effective_node_bounds(frame_bounds: Option<Rect>, clips: &ClipChain) -> Option<Rect> {
@@ -1186,7 +1174,13 @@ impl SceneRecorder {
             .nodes
             .iter()
             .enumerate()
-            .map(|(index, node)| (node.start, Reverse(node.end.unwrap_or(command_count)), index))
+            .map(|(index, node)| {
+                (
+                    node.start,
+                    Reverse(node.end.unwrap_or(command_count)),
+                    index,
+                )
+            })
             .collect::<Vec<_>>();
         ordered_nodes.sort_unstable();
         let mut open = Vec::new();
@@ -1218,7 +1212,10 @@ impl SceneRecorder {
             node_ids.push(draft.descriptor.id);
         }
         for (index, draft) in self.nodes.iter().enumerate() {
-            let snapshot = draft.state.clone().unwrap_or_else(|| SceneState::default().snapshot());
+            let snapshot = draft
+                .state
+                .clone()
+                .unwrap_or_else(|| SceneState::default().snapshot());
             let frame_bounds = transformed_rect(snapshot.transform, draft.descriptor.bounds);
             let effective_bounds = effective_node_bounds(frame_bounds, &snapshot.clip_chain);
             let parent = draft.parent.map(|parent| self.nodes[parent].descriptor.id);
@@ -1230,7 +1227,9 @@ impl SceneRecorder {
             let mut direct_indices = owners
                 .iter()
                 .enumerate()
-                .filter_map(|(command_index, owner)| (*owner == Some(index)).then_some(command_index))
+                .filter_map(|(command_index, owner)| {
+                    (*owner == Some(index)).then_some(command_index)
+                })
                 .collect::<Vec<_>>();
             let mut paint_events = Vec::new();
             for range in contiguous_ranges(&mut direct_indices) {
@@ -1249,12 +1248,10 @@ impl SceneRecorder {
                 .collect::<Vec<_>>();
 
             let cached_surface = direct_indices.iter().find_map(|command_index| {
-                    match draw_list.commands().get(*command_index) {
-                    Some(DrawCommand::RetainedLayer { layer_id, .. }) => {
-                        surface_by_command
-                            .get(&SurfaceId::from_raw(*layer_id))
-                            .copied()
-                    }
+                match draw_list.commands().get(*command_index) {
+                    Some(DrawCommand::RetainedLayer { layer_id, .. }) => surface_by_command
+                        .get(&SurfaceId::from_raw(*layer_id))
+                        .copied(),
                     _ => None,
                 }
             });
@@ -1348,7 +1345,13 @@ fn state_snapshots(nodes: &[NodeDraft], draw_list: &DrawList) -> Vec<SceneStateS
     let mut starts = nodes
         .iter()
         .enumerate()
-        .map(|(index, node)| (node.start, Reverse(node.end.unwrap_or(draw_list.commands().len())), index))
+        .map(|(index, node)| {
+            (
+                node.start,
+                Reverse(node.end.unwrap_or(draw_list.commands().len())),
+                index,
+            )
+        })
         .collect::<Vec<_>>();
     starts.sort_unstable();
     let mut snapshots = vec![None; nodes.len()];
@@ -1484,7 +1487,8 @@ fn render_items_from_draw_list(draw_list: &DrawList) -> (Vec<SurfaceNode>, Vec<S
                 let mut properties = SurfaceProperties::new(*rect, surfaces.len() as u32);
                 properties.transform = transform;
                 properties.opacity = opacity;
-                let surface = SurfaceNode::retained_layer(SurfaceId::from_raw(*layer_id), properties);
+                let surface =
+                    SurfaceNode::retained_layer(SurfaceId::from_raw(*layer_id), properties);
                 surfaces.push(surface);
                 items.push(SceneItem::Surface(surface));
                 command_start = command_index + 1;
@@ -1630,10 +1634,7 @@ impl CompositorScene {
         for item in &self.render_items {
             match item {
                 SceneItem::Commands { start, end } => {
-                    if *start != cursor
-                        || *start > *end
-                        || *end > draw_list.commands().len()
-                    {
+                    if *start != cursor || *start > *end || *end > draw_list.commands().len() {
                         return false;
                     }
                     cursor = *end;
@@ -1675,12 +1676,7 @@ mod tests {
             content: std::sync::Arc::new(RetainedLayerContentForTest::content()),
         });
 
-        let scene = CompositorScene::from_draw_list(
-            &draw,
-            32,
-            24,
-            DamageSet::full(32, 24),
-        );
+        let scene = CompositorScene::from_draw_list(&draw, 32, 24, DamageSet::full(32, 24));
 
         assert_eq!(scene.surfaces().len(), 2);
         assert_eq!(
@@ -1701,12 +1697,7 @@ mod tests {
         let mut draw = DrawList::new();
         draw.clear_rect(Rect::new(0.0, 0.0, 4.0, 4.0));
 
-        let scene = CompositorScene::from_draw_list(
-            &draw,
-            8,
-            8,
-            DamageSet::full(8, 8),
-        );
+        let scene = CompositorScene::from_draw_list(&draw, 8, 8, DamageSet::full(8, 8));
 
         assert!(scene.is_empty());
         assert!(scene.items().is_empty());
@@ -1740,18 +1731,10 @@ mod tests {
             rect: Rect::new(100.0, 0.0, 16.0, 16.0),
             content: std::sync::Arc::new(RetainedLayerContentForTest::content()),
         });
-        let scene = CompositorScene::from_draw_list(
-            &draw,
-            128,
-            32,
-            DamageSet::new(128, 32),
-        );
+        let scene = CompositorScene::from_draw_list(&draw, 128, 32, DamageSet::new(128, 32));
 
-        let mut iter = SceneRenderIter::new_for_damage(
-            &draw,
-            Some(&scene),
-            DamageRect::new(0, 0, 32, 32),
-        );
+        let mut iter =
+            SceneRenderIter::new_for_damage(&draw, Some(&scene), DamageRect::new(0, 0, 32, 32));
         let surfaces = std::iter::from_fn(|| iter.next())
             .filter_map(|item| match item {
                 SceneRenderItem::Surface(surface) => Some(surface.id().get()),
@@ -1811,12 +1794,7 @@ mod tests {
         draw.push(DrawCommand::PopTransform);
         recorder.end_node(root, draw.commands().len());
 
-        let scene = recorder.finish(
-            &draw,
-            64,
-            64,
-            DamageSet::full(64, 64),
-        );
+        let scene = recorder.finish(&draw, 64, 64, DamageSet::full(64, 64));
 
         assert!(scene.is_recorded());
         assert_eq!(scene.roots(), &[SceneNodeId::from_raw(1)]);
@@ -1907,25 +1885,31 @@ mod tests {
         let old = scene_at([1, 2], 0.0, 1.0);
         let order_diff = scene_at([2, 1], 0.0, 1.0).diff(Some(&old));
 
-        assert!(order_diff
-            .changes()
-            .iter()
-            .any(|change| change.id == SceneNodeId::from_raw(99)
-                && change.kind == SceneChangeKind::Order));
+        assert!(
+            order_diff
+                .changes()
+                .iter()
+                .any(|change| change.id == SceneNodeId::from_raw(99)
+                    && change.kind == SceneChangeKind::Order)
+        );
 
         let clip_diff = scene_at([1, 2], 4.0, 1.0).diff(Some(&old));
-        assert!(clip_diff
-            .changes()
-            .iter()
-            .any(|change| change.id == SceneNodeId::from_raw(99)
-                && change.kind == SceneChangeKind::Clip));
+        assert!(
+            clip_diff
+                .changes()
+                .iter()
+                .any(|change| change.id == SceneNodeId::from_raw(99)
+                    && change.kind == SceneChangeKind::Clip)
+        );
 
         let opacity_diff = scene_at([1, 2], 0.0, 0.5).diff(Some(&old));
-        assert!(opacity_diff
-            .changes()
-            .iter()
-            .any(|change| change.id == SceneNodeId::from_raw(99)
-                && change.kind == SceneChangeKind::Opacity));
+        assert!(
+            opacity_diff
+                .changes()
+                .iter()
+                .any(|change| change.id == SceneNodeId::from_raw(99)
+                    && change.kind == SceneChangeKind::Opacity)
+        );
         assert!(!order_diff.damage().is_empty());
         assert!(!clip_diff.damage().is_empty());
         assert!(!opacity_diff.damage().is_empty());
@@ -1998,7 +1982,9 @@ mod tests {
 
     impl RetainedLayerContentForTest {
         fn content() -> crate::draw_cmd::RetainedLayerContent {
-            crate::draw_cmd::RetainedLayerContent::from_snapshot(DrawList::new().retained_snapshot().unwrap())
+            crate::draw_cmd::RetainedLayerContent::from_snapshot(
+                DrawList::new().retained_snapshot().unwrap(),
+            )
         }
     }
 }

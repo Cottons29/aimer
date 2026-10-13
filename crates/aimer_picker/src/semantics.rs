@@ -1,8 +1,8 @@
 //! Platform-neutral accessibility snapshots for picker controls.
 
 use super::{
-    Calendar, CalendarCellId, ColorPicker, Date, DatePicker, DateTime, DateTimePicker,
-    DateTimePickerPolicy, DateSelection, Hsva, Month, SwatchId, TimePicker, TimeOfDay,
+    Calendar, CalendarCellId, ColorPicker, Date, DatePicker, DateSelection, DateTime,
+    DateTimePicker, DateTimePickerPolicy, Hsva, Month, SwatchId, TimeOfDay, TimePicker,
     TimeZonePolicy,
 };
 

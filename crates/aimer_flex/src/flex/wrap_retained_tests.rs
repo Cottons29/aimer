@@ -115,7 +115,10 @@ fn a_stranger_is_not_given_wrapped_geometry() {
     let row = wrapped_row(&ctx);
     let stranger = Fixed(1.0, 1.0).to_element(&ctx);
 
-    assert!(row.retained_v2_child_geometry_at(&ctx, stranger.as_ref(), 0).is_none());
+    assert!(
+        row.retained_v2_child_geometry_at(&ctx, stranger.as_ref(), 0)
+            .is_none()
+    );
 }
 
 /// A leaf that counts how often it is measured.
@@ -168,8 +171,10 @@ fn syncing_every_wrapped_child_measures_the_list_once() {
     let mut children = Vec::new();
     row.visit_retained_v2_children(&mut |index, child| children.push((index, child)));
     for (index, child) in &children {
-        row.retained_v2_child_geometry_at(&ctx, *child, *index).unwrap();
-        row.retained_v2_child_context_at(&ctx, *child, *index).unwrap();
+        row.retained_v2_child_geometry_at(&ctx, *child, *index)
+            .unwrap();
+        row.retained_v2_child_context_at(&ctx, *child, *index)
+            .unwrap();
     }
 
     assert!(

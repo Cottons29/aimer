@@ -24,15 +24,21 @@ impl Widget for SkeletonRow {
             let bar = Color::Rgb(255, 146, 110).with_alpha(0.12 + 0.18 * value);
             aimer_container::Container::new()
                 .padding(aimer_style::LayoutSpacing::vertical(12))
-                .child(Row::new().children(vec![
-                    SizedBox::new().width(4).boxed(),
-                    aimer_container::Container::new()
-                        .width(Dimension::Px(110.0))
-                        .height(Dimension::Px(12.0))
-                        .box_decoration(aimer_style::BoxDecoration::new().background_color(bar).border_radius(6))
-                        .child(aimer_container::ZeroSizedBox)
-                        .boxed(),
-                ]))
+                .child(
+                    Row::new().children(vec![
+                        SizedBox::new().width(4).boxed(),
+                        aimer_container::Container::new()
+                            .width(Dimension::Px(110.0))
+                            .height(Dimension::Px(12.0))
+                            .box_decoration(
+                                aimer_style::BoxDecoration::new()
+                                    .background_color(bar)
+                                    .border_radius(6),
+                            )
+                            .child(aimer_container::ZeroSizedBox)
+                            .boxed(),
+                    ]),
+                )
         })
         .to_element(ctx)
     }
@@ -56,10 +62,18 @@ impl Widget for Screen {
                     .child(|_snapshot| {
                         aimer_collapsible::CollapsibleList::new()
                             .animation_millis(120)
-                            .header(aimer_collapsible::ListHeader::new().child(aimer_text::Text::new("Categories")))
-                            .body(aimer_collapsible::ListBody::new().child(
-                                Column::new().gaps(aimer_style::LayoutSpacing::all(2)).list(0..ROWS).builder(|_: &usize| SkeletonRow),
-                            ))
+                            .header(
+                                aimer_collapsible::ListHeader::new()
+                                    .child(aimer_text::Text::new("Categories")),
+                            )
+                            .body(
+                                aimer_collapsible::ListBody::new().child(
+                                    Column::new()
+                                        .gaps(aimer_style::LayoutSpacing::all(2))
+                                        .list(0..ROWS)
+                                        .builder(|_: &usize| SkeletonRow),
+                                ),
+                            )
                             .boxed()
                     }),
             )
@@ -71,7 +85,11 @@ impl aimer_widget::PortableWidget for Screen {}
 
 /// The distinct translucent fills the render tree holds for the pulsing bars.
 fn bar_fills<W: Widget + 'static>(app: &HeadlessAimerApp<W>) -> Vec<String> {
-    fn walk<W: Widget + 'static>(app: &HeadlessAimerApp<W>, element: &dyn Element, out: &mut Vec<String>) {
+    fn walk<W: Widget + 'static>(
+        app: &HeadlessAimerApp<W>,
+        element: &dyn Element,
+        out: &mut Vec<String>,
+    ) {
         if let Some(node) = app.app.render_node_for_element(element.id())
             && let Ok(snapshot) = app.app.render_tree().draw_list_snapshot(node)
         {
@@ -87,7 +105,11 @@ fn bar_fills<W: Widget + 'static>(app: &HeadlessAimerApp<W>) -> Vec<String> {
         element.visit_children(&mut |child| walk(app, child, out));
     }
     let mut out = Vec::new();
-    walk(app, app.app.widget_root.as_ref().unwrap().as_ref(), &mut out);
+    walk(
+        app,
+        app.app.widget_root.as_ref().unwrap().as_ref(),
+        &mut out,
+    );
     out
 }
 
@@ -105,10 +127,15 @@ impl aimer_widget::PortableWidget for LoneRow {}
 
 #[test]
 fn a_placeholder_nested_below_its_builder_keeps_pulsing() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     let mut app = AimerApp::start_headless_with(
         LoneRow,
-        HeadlessOptions { size: PhysicalSize::new(300, 600), scale_factor: 1.0 },
+        HeadlessOptions {
+            size: PhysicalSize::new(300, 600),
+            scale_factor: 1.0,
+        },
     );
     app.pump_frames(4);
     let mut seen = std::collections::BTreeSet::new();
@@ -117,15 +144,24 @@ fn a_placeholder_nested_below_its_builder_keeps_pulsing() {
         app.pump_frames(1);
         seen.extend(bar_fills(&app));
     }
-    assert!(seen.len() > 5, "the bar was painted with only {} distinct fills over a second: {seen:?}", seen.len());
+    assert!(
+        seen.len() > 5,
+        "the bar was painted with only {} distinct fills over a second: {seen:?}",
+        seen.len()
+    );
 }
 
 #[test]
 fn placeholders_keep_pulsing_with_no_input() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     let mut app = AimerApp::start_headless_with(
         Screen,
-        HeadlessOptions { size: PhysicalSize::new(300, 600), scale_factor: 1.0 },
+        HeadlessOptions {
+            size: PhysicalSize::new(300, 600),
+            scale_factor: 1.0,
+        },
     );
     app.pump_frames(4);
 
@@ -138,6 +174,13 @@ fn placeholders_keep_pulsing_with_no_input() {
         }
         seen.extend(bar_fills(&app));
     }
-    assert_eq!(stalled, 0, "{stalled} of 60 frames were never asked for while the placeholders pulsed");
-    assert!(seen.len() > 5, "the bars were painted with only {} distinct fills over a second: {seen:?}", seen.len());
+    assert_eq!(
+        stalled, 0,
+        "{stalled} of 60 frames were never asked for while the placeholders pulsed"
+    );
+    assert!(
+        seen.len() > 5,
+        "the bars were painted with only {} distinct fills over a second: {seen:?}",
+        seen.len()
+    );
 }

@@ -1,4 +1,3 @@
-
 use aimer_attribute::BoxConstraint;
 use aimer_attribute::dimension::Dimension;
 use aimer_attribute::position::Vec2d;
@@ -385,7 +384,9 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
     }
 
     #[inline]
-    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+    fn retained_v2_interaction_disagreement(
+        &self,
+    ) -> Option<aimer_widget::InteractionDisagreement> {
         self.bounds.disagreement("Positioned")
     }
 
@@ -602,6 +603,7 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
                 cursor_pos: ctx.cursor_pos,
                 box_constraint: child_constraint,
                 visible_rect: child_visible_rect,
+                paint_background: ctx.paint_background,
                 window: ctx.window.clone(),
                 #[cfg(not(target_arch = "wasm32"))]
                 async_handle: ctx.async_handle.clone(),
@@ -642,10 +644,7 @@ impl<E: Element> VisitorElement for RawPositionedElement<E> {
         // double-rendering at (0,0).
     }
 
-    fn visit_retained_v2_children<'a>(
-        &'a self,
-        visitor: &mut dyn FnMut(usize, &'a dyn Element),
-    ) {
+    fn visit_retained_v2_children<'a>(&'a self, visitor: &mut dyn FnMut(usize, &'a dyn Element)) {
         visitor(0, &self.child);
     }
 
@@ -729,8 +728,8 @@ mod tests {
         // After the fix: shift by the 110px top offset. The title's real position
         // is stack y 110..140, still above the viewport (200), so culling it is
         // now *correct*; both title and body are judged in the same, correct space.
-        let shifted = shift_visible_rect(Some(stack_visible), 0.0, 110.0, &Transform::None)
-            .unwrap();
+        let shifted =
+            shift_visible_rect(Some(stack_visible), 0.0, 110.0, &Transform::None).unwrap();
         assert_eq!(shifted, (0.0, 90.0, 1000.0, 600.0));
 
         // A block near the top of the stack (offset 10px) whose title IS on screen

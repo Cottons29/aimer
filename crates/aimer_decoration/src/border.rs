@@ -64,6 +64,8 @@ pub fn resolve_dim(dim: Dimension, parent_val: f32, scale: f32) -> f32 {
     }
 }
 
+/// An inside border usable directly as a [`crate::Decoration`].
+/// Containers reserve its stroke widths as child insets without clipping.
 #[derive(Default, Clone, Copy, PartialEq, Debug)]
 pub struct BoxBorder {
     pub left: BorderSlice,
@@ -72,6 +74,8 @@ pub struct BoxBorder {
     pub bottom: BorderSlice,
 }
 
+/// An outside outline usable directly as a [`crate::Decoration`].
+/// Its paint outsets include the stroke widths; child geometry is unchanged.
 #[derive(Default, Clone, Copy, PartialEq, Debug)]
 pub struct BoxOutline {
     pub left: BorderSlice,
@@ -315,7 +319,6 @@ impl BoxOutline {
 }
 
 impl Drawable for RawBoxBorder {
-
     fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
         ctx.scale.is_finite()
             && ctx.scale > 0.0
@@ -380,13 +383,7 @@ impl Drawable for RawBoxBorder {
                 }
             };
             if is_outline {
-                fill_side(
-                    self.top,
-                    -left,
-                    -top,
-                    box_width + left + right,
-                    top,
-                );
+                fill_side(self.top, -left, -top, box_width + left + right, top);
                 fill_side(
                     self.bottom,
                     -left,
@@ -394,13 +391,7 @@ impl Drawable for RawBoxBorder {
                     box_width + left + right,
                     bottom,
                 );
-                fill_side(
-                    self.left,
-                    -left,
-                    -top,
-                    left,
-                    box_height + top + bottom,
-                );
+                fill_side(self.left, -left, -top, left, box_height + top + bottom);
                 fill_side(
                     self.right,
                     box_width,
@@ -410,21 +401,9 @@ impl Drawable for RawBoxBorder {
                 );
             } else {
                 fill_side(self.top, 0.0, 0.0, box_width, top);
-                fill_side(
-                    self.bottom,
-                    0.0,
-                    box_height - bottom,
-                    box_width,
-                    bottom,
-                );
+                fill_side(self.bottom, 0.0, box_height - bottom, box_width, bottom);
                 fill_side(self.left, 0.0, 0.0, left, box_height);
-                fill_side(
-                    self.right,
-                    box_width - right,
-                    0.0,
-                    right,
-                    box_height,
-                );
+                fill_side(self.right, box_width - right, 0.0, right, box_height);
             }
         }
         canvas.finish();

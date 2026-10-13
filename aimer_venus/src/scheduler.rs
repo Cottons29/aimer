@@ -472,7 +472,10 @@ mod tests {
         });
 
         assert_eq!(scheduler.run_microtasks(), 0);
-        assert_eq!(scheduler.run_idle(&FrameBudget::from_now(Duration::from_millis(4))), 0);
+        assert_eq!(
+            scheduler.run_idle(&FrameBudget::from_now(Duration::from_millis(4))),
+            0
+        );
         assert_eq!(ran.get(), 0);
 
         assert_eq!(scheduler.run_frame_tasks(), 1);
@@ -652,9 +655,7 @@ mod tests {
     fn a_microtask_warning_starts_strictly_above_the_threshold() {
         let task = TaskId::new(7, 2);
 
-        assert!(
-            super::slow_microtask_warning(task, crate::MICROTASK_BUDGET_WARNING).is_none()
-        );
+        assert!(super::slow_microtask_warning(task, crate::MICROTASK_BUDGET_WARNING).is_none());
 
         let warning = super::slow_microtask_warning(
             task,

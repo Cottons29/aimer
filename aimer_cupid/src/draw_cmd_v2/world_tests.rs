@@ -19,14 +19,17 @@ mod reference {
             .parent
             .and_then(|parent| world_origin(tree, parent))
             .unwrap_or((0.0, 0.0));
-        Some((parent_origin.0 + node.bounds.x, parent_origin.1 + node.bounds.y))
+        Some((
+            parent_origin.0 + node.bounds.x,
+            parent_origin.1 + node.bounds.y,
+        ))
     }
 
     pub(super) fn world_transform(tree: &DrawCommandList, id: RenderNodeId) -> Option<Mat3> {
         let node = tree.node(id)?;
-        let parent_transform = node
-            .parent
-            .map_or(Some(Mat3::identity()), |parent| world_transform(tree, parent))?;
+        let parent_transform = node.parent.map_or(Some(Mat3::identity()), |parent| {
+            world_transform(tree, parent)
+        })?;
         let (x, y) = world_origin(tree, id)?;
         let local_transform = Mat3::translate(x, y)
             .mul(&node.presentation_transform)
@@ -40,9 +43,9 @@ mod reference {
         id: RenderNodeId,
     ) -> Option<Mat3> {
         let node = tree.node(id)?;
-        let parent_transform = node
-            .parent
-            .map_or(Some(Mat3::identity()), |parent| world_transform(tree, parent))?;
+        let parent_transform = node.parent.map_or(Some(Mat3::identity()), |parent| {
+            world_transform(tree, parent)
+        })?;
         let (x, y) = world_origin(tree, id)?;
         let local_transform = Mat3::translate(x, y)
             .mul(&node.presentation_transform)
@@ -84,9 +87,9 @@ mod reference {
 
     pub(super) fn inherited_clip(tree: &DrawCommandList, id: RenderNodeId) -> Option<ClipState> {
         let node = tree.node(id)?;
-        let parent_clip = node
-            .parent
-            .map_or(Some(ClipState::Unclipped), |parent| inherited_clip(tree, parent))?;
+        let parent_clip = node.parent.map_or(Some(ClipState::Unclipped), |parent| {
+            inherited_clip(tree, parent)
+        })?;
         Some(parent_clip.intersect_state(world_clip(tree, id)))
     }
 
@@ -104,14 +107,11 @@ mod reference {
         clip.intersect_bounds(world_bounds(tree, id)?)
     }
 
-    pub(super) fn visible_subtree_bounds(
-        tree: &DrawCommandList,
-        id: RenderNodeId,
-    ) -> Option<Rect> {
+    pub(super) fn visible_subtree_bounds(tree: &DrawCommandList, id: RenderNodeId) -> Option<Rect> {
         let node = tree.node(id)?;
-        let parent_clip = node
-            .parent
-            .map_or(Some(ClipState::Unclipped), |parent| inherited_clip(tree, parent))?;
+        let parent_clip = node.parent.map_or(Some(ClipState::Unclipped), |parent| {
+            inherited_clip(tree, parent)
+        })?;
         visible_subtree_bounds_with_clip(tree, id, parent_clip)
     }
 
@@ -318,12 +318,18 @@ fn an_untransformed_chain_keeps_the_exact_translation_of_its_origin() {
     let mut id = tree.add_root(Rect::new(0.1, 0.3, 50.0, 50.0)).unwrap();
     for level in 0..40 {
         id = tree
-            .add_child(id, Rect::new(777.7 + level as f32 * 0.37, 1234.1, 50.0, 50.0))
+            .add_child(
+                id,
+                Rect::new(777.7 + level as f32 * 0.37, 1234.1, 50.0, 50.0),
+            )
             .unwrap();
     }
     let inner = tree.draw_cmd.borrow();
     assert_eq!(inner.world_bounds(id), reference::world_bounds(&inner, id));
-    assert_eq!(inner.visible_node_bounds(id), reference::visible_node_bounds(&inner, id));
+    assert_eq!(
+        inner.visible_node_bounds(id),
+        reference::visible_node_bounds(&inner, id)
+    );
 }
 
 /// A single chain `depth` deep, each node nested in the previous one.
@@ -363,17 +369,26 @@ fn a_visibility_query_costs_time_proportional_to_depth() {
     let lookups = lookups_for(DEPTH, |tree, leaf| {
         let _ = tree.visible_subtree_bounds(leaf);
     });
-    assert!(lookups <= budget, "visible_subtree_bounds took {lookups} lookups (budget {budget})");
+    assert!(
+        lookups <= budget,
+        "visible_subtree_bounds took {lookups} lookups (budget {budget})"
+    );
 
     let lookups = lookups_for(DEPTH, |tree, leaf| {
         let _ = tree.visible_node_bounds(leaf);
     });
-    assert!(lookups <= budget, "visible_node_bounds took {lookups} lookups (budget {budget})");
+    assert!(
+        lookups <= budget,
+        "visible_node_bounds took {lookups} lookups (budget {budget})"
+    );
 
     let lookups = lookups_for(DEPTH, |tree, leaf| {
         let _ = tree.world_bounds(leaf);
     });
-    assert!(lookups <= budget, "world_bounds took {lookups} lookups (budget {budget})");
+    assert!(
+        lookups <= budget,
+        "world_bounds took {lookups} lookups (budget {budget})"
+    );
 }
 
 #[test]
@@ -384,12 +399,35 @@ fn a_query_resolves_its_ancestors_without_looking_each_one_up() {
     const BUDGET: usize = 8;
 
     for (what, lookups) in [
-        ("world_bounds", lookups_for(DEPTH, |tree, leaf| { let _ = tree.world_bounds(leaf); })),
-        ("visible_node_bounds", lookups_for(DEPTH, |tree, leaf| { let _ = tree.visible_node_bounds(leaf); })),
-        ("local_visible_region", lookups_for(DEPTH, |tree, leaf| { let _ = tree.local_visible_region(leaf); })),
-        ("visible_subtree_bounds", lookups_for(DEPTH, |tree, leaf| { let _ = tree.visible_subtree_bounds(leaf); })),
+        (
+            "world_bounds",
+            lookups_for(DEPTH, |tree, leaf| {
+                let _ = tree.world_bounds(leaf);
+            }),
+        ),
+        (
+            "visible_node_bounds",
+            lookups_for(DEPTH, |tree, leaf| {
+                let _ = tree.visible_node_bounds(leaf);
+            }),
+        ),
+        (
+            "local_visible_region",
+            lookups_for(DEPTH, |tree, leaf| {
+                let _ = tree.local_visible_region(leaf);
+            }),
+        ),
+        (
+            "visible_subtree_bounds",
+            lookups_for(DEPTH, |tree, leaf| {
+                let _ = tree.visible_subtree_bounds(leaf);
+            }),
+        ),
     ] {
-        assert!(lookups <= BUDGET, "{what} took {lookups} node lookups for a chain {DEPTH} deep");
+        assert!(
+            lookups <= BUDGET,
+            "{what} took {lookups} node lookups for a chain {DEPTH} deep"
+        );
     }
 }
 
@@ -464,12 +502,8 @@ fn every_edit_is_seen_by_the_next_query_even_with_warm_results() {
                 }
                 4 => {
                     let clip = rng.chance(50).then(|| random_clip(&mut rng));
-                    let _ = tree.set_compositor_animation(
-                        id,
-                        random_transform(&mut rng),
-                        1.0,
-                        clip,
-                    );
+                    let _ =
+                        tree.set_compositor_animation(id, random_transform(&mut rng), 1.0, clip);
                     "set_compositor_animation"
                 }
                 _ => {
@@ -477,7 +511,11 @@ fn every_edit_is_seen_by_the_next_query_even_with_warm_results() {
                     "set_presentation"
                 }
             };
-            assert_matches_reference(&tree, &ids, &format!("seed {seed} step {step} after {what}"));
+            assert_matches_reference(
+                &tree,
+                &ids,
+                &format!("seed {seed} step {step} after {what}"),
+            );
         }
     }
 }
@@ -487,7 +525,9 @@ fn growing_and_restructuring_the_tree_is_seen_by_warm_results() {
     let (tree, mut ids) = untransformed_tree(77, 30);
     assert_matches_reference(&tree, &ids, "initially");
 
-    let added = tree.add_child(ids[3], Rect::new(4.0, 5.0, 30.0, 30.0)).unwrap();
+    let added = tree
+        .add_child(ids[3], Rect::new(4.0, 5.0, 30.0, 30.0))
+        .unwrap();
     ids.push(added);
     assert_matches_reference(&tree, &ids, "after add_child");
 
@@ -529,16 +569,23 @@ fn an_edit_makes_the_next_query_derive_its_frames_again() {
         let _ = inner.world_bounds(leaf);
         reset_node_lookups();
         let _ = inner.world_bounds(leaf);
-        assert!(frame_derivations() <= 2, "a repeated query re-derived its ancestors");
+        assert!(
+            frame_derivations() <= 2,
+            "a repeated query re-derived its ancestors"
+        );
     }
 
     let root = tree.draw_cmd.borrow().roots[0];
-    tree.set_bounds(root, Rect::new(3.0, 3.0, 500.0, 500.0)).unwrap();
+    tree.set_bounds(root, Rect::new(3.0, 3.0, 500.0, 500.0))
+        .unwrap();
 
     let inner = tree.draw_cmd.borrow();
     reset_node_lookups();
     let moved = inner.world_bounds(leaf);
-    assert!(frame_derivations() >= DEPTH, "the edit did not invalidate the cached frames");
+    assert!(
+        frame_derivations() >= DEPTH,
+        "the edit did not invalidate the cached frames"
+    );
     assert_eq!(moved, reference::world_bounds(&inner, leaf));
 }
 
@@ -546,9 +593,15 @@ fn an_edit_makes_the_next_query_derive_its_frames_again() {
 fn queries_follow_the_structure_after_it_changes() {
     let tree = RenderTree::new();
     let root = tree.add_root(Rect::new(0.0, 0.0, 300.0, 300.0)).unwrap();
-    let left = tree.add_child(root, Rect::new(10.0, 10.0, 100.0, 100.0)).unwrap();
-    let right = tree.add_child(root, Rect::new(150.0, 20.0, 100.0, 100.0)).unwrap();
-    let leaf = tree.add_child(left, Rect::new(5.0, 5.0, 20.0, 20.0)).unwrap();
+    let left = tree
+        .add_child(root, Rect::new(10.0, 10.0, 100.0, 100.0))
+        .unwrap();
+    let right = tree
+        .add_child(root, Rect::new(150.0, 20.0, 100.0, 100.0))
+        .unwrap();
+    let leaf = tree
+        .add_child(left, Rect::new(5.0, 5.0, 20.0, 20.0))
+        .unwrap();
     let before = tree.draw_cmd.borrow().world_bounds(leaf).unwrap();
     assert_eq!((before.x, before.y), (15.0, 15.0));
 
@@ -565,7 +618,10 @@ fn queries_follow_the_structure_after_it_changes() {
     let inner = tree.draw_cmd.borrow();
     let after = inner.world_bounds(leaf).unwrap();
     assert_eq!((after.x, after.y), (155.0, 25.0));
-    assert_eq!(inner.world_bounds(leaf), reference::world_bounds(&inner, leaf));
+    assert_eq!(
+        inner.world_bounds(leaf),
+        reference::world_bounds(&inner, leaf)
+    );
 }
 
 #[test]
@@ -574,13 +630,20 @@ fn a_node_added_after_a_query_is_found_by_the_next_one() {
     let root = tree.add_root(Rect::new(5.0, 6.0, 100.0, 100.0)).unwrap();
     let _ = tree.draw_cmd.borrow().world_bounds(root);
 
-    let child = tree.add_child(root, Rect::new(10.0, 20.0, 30.0, 40.0)).unwrap();
-    let grandchild = tree.add_child(child, Rect::new(1.0, 2.0, 3.0, 4.0)).unwrap();
+    let child = tree
+        .add_child(root, Rect::new(10.0, 20.0, 30.0, 40.0))
+        .unwrap();
+    let grandchild = tree
+        .add_child(child, Rect::new(1.0, 2.0, 3.0, 4.0))
+        .unwrap();
 
     let inner = tree.draw_cmd.borrow();
     let bounds = inner.world_bounds(grandchild).unwrap();
     assert_eq!((bounds.x, bounds.y), (16.0, 28.0));
-    assert_eq!(inner.world_bounds(grandchild), reference::world_bounds(&inner, grandchild));
+    assert_eq!(
+        inner.world_bounds(grandchild),
+        reference::world_bounds(&inner, grandchild)
+    );
 }
 
 #[test]
@@ -692,7 +755,9 @@ mod geometry_revision {
     fn tree_with_child() -> (RenderTree, RenderNodeId, RenderNodeId) {
         let tree = RenderTree::new();
         let root = tree.add_root(Rect::new(0.0, 0.0, 100.0, 100.0)).unwrap();
-        let child = tree.add_child(root, Rect::new(10.0, 10.0, 20.0, 20.0)).unwrap();
+        let child = tree
+            .add_child(root, Rect::new(10.0, 10.0, 20.0, 20.0))
+            .unwrap();
         (tree, root, child)
     }
 
@@ -726,13 +791,16 @@ mod geometry_revision {
     fn every_geometry_mutator_advances_it() {
         let (tree, root, child) = tree_with_child();
         assert!(advanced_by(&tree, || {
-            tree.set_bounds(child, Rect::new(11.0, 10.0, 20.0, 20.0)).unwrap();
+            tree.set_bounds(child, Rect::new(11.0, 10.0, 20.0, 20.0))
+                .unwrap();
         }));
         assert!(advanced_by(&tree, || {
-            tree.set_geometry(child, Rect::new(12.0, 10.0, 20.0, 20.0), None).unwrap();
+            tree.set_geometry(child, Rect::new(12.0, 10.0, 20.0, 20.0), None)
+                .unwrap();
         }));
         assert!(advanced_by(&tree, || {
-            tree.set_transform(child, Mat3::translate(3.0, 0.0)).unwrap();
+            tree.set_transform(child, Mat3::translate(3.0, 0.0))
+                .unwrap();
         }));
         assert!(advanced_by(&tree, || {
             tree.set_compositor_animation(child, Mat3::translate(4.0, 0.0), 1.0, None)
@@ -753,7 +821,8 @@ mod geometry_revision {
         let before = tree.element_bounds(child).unwrap();
 
         let revision = tree.geometry_revision();
-        tree.set_bounds(root, Rect::new(50.0, 0.0, 100.0, 100.0)).unwrap();
+        tree.set_bounds(root, Rect::new(50.0, 0.0, 100.0, 100.0))
+            .unwrap();
 
         assert_ne!(tree.geometry_revision(), revision);
         assert_eq!(tree.element_bounds(child).unwrap().x, before.x + 50.0);

@@ -19,38 +19,38 @@ pub fn justify_content_example() -> impl Widget {
     let app_theme = theme::app_theme();
 
     Container::new()
-            // .width(700)
-            .padding(LayoutSpacing::all(Spacing::Px(28)))
-            .color(app_theme.background_color)
-            .child(
-                Column::new()
-                    .gaps(LayoutSpacing::all(Spacing::Px(12)))
-                    .children([
-                        Text::new("JustifyContent")
-                            .text_style(
-                                TextStyle::new()
-                                    .font_size(28)
-                                    .font_weight(FontWeight::Bold)
-                                    .color(app_theme.on_background_color),
-                            )
-                            .boxed(),
-                        Text::new(
-                            "The main-axis placement changes while every row keeps the same width.",
-                        )
+        // .width(700)
+        .padding(LayoutSpacing::all(Spacing::Px(28)))
+        .color(app_theme.background_color)
+        .child(
+            Column::new()
+                .gaps(LayoutSpacing::all(Spacing::Px(12)))
+                .children([
+                    Text::new("JustifyContent")
                         .text_style(
                             TextStyle::new()
-                                .font_size(16)
-                                .color(theme::muted_text(&app_theme)),
+                                .font_size(28)
+                                .font_weight(FontWeight::Bold)
+                                .color(app_theme.on_background_color),
                         )
                         .boxed(),
-                        demo(JustifyContent::Start, app_theme),
-                        demo(JustifyContent::Center, app_theme),
-                        demo(JustifyContent::End, app_theme),
-                        demo(JustifyContent::SpaceBetween, app_theme),
-                        demo(JustifyContent::SpaceAround, app_theme),
-                        demo(JustifyContent::SpaceEvenly, app_theme),
-                    ]),
-            )
+                    Text::new(
+                        "The main-axis placement changes while every row keeps the same width.",
+                    )
+                    .text_style(
+                        TextStyle::new()
+                            .font_size(16)
+                            .color(theme::muted_text(&app_theme)),
+                    )
+                    .boxed(),
+                    demo(JustifyContent::Start, app_theme),
+                    demo(JustifyContent::Center, app_theme),
+                    demo(JustifyContent::End, app_theme),
+                    demo(JustifyContent::SpaceBetween, app_theme),
+                    demo(JustifyContent::SpaceAround, app_theme),
+                    demo(JustifyContent::SpaceEvenly, app_theme),
+                ]),
+        )
 }
 
 pub fn start_justify_content_example() {
@@ -91,7 +91,11 @@ fn item(label: &'static str, app_theme: ThemeData) -> AnyWidget {
     Container::new()
         .width(ITEM_SIZE)
         .height(ITEM_SIZE)
-        .color(app_theme.primary_color.darken(0.08))
+        .color(
+            app_theme
+                .primary_color
+                .darken(0.08),
+        )
         .box_decoration(
             BoxDecoration::new().border(BoxBorder::all(
                 BorderSlice::new()
@@ -104,10 +108,10 @@ fn item(label: &'static str, app_theme: ThemeData) -> AnyWidget {
             Text::new(label)
                 .text_align(TextAlign::MidCenter)
                 .text_style(
-                TextStyle::new()
-                    .font_size(14)
-                    .color(app_theme.on_primary_color),
-            ),
+                    TextStyle::new()
+                        .font_size(14)
+                        .color(app_theme.on_primary_color),
+                ),
         )
         .boxed()
 }

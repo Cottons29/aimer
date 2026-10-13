@@ -446,9 +446,12 @@ fn validate_path(path: &Path, max_path_bytes: usize) -> Option<FileDropRejectRea
         match component {
             Component::ParentDir => return Some(FileDropRejectReason::PathTraversal),
             Component::Normal(value) if value.to_str().is_none() => {
-                return Some(FileDropRejectReason::InvalidPath)
+                return Some(FileDropRejectReason::InvalidPath);
             }
-            Component::Normal(_) | Component::CurDir | Component::RootDir | Component::Prefix(_) => {}
+            Component::Normal(_)
+            | Component::CurDir
+            | Component::RootDir
+            | Component::Prefix(_) => {}
         }
     }
     None
@@ -488,11 +491,8 @@ mod tests {
 
     #[test]
     fn file_count_size_and_total_limits_fail_closed() {
-        let too_many = policy().validate(&[
-            entry("a.png", 1),
-            entry("b.png", 1),
-            entry("c.png", 1),
-        ]);
+        let too_many =
+            policy().validate(&[entry("a.png", 1), entry("b.png", 1), entry("c.png", 1)]);
         assert!(matches!(
             too_many,
             FileDropOutcome::Rejected(rejection)

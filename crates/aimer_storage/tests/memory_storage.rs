@@ -1,15 +1,11 @@
 use std::future::Future;
 use std::pin::Pin;
-use std::task::{Context, Poll, Wake, Waker};
 use std::sync::Arc;
+use std::task::{Context, Poll, Wake, Waker};
 
 use aimer_storage::{
-    migrate_bytes, MemoryStorage, QuotaKind, Storage, StorageError, StorageLimits,
-    StorageMigration,
+    MemoryStorage, QuotaKind, Storage, StorageError, StorageLimits, StorageMigration, migrate_bytes,
 };
-
-#[cfg(not(target_arch = "wasm32"))]
-use aimer_storage::FileStorage;
 
 fn block_on<F: Future>(future: F) -> F::Output {
     struct Parker(std::thread::Thread);
@@ -144,10 +140,8 @@ fn memory_storage_rejects_invalid_keys_and_preserves_quota_invariants() {
     let entry_limited = MemoryStorage::with_limits(
         StorageLimits::new(4, 64, 2, 1).expect("entry test limits should be valid"),
     );
-    block_on(entry_limited.write("profile", "one", b"1"))
-        .expect("first entry should fit");
-    block_on(entry_limited.write("profile", "two", b"1"))
-        .expect("second entry should fit");
+    block_on(entry_limited.write("profile", "one", b"1")).expect("first entry should fit");
+    block_on(entry_limited.write("profile", "two", b"1")).expect("second entry should fit");
     assert_eq!(
         block_on(entry_limited.write("profile", "three", b"1")),
         Err(StorageError::QuotaExceeded {
@@ -216,49 +210,4 @@ fn migrations_follow_exact_versions_and_report_gaps() {
             to_version: 2,
         })
     );
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-#[test]
-fn file_storage_round_trip_uses_bounded_worker_io() {
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    static NEXT_TEST_ID: AtomicU64 = AtomicU64::new(1);
-    let root = std::env::temp_dir().join(format!(
-        "aimer-storage-test-{}-{}",
-        std::process::id(),
-        NEXT_TEST_ID.fetch_add(1, Ordering::Relaxed)
-    ));
-    let limits = StorageLimits::new(64, 256, 8, 8).expect("test limits should be valid");
-    let storage = FileStorage::with_limits(&root, limits);
-
-    block_on(storage.write("profile", "display-mode", b"dark"))
-        .expect("encoded file paths should accept safe logical keys");
-    assert_eq!(
-        block_on(storage.read("profile", "display-mode"))
-            .expect("reading a native value should succeed"),
-        Some(b"dark".to_vec())
-    );
-    assert_eq!(
-        block_on(storage.metadata("profile", "display-mode"))
-            .expect("metadata should succeed")
-            .expect("metadata should exist")
-            .size(),
-        4
-    );
-    assert_eq!(
-        block_on(storage.list("profile", 8))
-            .expect("listing should succeed")
-            .entries()[0]
-            .key(),
-        "display-mode"
-    );
-    assert!(block_on(storage.remove("profile", "display-mode")).expect("remove should succeed"));
-    assert_eq!(
-        block_on(storage.read("profile", "display-mode"))
-            .expect("reading a removed value should succeed"),
-        None
-    );
-
-    std::fs::remove_dir_all(root).expect("the test-owned storage directory should be removable");
 }

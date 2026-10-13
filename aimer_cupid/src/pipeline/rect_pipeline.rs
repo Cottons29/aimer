@@ -60,20 +60,72 @@ impl RectInstance {
         }
     }
 
-        const GENERIC_ATTRIBUTES: [crate::backend::VertexAttribute; 13] = [
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x2, offset: std::mem::offset_of!(Self, position) as u64, shader_location: 0 },
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x2, offset: std::mem::offset_of!(Self, size) as u64, shader_location: 1 },
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Unorm8x4, offset: std::mem::offset_of!(Self, color) as u64, shader_location: 2 },
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, border_radius) as u64, shader_location: 3 },
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, border_width) as u64, shader_location: 4 },
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Unorm8x4, offset: std::mem::offset_of!(Self, border_color) as u64, shader_location: 5 },
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, outline_width) as u64, shader_location: 6 },
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Unorm8x4, offset: std::mem::offset_of!(Self, outline_color) as u64, shader_location: 7 },
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, clip_rect) as u64, shader_location: 8 },
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, clip_border_radius) as u64, shader_location: 9 },
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, shadow_params) as u64, shader_location: 10 },
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Unorm8x4, offset: std::mem::offset_of!(Self, shadow_color) as u64, shader_location: 11 },
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, shadow_flags) as u64, shader_location: 12 },
+    const GENERIC_ATTRIBUTES: [crate::backend::VertexAttribute; 13] = [
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Float32x2,
+            offset: std::mem::offset_of!(Self, position) as u64,
+            shader_location: 0,
+        },
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Float32x2,
+            offset: std::mem::offset_of!(Self, size) as u64,
+            shader_location: 1,
+        },
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Unorm8x4,
+            offset: std::mem::offset_of!(Self, color) as u64,
+            shader_location: 2,
+        },
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Float32x4,
+            offset: std::mem::offset_of!(Self, border_radius) as u64,
+            shader_location: 3,
+        },
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Float32x4,
+            offset: std::mem::offset_of!(Self, border_width) as u64,
+            shader_location: 4,
+        },
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Unorm8x4,
+            offset: std::mem::offset_of!(Self, border_color) as u64,
+            shader_location: 5,
+        },
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Float32x4,
+            offset: std::mem::offset_of!(Self, outline_width) as u64,
+            shader_location: 6,
+        },
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Unorm8x4,
+            offset: std::mem::offset_of!(Self, outline_color) as u64,
+            shader_location: 7,
+        },
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Float32x4,
+            offset: std::mem::offset_of!(Self, clip_rect) as u64,
+            shader_location: 8,
+        },
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Float32x4,
+            offset: std::mem::offset_of!(Self, clip_border_radius) as u64,
+            shader_location: 9,
+        },
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Float32x4,
+            offset: std::mem::offset_of!(Self, shadow_params) as u64,
+            shader_location: 10,
+        },
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Unorm8x4,
+            offset: std::mem::offset_of!(Self, shadow_color) as u64,
+            shader_location: 11,
+        },
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Float32x4,
+            offset: std::mem::offset_of!(Self, shadow_flags) as u64,
+            shader_location: 12,
+        },
     ];
 }
 
@@ -90,8 +142,6 @@ pub struct RectPipeline<B: crate::backend::GpuBackend = crate::backend::DefaultG
     immediate_uploads: bool,
     last_viewport: Option<(u32, u32, bool)>,
 }
-
-
 
 // ── Backend-agnostic generic path ──────────────────────────────────────────
 //
@@ -117,11 +167,7 @@ impl<B: crate::backend::GpuBackend> RectPipeline<B> {
     }
 
     /// Creates a rect pipeline through the selected backend.
-    pub fn new(
-        backend: &B,
-        format: B::TextureFormat,
-        antialiasing: crate::AntiAlias,
-    ) -> Self {
+    pub fn new(backend: &B, format: B::TextureFormat, antialiasing: crate::AntiAlias) -> Self {
         use crate::backend::*;
 
         let shader = backend.create_shader_module(backend.rect_shader_source(), "rect shader");
@@ -240,8 +286,7 @@ impl<B: crate::backend::GpuBackend> RectPipeline<B> {
         if self.instance_policy.capacity() != previous_capacity {
             self.instance_buffer = backend.create_buffer(&crate::backend::BufferDescriptor {
                 label: Some("rect instance buffer (resized)".to_string()),
-                size: (self.instance_policy.capacity() * size_of::<RectInstance>())
-                    as u64,
+                size: (self.instance_policy.capacity() * size_of::<RectInstance>()) as u64,
                 usage: vec![
                     crate::backend::BufferUsage::Vertex,
                     crate::backend::BufferUsage::CopyDst,
@@ -336,10 +381,22 @@ mod tests {
     #[test]
     fn rect_instance_uses_unorm_bytes_for_each_paint_color() {
         assert_eq!(std::mem::size_of::<RectInstance>(), 144);
-        assert_eq!(RectInstance::ATTRIBS[2].format, wgpu::VertexFormat::Unorm8x4);
-        assert_eq!(RectInstance::ATTRIBS[5].format, wgpu::VertexFormat::Unorm8x4);
-        assert_eq!(RectInstance::ATTRIBS[7].format, wgpu::VertexFormat::Unorm8x4);
-        assert_eq!(RectInstance::ATTRIBS[11].format, wgpu::VertexFormat::Unorm8x4);
+        assert_eq!(
+            RectInstance::ATTRIBS[2].format,
+            wgpu::VertexFormat::Unorm8x4
+        );
+        assert_eq!(
+            RectInstance::ATTRIBS[5].format,
+            wgpu::VertexFormat::Unorm8x4
+        );
+        assert_eq!(
+            RectInstance::ATTRIBS[7].format,
+            wgpu::VertexFormat::Unorm8x4
+        );
+        assert_eq!(
+            RectInstance::ATTRIBS[11].format,
+            wgpu::VertexFormat::Unorm8x4
+        );
         assert_eq!(
             RectInstance::ATTRIBS[2].offset,
             std::mem::offset_of!(RectInstance, color) as u64

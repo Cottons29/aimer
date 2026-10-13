@@ -230,7 +230,15 @@ pub(crate) fn fallback_font_path_for_probes(probes: &[char], weight: u16) -> Opt
     let base_font = unsafe { CTFont::with_name(&base_name, LOOKUP_FONT_SIZE, std::ptr::null()) };
     let base_font = font_at_weight(base_font, weight);
     // SAFETY: the range spans exactly the UTF-16 content of `sample`.
-    let fallback = unsafe { base_font.for_string(&sample, CFRange { location: 0, length }) };
+    let fallback = unsafe {
+        base_font.for_string(
+            &sample,
+            CFRange {
+                location: 0,
+                length,
+            },
+        )
+    };
 
     font_file_path(&fallback)
 }
@@ -626,7 +634,10 @@ mod tests {
             .and_then(|name| name.to_str())
             .unwrap_or_default()
             .to_ascii_lowercase();
-        assert!(name.contains("emoji"), "expected an emoji face, got {first:?}");
+        assert!(
+            name.contains("emoji"),
+            "expected an emoji face, got {first:?}"
+        );
     }
 
     // The weight a style asks for is an OpenType `wght` value, while Core Text
@@ -690,8 +701,12 @@ mod tests {
 
     #[test]
     fn system_font_path_resolves_an_existing_file() {
-        let path = system_font_path("Helvetica").expect("Helvetica must resolve on Apple platforms");
-        assert!(path.is_absolute(), "expected an absolute path, got {path:?}");
+        let path =
+            system_font_path("Helvetica").expect("Helvetica must resolve on Apple platforms");
+        assert!(
+            path.is_absolute(),
+            "expected an absolute path, got {path:?}"
+        );
         assert!(path.exists(), "resolved font file does not exist: {path:?}");
     }
 
@@ -706,7 +721,10 @@ mod tests {
         // family still yields a usable file rather than a dangling path.
         let path = system_font_path("aimer-does-not-exist-font-family")
             .expect("Core Text substitutes a default face");
-        assert!(path.exists(), "substituted font file does not exist: {path:?}");
+        assert!(
+            path.exists(),
+            "substituted font file does not exist: {path:?}"
+        );
     }
 
     #[test]
@@ -829,9 +847,6 @@ mod tests {
     fn table_checksum_pads_the_trailing_word_with_zeroes() {
         assert_eq!(table_checksum(&[]), 0);
         assert_eq!(table_checksum(&[0x01]), 0x0100_0000);
-        assert_eq!(
-            table_checksum(&[0x00, 0x00, 0x00, 0x01, 0x02]),
-            0x0200_0001
-        );
+        assert_eq!(table_checksum(&[0x00, 0x00, 0x00, 0x01, 0x02]), 0x0200_0001);
     }
 }

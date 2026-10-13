@@ -10,6 +10,7 @@ portable-guest = [
     "aimer_style/portable-guest",
     "aimer_widget/portable-guest",
     "aimer_container/portable-guest",
+    "aimer_decoration/portable-guest",
 ]
 
 [dependencies]
@@ -28,6 +29,7 @@ aimer_macro.workspace = true
 aimer_text.workspace = true
 aimer_native.workspace = true
 aimer_container.workspace = true
+aimer_decoration.workspace = true
 aimer_ctxmenu.workspace = true
 #####################
 winit.workspace = true

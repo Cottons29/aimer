@@ -10,7 +10,9 @@ use super::{MetalBackend, MetalSurface, MetalSurfaceFrame, MetalTexture, MetalTe
 /// Layer geometry and attachment remain the UI owner's responsibility. This
 /// handle exposes no AppKit/UIKit objects or layer mutation methods.
 #[doc(hidden)]
-pub struct MetalDrawableSource { layer: Retained<CAMetalLayer> }
+pub struct MetalDrawableSource {
+    layer: Retained<CAMetalLayer>,
+}
 
 // SAFETY: CAMetalLayer supports drawable acquisition from a rendering thread.
 // The retained reference keeps the layer alive; only acquisition is exposed,
@@ -21,7 +23,9 @@ impl MetalSurface {
     /// Retains an acquisition-only handle for a dedicated rendering thread.
     #[doc(hidden)]
     pub fn drawable_source(&self) -> MetalDrawableSource {
-        MetalDrawableSource { layer: self.layer.clone() }
+        MetalDrawableSource {
+            layer: self.layer.clone(),
+        }
     }
 }
 
@@ -31,7 +35,12 @@ impl MetalDrawableSource {
         let drawable = self.layer.nextDrawable()?;
         let texture = MetalTexture(drawable.texture());
         let view = MetalTextureView(texture.0.clone());
-        Some(MetalSurfaceFrame { drawable, texture, view, presents_with_transaction: true })
+        Some(MetalSurfaceFrame {
+            drawable,
+            texture,
+            view,
+            presents_with_transaction: true,
+        })
     }
 }
 
@@ -54,23 +63,34 @@ impl MetalSurfaceFrame {
     /// Render and call this method without interleaving another frame on the
     /// same backend. The encoder remains local to that thread throughout.
     #[doc(hidden)]
-    pub fn schedule_transactional_presentation(self, backend: &MetalBackend) -> ScheduledMetalDrawable {
+    pub fn schedule_transactional_presentation(
+        self,
+        backend: &MetalBackend,
+    ) -> ScheduledMetalDrawable {
         let size = self.size();
         let _submission = backend.wait_for_render_submission();
-        ScheduledMetalDrawable { drawable: self.drawable, size }
+        ScheduledMetalDrawable {
+            drawable: self.drawable,
+            size,
+        }
     }
 }
 
 impl ScheduledMetalDrawable {
     /// Returns the acquired drawable dimensions for viewport validation.
-    pub fn size(&self) -> (u32, u32) { self.size }
+    pub fn size(&self) -> (u32, u32) {
+        self.size
+    }
 
     /// Presents in the current main-thread Core Animation transaction.
     ///
     /// Panics off the main thread. The caller must establish the transaction
     /// and validate that the drawable still matches the window's viewport.
     pub fn present(self) {
-        assert!(objc2::MainThreadMarker::new().is_some(), "transactional presentation requires the main thread");
+        assert!(
+            objc2::MainThreadMarker::new().is_some(),
+            "transactional presentation requires the main thread"
+        );
         let metal_drawable: &ProtocolObject<dyn CAMetalDrawable> = &self.drawable;
         let drawable: &ProtocolObject<dyn MTLDrawable> = metal_drawable.as_ref();
         drawable.present();

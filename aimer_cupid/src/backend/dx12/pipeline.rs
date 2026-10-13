@@ -4,22 +4,20 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use aimer_utils::info;
+use windows::Win32::Graphics::Direct3D::Fxc::{D3DCOMPILE_OPTIMIZATION_LEVEL0, D3DCompile};
 use windows::Win32::Graphics::Direct3D::{
-    D3D11_PRIMITIVE_TOPOLOGY_LINELIST, D3D11_PRIMITIVE_TOPOLOGY_LINESTRIP,
-    D3D11_PRIMITIVE_TOPOLOGY_POINTLIST, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
-    D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP, D3D_PRIMITIVE_TOPOLOGY,
-    D3D_SHADER_MACRO, ID3DBlob,
+    D3D_PRIMITIVE_TOPOLOGY, D3D_SHADER_MACRO, D3D11_PRIMITIVE_TOPOLOGY_LINELIST,
+    D3D11_PRIMITIVE_TOPOLOGY_LINESTRIP, D3D11_PRIMITIVE_TOPOLOGY_POINTLIST,
+    D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP, ID3DBlob,
 };
-use windows::Win32::Graphics::Direct3D::Fxc::{D3DCompile, D3DCOMPILE_OPTIMIZATION_LEVEL0};
 use windows::Win32::Graphics::Direct3D12::*;
 use windows::Win32::Graphics::Dxgi::Common::*;
 use windows::core::PCSTR;
 
 use crate::backend::{
-    BackendError, BindGroupLayoutEntry, BindingResource, BindingType, BufferBindingType,
-    ColorTargetState, BlendFactor, BlendOperation, Face, FrontFace,
-    PrimitiveTopology, RenderPipelineDescriptor, VertexFormat,
-    VertexStepMode,
+    BackendError, BindGroupLayoutEntry, BindingResource, BindingType, BlendFactor, BlendOperation,
+    BufferBindingType, ColorTargetState, Face, FrontFace, PrimitiveTopology,
+    RenderPipelineDescriptor, VertexFormat, VertexStepMode,
 };
 
 use super::resource::{Dx12Buffer, Dx12Sampler, Dx12TextureView};
@@ -43,9 +41,17 @@ pub struct Dx12BindGroupLayout {
 
 #[derive(Clone)]
 pub(super) enum BoundResource {
-    Buffer { buffer: Dx12Buffer, offset: u64, size: u64 },
-    Texture { view: Dx12TextureView },
-    Sampler { sampler: Dx12Sampler },
+    Buffer {
+        buffer: Dx12Buffer,
+        offset: u64,
+        size: u64,
+    },
+    Texture {
+        view: Dx12TextureView,
+    },
+    Sampler {
+        sampler: Dx12Sampler,
+    },
 }
 
 #[derive(Clone)]
@@ -139,7 +145,9 @@ impl Dx12Backend {
                             RootBindingKind::Buffer(*ty),
                             D3D12_ROOT_PARAMETER {
                                 ParameterType: parameter_type,
-                                Anonymous: D3D12_ROOT_PARAMETER_0 { Descriptor: descriptor },
+                                Anonymous: D3D12_ROOT_PARAMETER_0 {
+                                    Descriptor: descriptor,
+                                },
                                 ShaderVisibility: D3D12_SHADER_VISIBILITY_ALL,
                             },
                         )
@@ -161,7 +169,9 @@ impl Dx12Backend {
                             RootBindingKind::Texture,
                             D3D12_ROOT_PARAMETER {
                                 ParameterType: D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE,
-                                Anonymous: D3D12_ROOT_PARAMETER_0 { DescriptorTable: table },
+                                Anonymous: D3D12_ROOT_PARAMETER_0 {
+                                    DescriptorTable: table,
+                                },
                                 ShaderVisibility: D3D12_SHADER_VISIBILITY_ALL,
                             },
                         )
@@ -183,13 +193,16 @@ impl Dx12Backend {
                             RootBindingKind::Sampler,
                             D3D12_ROOT_PARAMETER {
                                 ParameterType: D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE,
-                                Anonymous: D3D12_ROOT_PARAMETER_0 { DescriptorTable: table },
+                                Anonymous: D3D12_ROOT_PARAMETER_0 {
+                                    DescriptorTable: table,
+                                },
                                 ShaderVisibility: D3D12_SHADER_VISIBILITY_ALL,
                             },
                         )
                     }
                     BindingType::StorageTexture { access, .. } => {
-                        let read_only = matches!(*access, crate::backend::StorageTextureAccess::ReadOnly);
+                        let read_only =
+                            matches!(*access, crate::backend::StorageTextureAccess::ReadOnly);
                         let range_index = ranges.len();
                         ranges.push(D3D12_DESCRIPTOR_RANGE {
                             RangeType: if read_only {
@@ -210,7 +223,9 @@ impl Dx12Backend {
                             RootBindingKind::StorageTexture(read_only),
                             D3D12_ROOT_PARAMETER {
                                 ParameterType: D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE,
-                                Anonymous: D3D12_ROOT_PARAMETER_0 { DescriptorTable: table },
+                                Anonymous: D3D12_ROOT_PARAMETER_0 {
+                                    DescriptorTable: table,
+                                },
                                 ShaderVisibility: D3D12_SHADER_VISIBILITY_ALL,
                             },
                         )
@@ -245,7 +260,10 @@ impl Dx12Backend {
             )
         }
         .unwrap_or_else(|error| {
-            panic!("serialize D3D12 root signature failed: {}", blob_text(errors.as_ref()).unwrap_or_else(|| error.to_string()))
+            panic!(
+                "serialize D3D12 root signature failed: {}",
+                blob_text(errors.as_ref()).unwrap_or_else(|| error.to_string())
+            )
         });
         let blob = serialized.expect("root signature serialization returned no blob");
         let bytes = unsafe {
@@ -282,11 +300,12 @@ impl Dx12Backend {
             fallback_layout
         };
         let vertex_started = Instant::now();
-        let vs = compile_hlsl(&desc.vertex.module, desc.vertex.entry_point, b"vs_5_1\0")
-            .map_err(|message| BackendError {
+        let vs = compile_hlsl(&desc.vertex.module, desc.vertex.entry_point, b"vs_5_1\0").map_err(
+            |message| BackendError {
                 operation: "compile_vertex_shader",
                 message: format!("{}: {message}", desc.vertex.module.label),
-            })?;
+            },
+        )?;
         let vertex_elapsed = vertex_started.elapsed();
         let (ps, pixel_elapsed) = if let Some(fragment) = &desc.fragment {
             let pixel_started = Instant::now();
@@ -317,7 +336,9 @@ impl Dx12Backend {
                         } else {
                             D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA
                         },
-                        InstanceDataStepRate: u32::from(layout.step_mode == VertexStepMode::Instance),
+                        InstanceDataStepRate: u32::from(
+                            layout.step_mode == VertexStepMode::Instance,
+                        ),
                     });
                 }
             } else {
@@ -335,11 +356,14 @@ impl Dx12Backend {
             pInputElementDescs: input_elements.as_ptr(),
             NumElements: input_elements.len() as u32,
         };
-        pipeline_desc.BlendState = blend_desc(desc.fragment.as_ref().and_then(|fragment| {
-            fragment.targets.first().and_then(Option::as_ref)
-        }));
+        pipeline_desc.BlendState = blend_desc(
+            desc.fragment
+                .as_ref()
+                .and_then(|fragment| fragment.targets.first().and_then(Option::as_ref)),
+        );
         pipeline_desc.SampleMask = u32::MAX;
-        pipeline_desc.RasterizerState = rasterizer_desc(desc.primitive.front_face, desc.primitive.cull_mode);
+        pipeline_desc.RasterizerState =
+            rasterizer_desc(desc.primitive.front_face, desc.primitive.cull_mode);
         pipeline_desc.PrimitiveTopologyType = topology_type(desc.primitive.topology);
         pipeline_desc.SampleDesc = DXGI_SAMPLE_DESC {
             Count: desc.multisample.count.max(1),
@@ -458,7 +482,11 @@ pub(super) fn blob_text(blob: Option<&ID3DBlob>) -> Option<String> {
     let length = unsafe { blob.GetBufferSize() };
     let pointer = unsafe { blob.GetBufferPointer().cast::<u8>() };
     let bytes = unsafe { std::slice::from_raw_parts(pointer, length) };
-    Some(String::from_utf8_lossy(bytes).trim_end_matches('\0').to_string())
+    Some(
+        String::from_utf8_lossy(bytes)
+            .trim_end_matches('\0')
+            .to_string(),
+    )
 }
 
 fn shader_bytecode(bytes: &[u8]) -> D3D12_SHADER_BYTECODE {
@@ -573,8 +601,12 @@ fn rasterizer_desc(front_face: FrontFace, cull_mode: Option<Face>) -> D3D12_RAST
 fn topology_type(topology: PrimitiveTopology) -> D3D12_PRIMITIVE_TOPOLOGY_TYPE {
     match topology {
         PrimitiveTopology::PointList => D3D12_PRIMITIVE_TOPOLOGY_TYPE_POINT,
-        PrimitiveTopology::LineList | PrimitiveTopology::LineStrip => D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE,
-        PrimitiveTopology::TriangleList | PrimitiveTopology::TriangleStrip => D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE,
+        PrimitiveTopology::LineList | PrimitiveTopology::LineStrip => {
+            D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE
+        }
+        PrimitiveTopology::TriangleList | PrimitiveTopology::TriangleStrip => {
+            D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE
+        }
     }
 }
 
@@ -607,20 +639,35 @@ pub(super) fn bind_group(
             .find(|candidate| candidate.binding == entry.binding)
             .unwrap_or_else(|| panic!("binding {} is not in its D3D12 layout", entry.binding));
         let resource = match (&entry.resource, &declared.ty) {
-            (BindingResource::Buffer(buffer), BindingType::Buffer { .. }) => BoundResource::Buffer {
-                buffer: (**buffer).clone(), offset: 0, size: buffer.size,
-            },
-            (BindingResource::BufferRange(buffer, offset, size), BindingType::Buffer { .. }) => BoundResource::Buffer {
-                buffer: (**buffer).clone(), offset: *offset, size: *size,
-            },
+            (BindingResource::Buffer(buffer), BindingType::Buffer { .. }) => {
+                BoundResource::Buffer {
+                    buffer: (**buffer).clone(),
+                    offset: 0,
+                    size: buffer.size,
+                }
+            }
+            (BindingResource::BufferRange(buffer, offset, size), BindingType::Buffer { .. }) => {
+                BoundResource::Buffer {
+                    buffer: (**buffer).clone(),
+                    offset: *offset,
+                    size: *size,
+                }
+            }
             (BindingResource::TextureView(view), BindingType::Texture { .. })
-            | (BindingResource::TextureView(view), BindingType::StorageTexture { .. }) => BoundResource::Texture {
-                view: (**view).clone(),
-            },
-            (BindingResource::Sampler(sampler), BindingType::Sampler(_)) => BoundResource::Sampler {
-                sampler: (**sampler).clone(),
-            },
-            _ => panic!("bind group entry {} disagrees with its D3D12 layout", entry.binding),
+            | (BindingResource::TextureView(view), BindingType::StorageTexture { .. }) => {
+                BoundResource::Texture {
+                    view: (**view).clone(),
+                }
+            }
+            (BindingResource::Sampler(sampler), BindingType::Sampler(_)) => {
+                BoundResource::Sampler {
+                    sampler: (**sampler).clone(),
+                }
+            }
+            _ => panic!(
+                "bind group entry {} disagrees with its D3D12 layout",
+                entry.binding
+            ),
         };
         if let BoundResource::Texture { view } = &resource {
             let has_srv = view.srv.is_some();
@@ -628,8 +675,12 @@ pub(super) fn bind_group(
             match &declared.ty {
                 BindingType::Texture { .. } => assert!(has_srv, "bound D3D12 texture has no SRV"),
                 BindingType::StorageTexture { access, .. } => {
-                    let needs_uav = !matches!(access, crate::backend::StorageTextureAccess::ReadOnly);
-                    assert!(if needs_uav { has_uav } else { has_srv }, "bound D3D12 storage texture has no matching view");
+                    let needs_uav =
+                        !matches!(access, crate::backend::StorageTextureAccess::ReadOnly);
+                    assert!(
+                        if needs_uav { has_uav } else { has_srv },
+                        "bound D3D12 storage texture has no matching view"
+                    );
                 }
                 _ => unreachable!("texture resource paired with a non-texture layout"),
             }

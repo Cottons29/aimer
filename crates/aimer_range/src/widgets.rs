@@ -4,12 +4,12 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use aimer_attribute::BoxConstraint;
-use aimer_widget::InteractionBounds;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_cupid::draw_cmd_v2::Rect;
 use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
 use aimer_events::pointer::PointerButton;
+use aimer_widget::InteractionBounds;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
     AnyElement, ChildBuilder, Drawable, Element, EventElement, EventResult, EventTreeRole,
@@ -17,10 +17,8 @@ use aimer_widget::{
     StatefulElement, StatefulWidget, VisitorElement, Widget,
 };
 
-use super::{
-    RangeSlider, RangeThumb, RangeValue, Slider, SliderKey, SliderThumb, SliderTrail,
-};
 use super::visuals::{SliderTrack, SliderVisualState};
+use super::{RangeSlider, RangeThumb, RangeValue, Slider, SliderKey, SliderThumb, SliderTrail};
 
 struct SliderRuntime<T: RangeValue> {
     current: Cell<T>,
@@ -161,8 +159,12 @@ impl<T: RangeValue> RangeSliderRuntime<T> {
             default_visuals: RefCell::new(RangeSliderDefaultVisuals {
                 track: ChildBuilder::from_widget(SliderTrack::new()),
                 trail: ChildBuilder::from_widget(SliderTrail::for_state(default_visual_state)),
-                lower_thumb: ChildBuilder::from_widget(SliderThumb::for_state(default_visual_state)),
-                upper_thumb: ChildBuilder::from_widget(SliderThumb::for_state(default_visual_state)),
+                lower_thumb: ChildBuilder::from_widget(SliderThumb::for_state(
+                    default_visual_state,
+                )),
+                upper_thumb: ChildBuilder::from_widget(SliderThumb::for_state(
+                    default_visual_state,
+                )),
                 trail_style: DefaultVisualStyle::Normal,
                 thumb_style: DefaultVisualStyle::Normal,
             }),
@@ -482,7 +484,6 @@ impl Drawable for RawSliderVisualSlot {
     fn sync_paint_geometry(&self, ctx: &BuildContext) {
         self.child.sync_paint_geometry(ctx);
     }
-
 }
 
 struct RawSlider<T: RangeValue> {
@@ -656,8 +657,7 @@ impl<T: RangeValue> RawSlider<T> {
 
     fn thumb_inset(&self, ctx: &BuildContext, size: ResolvedSize) -> f32 {
         let child_ctx = child_context(ctx, size);
-        (self.thumb.computed_size(&child_ctx).width.max(0.0) / 2.0)
-            .min(size.width.max(0.0) / 2.0)
+        (self.thumb.computed_size(&child_ctx).width.max(0.0) / 2.0).min(size.width.max(0.0) / 2.0)
     }
 }
 
@@ -767,7 +767,10 @@ impl<T: RangeValue> EventElement for RawSlider<T> {
 
 impl<T: RangeValue> LayoutElement for RawSlider<T> {
     fn size(&self) -> Option<Size> {
-        Some(Size::new(self.model.widget_width(), self.model.widget_height()))
+        Some(Size::new(
+            self.model.widget_width(),
+            self.model.widget_height(),
+        ))
     }
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
@@ -818,7 +821,9 @@ impl<T: RangeValue> Drawable for RawSlider<T> {
     }
 
     #[inline]
-    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+    fn retained_v2_interaction_disagreement(
+        &self,
+    ) -> Option<aimer_widget::InteractionDisagreement> {
         self.bounds.disagreement("RawSlider")
     }
 
@@ -959,8 +964,8 @@ impl<T: RangeValue> State<RangeSlider<T>> for RangeSliderState<T> {
 
     fn adopt_config_from(&mut self, new: Self) {
         let old_model = &self.model;
-        let values_changed = old_model.lower() != new.model.lower()
-            || old_model.upper() != new.model.upper();
+        let values_changed =
+            old_model.lower() != new.model.lower() || old_model.upper() != new.model.upper();
         let domain_changed = old_model.range_bounds() != new.model.range_bounds()
             || old_model.step_value() != new.model.step_value()
             || old_model.reversed_bounds_policy_value() != new.model.reversed_bounds_policy_value();
@@ -1289,10 +1294,7 @@ impl<T: RangeValue> RawRangeSlider<T> {
         let child_ctx = child_context(ctx, size);
         let lower = self.lower_thumb.computed_size(&child_ctx).width / 2.0;
         let upper = self.upper_thumb.computed_size(&child_ctx).width / 2.0;
-        lower
-            .max(upper)
-            .max(0.0)
-            .min(size.width.max(0.0) / 2.0)
+        lower.max(upper).max(0.0).min(size.width.max(0.0) / 2.0)
     }
 }
 
@@ -1431,7 +1433,10 @@ impl<T: RangeValue> EventElement for RawRangeSlider<T> {
 
 impl<T: RangeValue> LayoutElement for RawRangeSlider<T> {
     fn size(&self) -> Option<Size> {
-        Some(Size::new(self.model.widget_width(), self.model.widget_height()))
+        Some(Size::new(
+            self.model.widget_width(),
+            self.model.widget_height(),
+        ))
     }
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
@@ -1483,7 +1488,9 @@ impl<T: RangeValue> Drawable for RawRangeSlider<T> {
     }
 
     #[inline]
-    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+    fn retained_v2_interaction_disagreement(
+        &self,
+    ) -> Option<aimer_widget::InteractionDisagreement> {
         self.bounds.disagreement("RawRangeSlider")
     }
 

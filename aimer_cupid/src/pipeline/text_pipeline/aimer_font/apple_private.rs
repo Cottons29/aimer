@@ -88,10 +88,7 @@ mod tests {
 
     #[test]
     fn recognizes_private_tags_without_reading_payloads() {
-        let tables = ApplePrivateTables::from_records(&[
-            record(*b"hvgl"),
-            record(*b"emjc"),
-        ]);
+        let tables = ApplePrivateTables::from_records(&[record(*b"hvgl"), record(*b"emjc")]);
 
         assert!(tables.has_hvgl());
         assert!(tables.has_emjc());

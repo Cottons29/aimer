@@ -156,7 +156,10 @@ mod tests {
     fn the_first_wheel_event_opens_a_gesture() {
         let mut phase = WebScrollPhase::new();
 
-        assert_eq!(phase.on_wheel_at(Instant::now()), WebScrollTransition::Begin);
+        assert_eq!(
+            phase.on_wheel_at(Instant::now()),
+            WebScrollTransition::Begin
+        );
         assert!(phase.is_open());
     }
 
@@ -167,8 +170,14 @@ mod tests {
 
         phase.on_wheel_at(base);
 
-        assert_eq!(phase.on_wheel_at(ms(base, 16)), WebScrollTransition::Continue);
-        assert_eq!(phase.on_wheel_at(ms(base, 32)), WebScrollTransition::Continue);
+        assert_eq!(
+            phase.on_wheel_at(ms(base, 16)),
+            WebScrollTransition::Continue
+        );
+        assert_eq!(
+            phase.on_wheel_at(ms(base, 32)),
+            WebScrollTransition::Continue
+        );
         assert_eq!(
             phase.on_wheel_at(ms(base, 32 + IDLE_GAP_MS as u64)),
             WebScrollTransition::Continue,

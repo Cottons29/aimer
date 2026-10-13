@@ -57,12 +57,7 @@ pub trait HapticFeedback {
     fn trigger(&self, kind: HapticKind) -> CapabilityResult<()>;
 }
 
-#[aimer_macro::capability(
-    name = "haptics",
-    id = "dev.aimer.haptics",
-    abi = 1,
-    since = "0.1.0",
-)]
+#[aimer_macro::capability(name = "haptics", id = "dev.aimer.haptics", abi = 1, since = "0.1.0")]
 pub trait HapticsContract {
     /// Dispatches one validated fixed-width haptic discriminant.
     fn trigger(&self, kind: u32) -> CapabilityResult<()>;
@@ -105,10 +100,10 @@ mod tests {
     use std::rc::Rc;
 
     use aimer_anteros::{
-        AbiVersion, ApplicationManifest, CapabilityCall, CapabilityError, CapabilityLimits,
-        CapabilityPolicy, CapabilityRegistry, CapabilityRegistryError, CapabilityResult,
-        CapabilityStagingClass, CapabilityTransport, GenerationId, ManifestView,
-        ModelLimits, StableId128, CALLBACK_EVENT_FORMAT_VERSION, STATE_FORMAT_VERSION,
+        AbiVersion, ApplicationManifest, CALLBACK_EVENT_FORMAT_VERSION, CapabilityCall,
+        CapabilityError, CapabilityLimits, CapabilityPolicy, CapabilityRegistry,
+        CapabilityRegistryError, CapabilityResult, CapabilityStagingClass, CapabilityTransport,
+        GenerationId, ManifestView, ModelLimits, STATE_FORMAT_VERSION, StableId128,
         WIDGET_IR_FORMAT_VERSION,
     };
 

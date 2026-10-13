@@ -87,12 +87,7 @@ impl<'a> GpuRenderPass<WgpuBackend> for ::wgpu::RenderPass<'a> {
         self.draw(vertices, instances);
     }
 
-    fn draw_indexed(
-        &mut self,
-        indices: Range<u32>,
-        base_vertex: i32,
-        instances: Range<u32>,
-    ) {
+    fn draw_indexed(&mut self, indices: Range<u32>, base_vertex: i32, instances: Range<u32>) {
         self.draw_indexed(indices, base_vertex, instances);
     }
 }
@@ -125,12 +120,13 @@ impl GpuBackend for WgpuBackend {
     // ── Resource creation ───────────────────────────────────────────────
 
     fn create_shader_module(&self, source: &[u8], label: &str) -> Self::ShaderModule {
-        self.device.create_shader_module(::wgpu::ShaderModuleDescriptor {
-            label: Some(label),
-            source: ::wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(
-                std::str::from_utf8(source).expect("shader source must be valid UTF-8"),
-            )),
-        })
+        self.device
+            .create_shader_module(::wgpu::ShaderModuleDescriptor {
+                label: Some(label),
+                source: ::wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(
+                    std::str::from_utf8(source).expect("shader source must be valid UTF-8"),
+                )),
+            })
     }
 
     fn create_buffer(&self, desc: &BufferDescriptor) -> Self::Buffer {
@@ -191,10 +187,7 @@ impl GpuBackend for WgpuBackend {
         })
     }
 
-    fn create_bind_group_layout(
-        &self,
-        entries: &[BindGroupLayoutEntry],
-    ) -> Self::BindGroupLayout {
+    fn create_bind_group_layout(&self, entries: &[BindGroupLayoutEntry]) -> Self::BindGroupLayout {
         let wgpu_entries: Vec<::wgpu::BindGroupLayoutEntry> = entries
             .iter()
             .map(|e| ::wgpu::BindGroupLayoutEntry {
@@ -230,10 +223,7 @@ impl GpuBackend for WgpuBackend {
         })
     }
 
-    fn create_pipeline_layout(
-        &self,
-        layouts: &[&Self::BindGroupLayout],
-    ) -> Self::PipelineLayout {
+    fn create_pipeline_layout(&self, layouts: &[&Self::BindGroupLayout]) -> Self::PipelineLayout {
         let wgpu_layouts: Vec<Option<&::wgpu::BindGroupLayout>> =
             layouts.iter().map(|l| Some(*l)).collect();
         self.device
@@ -298,11 +288,11 @@ impl GpuBackend for WgpuBackend {
 
         // Compute color target states first so the Vec lives long enough for
         // the FragmentState to reference it.
-        let color_state_storage: Vec<Option<::wgpu::ColorTargetState>> =
-            desc.fragment
-                .as_ref()
-                .map(|f| color_target_states(f.targets))
-                .unwrap_or_default();
+        let color_state_storage: Vec<Option<::wgpu::ColorTargetState>> = desc
+            .fragment
+            .as_ref()
+            .map(|f| color_target_states(f.targets))
+            .unwrap_or_default();
 
         let fragment = desc.fragment.as_ref().map(|f| ::wgpu::FragmentState {
             module: f.module,
@@ -369,9 +359,7 @@ impl GpuBackend for WgpuBackend {
 
     fn create_command_encoder(&self, label: &str) -> Self::CommandEncoder {
         self.device
-            .create_command_encoder(&::wgpu::CommandEncoderDescriptor {
-                label: Some(label),
-            })
+            .create_command_encoder(&::wgpu::CommandEncoderDescriptor { label: Some(label) })
     }
 
     fn begin_render_pass<'a>(
@@ -389,14 +377,12 @@ impl GpuBackend for WgpuBackend {
                     ops: ::wgpu::Operations {
                         load: match ca.ops.load {
                             LoadOp::Load => ::wgpu::LoadOp::Load,
-                            LoadOp::Clear(rgba) => {
-                                ::wgpu::LoadOp::Clear(::wgpu::Color {
-                                    r: rgba[0],
-                                    g: rgba[1],
-                                    b: rgba[2],
-                                    a: rgba[3],
-                                })
-                            }
+                            LoadOp::Clear(rgba) => ::wgpu::LoadOp::Clear(::wgpu::Color {
+                                r: rgba[0],
+                                g: rgba[1],
+                                b: rgba[2],
+                                a: rgba[3],
+                            }),
                         },
                         store: match ca.ops.store {
                             StoreOp::Store => ::wgpu::StoreOp::Store,
@@ -660,8 +646,7 @@ fn binding_type(ty: &BindingType) -> ::wgpu::BindingType {
         } => ::wgpu::BindingType::Buffer {
             ty: buffer_binding_type(*ty),
             has_dynamic_offset: *has_dynamic_offset,
-            min_binding_size: min_binding_size
-                .and_then(|s| std::num::NonZeroU64::new(s)),
+            min_binding_size: min_binding_size.and_then(|s| std::num::NonZeroU64::new(s)),
         },
         BindingType::Texture {
             multisampled,
@@ -705,9 +690,7 @@ fn texture_view_dimension(dim: TextureViewDimension) -> ::wgpu::TextureViewDimen
 
 fn texture_sample_type(sample: TextureSampleType) -> ::wgpu::TextureSampleType {
     match sample {
-        TextureSampleType::Float { filterable } => {
-            ::wgpu::TextureSampleType::Float { filterable }
-        }
+        TextureSampleType::Float { filterable } => ::wgpu::TextureSampleType::Float { filterable },
         TextureSampleType::Depth => ::wgpu::TextureSampleType::Depth,
         TextureSampleType::Uint => ::wgpu::TextureSampleType::Uint,
         TextureSampleType::Sint => ::wgpu::TextureSampleType::Sint,
@@ -723,42 +706,48 @@ fn sampler_binding_type(ty: SamplerBindingType) -> ::wgpu::SamplerBindingType {
 }
 
 fn buffer_usages(usages: &[BufferUsage]) -> ::wgpu::BufferUsages {
-    usages.iter().fold(::wgpu::BufferUsages::empty(), |bits, u| {
-        bits | match u {
-            BufferUsage::Vertex => ::wgpu::BufferUsages::VERTEX,
-            BufferUsage::Index => ::wgpu::BufferUsages::INDEX,
-            BufferUsage::Uniform => ::wgpu::BufferUsages::UNIFORM,
-            BufferUsage::Storage => ::wgpu::BufferUsages::STORAGE,
-            BufferUsage::ReadOnlyStorage => ::wgpu::BufferUsages::STORAGE,
-            BufferUsage::Indirect => ::wgpu::BufferUsages::INDIRECT,
-            BufferUsage::CopySrc => ::wgpu::BufferUsages::COPY_SRC,
-            BufferUsage::CopyDst => ::wgpu::BufferUsages::COPY_DST,
-            BufferUsage::MapRead => ::wgpu::BufferUsages::MAP_READ,
-            BufferUsage::MapWrite => ::wgpu::BufferUsages::MAP_WRITE,
-        }
-    })
+    usages
+        .iter()
+        .fold(::wgpu::BufferUsages::empty(), |bits, u| {
+            bits | match u {
+                BufferUsage::Vertex => ::wgpu::BufferUsages::VERTEX,
+                BufferUsage::Index => ::wgpu::BufferUsages::INDEX,
+                BufferUsage::Uniform => ::wgpu::BufferUsages::UNIFORM,
+                BufferUsage::Storage => ::wgpu::BufferUsages::STORAGE,
+                BufferUsage::ReadOnlyStorage => ::wgpu::BufferUsages::STORAGE,
+                BufferUsage::Indirect => ::wgpu::BufferUsages::INDIRECT,
+                BufferUsage::CopySrc => ::wgpu::BufferUsages::COPY_SRC,
+                BufferUsage::CopyDst => ::wgpu::BufferUsages::COPY_DST,
+                BufferUsage::MapRead => ::wgpu::BufferUsages::MAP_READ,
+                BufferUsage::MapWrite => ::wgpu::BufferUsages::MAP_WRITE,
+            }
+        })
 }
 
 fn texture_usages(usages: &[TextureUsage]) -> ::wgpu::TextureUsages {
-    usages.iter().fold(::wgpu::TextureUsages::empty(), |bits, u| {
-        bits | match u {
-            TextureUsage::TextureBinding => ::wgpu::TextureUsages::TEXTURE_BINDING,
-            TextureUsage::StorageBinding => ::wgpu::TextureUsages::STORAGE_BINDING,
-            TextureUsage::RenderAttachment => ::wgpu::TextureUsages::RENDER_ATTACHMENT,
-            TextureUsage::CopySrc => ::wgpu::TextureUsages::COPY_SRC,
-            TextureUsage::CopyDst => ::wgpu::TextureUsages::COPY_DST,
-        }
-    })
+    usages
+        .iter()
+        .fold(::wgpu::TextureUsages::empty(), |bits, u| {
+            bits | match u {
+                TextureUsage::TextureBinding => ::wgpu::TextureUsages::TEXTURE_BINDING,
+                TextureUsage::StorageBinding => ::wgpu::TextureUsages::STORAGE_BINDING,
+                TextureUsage::RenderAttachment => ::wgpu::TextureUsages::RENDER_ATTACHMENT,
+                TextureUsage::CopySrc => ::wgpu::TextureUsages::COPY_SRC,
+                TextureUsage::CopyDst => ::wgpu::TextureUsages::COPY_DST,
+            }
+        })
 }
 
 fn shader_stages(stages: &[ShaderStage]) -> ::wgpu::ShaderStages {
-    stages.iter().fold(::wgpu::ShaderStages::empty(), |bits, s| {
-        bits | match s {
-            ShaderStage::Vertex => ::wgpu::ShaderStages::VERTEX,
-            ShaderStage::Fragment => ::wgpu::ShaderStages::FRAGMENT,
-            ShaderStage::Compute => ::wgpu::ShaderStages::COMPUTE,
-        }
-    })
+    stages
+        .iter()
+        .fold(::wgpu::ShaderStages::empty(), |bits, s| {
+            bits | match s {
+                ShaderStage::Vertex => ::wgpu::ShaderStages::VERTEX,
+                ShaderStage::Fragment => ::wgpu::ShaderStages::FRAGMENT,
+                ShaderStage::Compute => ::wgpu::ShaderStages::COMPUTE,
+            }
+        })
 }
 
 fn color_write_mask(mask: ColorWriteMask) -> ::wgpu::ColorWrites {

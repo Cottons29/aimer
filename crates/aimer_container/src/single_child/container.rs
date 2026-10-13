@@ -3,15 +3,15 @@ use std::rc::Rc;
 use aimer_attribute::dimension::Dimension;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
+use aimer_decoration::{BoxDecoration, Decoration};
 use aimer_events::element::ElementEvent;
 use aimer_macro::Rebuildable;
-use aimer_decoration::{BoxDecoration, Decoration};
 pub use aimer_style::*;
 use aimer_widget::InteractionBounds;
 use aimer_widget::base::*;
 use aimer_widget::{
-    AnyElement, AnyWidget, Drawable, Element, EventElement, EventResult, LayoutCache,
-    EventTreeRole, LayoutElement, RequiredChild, VisitorElement, Widget,
+    AnyElement, AnyWidget, Drawable, Element, EventElement, EventResult, EventTreeRole,
+    LayoutCache, LayoutElement, RequiredChild, VisitorElement, Widget,
 };
 
 mod decoration;
@@ -20,9 +20,7 @@ pub use decoration::RetainedBoxDecoration;
 const LOCAL_V2_CONTAINER_EXTENT_LIMIT: f32 = 1_000_000.0;
 
 #[cfg(feature = "portable-guest")]
-use aimer_widget::portable::{
-    PortableBuildContext, PortableBuildError, SourceFingerprint,
-};
+use aimer_widget::portable::{PortableBuildContext, PortableBuildError, SourceFingerprint};
 
 /// A decorated single-child layout box with optional size, spacing, and color.
 ///
@@ -33,7 +31,8 @@ use aimer_widget::portable::{
 ///
 /// [`Container::decoration`] accepts any [`Decoration`] without boxing it.
 /// The default [`BoxDecoration`] supplies border insets and rounded child
-/// clipping. Custom decorations choose their own insets and optional clip.
+/// clipping. [`crate::Scalable`] may render beyond ancestor clips without
+/// changing layout. Custom decorations choose their own insets and optional clip.
 ///
 /// Attach a child with [`Container::child`] to retain its concrete type, or
 /// with [`Container::box_child`] when branches need a shared erased type.
@@ -219,9 +218,11 @@ impl<W: Widget, D: Decoration + 'static> Widget for Container<W, D> {
             padding: self.padding,
             margin: self.margin,
             box_decoration: self.box_decoration,
-            decoration_source: self.decoration_source.map(decoration::RetainedDecorationState::new),
+            decoration_source: self
+                .decoration_source
+                .map(decoration::RetainedDecorationState::new),
             cache: LayoutCache::new(),
-            raw: false,
+            flags: std::cell::Cell::new(if self.color.is_some() { HAS_COLOR } else { 0 }),
             bounds: InteractionBounds::new(),
             paint_state: std::cell::Cell::new(ContainerPaintState::new(self.color)),
         }
@@ -246,21 +247,23 @@ pub struct RawContainer<T: Element, D: Decoration = BoxDecoration> {
     decoration_source: Option<Box<decoration::RetainedDecorationState>>,
     pub child: T,
     pub cache: LayoutCache,
-    raw: bool,
+    flags: std::cell::Cell<u8>,
     pub bounds: InteractionBounds,
     paint_state: std::cell::Cell<ContainerPaintState>,
 }
 
-// Keep the fallback color and recording flag beside the revision. Separate
-// Option<Color> and Option<u64> fields spill the ordinary element beyond the
-// pool's 512-byte allocation class once its identity and provenance headers
-// are included. The two fixed debug names likewise need only a boolean.
+// Store flags in the former debug-name byte so adding the recorded background
+// keeps the paint state at 16 bytes. Growing it would spill ordinary containers
+// beyond the pool's 512-byte class once identity/provenance headers are included.
+const RAW: u8 = 1;
+const HAS_COLOR: u8 = 2;
+const RECORDED: u8 = 4;
+
 #[derive(Clone, Copy, Default)]
 struct ContainerPaintState {
     revision: u64,
     color: Color,
-    has_color: bool,
-    recorded: bool,
+    background: Color,
 }
 
 impl ContainerPaintState {
@@ -269,14 +272,8 @@ impl ContainerPaintState {
         Self {
             revision: 0,
             color: color.unwrap_or(Color::Transparent),
-            has_color: color.is_some(),
-            recorded: false,
+            background: Color::Transparent,
         }
-    }
-
-    #[inline]
-    fn background(self) -> Option<Color> {
-        self.has_color.then_some(self.color)
     }
 }
 
@@ -304,7 +301,7 @@ impl<E: Element, D: Decoration> RawContainer<E, D> {
             && self.height == Dimension::Auto
             && self.padding == LayoutSpacing::default()
             && self.margin == LayoutSpacing::default()
-            && self.paint_state.get().background().is_none()
+            && self.fallback_background().is_none()
             && self.decoration().is_empty()
     }
 
@@ -313,7 +310,10 @@ impl<E: Element, D: Decoration> RawContainer<E, D> {
     /// visually covers whatever sits behind it in a `Stack`, so it must also
     /// occlude it for hit-testing (Flutter's `HitTestBehavior::opaque`).
     fn is_opaque(&self) -> bool {
-        self.decoration().background_color().or(self.paint_state.get().background()).is_some()
+        self.decoration()
+            .background_color()
+            .or(self.fallback_background())
+            .is_some()
     }
 
     fn local_v2_paint_size(&self, ctx: &BuildContext) -> Option<ResolvedSize> {
@@ -382,7 +382,8 @@ impl<E: Element, D: Decoration> RawContainer<E, D> {
         let padding_top = self.padding.top.value(height, scale);
         let padding_right = self.padding.right.value(width, scale);
         let padding_bottom = self.padding.bottom.value(height, scale);
-        let [border_left, border_top, border_right, border_bottom] = self.decoration_insets(width, height, scale);
+        let [border_left, border_top, border_right, border_bottom] =
+            self.decoration_insets(width, height, scale);
         let clip_size = ResolvedSize {
             width: (width - border_left - border_right).max(0.0),
             height: (height - border_top - border_bottom).max(0.0),
@@ -396,9 +397,15 @@ impl<E: Element, D: Decoration> RawContainer<E, D> {
             height: (clip_size.height - padding_top - padding_bottom).max(0.0),
         };
         let clip = self.decoration().child_clip_radius(
-            ResolvedSize { width: width / scale, height: height / scale }, scale,
+            ResolvedSize {
+                width: width / scale,
+                height: height / scale,
+            },
+            scale,
         );
-        let clip_radii = clip.unwrap_or([0.0; 4]).map(|radius| finite_nonnegative(radius) * scale);
+        let clip_radii = clip
+            .unwrap_or([0.0; 4])
+            .map(|radius| finite_nonnegative(radius) * scale);
         Some(LocalV2ContainerGeometry {
             clip_origin: Vec2d {
                 x: margin_left + border_left,
@@ -412,9 +419,25 @@ impl<E: Element, D: Decoration> RawContainer<E, D> {
         })
     }
 
+    #[inline]
+    fn fallback_background(&self) -> Option<Color> {
+        (self.flags.get() & HAS_COLOR != 0).then_some(self.paint_state.get().color)
+    }
+
+    #[inline]
+    fn child_paint_background(&self, ctx: &BuildContext) -> Color {
+        aimer_canvas::composite_background(
+            self.decoration()
+                .background_color()
+                .or(self.fallback_background()),
+            ctx.paint_background,
+        )
+    }
+
     fn local_v2_child_context<'a>(&self, ctx: &BuildContext<'a>) -> Option<BuildContext<'a>> {
         let geometry = self.local_v2_geometry(ctx)?;
         let mut child_ctx = ctx.clone();
+        child_ctx.paint_background = self.child_paint_background(ctx);
         child_ctx.box_constraint.max_width = geometry.content_size.width;
         child_ctx.box_constraint.max_height = geometry.content_size.height;
         child_ctx.parent_size = geometry.content_size;
@@ -432,7 +455,11 @@ impl<E: Element, D: Decoration> RawContainer<E, D> {
 
 #[inline]
 fn finite_nonnegative(value: f32) -> f32 {
-    if value.is_finite() { value.max(0.0) } else { 0.0 }
+    if value.is_finite() {
+        value.max(0.0)
+    } else {
+        0.0
+    }
 }
 
 /// Clamps a device-pixel extent to what the render tree can carry.
@@ -455,12 +482,7 @@ fn intersect_retained_clip(
     let y = left.y.max(right.y);
     let right_edge = (left.x + left.width).min(right.x + right.width);
     let bottom_edge = (left.y + left.height).min(right.y + right.height);
-    aimer_cupid::draw_cmd_v2::Rect::new(
-        x,
-        y,
-        (right_edge - x).max(0.0),
-        (bottom_edge - y).max(0.0),
-    )
+    aimer_cupid::draw_cmd_v2::Rect::new(x, y, (right_edge - x).max(0.0), (bottom_edge - y).max(0.0))
 }
 
 mod painting;
@@ -489,7 +511,9 @@ impl<T: Element, D: Decoration> Drawable for RawContainer<T, D> {
     }
 
     #[inline]
-    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+    fn retained_v2_interaction_disagreement(
+        &self,
+    ) -> Option<aimer_widget::InteractionDisagreement> {
         self.bounds.disagreement("Container")
     }
 
@@ -513,7 +537,13 @@ impl<T: Element, D: Decoration> Drawable for RawContainer<T, D> {
         // relative to the node, so the decorated box sits that far inside it;
         // otherwise a shadowed panel is drawn up and to the left of where it was
         // laid out, under children that are in the right place.
-        let [outset_left, outset_top, _, _] = self.retained_v2_paint_outsets(ctx).unwrap_or([0.0; 4]);
+        let [outset_left, outset_top, _, _] =
+            self.retained_v2_paint_outsets(ctx).unwrap_or([0.0; 4]);
+        canvas.add_background_color(
+            self.decoration()
+                .background_color()
+                .or(self.fallback_background()),
+        );
         self.decoration().paint_with_background(
             &canvas,
             Vec2d {
@@ -525,19 +555,22 @@ impl<T: Element, D: Decoration> Drawable for RawContainer<T, D> {
                 height: render_extent(size.height, ctx.scale) / ctx.scale,
             },
             ctx.scale,
-            self.paint_state.get().background(),
+            self.fallback_background(),
         );
         canvas.finish();
         self.mark_decoration_recorded();
         let mut state = self.paint_state.get();
         state.revision = self.decoration().revision();
-        state.recorded = true;
+        state.background = ctx.paint_background;
+        self.flags.set(self.flags.get() | RECORDED);
         self.paint_state.set(state);
     }
 
-    fn local_v2_paint_needs_recording(&self, _ctx: &BuildContext) -> bool {
+    fn local_v2_paint_needs_recording(&self, ctx: &BuildContext) -> bool {
         let state = self.paint_state.get();
-        !state.recorded || self.retained_decoration_needs_recording()
+        self.flags.get() & RECORDED == 0
+            || state.background != ctx.paint_background
+            || self.retained_decoration_needs_recording()
             || state.revision != self.decoration().revision()
     }
 
@@ -548,13 +581,16 @@ impl<T: Element, D: Decoration> Drawable for RawContainer<T, D> {
 
     fn retained_v2_paint_outsets(&self, ctx: &BuildContext) -> Option<[f32; 4]> {
         let size = self.local_v2_paint_size(ctx)?;
-        let mut outsets = self.decoration().paint_outsets(
-            ResolvedSize {
-                width: render_extent(size.width, ctx.scale) / ctx.scale,
-                height: render_extent(size.height, ctx.scale) / ctx.scale,
-            },
-            ctx.scale,
-        ).map(finite_nonnegative);
+        let mut outsets = self
+            .decoration()
+            .paint_outsets(
+                ResolvedSize {
+                    width: render_extent(size.width, ctx.scale) / ctx.scale,
+                    height: render_extent(size.height, ctx.scale) / ctx.scale,
+                },
+                ctx.scale,
+            )
+            .map(finite_nonnegative);
 
         // The render node is as large as the container's content, but the
         // decoration is painted over the whole box: padding, border and the
@@ -590,12 +626,11 @@ impl<T: Element, D: Decoration> Drawable for RawContainer<T, D> {
         if !std::ptr::eq(child, &self.child as &dyn Element) {
             return [0.0; 4];
         }
-        self.local_v2_geometry(ctx)
-            .map_or([0.0; 4], |geometry| {
-                geometry
-                    .clip_radii
-                    .map(|radius| (radius / ctx.scale).min(LOCAL_V2_CONTAINER_EXTENT_LIMIT))
-            })
+        self.local_v2_geometry(ctx).map_or([0.0; 4], |geometry| {
+            geometry
+                .clip_radii
+                .map(|radius| (radius / ctx.scale).min(LOCAL_V2_CONTAINER_EXTENT_LIMIT))
+        })
     }
 
     fn retained_v2_child_geometry(
@@ -629,8 +664,7 @@ impl<T: Element, D: Decoration> Drawable for RawContainer<T, D> {
             render_extent(geometry.clip_size.height, scale) / scale,
         );
         let clip = geometry.clips_child.then_some(clip);
-        let clip = match (clip, child
-            .retained_clip(&child_ctx)) {
+        let clip = match (clip, child.retained_clip(&child_ctx)) {
             (Some(clip), Some(child_clip)) => Some(intersect_retained_clip(clip, child_clip)),
             (clip, child_clip) => clip.or(child_clip),
         };
@@ -674,15 +708,25 @@ impl<T: Element, D: Decoration> Drawable for RawContainer<T, D> {
 
         let padding_left = self.padding.left.value(box_width, scale);
         let padding_top = self.padding.top.value(box_height, scale);
-        let [border_left, border_top, border_right, border_bottom] = self.decoration_insets(box_width, box_height, scale);
-        let content_width = (box_width - padding_left - border_left
-            - self.padding.right.value(box_width, scale) - border_right).max(0.0);
-        let content_height = (box_height - padding_top - border_top
-            - self.padding.bottom.value(box_height, scale) - border_bottom).max(0.0);
+        let [border_left, border_top, border_right, border_bottom] =
+            self.decoration_insets(box_width, box_height, scale);
+        let content_width = (box_width
+            - padding_left
+            - border_left
+            - self.padding.right.value(box_width, scale)
+            - border_right)
+            .max(0.0);
+        let content_height = (box_height
+            - padding_top
+            - border_top
+            - self.padding.bottom.value(box_height, scale)
+            - border_bottom)
+            .max(0.0);
         let inset_x = m_left + padding_left + border_left;
         let inset_y = m_top + padding_top + border_top;
 
         let mut child_ctx = ctx.clone();
+        child_ctx.paint_background = self.child_paint_background(ctx);
         child_ctx.box_constraint.max_width = content_width;
         child_ctx.box_constraint.max_height = content_height;
         child_ctx.parent_size = ResolvedSize {
@@ -701,7 +745,6 @@ impl<T: Element, D: Decoration> Drawable for RawContainer<T, D> {
         self.child.sync_paint_geometry(&child_ctx);
         ctx.canvas.restore();
     }
-
 }
 
 impl<T: Element, D: Decoration> VisitorElement for RawContainer<T, D> {
@@ -710,7 +753,11 @@ impl<T: Element, D: Decoration> VisitorElement for RawContainer<T, D> {
     }
 
     fn debug_name(&self) -> &'static str {
-        if self.raw { "RawContainer" } else { "Container" }
+        if self.flags.get() & RAW != 0 {
+            "RawContainer"
+        } else {
+            "Container"
+        }
     }
 }
 
@@ -768,10 +815,9 @@ impl<E: Element> RawContainer<E> {
             decoration_source: None,
             child,
             cache: LayoutCache::default(),
-            raw: true,
+            flags: std::cell::Cell::new(RAW),
             bounds: InteractionBounds::new(),
             paint_state: std::cell::Cell::new(ContainerPaintState::new(None)),
         }
     }
-
 }

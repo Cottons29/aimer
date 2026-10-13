@@ -1,8 +1,8 @@
-use aimer_laboratory::v2_render::{CounterSimulation, RenderOp};
 use aimer_cupid::damage_region::DamageSet;
 use aimer_cupid::draw_cmd::DrawList;
 use aimer_cupid::draw_cmd_v2::DrawCommand as V2DrawCommand;
 use aimer_cupid::frame::{Frame, FramePacket, FrameRenderMetadata};
+use aimer_laboratory::v2_render::{CounterSimulation, RenderOp};
 
 #[test]
 fn state_update_relayouts_both_row_children_and_rerecords_only_the_counter() {
@@ -12,7 +12,12 @@ fn state_update_relayouts_both_row_children_and_rerecords_only_the_counter() {
     assert_eq!(initial_bounds[0].width, 128.0);
     assert_eq!(initial_bounds[1].x, 508.0);
 
-    assert!(simulation.dispatch_pointer_down((100.0, 100.0)).unwrap().is_none());
+    assert!(
+        simulation
+            .dispatch_pointer_down((100.0, 100.0))
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(simulation.count(), 9);
 
     let frame = simulation
@@ -63,9 +68,7 @@ fn recorded_commands(operations: &[RenderOp]) -> Vec<V2DrawCommand> {
 #[test]
 fn counter_simulation_builds_retained_packets_for_initial_and_incremental_frames() {
     let simulation = CounterSimulation::new().unwrap();
-    let metadata = || {
-        FrameRenderMetadata::new(1.0, 17, 2, 3, 4, DamageSet::new(1000, 800))
-    };
+    let metadata = || FrameRenderMetadata::new(1.0, 17, 2, 3, 4, DamageSet::new(1000, 800));
     let packet = |frame| {
         FramePacket::from_v2_direct_with_frame(
             frame,
@@ -97,7 +100,9 @@ fn counter_simulation_builds_retained_packets_for_initial_and_incremental_frames
     let packet = packet(updated);
     assert_eq!(
         packet.metadata().damage().regions(),
-        &[aimer_cupid::damage_region::DamageRect::new(372, 262, 214, 48)]
+        &[aimer_cupid::damage_region::DamageRect::new(
+            372, 262, 214, 48
+        )]
     );
     assert!(text_updated);
 }

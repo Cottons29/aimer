@@ -117,9 +117,13 @@ impl Stack {
     }
 }
 
-impl<W: Widget+ 'static> Widget for Stack<W> {
+impl<W: Widget + 'static> Widget for Stack<W> {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
-        let children = self.children.into_iter().map(|c| c.to_element(ctx)).collect();
+        let children = self
+            .children
+            .into_iter()
+            .map(|c| c.to_element(ctx))
+            .collect();
         RawStackElement {
             children,
             direction: self.direction,
@@ -162,8 +166,7 @@ impl CachedHitTestIndex {
         } else {
             let bin = ((y - self.min_y) / self.bin_height)
                 .floor()
-                .clamp(0.0, (HIT_TEST_BIN_COUNT - 1) as f32)
-                as usize;
+                .clamp(0.0, (HIT_TEST_BIN_COUNT - 1) as f32) as usize;
             let start = self.offsets[bin];
             let end = self.offsets[bin + 1];
             &self.children[start..end]
@@ -276,9 +279,7 @@ impl RawStackElement {
         for &index in sorted.iter() {
             let bounds = self.children[index]
                 .pos_start_end()
-                .filter(|(start, end)| {
-                    start.y.is_finite() && end.y.is_finite() && start.y <= end.y
-                })
+                .filter(|(start, end)| start.y.is_finite() && end.y.is_finite() && start.y <= end.y)
                 .map(|(start, end)| (start.y, end.y));
             if let Some((start_y, end_y)) = bounds {
                 min_y = min_y.min(start_y);
@@ -298,12 +299,10 @@ impl RawStackElement {
         let bin_range = |start_y: f32, end_y: f32| {
             let first_bin = ((start_y - min_y) / bin_height)
                 .floor()
-                .clamp(0.0, (HIT_TEST_BIN_COUNT - 1) as f32)
-                as usize;
+                .clamp(0.0, (HIT_TEST_BIN_COUNT - 1) as f32) as usize;
             let last_bin = ((end_y - min_y) / bin_height)
                 .floor()
-                .clamp(0.0, (HIT_TEST_BIN_COUNT - 1) as f32)
-                as usize;
+                .clamp(0.0, (HIT_TEST_BIN_COUNT - 1) as f32) as usize;
             (first_bin, last_bin)
         };
         let mut estimated_entries = 0usize;
@@ -316,40 +315,36 @@ impl RawStackElement {
                 estimated_entries = estimated_entries.saturating_add(entries);
             }
         }
-        let dense = !span_is_indexable
-            || estimated_entries > child_count.saturating_mul(4);
-        let (offsets, indexed_children, outside): (Vec<usize>, Vec<usize>, Vec<usize>) =
-            if dense {
-                (vec![0; HIT_TEST_BIN_COUNT + 1], Vec::new(), Vec::new())
-            } else {
-                let mut bins: Vec<Vec<usize>> = (0..HIT_TEST_BIN_COUNT)
-                    .map(|_| Vec::new())
-                    .collect();
-                let mut outside = Vec::new();
+        let dense = !span_is_indexable || estimated_entries > child_count.saturating_mul(4);
+        let (offsets, indexed_children, outside): (Vec<usize>, Vec<usize>, Vec<usize>) = if dense {
+            (vec![0; HIT_TEST_BIN_COUNT + 1], Vec::new(), Vec::new())
+        } else {
+            let mut bins: Vec<Vec<usize>> = (0..HIT_TEST_BIN_COUNT).map(|_| Vec::new()).collect();
+            let mut outside = Vec::new();
 
-                for &index in sorted.iter().rev() {
-                    if let Some((start_y, end_y)) = bounds_by_child[index] {
-                        let (first_bin, last_bin) = bin_range(start_y, end_y);
-                        for bin in first_bin..=last_bin {
-                            bins[bin].push(index);
-                        }
-                    } else {
-                        outside.push(index);
-                        for bin in &mut bins {
-                            bin.push(index);
-                        }
+            for &index in sorted.iter().rev() {
+                if let Some((start_y, end_y)) = bounds_by_child[index] {
+                    let (first_bin, last_bin) = bin_range(start_y, end_y);
+                    for bin in first_bin..=last_bin {
+                        bins[bin].push(index);
+                    }
+                } else {
+                    outside.push(index);
+                    for bin in &mut bins {
+                        bin.push(index);
                     }
                 }
+            }
 
-                let mut offsets = Vec::with_capacity(HIT_TEST_BIN_COUNT + 1);
-                let mut indexed_children = Vec::with_capacity(estimated_entries);
-                offsets.push(0);
-                for bin in bins {
-                    indexed_children.extend(bin);
-                    offsets.push(indexed_children.len());
-                }
-                (offsets, indexed_children, outside)
-            };
+            let mut offsets = Vec::with_capacity(HIT_TEST_BIN_COUNT + 1);
+            let mut indexed_children = Vec::with_capacity(estimated_entries);
+            offsets.push(0);
+            for bin in bins {
+                indexed_children.extend(bin);
+                offsets.push(indexed_children.len());
+            }
+            (offsets, indexed_children, outside)
+        };
 
         let slot = unsafe { &mut *self.hit_test_index.get() };
         *slot = Some(CachedHitTestIndex {
@@ -436,6 +431,7 @@ impl Drawable for RawStackElement {
                 max_height: content_size.height,
             },
             visible_rect: ctx.visible_rect,
+            paint_background: ctx.paint_background,
             window: ctx.window.clone(),
             #[cfg(not(target_arch = "wasm32"))]
             async_handle: ctx.async_handle.clone(),
@@ -491,10 +487,7 @@ impl VisitorElement for RawStackElement {
         }
     }
 
-    fn visit_retained_v2_children<'a>(
-        &'a self,
-        visitor: &mut dyn FnMut(usize, &'a dyn Element),
-    ) {
+    fn visit_retained_v2_children<'a>(&'a self, visitor: &mut dyn FnMut(usize, &'a dyn Element)) {
         let sorted_children = self.sorted_child_indices();
         if self.direction == StackDirection::Reverse {
             for &index in sorted_children.iter().rev() {
@@ -556,11 +549,7 @@ impl EventElement for RawStackElement {
     /// Uses the retained y index when it can reject enough siblings; otherwise
     /// preserves the exact painted traversal.
     #[inline]
-    fn hit_test_children_at<'a>(
-        &'a self,
-        pos: Vec2d,
-        visitor: &mut dyn FnMut(&'a dyn Element),
-    ) {
+    fn hit_test_children_at<'a>(&'a self, pos: Vec2d, visitor: &mut dyn FnMut(&'a dyn Element)) {
         self.visit_indexed(pos, false, visitor);
     }
 
@@ -573,7 +562,6 @@ impl EventElement for RawStackElement {
     ) {
         self.visit_indexed(pos, true, visitor);
     }
-
 }
 
 #[cfg(test)]
@@ -609,10 +597,14 @@ mod tests {
     struct BoundedElement {
         layer: u32,
         name: &'static str,
-        bounds: Rc<Cell<Option<(
-            aimer_attribute::position::Vec2d,
-            aimer_attribute::position::Vec2d,
-        )>>>,
+        bounds: Rc<
+            Cell<
+                Option<(
+                    aimer_attribute::position::Vec2d,
+                    aimer_attribute::position::Vec2d,
+                )>,
+            >,
+        >,
     }
 
     impl Drawable for BoundedElement {
@@ -670,16 +662,16 @@ mod tests {
             BoundedElement {
                 layer: 1,
                 name: "outside",
-                    bounds: Rc::new(Cell::new(Some((
-                        aimer_attribute::position::Vec2d { x: 20.0, y: 20.0 },
-                        aimer_attribute::position::Vec2d { x: 30.0, y: 30.0 },
-                    )))),
+                bounds: Rc::new(Cell::new(Some((
+                    aimer_attribute::position::Vec2d { x: 20.0, y: 20.0 },
+                    aimer_attribute::position::Vec2d { x: 30.0, y: 30.0 },
+                )))),
             }
             .boxed(),
             BoundedElement {
                 layer: 3,
                 name: "unknown",
-                    bounds: Rc::new(Cell::new(None)),
+                bounds: Rc::new(Cell::new(None)),
             }
             .boxed(),
             BoundedElement {
@@ -771,16 +763,16 @@ mod tests {
         )));
         assert_eq!(
             stack.children[0].pos_start_end(),
-            Some((
-                Vec2d { x: 20.0, y: 20.0 },
-                Vec2d { x: 30.0, y: 30.0 },
-            ))
+            Some((Vec2d { x: 20.0, y: 20.0 }, Vec2d { x: 30.0, y: 30.0 },))
         );
         stack.invalidate_hit_test_index();
         stack.ensure_hit_test_index();
         let cached = unsafe { &*stack.hit_test_index.get() };
         assert_eq!(
-            (cached.as_ref().unwrap().min_y, cached.as_ref().unwrap().max_y),
+            (
+                cached.as_ref().unwrap().min_y,
+                cached.as_ref().unwrap().max_y
+            ),
             (20.0, 101.0)
         );
         names.clear();
@@ -789,5 +781,4 @@ mod tests {
         });
         assert!(names.is_empty());
     }
-
 }

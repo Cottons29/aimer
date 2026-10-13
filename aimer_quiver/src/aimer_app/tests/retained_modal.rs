@@ -1,16 +1,14 @@
 use std::time::Duration;
 
 use aimer_attribute::Dimension;
-use aimer_ctxmenu::{ContextMenu, ContextMenuItem, ContextMenuShape, ContextMenuStyle};
 use aimer_container::{Container, ZeroSizedBox};
+use aimer_ctxmenu::{ContextMenu, ContextMenuItem, ContextMenuShape, ContextMenuStyle};
 use aimer_cupid::draw_cmd_v2::{DrawCommand as V2DrawCommand, RenderOp};
 use aimer_cupid::utilities::Mat3;
 use aimer_modal::{Modal, ModalAnimation};
-use aimer_style::{
-    BorderSlice, BorderStyle, BoxBorder, BoxDecoration, BoxOutline, BoxShadow,
-};
 #[cfg(feature = "wgpu")]
 use aimer_style::ShadowSide;
+use aimer_style::{BorderSlice, BorderStyle, BoxBorder, BoxDecoration, BoxOutline, BoxShadow};
 
 use super::*;
 
@@ -69,10 +67,12 @@ fn animated_modal_keeps_its_child_list_and_uses_compositor_properties() {
         .app
         .render_node_for_element(content_id)
         .expect("the modal content has its own retained node");
-    assert!(packet
-        .render_plan()
-        .and_then(|plan| plan.local_v2_revision(content_node))
-        .is_some());
+    assert!(
+        packet
+            .render_plan()
+            .and_then(|plan| plan.local_v2_revision(content_node))
+            .is_some()
+    );
 
     let operations = app.app.render_tree().render_all();
     let content_item = operations.iter().find_map(|operation| match operation {
@@ -178,7 +178,12 @@ fn animated_floating_menu_keeps_styled_panel_and_rows_as_local_lists() {
         Some(V2DrawCommand::DrawShadowRect { inset: true, .. })
     ));
     assert!(
-        app.app.render_tree().element_bounds(panel_node).unwrap().width > 150.0,
+        app.app
+            .render_tree()
+            .element_bounds(panel_node)
+            .unwrap()
+            .width
+            > 150.0,
         "shadow and outline outsets expand the retained panel bounds"
     );
 }
@@ -186,11 +191,11 @@ fn animated_floating_menu_keeps_styled_panel_and_rows_as_local_lists() {
 #[cfg(feature = "wgpu")]
 #[test]
 fn retained_context_menu_decoration_renders_at_one_and_two_x_under_opacity() {
+    use aimer_cupid::WgpuBackend;
     use aimer_cupid::damage_region::DamageSet;
     use aimer_cupid::draw_cmd_v2::{DrawCommand as V2DrawCommand, Rect, RenderFrame, RenderOp};
     use aimer_cupid::frame::{Frame, FramePacket, FrameRenderMetadata};
     use aimer_cupid::renderer::Renderer;
-    use aimer_cupid::WgpuBackend;
 
     let _serial = VIRTUALIZED_RENDER_TEST_LOCK
         .lock()
@@ -301,9 +306,11 @@ fn retained_context_menu_decoration_renders_at_one_and_two_x_under_opacity() {
             )
             .show();
         let (_, initial_packet) = direct_headless_frame_packet(&mut app);
-        assert!(initial_packet
-            .render_plan()
-            .is_some_and(|plan| plan.is_complete()));
+        assert!(
+            initial_packet
+                .render_plan()
+                .is_some_and(|plan| plan.is_complete())
+        );
 
         let panel_id = retained_element_id_named(&app, "ContextMenu")
             .expect("the custom context-menu panel is present");
@@ -371,14 +378,7 @@ fn retained_context_menu_decoration_renders_at_one_and_two_x_under_opacity() {
                 )],
                 operations,
             },
-            FrameRenderMetadata::new(
-                scale,
-                1,
-                1,
-                1,
-                1,
-                DamageSet::full(width, height),
-            ),
+            FrameRenderMetadata::new(scale, 1, 1, 1, 1, DamageSet::full(width, height)),
             Frame::new(initial_packet.into_frame().draw_list, width, height),
         )
         .expect("build a complete retained menu packet");
@@ -456,10 +456,8 @@ fn retained_context_menu_decoration_renders_at_one_and_two_x_under_opacity() {
         readback.unmap();
 
         let pixel_at = |local_x: f32, local_y: f32| {
-            let (x, y) = transform.transform_point(
-                origin.0 + rect.x + local_x,
-                origin.1 + rect.y + local_y,
-            );
+            let (x, y) =
+                transform.transform_point(origin.0 + rect.x + local_x, origin.1 + rect.y + local_y);
             let x = (x * scale).floor() as u32;
             let y = (y * scale).floor() as u32;
             let offset = ((y * width + x) * 4) as usize;
@@ -575,24 +573,35 @@ fn context_menu_row_choice_runs_and_dismisses_through_the_retained_overlay() {
         click,
         &ElementEvent::PointerDown(PointerInfo::mouse(click, PointerButton::Primary)),
     );
-    assert!(app.window.take_redraw_request(), "pressing a menu row schedules its frame");
+    assert!(
+        app.window.take_redraw_request(),
+        "pressing a menu row schedules its frame"
+    );
     dispatch_headless_event(
         &mut app,
         click,
         &ElementEvent::PointerUp(PointerInfo::mouse(click, PointerButton::Primary)),
     );
-    assert!(app.window.take_redraw_request(), "choosing a row schedules dismissal");
+    assert!(
+        app.window.take_redraw_request(),
+        "choosing a row schedules dismissal"
+    );
 
     let (_, dismissed_packet) = direct_headless_frame_packet(&mut app);
     assert!(selected.get(), "the menu row action runs on release");
-    assert!(!handle.is_showing(), "choosing a row dismisses the hosted menu");
+    assert!(
+        !handle.is_showing(),
+        "choosing a row dismisses the hosted menu"
+    );
     assert!(
         retained_element_id_named(&app, "ContextMenu").is_none(),
         "the dismissed panel leaves the retained tree"
     );
-    assert!(dismissed_packet
-        .render_plan()
-        .is_some_and(|plan| plan.is_complete()));
+    assert!(
+        dismissed_packet
+            .render_plan()
+            .is_some_and(|plan| plan.is_complete())
+    );
 }
 
 #[test]
@@ -631,7 +640,11 @@ fn context_menu_hover_invalidates_only_the_old_and_new_row_nodes() {
     let panel_node = app.app.render_node_for_element(panel_id).unwrap();
     let rows_node = app.app.render_node_for_element(rows_id).unwrap();
     let row_ids = retained_element_ids_named(&app, "ContextMenuRow");
-    assert_eq!(row_ids.len(), 3, "each menu item owns a retained row element");
+    assert_eq!(
+        row_ids.len(),
+        3,
+        "each menu item owns a retained row element"
+    );
     let tree = app.app.render_tree().clone();
     let panel_revision = initial_plan.local_v2_revision(panel_node).unwrap();
     let rows_revision = initial_plan.local_v2_revision(rows_node);
@@ -661,19 +674,22 @@ fn context_menu_hover_invalidates_only_the_old_and_new_row_nodes() {
         dispatch_headless_event(
             &mut app,
             pointer,
-            &ElementEvent::PointerMove(PointerInfo::mouse(
-                pointer,
-                PointerButton::Primary,
-            )),
+            &ElementEvent::PointerMove(PointerInfo::mouse(pointer, PointerButton::Primary)),
         );
-        assert!(app.window.take_redraw_request(), "row hover schedules a frame");
+        assert!(
+            app.window.take_redraw_request(),
+            "row hover schedules a frame"
+        );
         let rebuild_before_frame = aimer_widget::rebuild_invalidation_generation();
         let layout_before_frame = aimer_widget::layout_invalidation_generation();
         let (_, hover_packet) = direct_headless_frame_packet(&mut app);
         let hover_plan = hover_packet.render_plan().unwrap();
         assert_eq!(tree.draw_list_revision(panel_node).unwrap(), panel_revision);
-        assert_eq!(hover_plan.local_v2_revision(panel_node), Some(panel_revision),
-            "the unchanged panel background is composited beneath row damage");
+        assert_eq!(
+            hover_plan.local_v2_revision(panel_node),
+            Some(panel_revision),
+            "the unchanged panel background is composited beneath row damage"
+        );
         assert_eq!(hover_plan.local_v2_revision(rows_node), rows_revision);
         for (index, (row_node, _, revision)) in row_nodes.iter().enumerate() {
             let actual = tree.draw_list_revision(*row_node).unwrap();
@@ -691,7 +707,11 @@ fn context_menu_hover_invalidates_only_the_old_and_new_row_nodes() {
             != aimer_widget::rebuild_invalidation_generation()
             || layout_before_frame != aimer_widget::layout_invalidation_generation();
         if !concurrent_global_invalidation {
-            assert!(!damage.is_full(), "row hover stayed partial: {:?}", damage.regions());
+            assert!(
+                !damage.is_full(),
+                "row hover stayed partial: {:?}",
+                damage.regions()
+            );
             let first = row_nodes[0].1;
             let last_index = if row_index == 0 { 0 } else { 1 };
             let last = row_nodes[last_index].1;
@@ -699,12 +719,16 @@ fn context_menu_hover_invalidates_only_the_old_and_new_row_nodes() {
             let top = first.y.min(last.y) * 2.0;
             let right = (first.x + first.width).max(last.x + last.width) * 2.0;
             let bottom = (first.y + first.height).max(last.y + last.height) * 2.0;
-            assert!(damage.regions().iter().all(|region| {
-                region.x as f32 >= left - 1.0
-                    && region.y as f32 >= top - 1.0
-                    && (region.x + region.width) as f32 <= right + 1.0
-                    && (region.y + region.height) as f32 <= bottom + 1.0
-            }), "hover damage escaped the changed row bounds: {:?}", damage.regions());
+            assert!(
+                damage.regions().iter().all(|region| {
+                    region.x as f32 >= left - 1.0
+                        && region.y as f32 >= top - 1.0
+                        && (region.x + region.width) as f32 <= right + 1.0
+                        && (region.y + region.height) as f32 <= bottom + 1.0
+                }),
+                "hover damage escaped the changed row bounds: {:?}",
+                damage.regions()
+            );
         }
 
         for row in &mut row_nodes {
@@ -807,9 +831,8 @@ fn read_context_menu_pixels(
     for row in 0..height as usize {
         let source_start = row * bytes_per_row as usize;
         let target_start = row * unpadded_bytes_per_row as usize;
-        pixels[target_start..target_start + unpadded_bytes_per_row as usize].copy_from_slice(
-            &mapped[source_start..source_start + unpadded_bytes_per_row as usize],
-        );
+        pixels[target_start..target_start + unpadded_bytes_per_row as usize]
+            .copy_from_slice(&mapped[source_start..source_start + unpadded_bytes_per_row as usize]);
     }
     drop(mapped);
     readback.unmap();
@@ -839,8 +862,8 @@ fn assert_context_menu_pixel_near(actual: [u8; 4], expected: [u8; 4], label: &st
 #[cfg(feature = "wgpu")]
 #[test]
 fn retained_context_menu_hover_updates_only_its_rows_layer() {
-    use aimer_cupid::renderer::Renderer;
     use aimer_cupid::WgpuBackend;
+    use aimer_cupid::renderer::Renderer;
     use aimer_events::pointer::{PointerButton, PointerInfo};
 
     let _serial = VIRTUALIZED_RENDER_TEST_LOCK
@@ -886,7 +909,10 @@ fn retained_context_menu_hover_updates_only_its_rows_layer() {
             .style(style)
             .barrier_color(Color::Rgba(0, 0, 0, 64))
             .at(Vec2d { x: 48.0, y: 40.0 })
-            .items(vec![ContextMenuItem::new("Copy"), ContextMenuItem::new("Paste")])
+            .items(vec![
+                ContextMenuItem::new("Copy"),
+                ContextMenuItem::new("Paste"),
+            ])
             .animation(
                 ModalAnimation::new()
                     .enter_duration(Duration::ZERO)
@@ -944,7 +970,8 @@ fn retained_context_menu_hover_updates_only_its_rows_layer() {
         let mut renderer = Renderer::new(&backend, FORMAT);
         renderer.render_packet(&backend, &view, &first_packet, false);
         let initial_pixels = read_context_menu_pixels(&device, &queue, &target, width, height);
-        let initial_first_row = context_menu_pixel(&initial_pixels, width, probe_x, first_row_y, scale);
+        let initial_first_row =
+            context_menu_pixel(&initial_pixels, width, probe_x, first_row_y, scale);
         let initial_outside_rows = context_menu_pixel(
             &initial_pixels,
             width,
@@ -968,12 +995,18 @@ fn retained_context_menu_hover_updates_only_its_rows_layer() {
                 PointerButton::Primary,
             )),
         );
-        assert!(app.window.take_redraw_request(), "row hover schedules a frame");
+        assert!(
+            app.window.take_redraw_request(),
+            "row hover schedules a frame"
+        );
         let rebuild_before_first_hover = aimer_widget::rebuild_invalidation_generation();
         let layout_before_first_hover = aimer_widget::layout_invalidation_generation();
         let (_, first_hover_packet) = direct_headless_frame_packet(&mut app);
         let first_hover_plan = first_hover_packet.render_plan().unwrap();
-        assert_eq!(first_hover_plan.local_v2_revision(panel_node), Some(panel_revision));
+        assert_eq!(
+            first_hover_plan.local_v2_revision(panel_node),
+            Some(panel_revision)
+        );
         assert_eq!(first_hover_plan.local_v2_revision(rows_node), None);
         for (index, (row_node, _, revision)) in row_nodes.iter().enumerate() {
             assert_eq!(
@@ -992,14 +1025,18 @@ fn retained_context_menu_hover_updates_only_its_rows_layer() {
                 "hover damage was promoted to full: {:?}",
                 first_hover_damage.regions()
             );
-            assert!(first_hover_damage.regions().iter().all(|region| {
-                region.x as f32 >= rows_bounds.x * scale - 1.0
-                    && region.y as f32 >= rows_bounds.y * scale - 1.0
-                    && (region.x + region.width) as f32
-                        <= (rows_bounds.x + rows_bounds.width) * scale + 1.0
-                    && (region.y + region.height) as f32
-                        <= (rows_bounds.y + rows_bounds.height) * scale + 1.0
-            }), "hover damage escaped the rows bounds: {:?}", first_hover_damage.regions());
+            assert!(
+                first_hover_damage.regions().iter().all(|region| {
+                    region.x as f32 >= rows_bounds.x * scale - 1.0
+                        && region.y as f32 >= rows_bounds.y * scale - 1.0
+                        && (region.x + region.width) as f32
+                            <= (rows_bounds.x + rows_bounds.width) * scale + 1.0
+                        && (region.y + region.height) as f32
+                            <= (rows_bounds.y + rows_bounds.height) * scale + 1.0
+                }),
+                "hover damage escaped the rows bounds: {:?}",
+                first_hover_damage.regions()
+            );
         }
         renderer.render_packet(&backend, &view, &first_hover_packet, false);
         let first_hover_pixels = read_context_menu_pixels(&device, &queue, &target, width, height);
@@ -1038,12 +1075,18 @@ fn retained_context_menu_hover_updates_only_its_rows_layer() {
                 PointerButton::Primary,
             )),
         );
-        assert!(app.window.take_redraw_request(), "moving the hover schedules a frame");
+        assert!(
+            app.window.take_redraw_request(),
+            "moving the hover schedules a frame"
+        );
         let rebuild_before_second_hover = aimer_widget::rebuild_invalidation_generation();
         let layout_before_second_hover = aimer_widget::layout_invalidation_generation();
         let (_, second_hover_packet) = direct_headless_frame_packet(&mut app);
         let second_hover_plan = second_hover_packet.render_plan().unwrap();
-        assert_eq!(second_hover_plan.local_v2_revision(panel_node), Some(panel_revision));
+        assert_eq!(
+            second_hover_plan.local_v2_revision(panel_node),
+            Some(panel_revision)
+        );
         assert_eq!(second_hover_plan.local_v2_revision(rows_node), None);
         for (index, (row_node, _, revision)) in row_nodes.iter().enumerate() {
             assert_eq!(
@@ -1058,14 +1101,18 @@ fn retained_context_menu_hover_updates_only_its_rows_layer() {
             || layout_before_second_hover != aimer_widget::layout_invalidation_generation();
         if !concurrent_second_hover_invalidation {
             assert!(!second_hover_damage.is_full());
-            assert!(second_hover_damage.regions().iter().all(|region| {
-                region.x as f32 >= rows_bounds.x * scale - 1.0
-                    && region.y as f32 >= rows_bounds.y * scale - 1.0
-                    && (region.x + region.width) as f32
-                        <= (rows_bounds.x + rows_bounds.width) * scale + 1.0
-                    && (region.y + region.height) as f32
-                        <= (rows_bounds.y + rows_bounds.height) * scale + 1.0
-            }), "row-transfer damage escaped the rows bounds: {:?}", second_hover_damage.regions());
+            assert!(
+                second_hover_damage.regions().iter().all(|region| {
+                    region.x as f32 >= rows_bounds.x * scale - 1.0
+                        && region.y as f32 >= rows_bounds.y * scale - 1.0
+                        && (region.x + region.width) as f32
+                            <= (rows_bounds.x + rows_bounds.width) * scale + 1.0
+                        && (region.y + region.height) as f32
+                            <= (rows_bounds.y + rows_bounds.height) * scale + 1.0
+                }),
+                "row-transfer damage escaped the rows bounds: {:?}",
+                second_hover_damage.regions()
+            );
         }
         renderer.render_packet(&backend, &view, &second_hover_packet, false);
         let second_hover_pixels = read_context_menu_pixels(&device, &queue, &target, width, height);
@@ -1096,9 +1143,9 @@ fn retained_context_menu_hover_updates_only_its_rows_layer() {
 #[cfg(feature = "wgpu")]
 #[test]
 fn replacing_a_retained_context_menu_clears_its_old_shadow_and_panel_pixels() {
+    use aimer_cupid::WgpuBackend;
     use aimer_cupid::draw_cmd_v2::{DrawCommand as V2DrawCommand, Rect, RenderOp};
     use aimer_cupid::renderer::Renderer;
-    use aimer_cupid::WgpuBackend;
 
     let _serial = VIRTUALIZED_RENDER_TEST_LOCK
         .lock()
@@ -1156,10 +1203,14 @@ fn replacing_a_retained_context_menu_clears_its_old_shadow_and_panel_pixels() {
             .iter()
             .find_map(|operation| match operation {
                 RenderOp::Draw(item) if item.element == first_panel_node => {
-                    let rect = item.snapshot().commands.iter().find_map(|command| match command {
-                        V2DrawCommand::FillRect { rect, .. } => Some(*rect),
-                        _ => None,
-                    })?;
+                    let rect =
+                        item.snapshot()
+                            .commands
+                            .iter()
+                            .find_map(|command| match command {
+                                V2DrawCommand::FillRect { rect, .. } => Some(*rect),
+                                _ => None,
+                            })?;
                     Some((item.origin, item.transform, rect))
                 }
                 _ => None,
@@ -1172,10 +1223,8 @@ fn replacing_a_retained_context_menu_clears_its_old_shadow_and_panel_pixels() {
             );
             (x, y)
         };
-        let old_fill_point = panel_point(
-            first_geometry.2.width - 6.0,
-            first_geometry.2.height * 0.5,
-        );
+        let old_fill_point =
+            panel_point(first_geometry.2.width - 6.0, first_geometry.2.height * 0.5);
         let old_shadow_point = panel_point(
             first_geometry.2.width * 0.5,
             first_geometry.2.height + 4.0 / scale,
@@ -1199,20 +1248,48 @@ fn replacing_a_retained_context_menu_clears_its_old_shadow_and_panel_pixels() {
         let mut renderer = Renderer::new(&backend, FORMAT);
         renderer.render_packet(&backend, &view, &first_packet, false);
         let first_pixels = read_context_menu_pixels(&device, &queue, &target, width, height);
-        assert!(context_menu_pixel(&first_pixels, width, old_fill_point.0, old_fill_point.1, scale)[3] > 240);
-        assert!(context_menu_pixel(&first_pixels, width, old_shadow_point.0, old_shadow_point.1, scale)[3] > 0);
+        assert!(
+            context_menu_pixel(
+                &first_pixels,
+                width,
+                old_fill_point.0,
+                old_fill_point.1,
+                scale
+            )[3] > 240
+        );
+        assert!(
+            context_menu_pixel(
+                &first_pixels,
+                width,
+                old_shadow_point.0,
+                old_shadow_point.1,
+                scale
+            )[3] > 0
+        );
 
         assert!(first_handle.dismiss());
         let (_, close_packet) = direct_headless_frame_packet(&mut app);
         renderer.render_packet(&backend, &view, &close_packet, false);
         let closed_pixels = read_context_menu_pixels(&device, &queue, &target, width, height);
         assert_eq!(
-            context_menu_pixel(&closed_pixels, width, old_fill_point.0, old_fill_point.1, scale),
+            context_menu_pixel(
+                &closed_pixels,
+                width,
+                old_fill_point.0,
+                old_fill_point.1,
+                scale
+            ),
             [0, 0, 0, 0],
             "dismissal clears the old panel at scale {scale}"
         );
         assert_eq!(
-            context_menu_pixel(&closed_pixels, width, old_shadow_point.0, old_shadow_point.1, scale),
+            context_menu_pixel(
+                &closed_pixels,
+                width,
+                old_shadow_point.0,
+                old_shadow_point.1,
+                scale
+            ),
             [0, 0, 0, 0],
             "dismissal clears the old shadow at scale {scale}"
         );
@@ -1239,10 +1316,14 @@ fn replacing_a_retained_context_menu_clears_its_old_shadow_and_panel_pixels() {
             .iter()
             .find_map(|operation| match operation {
                 RenderOp::Draw(item) if item.element == second_panel_node => {
-                    let rect = item.snapshot().commands.iter().find_map(|command| match command {
-                        V2DrawCommand::FillRect { rect, .. } => Some(*rect),
-                        _ => None,
-                    })?;
+                    let rect =
+                        item.snapshot()
+                            .commands
+                            .iter()
+                            .find_map(|command| match command {
+                                V2DrawCommand::FillRect { rect, .. } => Some(*rect),
+                                _ => None,
+                            })?;
                     Some((item.origin, item.transform, rect))
                 }
                 _ => None,
@@ -1260,12 +1341,24 @@ fn replacing_a_retained_context_menu_clears_its_old_shadow_and_panel_pixels() {
             "replacement panel fill",
         );
         assert_eq!(
-            context_menu_pixel(&second_pixels, width, old_fill_point.0, old_fill_point.1, scale),
+            context_menu_pixel(
+                &second_pixels,
+                width,
+                old_fill_point.0,
+                old_fill_point.1,
+                scale
+            ),
             [0, 0, 0, 0],
             "the replaced menu leaves its previous panel area clear at scale {scale}"
         );
         assert_eq!(
-            context_menu_pixel(&second_pixels, width, old_shadow_point.0, old_shadow_point.1, scale),
+            context_menu_pixel(
+                &second_pixels,
+                width,
+                old_shadow_point.0,
+                old_shadow_point.1,
+                scale
+            ),
             [0, 0, 0, 0],
             "the replaced menu leaves its previous shadow area clear at scale {scale}"
         );
@@ -1275,9 +1368,9 @@ fn replacing_a_retained_context_menu_clears_its_old_shadow_and_panel_pixels() {
 #[cfg(feature = "wgpu")]
 #[test]
 fn retained_pill_menu_records_separator_and_hover_pixels_at_one_and_two_x() {
+    use aimer_cupid::WgpuBackend;
     use aimer_cupid::draw_cmd_v2::{DrawCommand as V2DrawCommand, RenderOp};
     use aimer_cupid::renderer::Renderer;
-    use aimer_cupid::WgpuBackend;
 
     let _serial = VIRTUALIZED_RENDER_TEST_LOCK
         .lock()
@@ -1424,12 +1517,18 @@ fn retained_pill_menu_records_separator_and_hover_pixels_at_one_and_two_x() {
                 aimer_events::pointer::PointerButton::Primary,
             )),
         );
-        assert!(app.window.take_redraw_request(), "pill-row hover schedules a frame");
+        assert!(
+            app.window.take_redraw_request(),
+            "pill-row hover schedules a frame"
+        );
         let rebuild_before_hover = aimer_widget::rebuild_invalidation_generation();
         let layout_before_hover = aimer_widget::layout_invalidation_generation();
         let (_, hover_packet) = direct_headless_frame_packet(&mut app);
         let hover_plan = hover_packet.render_plan().unwrap();
-        assert_eq!(hover_plan.local_v2_revision(panel_node), Some(panel_revision));
+        assert_eq!(
+            hover_plan.local_v2_revision(panel_node),
+            Some(panel_revision)
+        );
         assert_eq!(hover_plan.local_v2_revision(rows_node), None);
         assert_eq!(
             hover_plan.local_v2_revision(row_nodes[0].0),
@@ -1453,25 +1552,23 @@ fn retained_pill_menu_records_separator_and_hover_pixels_at_one_and_two_x() {
             let damage = hover_packet.metadata().damage();
             assert!(!damage.is_full());
             let bounds = row_nodes[0].1;
-            assert!(damage.regions().iter().all(|region| {
-                region.x as f32 >= bounds.x * scale - 1.0
-                    && region.y as f32 >= bounds.y * scale - 1.0
-                    && (region.x + region.width) as f32
-                        <= (bounds.x + bounds.width) * scale + 1.0
-                    && (region.y + region.height) as f32
-                        <= (bounds.y + bounds.height) * scale + 1.0
-            }), "first pill hover escaped its row bounds: {:?}", damage.regions());
+            assert!(
+                damage.regions().iter().all(|region| {
+                    region.x as f32 >= bounds.x * scale - 1.0
+                        && region.y as f32 >= bounds.y * scale - 1.0
+                        && (region.x + region.width) as f32
+                            <= (bounds.x + bounds.width) * scale + 1.0
+                        && (region.y + region.height) as f32
+                            <= (bounds.y + bounds.height) * scale + 1.0
+                }),
+                "first pill hover escaped its row bounds: {:?}",
+                damage.regions()
+            );
         }
         renderer.render_packet(&backend, &view, &hover_packet, false);
         let hovered_pixels = read_context_menu_pixels(&device, &queue, &target, width, height);
         assert_context_menu_pixel_near(
-            context_menu_pixel(
-                &hovered_pixels,
-                width,
-                first_row.x,
-                first_row.y,
-                scale,
-            ),
+            context_menu_pixel(&hovered_pixels, width, first_row.x, first_row.y, scale),
             [20, 220, 40, 255],
             "pill first-row hover",
         );
@@ -1494,12 +1591,18 @@ fn retained_pill_menu_records_separator_and_hover_pixels_at_one_and_two_x() {
                 aimer_events::pointer::PointerButton::Primary,
             )),
         );
-        assert!(app.window.take_redraw_request(), "moving pill hover schedules a frame");
+        assert!(
+            app.window.take_redraw_request(),
+            "moving pill hover schedules a frame"
+        );
         let rebuild_before_transfer = aimer_widget::rebuild_invalidation_generation();
         let layout_before_transfer = aimer_widget::layout_invalidation_generation();
         let (_, transfer_packet) = direct_headless_frame_packet(&mut app);
         let transfer_plan = transfer_packet.render_plan().unwrap();
-        assert_eq!(transfer_plan.local_v2_revision(panel_node), Some(panel_revision));
+        assert_eq!(
+            transfer_plan.local_v2_revision(panel_node),
+            Some(panel_revision)
+        );
         assert_eq!(transfer_plan.local_v2_revision(rows_node), None);
         assert_eq!(
             transfer_plan.local_v2_revision(row_nodes[0].0),
@@ -1526,12 +1629,16 @@ fn retained_pill_menu_records_separator_and_hover_pixels_at_one_and_two_x() {
             let top = row_nodes[0].1.y;
             let right = row_nodes[1].1.x + row_nodes[1].1.width;
             let bottom = row_nodes[1].1.y + row_nodes[1].1.height;
-            assert!(damage.regions().iter().all(|region| {
-                region.x as f32 >= left * scale - 1.0
-                    && region.y as f32 >= top * scale - 1.0
-                    && (region.x + region.width) as f32 <= right * scale + 1.0
-                    && (region.y + region.height) as f32 <= bottom * scale + 1.0
-            }), "pill hover-transfer damage escaped the old/new rows: {:?}", damage.regions());
+            assert!(
+                damage.regions().iter().all(|region| {
+                    region.x as f32 >= left * scale - 1.0
+                        && region.y as f32 >= top * scale - 1.0
+                        && (region.x + region.width) as f32 <= right * scale + 1.0
+                        && (region.y + region.height) as f32 <= bottom * scale + 1.0
+                }),
+                "pill hover-transfer damage escaped the old/new rows: {:?}",
+                damage.regions()
+            );
         }
         renderer.render_packet(&backend, &view, &transfer_packet, false);
         let transfer_pixels = read_context_menu_pixels(&device, &queue, &target, width, height);

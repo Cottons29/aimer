@@ -3,10 +3,12 @@ use std::time::Duration;
 use aimer::Dimension::Percent;
 use aimer::animation::{AnimatedSwitcher, Curve};
 use aimer::provider::media_query::MediaQuery;
-use aimer::style::{FontWeight, LayoutSpacing, Spacing, TextDecoration, TextStyle, Theme, ThemeData};
+use aimer::style::{
+    FontWeight, LayoutSpacing, Spacing, TextDecoration, TextStyle, Theme, ThemeData,
+};
 use aimer::{
-    AnyWidget, AssetImage, BoxAlignment, BuildContext, Column, Container, Dimension, Row,
-    SizedBox, State, StateUpdater, StatefulWidget, Text, TextButton, Widget, widget,
+    AnyWidget, AssetImage, BoxAlignment, BuildContext, Column, Container, Dimension, Row, SizedBox,
+    State, StateUpdater, StatefulWidget, Text, TextButton, Widget, widget,
 };
 
 #[widget(Stateful)]
@@ -85,19 +87,25 @@ impl State<TestFadingAnimation> for SameLookingSectionState {
                                 ),
                             )
                             .boxed(),
-                        SizedBox::new().height(24).boxed(),
+                        SizedBox::new()
+                            .height(24)
+                            .boxed(),
                         Container::new()
                             .height(if is_mobile(ctx) { 250 } else { 450 })
                             .child(platform_image_switcher(self.current_index))
                             .boxed(),
-                        SizedBox::new().height(40).boxed(),
+                        SizedBox::new()
+                            .height(40)
+                            .boxed(),
                         Row::new()
                             .horizontal_alignment(BoxAlignment::Center)
                             .vertical_alignment(BoxAlignment::Center)
                             .gaps(LayoutSpacing::horizontal(Spacing::Px(8)))
                             .children(self.build_platform_button_list(app_theme))
                             .boxed(),
-                        SizedBox::new().height(40).boxed(),
+                        SizedBox::new()
+                            .height(40)
+                            .boxed(),
                     ]),
             )
     }
@@ -142,7 +150,9 @@ impl SameLookingSectionState {
                                 .color(if is_selected {
                                     app_theme.primary_color
                                 } else {
-                                    app_theme.primary_color.lighten(0.22)
+                                    app_theme
+                                        .primary_color
+                                        .lighten(0.22)
                                 })
                                 .font_weight(font_weight)
                                 .text_decoration(TextDecoration::Underline),
@@ -151,7 +161,11 @@ impl SameLookingSectionState {
                             let updater = updater;
                             move || {
                                 println!("animation demo: tab {index} pressed");
-                                if updater.read_state().current_index != index {
+                                if updater
+                                    .read_state()
+                                    .current_index
+                                    != index
+                                {
                                     updater.set_state(move |s| s.current_index = index);
                                 }
                             }

@@ -96,11 +96,13 @@ impl RenderNode {
             parent.transform
         };
 
-        let mut own_clip = ClipState::Unclipped;
-        if let Some(local_clip) = self.clip {
-            own_clip = own_clip.intersect(transform_rect(transform, local_clip.translated(x, y)));
+        // The clip stored on an escaping node comes from its parent geometry.
+        // Drop it together with inherited clips; descendants keep their own clips.
+        let mut clip = if self.escapes_clip { ClipState::Unclipped } else { parent.clip };
+        if !self.escapes_clip && let Some(local_clip) = self.clip {
+            clip = clip.intersect(transform_rect(transform, local_clip.translated(x, y)));
         }
-        if let Some(local_clip) = self.animation_clip {
+        if !self.escapes_clip && let Some(local_clip) = self.animation_clip {
             // An animation clip is placed before the animation's own transform.
             let before_animation = if presents {
                 parent.transform.mul(
@@ -111,16 +113,17 @@ impl RenderNode {
             } else {
                 parent.transform
             };
-            own_clip = own_clip.intersect(transform_rect(
+            let world_clip = transform_rect(
                 before_animation,
                 local_clip.translated(x, y),
-            ));
+            );
+            clip = clip.intersect(world_clip);
         }
 
         WorldFrame {
             origin: (x, y),
             transform,
-            clip: parent.clip.intersect_state(own_clip),
+            clip,
         }
     }
 }
@@ -265,9 +268,9 @@ impl DrawCommandList {
         let node = self.node(id)?;
         let parent = self.frame_below(node.parent)?;
 
-        // Every descendant is clipped by the clip this node hands down, so the
-        // footprint can never exceed it. When the node's own visible bounds
-        // already fill that clip, the footprint is bracketed from both sides
+        // When no node escapes clipping, descendants stay inside the clip this
+        // node hands down. When its own visible bounds already fill that clip,
+        // the footprint is bracketed from both sides
         // and equals the clip without visiting a single descendant. A
         // scrollable's content node is exactly this case on every frame it
         // moves: it is taller than the viewport it is clipped to, and its
@@ -275,6 +278,7 @@ impl DrawCommandList {
         // viewport rectangle.
         let world = node.world(&parent);
         if let ClipState::Clipped(clip) = world.frame.clip
+            && self.clip_escape_count == 0
             && let Some(bounds) = world.bounds
             && bounds.intersection(clip) == Some(clip)
         {
@@ -294,6 +298,7 @@ impl DrawCommandList {
         let parent = self.frame_below(node.parent)?;
         let world = node.world(&parent);
         if let ClipState::Clipped(clip) = world.frame.clip
+            && self.clip_escape_count == 0
             && let Some(bounds) = world.bounds
             && bounds.intersection(clip) == Some(clip)
         {

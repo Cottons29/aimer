@@ -282,10 +282,7 @@ impl<'a> StateBundleView<'a> {
 
     #[cfg(feature = "wasm-hot-reload")]
     #[inline]
-    pub(crate) const fn from_validated(
-        bytes: &'a [u8],
-        validated: ValidatedStateBundle,
-    ) -> Self {
+    pub(crate) const fn from_validated(bytes: &'a [u8], validated: ValidatedStateBundle) -> Self {
         Self {
             bytes,
             entry_count: validated.entry_count,

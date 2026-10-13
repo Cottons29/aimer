@@ -349,10 +349,7 @@ impl GuestDiagnostic {
     }
 
     /// Encodes this diagnostic under a negotiated finite output ceiling.
-    pub fn encode_with_limit(
-        &self,
-        maximum: usize,
-    ) -> Result<Vec<u8>, GuestDiagnosticEncodeError> {
+    pub fn encode_with_limit(&self, maximum: usize) -> Result<Vec<u8>, GuestDiagnosticEncodeError> {
         if maximum == 0 || maximum > MAX_GUEST_DIAGNOSTIC_BYTES {
             return Err(GuestDiagnosticEncodeError::InvalidLimit { maximum });
         }
@@ -447,10 +444,7 @@ impl GuestDiagnostic {
     }
 
     /// Decodes one canonical diagnostic under a negotiated finite ceiling.
-    pub fn decode(
-        bytes: &[u8],
-        maximum: usize,
-    ) -> Result<Self, GuestDiagnosticDecodeError> {
+    pub fn decode(bytes: &[u8], maximum: usize) -> Result<Self, GuestDiagnosticDecodeError> {
         if maximum > MAX_GUEST_DIAGNOSTIC_BYTES || maximum == 0 {
             return Err(GuestDiagnosticDecodeError::InvalidLimit { maximum });
         }
@@ -513,14 +507,20 @@ impl GuestDiagnostic {
             return Err(GuestDiagnosticDecodeError::Malformed);
         };
         let widget = if flags & WIDGET_FLAG != 0 {
-            Some(decode_text(take(bytes, &mut cursor, widget_len)?, "widget")?)
+            Some(decode_text(
+                take(bytes, &mut cursor, widget_len)?,
+                "widget",
+            )?)
         } else if widget_len == 0 {
             None
         } else {
             return Err(GuestDiagnosticDecodeError::Malformed);
         };
         let property = if flags & PROPERTY_FLAG != 0 {
-            Some(decode_text(take(bytes, &mut cursor, property_len)?, "property")?)
+            Some(decode_text(
+                take(bytes, &mut cursor, property_len)?,
+                "property",
+            )?)
         } else if property_len == 0 {
             None
         } else {
@@ -546,7 +546,12 @@ impl GuestDiagnostic {
 
 impl fmt::Display for GuestDiagnostic {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{}: {}", self.operation.name(), self.category.name())?;
+        write!(
+            formatter,
+            "{}: {}",
+            self.operation.name(),
+            self.category.name()
+        )?;
         if let Some(widget) = &self.widget {
             write!(formatter, " {widget}")?;
         }
@@ -595,13 +600,18 @@ impl fmt::Display for GuestDiagnosticEncodeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidLimit { maximum } => {
-                write!(formatter, "diagnostic limit {maximum} is outside the ABI bound")
+                write!(
+                    formatter,
+                    "diagnostic limit {maximum} is outside the ABI bound"
+                )
             }
             Self::FieldTooLong { field, actual } => {
                 write!(formatter, "diagnostic {field} field has {actual} bytes")
             }
             Self::InvalidText { field } => write!(formatter, "diagnostic {field} is not UTF-8"),
-            Self::IncompleteLimits => formatter.write_str("diagnostic resource limits are incomplete"),
+            Self::IncompleteLimits => {
+                formatter.write_str("diagnostic resource limits are incomplete")
+            }
             Self::TooLong { maximum, actual } => write!(
                 formatter,
                 "diagnostic has {actual} bytes but the negotiated maximum is {maximum}"
@@ -637,7 +647,10 @@ impl fmt::Display for GuestDiagnosticDecodeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidLimit { maximum } => {
-                write!(formatter, "diagnostic limit {maximum} is outside the ABI bound")
+                write!(
+                    formatter,
+                    "diagnostic limit {maximum} is outside the ABI bound"
+                )
             }
             Self::LimitExceeded { maximum, actual } => write!(
                 formatter,
@@ -661,16 +674,21 @@ impl fmt::Display for GuestDiagnosticDecodeError {
 
 impl Error for GuestDiagnosticDecodeError {}
 
-fn take<'a>(bytes: &'a [u8], cursor: &mut usize, length: usize) -> Result<&'a [u8], GuestDiagnosticDecodeError> {
+fn take<'a>(
+    bytes: &'a [u8],
+    cursor: &mut usize,
+    length: usize,
+) -> Result<&'a [u8], GuestDiagnosticDecodeError> {
     let end = cursor
         .checked_add(length)
         .ok_or(GuestDiagnosticDecodeError::Malformed)?;
-    let value = bytes.get(*cursor..end).ok_or(GuestDiagnosticDecodeError::Malformed)?;
+    let value = bytes
+        .get(*cursor..end)
+        .ok_or(GuestDiagnosticDecodeError::Malformed)?;
     *cursor = end;
     Ok(value)
 }
 
 fn decode_text(bytes: &[u8], field: &'static str) -> Result<String, GuestDiagnosticDecodeError> {
-    String::from_utf8(bytes.to_vec())
-        .map_err(|_| GuestDiagnosticDecodeError::InvalidText { field })
+    String::from_utf8(bytes.to_vec()).map_err(|_| GuestDiagnosticDecodeError::InvalidText { field })
 }

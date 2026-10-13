@@ -14,8 +14,8 @@ use aimer_widget::{
     RequiredChild, VisitorElement, Widget,
 };
 
-use crate::animated_content::wrap_animated_content;
 use crate::ModalAnimation;
+use crate::animated_content::wrap_animated_content;
 use crate::host::{self, ModalHandle, ModalId, ModalTimeline};
 use crate::paint::{contains, overlay_child_context};
 
@@ -151,7 +151,9 @@ impl<W: Widget + 'static> Modal<W> {
             .to_element(ctx);
         let barrier = wrap_animated_content(
             barrier,
-            (self.barrier_color.to_rgba().3 != 0).then_some(self.animation).flatten(),
+            (self.barrier_color.to_rgba().3 != 0)
+                .then_some(self.animation)
+                .flatten(),
             timeline.clone(),
             false,
         );
@@ -380,10 +382,7 @@ impl VisitorElement for RawModal {
         visitor(self.child.as_ref());
     }
 
-    fn visit_retained_v2_children<'a>(
-        &'a self,
-        visitor: &mut dyn FnMut(usize, &'a dyn Element),
-    ) {
+    fn visit_retained_v2_children<'a>(&'a self, visitor: &mut dyn FnMut(usize, &'a dyn Element)) {
         visitor(0, self.barrier.as_ref());
         visitor(1, self.child.as_ref());
     }

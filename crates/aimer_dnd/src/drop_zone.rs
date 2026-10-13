@@ -42,11 +42,11 @@ use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use aimer_widget::InteractionBounds;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use aimer_events::pointer::{FILE_DRAG_POINTER_ID, PointerSource};
+use aimer_widget::InteractionBounds;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
     AnyElement, AnyWidget, Drawable, Element, EventElement, EventResult, EventTreeRole,
@@ -363,7 +363,10 @@ impl RawDropZone {
     /// for and silently leaves the rest, so a batch is worth highlighting for as
     /// long as one file in it would be kept.
     fn take_batch(&self, paths: &[PathBuf]) -> EventResult {
-        let mut wanted = paths.iter().filter(|path| self.logic.accepts(path)).peekable();
+        let mut wanted = paths
+            .iter()
+            .filter(|path| self.logic.accepts(path))
+            .peekable();
         if wanted.peek().is_none() {
             return EventResult::ignored();
         }
@@ -404,9 +407,7 @@ impl EventElement for RawDropZone {
 
     fn on_event(&self, event: &ElementEvent) -> EventResult {
         match event {
-            ElementEvent::HoveredFile { path, .. } => {
-                self.take_batch(std::slice::from_ref(path))
-            }
+            ElementEvent::HoveredFile { path, .. } => self.take_batch(std::slice::from_ref(path)),
 
             ElementEvent::HoveredFileMoved { paths, .. } => self.take_batch(paths),
 
@@ -495,7 +496,9 @@ impl Drawable for RawDropZone {
     }
 
     #[inline]
-    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+    fn retained_v2_interaction_disagreement(
+        &self,
+    ) -> Option<aimer_widget::InteractionDisagreement> {
         self.bounds.disagreement("DropZone")
     }
 
@@ -514,7 +517,6 @@ impl Drawable for RawDropZone {
             .save(ctx.scale, abs_x, abs_y, size.width, size.height);
         self.child.sync_paint_geometry(ctx);
     }
-
 }
 
 impl Rebuildable for RawDropZone {}

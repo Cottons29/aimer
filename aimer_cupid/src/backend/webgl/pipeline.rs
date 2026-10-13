@@ -7,11 +7,10 @@ use web_sys::{
 };
 
 use crate::backend::{
-    BackendError, BindingType, BindGroupLayoutEntry, BlendFactor, BlendOperation, ColorWriteMask,
+    BackendError, BindGroupLayoutEntry, BindingType, BlendFactor, BlendOperation, ColorWriteMask,
     CompareFunction, DepthBiasState, Face, FrontFace, GpuRenderPass, IndexFormat, LoadOp,
-    PolygonMode, PrimitiveState, PrimitiveTopology, RenderPassDescriptor,
-    RenderPipelineDescriptor, StencilOperation, StencilState, VertexAttribute, VertexFormat,
-    VertexStepMode,
+    PolygonMode, PrimitiveState, PrimitiveTopology, RenderPassDescriptor, RenderPipelineDescriptor,
+    StencilOperation, StencilState, VertexAttribute, VertexFormat, VertexStepMode,
 };
 
 use super::{WebGl2Backend, WebGl2Shared};
@@ -120,7 +119,6 @@ impl WebGl2TextureView {
             ),
         }
     }
-
 }
 
 #[derive(Clone)]
@@ -169,7 +167,11 @@ pub(super) struct WebGl2PipelineLayoutInner {
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) enum ShaderResource {
-    UniformBlock { group: u32, binding: u32, name: String },
+    UniformBlock {
+        group: u32,
+        binding: u32,
+        name: String,
+    },
     Sampler {
         texture_group: u32,
         texture_binding: u32,
@@ -177,7 +179,11 @@ pub(super) enum ShaderResource {
         sampler_binding: u32,
         name: String,
     },
-    Texture { group: u32, binding: u32, name: String },
+    Texture {
+        group: u32,
+        binding: u32,
+        name: String,
+    },
 }
 
 pub struct WebGl2ShaderModule(pub(super) Rc<WebGl2ShaderModuleInner>);
@@ -287,16 +293,23 @@ impl WebGl2ShaderModule {
         source: &[u8],
         label: &str,
     ) -> Result<Self, BackendError> {
-        let source = std::str::from_utf8(source).map_err(|error| backend_error(
-            "create_shader_module",
-            format!("{label} is not UTF-8 GLSL package data: {error}"),
-        ))?;
+        let source = std::str::from_utf8(source).map_err(|error| {
+            backend_error(
+                "create_shader_module",
+                format!("{label} is not UTF-8 GLSL package data: {error}"),
+            )
+        })?;
         let (vertex_source, fragment_source, resources) = parse_shader_package(source)
             .map_err(|error| backend_error("create_shader_module", format!("{label}: {error}")))?;
         let vertex = if vertex_source.is_empty() {
             None
         } else {
-            Some(compile_shader(shared, Gl::VERTEX_SHADER, vertex_source, label)?)
+            Some(compile_shader(
+                shared,
+                Gl::VERTEX_SHADER,
+                vertex_source,
+                label,
+            )?)
         };
         let fragment = if fragment_source.is_empty() {
             None
@@ -344,24 +357,45 @@ fn parse_shader_package(source: &str) -> Result<(&str, &str, Vec<ShaderResource>
         let parts: Vec<_> = line.split_whitespace().collect();
         let resource = match parts.as_slice() {
             ["UBO", group, binding, name] => ShaderResource::UniformBlock {
-                group: group.parse().map_err(|_| format!("invalid UBO group in `{line}`"))?,
-                binding: binding.parse().map_err(|_| format!("invalid UBO binding in `{line}`"))?,
+                group: group
+                    .parse()
+                    .map_err(|_| format!("invalid UBO group in `{line}`"))?,
+                binding: binding
+                    .parse()
+                    .map_err(|_| format!("invalid UBO binding in `{line}`"))?,
                 name: (*name).to_owned(),
             },
             ["TEXTURE", group, binding, name] => ShaderResource::Texture {
-                group: group.parse().map_err(|_| format!("invalid texture group in `{line}`"))?,
-                binding: binding.parse().map_err(|_| format!("invalid texture binding in `{line}`"))?,
+                group: group
+                    .parse()
+                    .map_err(|_| format!("invalid texture group in `{line}`"))?,
+                binding: binding
+                    .parse()
+                    .map_err(|_| format!("invalid texture binding in `{line}`"))?,
                 name: (*name).to_owned(),
             },
-            ["SAMPLER", texture_group, texture_binding, sampler_group, sampler_binding, name] => {
-                ShaderResource::Sampler {
-                    texture_group: texture_group.parse().map_err(|_| format!("invalid texture group in `{line}`"))?,
-                    texture_binding: texture_binding.parse().map_err(|_| format!("invalid texture binding in `{line}`"))?,
-                    sampler_group: sampler_group.parse().map_err(|_| format!("invalid sampler group in `{line}`"))?,
-                    sampler_binding: sampler_binding.parse().map_err(|_| format!("invalid sampler binding in `{line}`"))?,
-                    name: (*name).to_owned(),
-                }
-            }
+            [
+                "SAMPLER",
+                texture_group,
+                texture_binding,
+                sampler_group,
+                sampler_binding,
+                name,
+            ] => ShaderResource::Sampler {
+                texture_group: texture_group
+                    .parse()
+                    .map_err(|_| format!("invalid texture group in `{line}`"))?,
+                texture_binding: texture_binding
+                    .parse()
+                    .map_err(|_| format!("invalid texture binding in `{line}`"))?,
+                sampler_group: sampler_group
+                    .parse()
+                    .map_err(|_| format!("invalid sampler group in `{line}`"))?,
+                sampler_binding: sampler_binding
+                    .parse()
+                    .map_err(|_| format!("invalid sampler binding in `{line}`"))?,
+                name: (*name).to_owned(),
+            },
             _ => return Err(format!("invalid GLSL resource metadata `{line}`")),
         };
         resources.push(resource);
@@ -376,7 +410,10 @@ fn compile_shader(
     label: &str,
 ) -> Result<WebGlShader, BackendError> {
     let shader = shared.gl.create_shader(stage).ok_or_else(|| {
-        backend_error("create_shader_module", format!("{label}: createShader returned null"))
+        backend_error(
+            "create_shader_module",
+            format!("{label}: createShader returned null"),
+        )
     })?;
     let source = webgl_shader_source(source);
     shared.gl.shader_source(&shader, &source);
@@ -389,10 +426,7 @@ fn compile_shader(
     if !compiled {
         let log = shared.gl.get_shader_info_log(&shader).unwrap_or_default();
         shared.gl.delete_shader(Some(&shader));
-        return Err(backend_error(
-            "compile_shader",
-            format!("{label}: {log}"),
-        ));
+        return Err(backend_error("compile_shader", format!("{label}: {log}")));
     }
     Ok(shader)
 }
@@ -406,7 +440,10 @@ fn webgl_shader_source(source: &str) -> String {
 }
 
 pub(super) fn backend_error(operation: &'static str, message: impl Into<String>) -> BackendError {
-    BackendError { operation, message: message.into() }
+    BackendError {
+        operation,
+        message: message.into(),
+    }
 }
 
 pub(super) fn create_render_pipeline(
@@ -445,16 +482,21 @@ pub(super) fn create_render_pipeline(
         ));
     }
     if desc.layout.is_some_and(|layout| {
-        layout.0.groups.iter().flat_map(|group| &group.0.entries).any(|entry| {
+        layout
+            .0
+            .groups
+            .iter()
+            .flat_map(|group| &group.0.entries)
+            .any(|entry| {
                 matches!(
                     &entry.ty,
-                BindingType::Buffer {
-                    ty: crate::backend::BufferBindingType::Storage
-                        | crate::backend::BufferBindingType::ReadOnlyStorage,
-                    ..
-                } | BindingType::StorageTexture { .. }
-            )
-        })
+                    BindingType::Buffer {
+                        ty: crate::backend::BufferBindingType::Storage
+                            | crate::backend::BufferBindingType::ReadOnlyStorage,
+                        ..
+                    } | BindingType::StorageTexture { .. }
+                )
+            })
     }) {
         return Err(backend_error(
             "create_render_pipeline",
@@ -463,14 +505,20 @@ pub(super) fn create_render_pipeline(
     }
 
     let vertex_shader = desc.vertex.module.0.vertex.as_ref().ok_or_else(|| {
-        backend_error("create_render_pipeline", "vertex module has no vertex stage")
+        backend_error(
+            "create_render_pipeline",
+            "vertex module has no vertex stage",
+        )
     })?;
     let fragment_shader = desc
         .fragment
         .as_ref()
         .map(|fragment| {
             fragment.module.0.fragment.as_ref().ok_or_else(|| {
-                backend_error("create_render_pipeline", "fragment module has no fragment stage")
+                backend_error(
+                    "create_render_pipeline",
+                    "fragment module has no fragment stage",
+                )
             })
         })
         .transpose()?;
@@ -505,7 +553,11 @@ pub(super) fn create_render_pipeline(
     {
         for resource in &module.resources {
             match resource {
-                ShaderResource::UniformBlock { group, binding, name } => {
+                ShaderResource::UniformBlock {
+                    group,
+                    binding,
+                    name,
+                } => {
                     let block_index = gl.get_uniform_block_index(&program, name);
                     if block_index != u32::MAX {
                         let binding_point = group
@@ -546,7 +598,11 @@ pub(super) fn create_render_pipeline(
                         name.clone(),
                     ));
                 }
-                ShaderResource::Texture { group, binding, name } => {
+                ShaderResource::Texture {
+                    group,
+                    binding,
+                    name,
+                } => {
                     texture_resources.insert((*group, *binding, name.clone()));
                 }
             }
@@ -556,8 +612,7 @@ pub(super) fn create_render_pipeline(
     let mut samplers = Vec::new();
     let mut textures = Vec::new();
     let mut next_unit = 0_u32;
-    for (texture_group, texture_binding, sampler_group, sampler_binding, name) in
-        sampler_resources
+    for (texture_group, texture_binding, sampler_group, sampler_binding, name) in sampler_resources
     {
         if next_unit >= shared.max_texture_units {
             gl.delete_program(Some(&program));
@@ -584,7 +639,10 @@ pub(super) fn create_render_pipeline(
         }
     }
     for (group, binding, name) in texture_resources {
-        if textures.iter().any(|texture| texture.group == group && texture.binding == binding) {
+        if textures
+            .iter()
+            .any(|texture| texture.group == group && texture.binding == binding)
+        {
             continue;
         }
         if next_unit >= shared.max_texture_units {
@@ -660,14 +718,20 @@ pub(super) fn begin_render_pass<'a>(
             "multiple color attachments are not supported by the WebGL2 adapter yet",
         ));
     }
-    if desc.color_attachments.iter().any(|attachment| attachment.resolve_target.is_some()) {
+    if desc
+        .color_attachments
+        .iter()
+        .any(|attachment| attachment.resolve_target.is_some())
+    {
         return Err(backend_error(
             "begin_render_pass",
             "resolve targets require multisampled render targets, which WebGL2 does not expose here",
         ));
     }
     let (framebuffer, extent) = framebuffer_for_pass(shared, desc)?;
-    shared.gl.bind_framebuffer(Gl::FRAMEBUFFER, framebuffer.as_ref());
+    shared
+        .gl
+        .bind_framebuffer(Gl::FRAMEBUFFER, framebuffer.as_ref());
     shared.gl.viewport(0, 0, extent.0 as i32, extent.1 as i32);
     shared.gl.disable(Gl::SCISSOR_TEST);
     shared.gl.color_mask(true, true, true, true);
@@ -724,7 +788,9 @@ pub(super) fn begin_render_pass<'a>(
     }
 
     let attachments = [
-        desc.color_attachments.first().map(|attachment| attachment.view.clone()),
+        desc.color_attachments
+            .first()
+            .map(|attachment| attachment.view.clone()),
         desc.depth_stencil_attachment
             .as_ref()
             .map(|attachment| attachment.view.clone()),
@@ -747,7 +813,9 @@ fn framebuffer_for_pass(
 ) -> Result<(Option<WebGlFramebuffer>, (u32, u32)), BackendError> {
     let mut extent = None;
     let mut has_surface = false;
-    let mut key = FramebufferKey { attachments: Vec::new() };
+    let mut key = FramebufferKey {
+        attachments: Vec::new(),
+    };
     let mut color_attachments = Vec::new();
     let mut attachment_views = Vec::new();
 
@@ -766,9 +834,10 @@ fn framebuffer_for_pass(
     if let Some(depth) = &desc.depth_stencil_attachment {
         let attachment_point = match &depth.view.0.target {
             WebGl2ViewTarget::Texture { texture, .. }
-                if texture.0.format == WebGl2TextureFormat::Depth24PlusStencil8 => {
-                    Gl::DEPTH_STENCIL_ATTACHMENT
-                }
+                if texture.0.format == WebGl2TextureFormat::Depth24PlusStencil8 =>
+            {
+                Gl::DEPTH_STENCIL_ATTACHMENT
+            }
             _ => Gl::DEPTH_ATTACHMENT,
         };
         append_attachment(
@@ -801,7 +870,9 @@ fn framebuffer_for_pass(
         let framebuffer = shared.gl.create_framebuffer().ok_or_else(|| {
             backend_error("create_framebuffer", "createFramebuffer returned null")
         })?;
-        shared.gl.bind_framebuffer(Gl::FRAMEBUFFER, Some(&framebuffer));
+        shared
+            .gl
+            .bind_framebuffer(Gl::FRAMEBUFFER, Some(&framebuffer));
         for (view, attachment) in attachment_views {
             attach_texture_view(shared, &framebuffer, &view, attachment);
         }
@@ -819,7 +890,10 @@ fn framebuffer_for_pass(
                 format!("framebuffer status {status:#x}"),
             ));
         }
-        shared.framebuffer_cache.borrow_mut().insert(key, framebuffer.clone());
+        shared
+            .framebuffer_cache
+            .borrow_mut()
+            .insert(key, framebuffer.clone());
         framebuffer
     };
     Ok((Some(framebuffer), extent))
@@ -846,7 +920,11 @@ fn append_attachment(
     }
     match &view.0.target {
         WebGl2ViewTarget::Surface(_) => *has_surface = true,
-        WebGl2ViewTarget::Texture { texture, level, layer } => {
+        WebGl2ViewTarget::Texture {
+            texture,
+            level,
+            layer,
+        } => {
             key.attachments.push((
                 attachment,
                 texture.0.id,
@@ -864,7 +942,12 @@ pub(super) fn framebuffer_for_view(
     view: &WebGl2TextureView,
     attachment: u32,
 ) -> Result<Option<WebGlFramebuffer>, BackendError> {
-    let WebGl2ViewTarget::Texture { texture, level, layer } = &view.0.target else {
+    let WebGl2ViewTarget::Texture {
+        texture,
+        level,
+        layer,
+    } = &view.0.target
+    else {
         return Ok(None);
     };
     let key = FramebufferKey {
@@ -878,10 +961,13 @@ pub(super) fn framebuffer_for_view(
     if let Some(framebuffer) = shared.framebuffer_cache.borrow().get(&key) {
         return Ok(Some(framebuffer.clone()));
     }
-    let framebuffer = shared.gl.create_framebuffer().ok_or_else(|| {
-        backend_error("create_framebuffer", "createFramebuffer returned null")
-    })?;
-    shared.gl.bind_framebuffer(Gl::FRAMEBUFFER, Some(&framebuffer));
+    let framebuffer = shared
+        .gl
+        .create_framebuffer()
+        .ok_or_else(|| backend_error("create_framebuffer", "createFramebuffer returned null"))?;
+    shared
+        .gl
+        .bind_framebuffer(Gl::FRAMEBUFFER, Some(&framebuffer));
     attach_texture_view(shared, &framebuffer, view, attachment);
     if attachment == Gl::COLOR_ATTACHMENT0 {
         set_draw_buffers(&shared.gl, &[Gl::COLOR_ATTACHMENT0]);
@@ -897,7 +983,10 @@ pub(super) fn framebuffer_for_view(
             format!("framebuffer status {status:#x}"),
         ));
     }
-    shared.framebuffer_cache.borrow_mut().insert(key, framebuffer.clone());
+    shared
+        .framebuffer_cache
+        .borrow_mut()
+        .insert(key, framebuffer.clone());
     Ok(Some(framebuffer))
 }
 
@@ -907,7 +996,12 @@ pub(super) fn attach_texture_view(
     view: &WebGl2TextureView,
     attachment: u32,
 ) {
-    let WebGl2ViewTarget::Texture { texture, level, layer } = &view.0.target else {
+    let WebGl2ViewTarget::Texture {
+        texture,
+        level,
+        layer,
+    } = &view.0.target
+    else {
         return;
     };
     if let Some(layer) = layer {
@@ -974,12 +1068,18 @@ impl GpuRenderPass<WebGl2Backend> for WebGl2RenderPass<'_> {
         bind_group: &WebGl2BindGroup,
         dynamic_offsets: &[u32],
     ) {
-        let pipeline = self.pipeline.as_ref().expect("WebGL2 bind group set before pipeline");
+        let pipeline = self
+            .pipeline
+            .as_ref()
+            .expect("WebGL2 bind group set before pipeline");
         let shared = &self.encoder.shared;
         let mut dynamic_index = 0;
         for entry in &bind_group.0.layout.0.entries {
             let dynamic_offset = match &entry.ty {
-                BindingType::Buffer { has_dynamic_offset: true, .. } => {
+                BindingType::Buffer {
+                    has_dynamic_offset: true,
+                    ..
+                } => {
                     let offset = *dynamic_offsets
                         .get(dynamic_index)
                         .expect("missing WebGL2 dynamic offset");
@@ -1028,14 +1128,15 @@ impl GpuRenderPass<WebGl2Backend> for WebGl2RenderPass<'_> {
                     }
                 }
                 WebGl2BoundResource::TextureView(view) => {
-                    if let Some(binding) = pipeline
-                        .0
-                        .textures
-                        .iter()
-                        .find(|binding| binding.group == index && binding.binding == entry.binding)
+                    if let Some(binding) =
+                        pipeline.0.textures.iter().find(|binding| {
+                            binding.group == index && binding.binding == entry.binding
+                        })
                     {
                         if let WebGl2ViewTarget::Texture { texture, .. } = &view.0.target {
-                            shared.gl.active_texture(Gl::TEXTURE0 + binding.texture_unit);
+                            shared
+                                .gl
+                                .active_texture(Gl::TEXTURE0 + binding.texture_unit);
                             shared
                                 .gl
                                 .bind_texture(texture.0.target, Some(&texture.0.object));
@@ -1061,12 +1162,19 @@ impl GpuRenderPass<WebGl2Backend> for WebGl2RenderPass<'_> {
                 }
             }
         }
-        assert_eq!(dynamic_index, dynamic_offsets.len(), "too many WebGL2 dynamic offsets");
+        assert_eq!(
+            dynamic_index,
+            dynamic_offsets.len(),
+            "too many WebGL2 dynamic offsets"
+        );
         shared.gl.active_texture(Gl::TEXTURE0);
     }
 
     fn set_vertex_buffer(&mut self, slot: u32, buffer: &WebGl2Buffer, offset: u64) {
-        let pipeline = self.pipeline.as_ref().expect("WebGL2 vertex buffer set before pipeline");
+        let pipeline = self
+            .pipeline
+            .as_ref()
+            .expect("WebGL2 vertex buffer set before pipeline");
         let Some(Some(_)) = pipeline.0.vertex_slots.get(slot as usize) else {
             return;
         };
@@ -1080,23 +1188,15 @@ impl GpuRenderPass<WebGl2Backend> for WebGl2RenderPass<'_> {
         offset: u64,
         data: &[u8],
     ) -> bool {
-        super::trait_impl::write_buffer_immediate(
-            &self.encoder.shared,
-            buffer,
-            offset,
-            data,
-        );
+        super::trait_impl::write_buffer_immediate(&self.encoder.shared, buffer, offset, data);
         true
     }
 
     fn set_index_buffer(&mut self, buffer: &WebGl2Buffer, format: IndexFormat, offset: u64) {
-        self.encoder
-            .shared
-            .gl
-            .bind_buffer(
-                Gl::ELEMENT_ARRAY_BUFFER,
-                Some(buffer.0.object_for_target(Gl::ELEMENT_ARRAY_BUFFER)),
-            );
+        self.encoder.shared.gl.bind_buffer(
+            Gl::ELEMENT_ARRAY_BUFFER,
+            Some(buffer.0.object_for_target(Gl::ELEMENT_ARRAY_BUFFER)),
+        );
         self.index = Some(WebGl2IndexBuffer {
             _buffer: buffer.clone(),
             format,
@@ -1168,7 +1268,9 @@ impl WebGl2RenderPass<'_> {
         if self.applied_vertex_offsets == Some((base_vertex, first_instance)) {
             return;
         }
-        let Some(pipeline) = self.pipeline.as_ref() else { return; };
+        let Some(pipeline) = self.pipeline.as_ref() else {
+            return;
+        };
         for (slot, bound) in self.vertex_buffers.iter().enumerate() {
             let (Some((buffer, offset)), Some(Some(layout))) =
                 (bound, pipeline.0.vertex_slots.get(slot))
@@ -1314,7 +1416,10 @@ fn apply_pipeline_state(gl: &Gl, state: &WebGl2RenderPipelineInner) {
 }
 
 fn has_constant_blend_factor(factor: BlendFactor) -> bool {
-    matches!(factor, BlendFactor::Constant | BlendFactor::OneMinusConstant)
+    matches!(
+        factor,
+        BlendFactor::Constant | BlendFactor::OneMinusConstant
+    )
 }
 
 fn primitive_topology(topology: PrimitiveTopology) -> u32 {

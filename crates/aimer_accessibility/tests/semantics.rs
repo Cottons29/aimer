@@ -2,9 +2,9 @@ use std::time::Duration;
 
 use aimer_accessibility::{
     AccessibilityPreferences, ActionHandler, ActionRequest, Announcement, AnnouncementKind,
-    AnnouncementPort, Bounds, CheckedState, Color, FocusTraversalSource, NodeId, NoopAnnouncementPort,
-    PreferenceAdapter, Role, SemanticAction, SemanticNode, SemanticTree, TouchTargetPolicy,
-    ValueRange, contrast_ratio, validate_contrast, validate_touch_target,
+    AnnouncementPort, Bounds, CheckedState, Color, FocusTraversalSource, NodeId,
+    NoopAnnouncementPort, PreferenceAdapter, Role, SemanticAction, SemanticNode, SemanticTree,
+    TouchTargetPolicy, ValueRange, contrast_ratio, validate_contrast, validate_touch_target,
 };
 
 #[test]
@@ -52,8 +52,19 @@ fn semantic_tree_applies_merge_exclude_leaf_and_has_stable_output() {
     assert!(first.root().state().busy());
     assert_eq!(first.root().description(), Some("Device settings"));
     assert_eq!(first.root().bounds().unwrap().width(), 320.0);
-    assert_eq!(first.node(NodeId::new(7)).unwrap().value(), Some("collapsed"));
-    assert_eq!(first.node(NodeId::new(7)).unwrap().value_range().unwrap().current(), 0.0);
+    assert_eq!(
+        first.node(NodeId::new(7)).unwrap().value(),
+        Some("collapsed")
+    );
+    assert_eq!(
+        first
+            .node(NodeId::new(7))
+            .unwrap()
+            .value_range()
+            .unwrap()
+            .current(),
+        0.0
+    );
     assert!(!first.node(NodeId::new(7)).unwrap().state().enabled());
     assert_eq!(first.canonical_string(), second.canonical_string());
 }
@@ -76,24 +87,31 @@ fn actions_dispatch_and_focus_projection_preserve_host_order() {
 
     let mut actions = RecordingActions::default();
     snapshot
-        .dispatch_action(
-            NodeId::new(2),
-            &SemanticAction::Activate,
-            &mut actions,
-        )
+        .dispatch_action(NodeId::new(2), &SemanticAction::Activate, &mut actions)
         .unwrap();
-    assert_eq!(actions.requests, vec![ActionRequest::new(NodeId::new(2), SemanticAction::Activate)]);
+    assert_eq!(
+        actions.requests,
+        vec![ActionRequest::new(NodeId::new(2), SemanticAction::Activate)]
+    );
 
     let focus = HostFocusOrder {
-        ordered: vec![NodeId::new(4), NodeId::new(3), NodeId::new(2), NodeId::new(99)],
+        ordered: vec![
+            NodeId::new(4),
+            NodeId::new(3),
+            NodeId::new(2),
+            NodeId::new(99),
+        ],
     };
-    assert_eq!(snapshot.focus_order(&focus), vec![NodeId::new(3), NodeId::new(2)]);
+    assert_eq!(
+        snapshot.focus_order(&focus),
+        vec![NodeId::new(3), NodeId::new(2)]
+    );
 }
 
 #[test]
 fn announcements_are_bounded_and_noop_delivery_is_deterministic() {
-    let announcement = Announcement::try_new(AnnouncementKind::ValidationError, "Name is required")
-        .unwrap();
+    let announcement =
+        Announcement::try_new(AnnouncementKind::ValidationError, "Name is required").unwrap();
     let mut port = RecordingAnnouncements::default();
     announcement.deliver_to(&mut port);
     assert_eq!(port.messages, vec!["Name is required"]);
@@ -120,12 +138,17 @@ fn preference_adapter_maps_platform_inputs_without_global_state() {
     assert!(preferences.high_contrast());
     assert!(preferences.non_color_cues());
     assert_eq!(preferences.scaled_text_size(10.0).unwrap(), 15.0);
-    assert_eq!(preferences.motion_duration(Duration::from_millis(200)), Duration::ZERO);
-    assert!(AccessibilityPreferences::from_adapter(&FakePreferences {
-        text_scale: f32::NAN,
-        ..FakePreferences::default()
-    })
-    .is_err());
+    assert_eq!(
+        preferences.motion_duration(Duration::from_millis(200)),
+        Duration::ZERO
+    );
+    assert!(
+        AccessibilityPreferences::from_adapter(&FakePreferences {
+            text_scale: f32::NAN,
+            ..FakePreferences::default()
+        })
+        .is_err()
+    );
 }
 
 #[test]
@@ -144,10 +167,20 @@ fn touch_and_contrast_helpers_enforce_their_boundaries() {
 
 #[test]
 fn value_ranges_reject_non_finite_and_reversed_values() {
-    assert!(ValueRange::new(0.0, 100.0, 50.0).unwrap().with_step(5.0).is_ok());
+    assert!(
+        ValueRange::new(0.0, 100.0, 50.0)
+            .unwrap()
+            .with_step(5.0)
+            .is_ok()
+    );
     assert!(ValueRange::new(100.0, 0.0, 50.0).is_err());
     assert!(ValueRange::new(0.0, 100.0, f32::NAN).is_err());
-    assert!(ValueRange::new(0.0, 100.0, 50.0).unwrap().with_step(0.0).is_err());
+    assert!(
+        ValueRange::new(0.0, 100.0, 50.0)
+            .unwrap()
+            .with_step(0.0)
+            .is_err()
+    );
 }
 
 #[derive(Default)]

@@ -1,6 +1,6 @@
 use super::*;
 
-fn mounted_elements(root: &dyn Element) -> Vec<(aimer_widget::ElementId, *const ())> {
+pub(super) fn mounted_elements(root: &dyn Element) -> Vec<(aimer_widget::ElementId, *const ())> {
     let mut elements = vec![(root.id(), root as *const dyn Element as *const ())];
     root.visit_children(&mut |child| elements.extend(mounted_elements(child)));
     elements
@@ -9,7 +9,10 @@ fn mounted_elements(root: &dyn Element) -> Vec<(aimer_widget::ElementId, *const 
 #[tokio::test]
 async fn hover_and_press_keep_the_mounted_button_wrappers() {
     let mut ctx = context();
-    ctx.parent_size = ResolvedSize { width: 100.0, height: 40.0 };
+    ctx.parent_size = ResolvedSize {
+        width: 100.0,
+        height: 40.0,
+    };
     ctx.box_constraint.max_width = 100.0;
     ctx.box_constraint.max_height = 40.0;
     ctx.cursor_pos = (-10.0, -10.0).into();
@@ -18,12 +21,18 @@ async fn hover_and_press_keep_the_mounted_button_wrappers() {
         .decoration(BoxDecoration::new().background_color(Color::WHITE))
         .hover_decoration(BoxDecoration::new().background_color(Color::BLUE))
         .press_decoration(BoxDecoration::new().background_color(Color::RED))
-        .child(Probe { builds: builds.clone() });
+        .child(Probe {
+            builds: builds.clone(),
+        });
     let root = button.to_element(&ctx);
     root.update(&ctx);
     let mut dispatcher = aimer_widget::EventDispatcher::new();
     let outside = PointerInfo::mouse((-10.0, -10.0).into(), PointerButton::Primary);
-    let _ = dispatcher.dispatch(root.as_ref(), outside.pos, &ElementEvent::PointerMove(outside));
+    let _ = dispatcher.dispatch(
+        root.as_ref(),
+        outside.pos,
+        &ElementEvent::PointerMove(outside),
+    );
     root.rebuild_if_dirty(&ctx);
     let mounted = mounted_elements(root.as_ref());
     let pointer = PointerInfo::mouse((1.0, 1.0).into(), PointerButton::Primary);
@@ -47,13 +56,16 @@ async fn hover_and_press_keep_the_mounted_button_wrappers() {
             assert!(dispatcher.captured_owner(key).is_none());
         }
         assert_eq!(decoration_paint(root.as_ref(), &ctx), color.into());
-        assert_eq!(mounted_elements(root.as_ref()), mounted,
-            "hover and press must update paint without replacing retained wrappers");
+        assert_eq!(
+            mounted_elements(root.as_ref()),
+            mounted,
+            "hover and press must update paint without replacing retained wrappers"
+        );
     }
     assert_eq!(builds.get(), 1);
 }
 
-fn find_element<'a>(root: &'a dyn Element, name: &str) -> Option<&'a dyn Element> {
+pub(super) fn find_element<'a>(root: &'a dyn Element, name: &str) -> Option<&'a dyn Element> {
     if root.debug_name() == name {
         return Some(root);
     }
@@ -66,10 +78,12 @@ fn find_element<'a>(root: &'a dyn Element, name: &str) -> Option<&'a dyn Element
     found
 }
 
-fn decoration_paint(root: &dyn Element, ctx: &BuildContext<'_>) -> aimer_cupid::draw_cmd_v2::Color {
+pub(super) fn decoration_paint(root: &dyn Element, ctx: &BuildContext<'_>) -> aimer_cupid::draw_cmd_v2::Color {
     let element = find_element(root, "Container").expect("Button has a decoration owner");
     let tree = aimer_cupid::draw_cmd_v2::RenderTree::new();
-    let node = tree.add_root(aimer_cupid::draw_cmd_v2::Rect::new(0.0, 0.0, 100.0, 40.0)).unwrap();
+    let node = tree
+        .add_root(aimer_cupid::draw_cmd_v2::Rect::new(0.0, 0.0, 100.0, 40.0))
+        .unwrap();
     ctx.with_local_v2_paint_context(tree.context(node).unwrap(), |ctx| {
         assert!(element.can_paint_local_v2(ctx));
         element.paint_local_v2(ctx);
@@ -82,9 +96,12 @@ fn decoration_paint(root: &dyn Element, ctx: &BuildContext<'_>) -> aimer_cupid::
     }
 }
 
-fn button_context() -> BuildContext<'static> {
+pub(super) fn button_context() -> BuildContext<'static> {
     let mut ctx = context();
-    ctx.parent_size = ResolvedSize { width: 100.0, height: 40.0 };
+    ctx.parent_size = ResolvedSize {
+        width: 100.0,
+        height: 40.0,
+    };
     ctx.box_constraint.max_width = 100.0;
     ctx.box_constraint.max_height = 40.0;
     ctx.cursor_pos = (-10.0, -10.0).into();
@@ -99,14 +116,23 @@ async fn cancelling_a_retained_press_restores_hover_paint() {
         .decoration(BoxDecoration::new().background_color(Color::WHITE))
         .hover_decoration(BoxDecoration::new().background_color(Color::BLUE))
         .press_decoration(BoxDecoration::new().background_color(Color::RED))
-        .on_press({ let presses = presses.clone(); move || presses.set(presses.get() + 1) })
-        .child(Probe { builds: Rc::new(Cell::new(0)) })
+        .on_press({
+            let presses = presses.clone();
+            move || presses.set(presses.get() + 1)
+        })
+        .child(Probe {
+            builds: Rc::new(Cell::new(0)),
+        })
         .to_element(&ctx);
     root.update(&ctx);
     let mounted = mounted_elements(root.as_ref());
     let mut dispatcher = aimer_widget::EventDispatcher::new();
     let pointer = PointerInfo::mouse((1.0, 1.0).into(), PointerButton::Primary);
-    let _ = dispatcher.dispatch(root.as_ref(), pointer.pos, &ElementEvent::PointerDown(pointer));
+    let _ = dispatcher.dispatch(
+        root.as_ref(),
+        pointer.pos,
+        &ElementEvent::PointerDown(pointer),
+    );
     assert_eq!(decoration_paint(root.as_ref(), &ctx), Color::RED.into());
     let _ = dispatcher.broadcast(root.as_ref(), &ElementEvent::Cancel);
     root.rebuild_if_dirty(&ctx);
@@ -122,13 +148,20 @@ async fn retained_hover_observes_parent_decoration_and_disabled_updates() {
         .decoration(BoxDecoration::new().background_color(Color::WHITE))
         .hover_decoration(BoxDecoration::new().background_color(Color::BLUE))
         .disable_decoration(BoxDecoration::new().background_color(Color::GRAY))
-        .child(Probe { builds: Rc::new(Cell::new(0)) });
-    let (root, updater) = aimer_widget::StatefulElement::new_with_name(button, &ctx, "Button", None);
+        .child(Probe {
+            builds: Rc::new(Cell::new(0)),
+        });
+    let (root, updater) =
+        aimer_widget::StatefulElement::new_with_name(button, &ctx, "Button", None);
     let root = root.boxed();
     root.update(&ctx);
     let mut dispatcher = aimer_widget::EventDispatcher::new();
     let pointer = PointerInfo::mouse((1.0, 1.0).into(), PointerButton::Primary);
-    let _ = dispatcher.dispatch(root.as_ref(), pointer.pos, &ElementEvent::PointerMove(pointer));
+    let _ = dispatcher.dispatch(
+        root.as_ref(),
+        pointer.pos,
+        &ElementEvent::PointerMove(pointer),
+    );
     assert_eq!(decoration_paint(root.as_ref(), &ctx), Color::BLUE.into());
     updater.set_state(|state| {
         state.hover_decoration = Some(BoxDecoration::new().background_color(Color::RED));
@@ -150,7 +183,10 @@ async fn retained_feedback_keeps_default_lightening_and_darkening() {
     let ctx = button_context();
     let root = Button::new()
         .decoration(BoxDecoration::new().background_color(Color::BLACK))
-        .child(Probe { builds: Rc::new(Cell::new(0)) }).to_element(&ctx);
+        .child(Probe {
+            builds: Rc::new(Cell::new(0)),
+        })
+        .to_element(&ctx);
     root.update(&ctx);
     assert_eq!(decoration_paint(root.as_ref(), &ctx), Color::BLACK.into());
     let mut dispatcher = aimer_widget::EventDispatcher::new();
@@ -162,18 +198,24 @@ async fn retained_feedback_keeps_default_lightening_and_darkening() {
     ] {
         let _ = dispatcher.dispatch(root.as_ref(), pointer.pos, &event);
         root.rebuild_if_dirty(&ctx);
-        assert_eq!(decoration_paint(root.as_ref(), &ctx), Color::Rgba(channel, channel, channel, 255).into());
+        assert_eq!(
+            decoration_paint(root.as_ref(), &ctx),
+            Color::Rgba(channel, channel, channel, 255).into()
+        );
     }
 }
 
-fn child_geometry(root: &dyn Element, ctx: &BuildContext<'_>) -> (f32, f32, [f32; 4]) {
+pub(super) fn child_geometry(root: &dyn Element, ctx: &BuildContext<'_>) -> (f32, f32, [f32; 4]) {
     let decoration = find_element(root, "Container").unwrap();
     let mut child = None;
     decoration.visit_children(&mut |element| child = Some(element));
     let child = child.unwrap();
     let child_ctx = decoration.retained_v2_child_context(ctx, child).unwrap();
-    (child_ctx.box_constraint.max_width, child_ctx.box_constraint.max_height,
-        decoration.retained_v2_child_clip_radius(ctx, child))
+    (
+        child_ctx.box_constraint.max_width,
+        child_ctx.box_constraint.max_height,
+        decoration.retained_v2_child_clip_radius(ctx, child),
+    )
 }
 
 #[tokio::test]
@@ -181,25 +223,54 @@ async fn retained_feedback_refreshes_border_insets_and_rounded_clipping() {
     use aimer_style::{BorderSlice, BorderStyle, BoxBorder};
 
     let ctx = button_context();
-    let border = |width| BoxBorder::all(BorderSlice::new()
-        .style(BorderStyle::Solid).stroke(width).color(Color::BLACK));
+    let border = |width| {
+        BoxBorder::all(
+            BorderSlice::new()
+                .style(BorderStyle::Solid)
+                .stroke(width)
+                .color(Color::BLACK),
+        )
+    };
     let root = Button::new()
-        .decoration(BoxDecoration::new().background_color(Color::WHITE)
-            .border(border(1.0)).border_radius(8.0))
-        .hover_decoration(BoxDecoration::new().background_color(Color::BLUE)
-            .border(border(3.0)).border_radius(12.0))
-        .press_decoration(BoxDecoration::new().background_color(Color::RED)
-            .border(border(3.0)).border_radius(16.0))
-        .child(Probe { builds: Rc::new(Cell::new(0)) }).to_element(&ctx);
+        .decoration(
+            BoxDecoration::new()
+                .background_color(Color::WHITE)
+                .border(border(1.0))
+                .border_radius(8.0),
+        )
+        .hover_decoration(
+            BoxDecoration::new()
+                .background_color(Color::BLUE)
+                .border(border(3.0))
+                .border_radius(12.0),
+        )
+        .press_decoration(
+            BoxDecoration::new()
+                .background_color(Color::RED)
+                .border(border(3.0))
+                .border_radius(16.0),
+        )
+        .child(Probe {
+            builds: Rc::new(Cell::new(0)),
+        })
+        .to_element(&ctx);
     root.update(&ctx);
     let mounted = mounted_elements(root.as_ref());
     assert_eq!(child_geometry(root.as_ref(), &ctx), (98.0, 38.0, [7.0; 4]));
     let mut dispatcher = aimer_widget::EventDispatcher::new();
     let pointer = PointerInfo::mouse((10.0, 10.0).into(), PointerButton::Primary);
-    let _ = dispatcher.dispatch(root.as_ref(), pointer.pos, &ElementEvent::PointerMove(pointer));
+    let _ = dispatcher.dispatch(
+        root.as_ref(),
+        pointer.pos,
+        &ElementEvent::PointerMove(pointer),
+    );
     root.rebuild_if_dirty(&ctx);
     assert_eq!(child_geometry(root.as_ref(), &ctx), (94.0, 34.0, [9.0; 4]));
-    let _ = dispatcher.dispatch(root.as_ref(), pointer.pos, &ElementEvent::PointerDown(pointer));
+    let _ = dispatcher.dispatch(
+        root.as_ref(),
+        pointer.pos,
+        &ElementEvent::PointerDown(pointer),
+    );
     root.rebuild_if_dirty(&ctx);
     assert_eq!(child_geometry(root.as_ref(), &ctx), (94.0, 34.0, [13.0; 4]));
     assert_eq!(decoration_paint(root.as_ref(), &ctx), Color::RED.into());

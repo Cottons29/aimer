@@ -94,7 +94,6 @@ mod controller {
             self.inner.set_text(text);
         }
 
-
         /// Inserts a single character at the given grapheme offset.
         ///
         /// # Safety
@@ -154,7 +153,6 @@ mod controller {
         }
 
         // ── Undo / Redo ──────────────────────────────────────────────────
-
 
         /// Revert to the previous text state. Returns `true` if an undo was
         /// performed.
@@ -362,7 +360,10 @@ mod controller {
 
         #[test]
         fn test_grapheme_count_counts_clusters_not_chars() {
-            assert_eq!(TextFieldController::with_initial(FAMILY).grapheme_count(), 1);
+            assert_eq!(
+                TextFieldController::with_initial(FAMILY).grapheme_count(),
+                1
+            );
             assert_eq!(
                 TextFieldController::with_initial(COMBINING_E).grapheme_count(),
                 1
@@ -478,21 +479,21 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use aimer_macro::PortableWidget;
-use aimer_venus::{ScopeId, TaskScope, Venus};
 use aimer_style::{BoxDecoration, LayoutSpacing, TextAlign, TextStyle};
+use aimer_venus::{ScopeId, TaskScope, Venus};
 use aimer_widget::base::{BuildContext, Color, Colors};
-use aimer_widget::{
-    AnyElement, FocusBehavior, Focusable, FocusNode, Key, State, StateUpdater, StatefulElement,
-    StatefulWidget, Widget,
-};
 #[cfg(feature = "portable-guest")]
 use aimer_widget::portable::{PortableBuildContext, PortableBuildError, SourceFingerprint};
+use aimer_widget::{
+    AnyElement, FocusBehavior, FocusNode, Focusable, Key, State, StateUpdater, StatefulElement,
+    StatefulWidget, Widget,
+};
 
+use crate::TextEditingController;
 use crate::input_field::caret::{CaretBlink, CaretBuilder, CaretContext};
 use crate::input_field::raw_fields::{
     CaretSlot, ExpandDirection, InputType, RawFieldConfig, RawTextFieldWidget, TextFieldCallback,
 };
-use crate::TextEditingController;
 
 #[allow(dead_code)]
 ///
@@ -679,11 +680,10 @@ fn validate_portable_text_field(
 ) -> Result<(), PortableBuildError> {
     let expected = match field.max_length {
         None => None,
-        Some(value) => Some(u32::try_from(value).map_err(|_| {
-            PortableBuildError::InvalidPropertyValue {
-                rust_type: "usize",
-            }
-        })?),
+        Some(value) => Some(
+            u32::try_from(value)
+                .map_err(|_| PortableBuildError::InvalidPropertyValue { rust_type: "usize" })?,
+        ),
     };
     if field.max_length_wire != expected {
         return Err(PortableBuildError::UnsupportedProperty {
@@ -841,7 +841,6 @@ impl State<TextField> for TextFieldState {
 }
 
 impl TextField {
-
     /// Creates an empty, enabled, editable field with default styling and no-op
     /// callbacks.
     pub fn new() -> Self {
@@ -1021,16 +1020,13 @@ impl TextField {
         self
     }
 
-
     /// Sets the optional maximum input length in Unicode scalar values.
     ///
     /// `None` removes the limit. Input beyond the limit is not inserted.
     #[inline]
     pub fn max_length(mut self, max_length: Option<usize>) -> Self {
         self.max_length = max_length;
-        self.max_length_wire = max_length.map(|value| {
-            u32::try_from(value).unwrap_or(u32::MAX)
-        });
+        self.max_length_wire = max_length.map(|value| u32::try_from(value).unwrap_or(u32::MAX));
         self
     }
 
@@ -1051,7 +1047,6 @@ impl TextField {
         self.enable = enable;
         self
     }
-
 
     /// Replaces the normal field decoration.
     #[inline]
@@ -1202,7 +1197,10 @@ mod tests {
     fn explicit_key_sets_reconciliation_identity() {
         let field = TextField::new().key("login-field");
 
-        assert_eq!(Widget::key(&field), Some(Key::Value("login-field".to_owned())));
+        assert_eq!(
+            Widget::key(&field),
+            Some(Key::Value("login-field".to_owned()))
+        );
     }
 
     #[test]
@@ -1223,7 +1221,9 @@ mod tests {
 
     #[test]
     fn text_field_is_always_single_line_and_number_is_only_an_input_hint() {
-        let state = TextField::new().input_type(InputType::Number).create_state();
+        let state = TextField::new()
+            .input_type(InputType::Number)
+            .create_state();
 
         assert_eq!(state.config.input_type, InputType::Number);
         assert_eq!(state.config.min_lines, Some(1));
@@ -1262,10 +1262,12 @@ mod tests {
     fn custom_caret_builder_mounts_one_retained_widget() {
         let builds = Rc::new(Cell::new(0));
         let seen = builds.clone();
-        let state = TextField::new().caret(move |context| {
-            seen.set(seen.get() + 1);
-            DefaultCaret::new(context, Colors::default())
-        }).create_state();
+        let state = TextField::new()
+            .caret(move |context| {
+                seen.set(seen.get() + 1);
+                DefaultCaret::new(context, Colors::default())
+            })
+            .create_state();
         let context = dummy_build_context(200.0, 40.0);
 
         let _first = Widget::to_element(state.focusable_field(), &context);
@@ -1292,7 +1294,6 @@ mod tests {
     #[test]
     fn size_of_text_field() {
         eprintln!("Size Of TextField: {}", size_of::<TextField>())
-
     }
 
     #[test]
@@ -1439,7 +1440,10 @@ mod focus_tests {
         let mut dispatcher = EventDispatcher::new();
 
         press(&mut dispatcher, &element, INSIDE);
-        assert!(node.has_focus(), "a press must focus the field it landed on");
+        assert!(
+            node.has_focus(),
+            "a press must focus the field it landed on"
+        );
 
         commit(&mut dispatcher, &element, "你好");
 
@@ -1492,12 +1496,8 @@ mod focus_tests {
                 DefaultCaret::new(caret_context, Colors::default())
             });
         let build_context = dummy_build_context(FIELD_WIDTH, FIELD_HEIGHT);
-        let (element, updater) = StatefulElement::new_with_name(
-            widget,
-            &build_context,
-            "TextField",
-            None,
-        );
+        let (element, updater) =
+            StatefulElement::new_with_name(widget, &build_context, "TextField", None);
         let element = element.boxed();
         element.update(&build_context);
         let mut dispatcher = EventDispatcher::new();
@@ -1529,15 +1529,13 @@ mod focus_tests {
     fn custom_caret_subtrees_are_not_focus_targets() {
         let field_node = FocusNode::new();
         let caret_node = FocusNode::new();
-        let (element, _context) = drawn(
-            TextField::new()
-                .focus_node(field_node)
-                .caret(move |context| {
-                    Focusable::new()
-                        .node(caret_node.clone())
-                        .child(DefaultCaret::new(context, Colors::default()))
-                }),
-        );
+        let (element, _context) = drawn(TextField::new().focus_node(field_node).caret(
+            move |context| {
+                Focusable::new()
+                    .node(caret_node.clone())
+                    .child(DefaultCaret::new(context, Colors::default()))
+            },
+        ));
 
         assert_eq!(focus_targets(&element), ["Focusable"]);
     }
@@ -1572,7 +1570,11 @@ mod focus_tests {
         let mut dispatcher = EventDispatcher::new();
 
         press(&mut dispatcher, &element, INSIDE);
-        assert_eq!((focuses.get(), blurs.get()), (1, 0), "the first press focuses");
+        assert_eq!(
+            (focuses.get(), blurs.get()),
+            (1, 0),
+            "the first press focuses"
+        );
 
         press(&mut dispatcher, &element, INSIDE);
         press(&mut dispatcher, &element, INSIDE);
@@ -1657,23 +1659,35 @@ mod focus_tests {
         let mut dispatcher = EventDispatcher::new();
         let start = Vec2d { x: 4.0, y: 12.0 };
         let end = Vec2d { x: 50.0, y: 12.0 };
-        assert!(dispatcher.dispatch(
-            element.as_ref(),
-            start,
-            &ElementEvent::PointerDown(PointerInfo::mouse(start, PointerButton::Primary)),
-        ).is_consumed());
+        assert!(
+            dispatcher
+                .dispatch(
+                    element.as_ref(),
+                    start,
+                    &ElementEvent::PointerDown(PointerInfo::mouse(start, PointerButton::Primary)),
+                )
+                .is_consumed()
+        );
         element.update(&ctx);
-        assert!(dispatcher.dispatch(
-            element.as_ref(),
-            end,
-            &ElementEvent::PointerMove(PointerInfo::mouse(end, PointerButton::Primary)),
-        ).is_consumed());
+        assert!(
+            dispatcher
+                .dispatch(
+                    element.as_ref(),
+                    end,
+                    &ElementEvent::PointerMove(PointerInfo::mouse(end, PointerButton::Primary)),
+                )
+                .is_consumed()
+        );
         element.update(&ctx);
-        assert!(dispatcher.dispatch(
-            element.as_ref(),
-            end,
-            &ElementEvent::PointerUp(PointerInfo::mouse(end, PointerButton::Primary)),
-        ).is_consumed());
+        assert!(
+            dispatcher
+                .dispatch(
+                    element.as_ref(),
+                    end,
+                    &ElementEvent::PointerUp(PointerInfo::mouse(end, PointerButton::Primary)),
+                )
+                .is_consumed()
+        );
         element.update(&ctx);
 
         assert_eq!(controller.selection_graphemes(), (1, 9));

@@ -197,9 +197,8 @@ impl<B: GpuBackend> PersistentTargetGeneric<B> {
             return TargetEnsureResult::Unavailable;
         }
 
-        let resource_matches = self.texture.is_some()
-            && self.format == Some(format)
-            && self.state.same_resource(key);
+        let resource_matches =
+            self.texture.is_some() && self.format == Some(format) && self.state.same_resource(key);
         if resource_matches {
             return if self.state.can_reuse_contents(key) {
                 TargetEnsureResult::ReusedValid
@@ -272,7 +271,6 @@ impl<B: GpuBackend> PersistentTargetGeneric<B> {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -281,12 +279,30 @@ mod tests {
     fn target_key_covers_every_resource_identity() {
         let base = PersistentTargetKey::new(800, 600, 2.0, 7, 11, 13, TargetValidity::Valid);
 
-        assert_ne!(base, PersistentTargetKey::new(801, 600, 2.0, 7, 11, 13, TargetValidity::Valid));
-        assert_ne!(base, PersistentTargetKey::new(800, 601, 2.0, 7, 11, 13, TargetValidity::Valid));
-        assert_ne!(base, PersistentTargetKey::new(800, 600, 1.0, 7, 11, 13, TargetValidity::Valid));
-        assert_ne!(base, PersistentTargetKey::new(800, 600, 2.0, 8, 11, 13, TargetValidity::Valid));
-        assert_ne!(base, PersistentTargetKey::new(800, 600, 2.0, 7, 12, 13, TargetValidity::Valid));
-        assert_ne!(base, PersistentTargetKey::new(800, 600, 2.0, 7, 11, 14, TargetValidity::Valid));
+        assert_ne!(
+            base,
+            PersistentTargetKey::new(801, 600, 2.0, 7, 11, 13, TargetValidity::Valid)
+        );
+        assert_ne!(
+            base,
+            PersistentTargetKey::new(800, 601, 2.0, 7, 11, 13, TargetValidity::Valid)
+        );
+        assert_ne!(
+            base,
+            PersistentTargetKey::new(800, 600, 1.0, 7, 11, 13, TargetValidity::Valid)
+        );
+        assert_ne!(
+            base,
+            PersistentTargetKey::new(800, 600, 2.0, 8, 11, 13, TargetValidity::Valid)
+        );
+        assert_ne!(
+            base,
+            PersistentTargetKey::new(800, 600, 2.0, 7, 12, 13, TargetValidity::Valid)
+        );
+        assert_ne!(
+            base,
+            PersistentTargetKey::new(800, 600, 2.0, 7, 11, 14, TargetValidity::Valid)
+        );
         assert_ne!(base, base.with_validity(TargetValidity::Invalid));
     }
 

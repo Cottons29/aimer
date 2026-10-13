@@ -35,9 +35,7 @@ macro_rules! impl_number_for_primitives {
 }
 
 impl_number_for_primitives!(
-    i8, i16, i32, i64, i128, isize,
-    u8, u16, u32, u64, u128, usize,
-    f32, f64,
+    i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize, f32, f64,
 );
 
 #[cfg(test)]
@@ -45,12 +43,7 @@ mod tests {
     use super::Number;
 
     fn exercise_arithmetic<T: Number>(left: T, right: T) -> (T, T, T, T) {
-        (
-            left + right,
-            left - right,
-            left * right,
-            left / right,
-        )
+        (left + right, left - right, left * right, left / right)
     }
 
     #[test]
@@ -76,9 +69,7 @@ mod tests {
         }
 
         assert_number_types!(
-            i8, i16, i32, i64, i128, isize,
-            u8, u16, u32, u64, u128, usize,
-            f32, f64,
+            i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize, f32, f64,
         );
     }
 }

@@ -5,11 +5,14 @@
 //! before handing work to a raster thread.
 
 mod render_order;
-mod world;
+mod clip_policy;
+mod command_equality;
+mod current_build_context;
 #[cfg(test)]
 mod render_order_tests;
 #[cfg(test)]
 mod sync_damage_tests;
+mod world;
 #[cfg(test)]
 mod world_tests;
 
@@ -118,15 +121,7 @@ impl ImageResource {
         height: u32,
         rgba: Arc<[u8]>,
     ) -> Option<Self> {
-        Self::rgba8_with_intrinsic_size(
-            texture_id,
-            revision,
-            width,
-            height,
-            width,
-            height,
-            rgba,
-        )
+        Self::rgba8_with_intrinsic_size(texture_id, revision, width, height, width, height, rgba)
     }
 
     /// Creates a retained RGBA8 resource with separate upload and layout sizes.
@@ -387,6 +382,13 @@ pub struct DrawList {
     /// layout container) can clear it, so it says whether the list is *known
     /// current*, not whether a commit is still outstanding.
     stale: bool,
+    /// The list is stale only because its owner was rebuilt (see
+    /// [`RenderTree::refresh_paint`]), so a recording equal to the current
+    /// commands may keep the revision and damage nothing. Every other reason a
+    /// list goes stale (a resize, an explicit invalidation, an abandoned
+    /// recording) clears it: those say the pixels under the node cannot be
+    /// trusted, whatever gets recorded next.
+    refreshed: bool,
     recording: bool,
 }
 
@@ -422,6 +424,7 @@ impl RenderNode {
             let mut list = self.draw_list.borrow_mut();
             list.dirty = true;
             list.stale = true;
+            list.refreshed = false;
         }
         self.bounds = bounds;
     }
@@ -435,6 +438,7 @@ struct RenderNode {
     clip: Option<Rect>,
     /// Corner radii of `clip`, in the clip's local logical pixels.
     clip_radius: [f32; 4],
+    escapes_clip: bool,
     animation_clip: Option<Rect>,
     presentation_transform: Mat3,
     presentation_opacity: f32,
@@ -483,7 +487,7 @@ fn transform_rect(transform: Mat3, rect: Rect) -> Option<Rect> {
     bounds.is_valid().then_some(bounds)
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 enum ClipState {
     Unclipped,
     Clipped(Rect),
@@ -497,9 +501,9 @@ impl ClipState {
             (Self::Empty, _) => Self::Empty,
             (state, None) => state,
             (Self::Unclipped, Some(clip)) => Self::Clipped(clip),
-            (Self::Clipped(parent), Some(clip)) => parent
-                .intersection(clip)
-                .map_or(Self::Empty, Self::Clipped),
+            (Self::Clipped(parent), Some(clip)) => {
+                parent.intersection(clip).map_or(Self::Empty, Self::Clipped)
+            }
         }
     }
 
@@ -508,9 +512,9 @@ impl ClipState {
         match (self, other) {
             (Self::Empty, _) | (_, Self::Empty) => Self::Empty,
             (Self::Unclipped, state) | (state, Self::Unclipped) => state,
-            (Self::Clipped(left), Self::Clipped(right)) => left
-                .intersection(right)
-                .map_or(Self::Empty, Self::Clipped),
+            (Self::Clipped(left), Self::Clipped(right)) => {
+                left.intersection(right).map_or(Self::Empty, Self::Clipped)
+            }
         }
     }
 
@@ -690,6 +694,7 @@ pub struct DrawCommandList {
     indices: HashMap<RenderNodeId, usize, crate::utilities::IdBuildHasher>,
     roots: Vec<RenderNodeId>,
     next_id: u64,
+    clip_escape_count: usize,
     pending_damage: Vec<Rect>,
     /// Advances whenever a node is added, handed out mutably, or the structure
     /// is replaced. Those are the only ways a node's world rectangle can
@@ -750,6 +755,7 @@ impl DrawCommandList {
             bounds,
             clip: None,
             clip_radius: [0.0; 4],
+            escapes_clip: false,
             animation_clip: None,
             presentation_transform: Mat3::identity(),
             presentation_opacity: 1.0,
@@ -838,8 +844,10 @@ impl DrawCommandList {
         tops: &[RenderNodeId],
         apply: impl FnOnce(&mut Self) -> R,
     ) -> R {
-        let before: Vec<Option<Rect>> =
-            tops.iter().map(|id| self.subtree_damage_bounds(*id)).collect();
+        let before: Vec<Option<Rect>> = tops
+            .iter()
+            .map(|id| self.subtree_damage_bounds(*id))
+            .collect();
         let result = apply(self);
         for (id, old_bounds) in tops.iter().zip(before) {
             let new_bounds = self.subtree_damage_bounds(*id);
@@ -956,7 +964,10 @@ impl RenderTree {
             return Err(RenderTreeError::InvalidBounds);
         }
         let mut tree = self.draw_cmd.borrow_mut();
-        if let Some(missing) = updates.iter().find(|update| tree.node(update.node).is_none()) {
+        if let Some(missing) = updates
+            .iter()
+            .find(|update| tree.node(update.node).is_none())
+        {
             return Err(RenderTreeError::UnknownNode(missing.node));
         }
         let changed: HashSet<RenderNodeId> = updates
@@ -1156,28 +1167,28 @@ impl RenderTree {
             .map(|node| (node.id, node))
             .collect::<HashMap<_, _>>();
         let mut synchronized = Vec::with_capacity(nodes.len());
+        let mut clip_escape_count = 0;
         for (index, spec) in nodes.iter().enumerate() {
             let id = ids[index];
-            let mut node = previous.remove(&id).unwrap_or_else(|| {
-                RenderNode {
-                    id,
-                    parent: None,
-                    children: Vec::new(),
-                    bounds: spec.bounds,
-                    clip: None,
-                    clip_radius: [0.0; 4],
-                    animation_clip: None,
-                    presentation_transform: Mat3::identity(),
-                    presentation_opacity: 1.0,
-                    transform: Mat3::identity(),
-                    opacity: 1.0,
-                    paint_source: RenderPaintSource::Unresolved,
-                    draw_list: Shared::new(RefCell::new(DrawList {
-                        dirty: true,
-                stale: true,
-                        ..DrawList::default()
-                    })),
-                }
+            let mut node = previous.remove(&id).unwrap_or_else(|| RenderNode {
+                id,
+                parent: None,
+                children: Vec::new(),
+                bounds: spec.bounds,
+                clip: None,
+                clip_radius: [0.0; 4],
+                escapes_clip: false,
+                animation_clip: None,
+                presentation_transform: Mat3::identity(),
+                presentation_opacity: 1.0,
+                transform: Mat3::identity(),
+                opacity: 1.0,
+                paint_source: RenderPaintSource::Unresolved,
+                draw_list: Shared::new(RefCell::new(DrawList {
+                    dirty: true,
+                    stale: true,
+                    ..DrawList::default()
+                })),
             });
             node.parent = parents[index];
             node.children = mem::take(&mut children[index]);
@@ -1186,12 +1197,14 @@ impl RenderTree {
                 node.clip = clips[index];
                 node.clip_radius = radius_at(index);
             }
+            clip_escape_count += usize::from(node.escapes_clip);
             synchronized.push(node);
         }
 
         tree.geometry_revision = tree.geometry_revision.wrapping_add(1);
         tree.topology_revision = tree.topology_revision.wrapping_add(1);
         tree.nodes = synchronized;
+        tree.clip_escape_count = clip_escape_count;
         tree.indices = tree
             .nodes
             .iter()
@@ -1237,7 +1250,9 @@ impl RenderTree {
     /// Returns whether this element's local v2 draw list needs recording.
     pub fn needs_recording(&self, element: RenderNodeId) -> Result<bool, RenderTreeError> {
         let tree = self.draw_cmd.borrow();
-        let node = tree.node(element).ok_or(RenderTreeError::UnknownNode(element))?;
+        let node = tree
+            .node(element)
+            .ok_or(RenderTreeError::UnknownNode(element))?;
         Ok(node.draw_list.borrow().needs_recording())
     }
 
@@ -1305,7 +1320,12 @@ impl RenderTree {
         element: RenderNodeId,
         transform: Mat3,
     ) -> Result<(), RenderTreeError> {
-        if !transform.cols.iter().flatten().all(|value| value.is_finite()) {
+        if !transform
+            .cols
+            .iter()
+            .flatten()
+            .all(|value| value.is_finite())
+        {
             return Err(RenderTreeError::InvalidTransform);
         }
         let mut tree = self.draw_cmd.borrow_mut();
@@ -1339,14 +1359,21 @@ impl RenderTree {
         transform: Mat3,
         opacity: f32,
     ) -> Result<(), RenderTreeError> {
-        if !transform.cols.iter().flatten().all(|value| value.is_finite()) {
+        if !transform
+            .cols
+            .iter()
+            .flatten()
+            .all(|value| value.is_finite())
+        {
             return Err(RenderTreeError::InvalidTransform);
         }
         if !opacity.is_finite() || !(0.0..=1.0).contains(&opacity) {
             return Err(RenderTreeError::InvalidOpacity);
         }
         let mut tree = self.draw_cmd.borrow_mut();
-        let node = tree.node(element).ok_or(RenderTreeError::UnknownNode(element))?;
+        let node = tree
+            .node(element)
+            .ok_or(RenderTreeError::UnknownNode(element))?;
         if node.presentation_transform == transform && node.presentation_opacity == opacity {
             return Ok(());
         }
@@ -1421,7 +1448,9 @@ impl RenderTree {
             return Err(RenderTreeError::InvalidBounds);
         }
         let mut tree = self.draw_cmd.borrow_mut();
-        let node = tree.node(element).ok_or(RenderTreeError::UnknownNode(element))?;
+        let node = tree
+            .node(element)
+            .ok_or(RenderTreeError::UnknownNode(element))?;
         if node.bounds == bounds && node.clip == clip && node.clip_radius == [0.0; 4] {
             return Ok(());
         }
@@ -1444,11 +1473,7 @@ impl RenderTree {
     /// A node with children becomes an opacity group so overlapping
     /// descendants are blended together once. A leaf carries opacity directly
     /// on its [`RenderItem`]. Both cases damage the node's subtree bounds.
-    pub fn set_opacity(
-        &self,
-        element: RenderNodeId,
-        opacity: f32,
-    ) -> Result<(), RenderTreeError> {
+    pub fn set_opacity(&self, element: RenderNodeId, opacity: f32) -> Result<(), RenderTreeError> {
         if !opacity.is_finite() || !(0.0..=1.0).contains(&opacity) {
             return Err(RenderTreeError::InvalidOpacity);
         }
@@ -1476,7 +1501,9 @@ impl RenderTree {
     #[doc(hidden)]
     pub fn presentation(&self, element: RenderNodeId) -> Result<(Mat3, f32), RenderTreeError> {
         let tree = self.draw_cmd.borrow();
-        let node = tree.node(element).ok_or(RenderTreeError::UnknownNode(element))?;
+        let node = tree
+            .node(element)
+            .ok_or(RenderTreeError::UnknownNode(element))?;
         Ok((node.presentation_transform, node.presentation_opacity))
     }
 
@@ -1486,9 +1513,14 @@ impl RenderTree {
     /// A node that was never animated reports the identity transform and full
     /// opacity.
     #[doc(hidden)]
-    pub fn compositor_animation(&self, element: RenderNodeId) -> Result<(Mat3, f32), RenderTreeError> {
+    pub fn compositor_animation(
+        &self,
+        element: RenderNodeId,
+    ) -> Result<(Mat3, f32), RenderTreeError> {
         let tree = self.draw_cmd.borrow();
-        let node = tree.node(element).ok_or(RenderTreeError::UnknownNode(element))?;
+        let node = tree
+            .node(element)
+            .ok_or(RenderTreeError::UnknownNode(element))?;
         Ok((node.transform, node.opacity))
     }
 
@@ -1502,7 +1534,12 @@ impl RenderTree {
         opacity: f32,
         clip: Option<Rect>,
     ) -> Result<(), RenderTreeError> {
-        if !transform.cols.iter().flatten().all(|value| value.is_finite()) {
+        if !transform
+            .cols
+            .iter()
+            .flatten()
+            .all(|value| value.is_finite())
+        {
             return Err(RenderTreeError::InvalidTransform);
         }
         if !opacity.is_finite() || !(0.0..=1.0).contains(&opacity) {
@@ -1516,10 +1553,7 @@ impl RenderTree {
         let node = tree
             .node(element)
             .ok_or(RenderTreeError::UnknownNode(element))?;
-        if node.transform == transform
-            && node.opacity == opacity
-            && node.animation_clip == clip
-        {
+        if node.transform == transform && node.opacity == opacity && node.animation_clip == clip {
             return Ok(());
         }
 
@@ -1551,6 +1585,29 @@ impl RenderTree {
         Ok(())
     }
 
+    /// Marks this element's local command list stale so it is recorded again,
+    /// without damaging anything yet.
+    ///
+    /// For an element that was rebuilt and may or may not draw something new:
+    /// the commit of its next recording damages the node only if the recorded
+    /// picture differs from the previous one. Use
+    /// [`invalidate_paint`](Self::invalidate_paint) when the pixels under the
+    /// node are known to be out of date whatever the element records.
+    pub fn refresh_paint(&self, element: RenderNodeId) -> Result<(), RenderTreeError> {
+        let mut tree = self.draw_cmd.borrow_mut();
+        let node = tree
+            .node_mut_paint(element)
+            .ok_or(RenderTreeError::UnknownNode(element))?;
+        let mut list = node.draw_list.borrow_mut();
+        // Already stale for a stronger reason stays that way.
+        if !list.stale {
+            list.refreshed = true;
+        }
+        list.dirty = true;
+        list.stale = true;
+        Ok(())
+    }
+
     /// Marks only this element's local command list stale.
     pub fn invalidate_paint(&self, element: RenderNodeId) -> Result<(), RenderTreeError> {
         let mut tree = self.draw_cmd.borrow_mut();
@@ -1565,6 +1622,7 @@ impl RenderTree {
             let mut list = node.draw_list.borrow_mut();
             list.dirty = true;
             list.stale = true;
+            list.refreshed = false;
         }
         if let Some(bounds) = bounds {
             tree.push_damage(bounds);
@@ -1585,7 +1643,9 @@ impl RenderTree {
     /// Returns the most recently committed local command revision.
     pub fn draw_list_revision(&self, element: RenderNodeId) -> Result<u64, RenderTreeError> {
         let tree = self.draw_cmd.borrow();
-        let node = tree.node(element).ok_or(RenderTreeError::UnknownNode(element))?;
+        let node = tree
+            .node(element)
+            .ok_or(RenderTreeError::UnknownNode(element))?;
         let revision = node.draw_list.borrow().revision;
         Ok(revision)
     }
@@ -1663,6 +1723,7 @@ impl RenderTree {
         let mut list = node.draw_list.borrow_mut();
         if !list.recording {
             list.stale = false;
+            list.refreshed = false;
         }
         Ok(())
     }
@@ -1685,13 +1746,20 @@ impl RenderTree {
         element: RenderNodeId,
     ) -> Result<DrawListSnapshot, RenderTreeError> {
         let tree = self.draw_cmd.borrow();
-        let node = tree.node(element).ok_or(RenderTreeError::UnknownNode(element))?;
+        let node = tree
+            .node(element)
+            .ok_or(RenderTreeError::UnknownNode(element))?;
         let draw_list = node.draw_list.borrow();
         Ok(DrawListSnapshot {
             revision: draw_list.revision,
             commands: draw_list.commands.clone(),
             image_textures: draw_list.image_textures.clone(),
         })
+    }
+
+    /// Returns whether any damage is waiting to be taken, without taking it.
+    pub fn has_pending_damage(&self) -> bool {
+        !self.draw_cmd.borrow().pending_damage.is_empty()
     }
 
     /// Takes damage accumulated by new nodes, local repaint, or geometry changes.
@@ -1715,7 +1783,6 @@ impl RenderTree {
         };
         Ok(tree.subtree_uses_only_local_v2(node.id))
     }
-
 }
 
 /// The active node identity and command tree passed while an element records paint.
@@ -1723,63 +1790,6 @@ impl RenderTree {
 pub struct CurrentBuildContext {
     draw_cmd: Shared<RefCell<DrawCommandList>>,
     element: RenderNodeId,
-}
-
-impl CurrentBuildContext {
-    /// Returns the element whose local commands this context records.
-    #[inline]
-    pub const fn element_id(&self) -> RenderNodeId {
-        self.element
-    }
-
-    /// Updates one direct child's retained presentation without re-recording
-    /// either command list.
-    #[doc(hidden)]
-    pub fn set_child_presentation_at(
-        &self,
-        child_index: usize,
-        transform: Mat3,
-        opacity: f32,
-    ) -> bool {
-        let child = self
-            .draw_cmd
-            .borrow()
-            .node(self.element)
-            .and_then(|node| node.children.get(child_index).copied());
-        let Some(child) = child else {
-            return false;
-        };
-        RenderTree {
-            draw_cmd: self.draw_cmd.clone(),
-        }
-        .set_presentation(child, transform, opacity)
-        .is_ok()
-    }
-
-    /// Reserves this element's retained list for one transactional recording.
-    #[doc(hidden)]
-    pub fn begin_recording(&self) -> Result<DrawListWriter, RenderTreeError> {
-        let draw_list = self
-            .draw_cmd
-            .borrow()
-            .node(self.element)
-            .ok_or(RenderTreeError::UnknownNode(self.element))?
-            .draw_list
-            .clone();
-        {
-            let mut retained = draw_list.borrow_mut();
-            if retained.recording {
-                return Err(RenderTreeError::RecorderAlreadyOpen(self.element));
-            }
-            retained.recording = true;
-        }
-        Ok(DrawListWriter {
-            owner: self.element,
-            draw_cmd: self.draw_cmd.clone(),
-            draw_list,
-            finished: false,
-        })
-    }
 }
 
 /// Internal commit lease for one element's retained draw list.
@@ -1807,8 +1817,21 @@ impl DrawListWriter {
             }
             tree.visible_node_bounds(self.owner)
         };
-        let revision = {
+        let (revision, changed) = {
             let mut draw_list = self.draw_list.borrow_mut();
+            // A rebuilt element records again whether or not its picture changed.
+            // The first recording always counts: revision 0 means nothing has
+            // been drawn from this list yet.
+            if draw_list.refreshed
+                && draw_list.revision > 0
+                && command_equality::commands_equal(&draw_list.commands, &commands)
+            {
+                draw_list.dirty = false;
+                draw_list.stale = false;
+                draw_list.refreshed = false;
+                draw_list.recording = false;
+                (draw_list.revision, false)
+            } else {
             draw_list.image_textures = commands
                 .iter()
                 .filter_map(|command| match command {
@@ -1826,10 +1849,12 @@ impl DrawListWriter {
                 .expect("draw-list revisions exhausted");
             draw_list.dirty = false;
             draw_list.stale = false;
+            draw_list.refreshed = false;
             draw_list.recording = false;
-            draw_list.revision
+            (draw_list.revision, true)
+            }
         };
-        if let Some(bounds) = bounds {
+        if changed && let Some(bounds) = bounds {
             self.draw_cmd.borrow_mut().push_damage(bounds);
         }
         self.finished = true;
@@ -1890,6 +1915,7 @@ impl Drop for DrawListWriter {
         draw_list.recording = false;
         draw_list.dirty = true;
         draw_list.stale = true;
+        draw_list.refreshed = false;
     }
 }
 

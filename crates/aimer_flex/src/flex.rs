@@ -33,8 +33,8 @@ mod lazy_tests {
 
     use crate::flex::raw_flex::RawFlex;
     use crate::flex::test_support::{
-        CountingChild, CountingSource, KeptChild, ResizingChild, VolatileChild, dummy_build_context,
-        replace_a_generated_subtree,
+        CountingChild, CountingSource, KeptChild, ResizingChild, VolatileChild,
+        dummy_build_context, replace_a_generated_subtree,
     };
     use crate::flex::{Column, FlexDirection, OverflowBehavior};
 
@@ -62,7 +62,6 @@ mod lazy_tests {
     impl Rebuildable for HitTestChild {}
     impl Drawable for HitTestChild {
         fn update(&self, _ctx: &BuildContext) {}
-
     }
     impl LayoutElement for HitTestChild {
         fn computed_size(&self, _ctx: &BuildContext) -> ResolvedSize {
@@ -209,18 +208,9 @@ mod lazy_tests {
         let column = RawFlex::new(
             FlexDirection::Column,
             vec![
-                HitTestChild::boxed((
-                    Vec2d { x: 0.0, y: 0.0 },
-                    Vec2d { x: 100.0, y: 20.0 },
-                )),
-                HitTestChild::boxed((
-                    Vec2d { x: 0.0, y: 20.0 },
-                    Vec2d { x: 100.0, y: 40.0 },
-                )),
-                HitTestChild::boxed((
-                    Vec2d { x: 0.0, y: 40.0 },
-                    Vec2d { x: 100.0, y: 60.0 },
-                )),
+                HitTestChild::boxed((Vec2d { x: 0.0, y: 0.0 }, Vec2d { x: 100.0, y: 20.0 })),
+                HitTestChild::boxed((Vec2d { x: 0.0, y: 20.0 }, Vec2d { x: 100.0, y: 40.0 })),
+                HitTestChild::boxed((Vec2d { x: 0.0, y: 40.0 }, Vec2d { x: 100.0, y: 60.0 })),
             ],
             "Column",
         );
@@ -436,7 +426,10 @@ mod lazy_tests {
         let general = dispatch_through_test_column(true);
 
         assert_eq!(indexed, general);
-        assert!(!indexed.0.contains(&4), "an unpainted child received a pointer event");
+        assert!(
+            !indexed.0.contains(&4),
+            "an unpainted child received a pointer event"
+        );
         assert_eq!(indexed.1, [4, 3, 2, 1, 0]);
     }
 
@@ -457,14 +450,8 @@ mod lazy_tests {
                 Some(CHILD_COUNT - 1),
                 VIEWPORT_HEIGHT,
             );
-        let (
-            direct_root,
-            mut direct_dispatcher,
-            direct_events,
-            _,
-            _,
-            indexed_setup,
-        ) = build_dispatch_fixture(CHILD_COUNT, WRAPPER_DEPTH, None, VIEWPORT_HEIGHT);
+        let (direct_root, mut direct_dispatcher, direct_events, _, _, indexed_setup) =
+            build_dispatch_fixture(CHILD_COUNT, WRAPPER_DEPTH, None, VIEWPORT_HEIGHT);
 
         let mut direct_samples = Vec::new();
         for _ in 0..ROUTES {
@@ -538,10 +525,7 @@ mod lazy_tests {
         pos_start_end_calls.set(0);
 
         let mut hits = 0;
-        column.hit_test_children_at_reversed(
-            Vec2d { x: 50.0, y: 1005.0 },
-            &mut |_| hits += 1,
-        );
+        column.hit_test_children_at_reversed(Vec2d { x: 50.0, y: 1005.0 }, &mut |_| hits += 1);
 
         assert_eq!(hits, 1);
         assert!(
@@ -609,7 +593,10 @@ mod lazy_tests {
         let drawn = Rc::new(Cell::new(0));
         let volatile_measured = Rc::new(Cell::new(0));
         let volatile_height = Rc::new(Cell::new(30.0));
-        let mut children = vec![VolatileChild::boxed_new(&volatile_height, &volatile_measured)];
+        let mut children = vec![VolatileChild::boxed_new(
+            &volatile_height,
+            &volatile_measured,
+        )];
         children.extend(
             (0..256).map(|_| CountingChild::boxed_new(200.0, CHILD_HEIGHT, &measured, &drawn)),
         );
@@ -624,7 +611,11 @@ mod lazy_tests {
 
         assert_eq!(column.computed_size(&ctx).height, total);
         assert_eq!(measured.get(), 0, "stable children were measured again");
-        assert_eq!(volatile_measured.get(), 1, "the unstable child must be asked once");
+        assert_eq!(
+            volatile_measured.get(),
+            1,
+            "the unstable child must be asked once"
+        );
     }
 
     /// The shortcut must not outlive the size it was checked against: when the
@@ -635,18 +626,27 @@ mod lazy_tests {
         let drawn = Rc::new(Cell::new(0));
         let volatile_measured = Rc::new(Cell::new(0));
         let volatile_height = Rc::new(Cell::new(30.0));
-        let mut children = vec![VolatileChild::boxed_new(&volatile_height, &volatile_measured)];
+        let mut children = vec![VolatileChild::boxed_new(
+            &volatile_height,
+            &volatile_measured,
+        )];
         children.extend(
             (0..16).map(|_| CountingChild::boxed_new(200.0, CHILD_HEIGHT, &measured, &drawn)),
         );
         let column = RawFlex::new(FlexDirection::Column, children, "Column");
         let ctx = dummy_build_context(200.0, VIEWPORT, Some((0.0, 0.0, 200.0, VIEWPORT)));
-        assert_eq!(column.computed_size(&ctx).height, 30.0 + 16.0 * CHILD_HEIGHT);
+        assert_eq!(
+            column.computed_size(&ctx).height,
+            30.0 + 16.0 * CHILD_HEIGHT
+        );
 
         volatile_height.set(80.0);
         replace_a_generated_subtree(&ctx);
 
-        assert_eq!(column.computed_size(&ctx).height, 80.0 + 16.0 * CHILD_HEIGHT);
+        assert_eq!(
+            column.computed_size(&ctx).height,
+            80.0 + 16.0 * CHILD_HEIGHT
+        );
     }
 
     /// Once the index of dirty paths is ready, the rebuild pass reaches the
@@ -679,7 +679,10 @@ mod lazy_tests {
             (2, 2),
             "both kept children must be rebuilt again"
         );
-        assert!(entered <= 3, "the pass entered {entered} boundaries for 2 kept children");
+        assert!(
+            entered <= 3,
+            "the pass entered {entered} boundaries for 2 kept children"
+        );
     }
 
     /// Which children changed is recorded as it happens, so revalidating a
@@ -692,7 +695,10 @@ mod lazy_tests {
         let volatile_measured = Rc::new(Cell::new(0));
         let volatile_height = Rc::new(Cell::new(30.0));
         let asked = Rc::new(Cell::new(0));
-        let mut children = vec![VolatileChild::boxed_new(&volatile_height, &volatile_measured)];
+        let mut children = vec![VolatileChild::boxed_new(
+            &volatile_height,
+            &volatile_measured,
+        )];
         children.extend(
             (0..256).map(|_| CountingChild::boxed_new(200.0, CHILD_HEIGHT, &measured, &drawn)),
         );
@@ -706,8 +712,16 @@ mod lazy_tests {
         asked.set(0);
         assert_eq!(column.computed_size(&ctx).height, total);
 
-        assert!(asked.get() <= 4, "{} of 257 children were looked at", asked.get());
-        assert_eq!(measured.get(), 256, "stable children are only measured by the first pass");
+        assert!(
+            asked.get() <= 4,
+            "{} of 257 children were looked at",
+            asked.get()
+        );
+        assert_eq!(
+            measured.get(),
+            256,
+            "stable children are only measured by the first pass"
+        );
     }
 
     /// A stable child whose subtree was replaced has to be asked again, even
@@ -719,7 +733,10 @@ mod lazy_tests {
         let volatile_measured = Rc::new(Cell::new(0));
         let volatile_height = Rc::new(Cell::new(30.0));
         let asked = Rc::new(Cell::new(0));
-        let mut children = vec![VolatileChild::boxed_new(&volatile_height, &volatile_measured)];
+        let mut children = vec![VolatileChild::boxed_new(
+            &volatile_height,
+            &volatile_measured,
+        )];
         children.extend(
             (0..64).map(|_| CountingChild::boxed_new(200.0, CHILD_HEIGHT, &measured, &drawn)),
         );
@@ -734,7 +751,11 @@ mod lazy_tests {
         replaced.set_subtree_generation(aimer_widget::element_tree_generation());
         column.computed_size(&ctx);
 
-        assert_eq!(measured.get(), 1, "only the child with a new generation is asked again");
+        assert_eq!(
+            measured.get(),
+            1,
+            "only the child with a new generation is asked again"
+        );
     }
 
     /// The log of changes is bounded. A container that fell behind it cannot
@@ -746,7 +767,10 @@ mod lazy_tests {
         let volatile_measured = Rc::new(Cell::new(0));
         let volatile_height = Rc::new(Cell::new(30.0));
         let asked = Rc::new(Cell::new(0));
-        let mut children = vec![VolatileChild::boxed_new(&volatile_height, &volatile_measured)];
+        let mut children = vec![VolatileChild::boxed_new(
+            &volatile_height,
+            &volatile_measured,
+        )];
         children.extend(
             (0..64).map(|_| CountingChild::boxed_new(200.0, CHILD_HEIGHT, &measured, &drawn)),
         );
@@ -766,7 +790,11 @@ mod lazy_tests {
         }
         column.computed_size(&ctx);
 
-        assert_eq!(measured.get(), 2, "both changed children must be found without the log");
+        assert_eq!(
+            measured.get(),
+            2,
+            "both changed children must be found without the log"
+        );
     }
 
     /// Visible overflow is an explicit request to keep children outside the
@@ -941,10 +969,10 @@ mod lazy_tests {
 pub mod raw_flex;
 pub mod row_column;
 #[cfg(test)]
+mod saturation_tests;
+#[cfg(test)]
 pub(crate) mod test_support;
 pub(crate) mod wrap_layout;
-#[cfg(test)]
-mod saturation_tests;
 #[cfg(test)]
 mod wrap_retained_tests;
 
@@ -952,12 +980,12 @@ mod wrap_retained_tests;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_widget::base::BuildContext;
+#[cfg(feature = "portable-guest")]
+use aimer_widget::portable::{PortableBuildContext, PortableBuildError, PortableEncodeProperty};
 use aimer_widget::portable::{
     PortableMaterializeError, PortableMaterializeProperty, PortableProperty,
     PortablePropertyConversion, PortablePropertyReflection,
 };
-#[cfg(feature = "portable-guest")]
-use aimer_widget::portable::{PortableBuildContext, PortableBuildError, PortableEncodeProperty};
 pub use flex_child::Expanded;
 pub use flex_list::{FlexList, ListFlex};
 pub use layout_transition::{FlexGeometrySnapshot, FlexItemGeometry, FlexSnapshotError};
@@ -1068,11 +1096,13 @@ impl PortableEncodeProperty for BoxAlignment {
         self,
         _context: &mut PortableBuildContext,
     ) -> Result<aimer_widget::portable::__anteros::PropertyValue, PortableBuildError> {
-        Ok(aimer_widget::portable::__anteros::PropertyValue::I64(match self {
-            Self::Start => 0,
-            Self::Center => 1,
-            Self::End => 2,
-        }))
+        Ok(aimer_widget::portable::__anteros::PropertyValue::I64(
+            match self {
+                Self::Start => 0,
+                Self::Center => 1,
+                Self::End => 2,
+            },
+        ))
     }
 }
 
@@ -1083,14 +1113,16 @@ impl PortableEncodeProperty for JustifyContent {
         self,
         _context: &mut PortableBuildContext,
     ) -> Result<aimer_widget::portable::__anteros::PropertyValue, PortableBuildError> {
-        Ok(aimer_widget::portable::__anteros::PropertyValue::I64(match self {
-            Self::Start => 0,
-            Self::Center => 1,
-            Self::End => 2,
-            Self::SpaceBetween => 3,
-            Self::SpaceAround => 4,
-            Self::SpaceEvenly => 5,
-        }))
+        Ok(aimer_widget::portable::__anteros::PropertyValue::I64(
+            match self {
+                Self::Start => 0,
+                Self::Center => 1,
+                Self::End => 2,
+                Self::SpaceBetween => 3,
+                Self::SpaceAround => 4,
+                Self::SpaceEvenly => 5,
+            },
+        ))
     }
 }
 
@@ -1101,11 +1133,13 @@ impl PortableEncodeProperty for OverflowBehavior {
         self,
         _context: &mut PortableBuildContext,
     ) -> Result<aimer_widget::portable::__anteros::PropertyValue, PortableBuildError> {
-        Ok(aimer_widget::portable::__anteros::PropertyValue::I64(match self {
-            Self::Hidden => 0,
-            Self::Wrap => 1,
-            Self::Visible => 2,
-        }))
+        Ok(aimer_widget::portable::__anteros::PropertyValue::I64(
+            match self {
+                Self::Hidden => 0,
+                Self::Wrap => 1,
+                Self::Visible => 2,
+            },
+        ))
     }
 }
 
@@ -1169,12 +1203,12 @@ impl PortableMaterializeProperty for OverflowBehavior {
 #[cfg(all(test, feature = "portable-guest"))]
 mod portable_layout_tests {
     use aimer_widget::base::BuildContext;
+    use aimer_widget::portable::__anteros::{
+        PropertyValue, Version, WIDGET_SIZED_BOX, WidgetDocumentView,
+    };
     use aimer_widget::portable::{
         PortableBuildContext, PortableLimits, PortableWidgetLimits, PortableWidgetSchema,
         SourceFingerprint, StableId128,
-    };
-    use aimer_widget::portable::__anteros::{
-        PropertyValue, Version, WIDGET_SIZED_BOX, WidgetDocumentView,
     };
     use aimer_widget::{AnyElement, ErrorWidget, PortableWidget, Widget};
 
@@ -1193,16 +1227,11 @@ mod portable_layout_tests {
             self,
             ctx: &mut PortableBuildContext,
             source: SourceFingerprint,
-        ) -> Result<aimer_widget::portable::PortableNodeId, aimer_widget::portable::PortableBuildError>
-        {
-            ctx.push_node(
-                WIDGET_SIZED_BOX,
-                Version::new(1, 0),
-                None,
-                source,
-                &[],
-                &[],
-            )
+        ) -> Result<
+            aimer_widget::portable::PortableNodeId,
+            aimer_widget::portable::PortableBuildError,
+        > {
+            ctx.push_node(WIDGET_SIZED_BOX, Version::new(1, 0), None, source, &[], &[])
         }
     }
 
@@ -1238,26 +1267,40 @@ mod portable_layout_tests {
     #[test]
     fn expanded_lowers_flex_property_and_required_child() {
         let mut ctx = context();
-        let root = Expanded::new().flex(2.5).child(Leaf).to_portable_node(&mut ctx, source()).unwrap();
+        let root = Expanded::new()
+            .flex(2.5)
+            .child(Leaf)
+            .to_portable_node(&mut ctx, source())
+            .unwrap();
         let document = ctx.finish_document(root).unwrap();
         let bytes = document.encode().unwrap();
         let view = WidgetDocumentView::decode(&bytes, document.model_limits()).unwrap();
         let node = view.node(root.index()).unwrap();
-        assert_eq!(node.widget_type(), <Expanded<Leaf> as PortableWidgetSchema>::SCHEMA.widget().id());
-        assert_eq!(node.properties().next().unwrap().value(), PropertyValue::F64(2.5));
+        assert_eq!(
+            node.widget_type(),
+            <Expanded<Leaf> as PortableWidgetSchema>::SCHEMA
+                .widget()
+                .id()
+        );
+        assert_eq!(
+            node.properties().next().unwrap().value(),
+            PropertyValue::F64(2.5)
+        );
         assert_eq!(node.children().count(), 1);
     }
 
     #[test]
     fn flex_lowers_collection_children_without_native_construction() {
-        assert_lowered(Flex::new().direction(FlexDirection::Row).children([Leaf]), 1, 0);
+        assert_lowered(
+            Flex::new().direction(FlexDirection::Row).children([Leaf]),
+            1,
+            0,
+        );
     }
 
     #[test]
     fn list_flex_lowers_data_builder_children() {
-        let list: ListFlex<u8, _> = super::Column::new()
-            .list([1_u8, 2])
-            .builder(|_| Leaf);
+        let list: ListFlex<u8, _> = super::Column::new().list([1_u8, 2]).builder(|_| Leaf);
         assert_lowered(list, 2, 0);
     }
 }

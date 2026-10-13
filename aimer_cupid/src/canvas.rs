@@ -3,8 +3,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::draw_cmd::{DrawList, TextureRegistry};
-use crate::frame::RetainedRenderPlan;
 use crate::font::{FontFamily, FontStyle, FontWeight, TextLanguage};
+use crate::frame::RetainedRenderPlan;
 use crate::lru_map::LruMap;
 use crate::text_pipeline::glyph_rasterizer::GlyphRasterizer;
 use crate::text_pipeline::text_layout::line_break_opportunities;
@@ -344,7 +344,7 @@ impl CupidCanvas {
             font_style,
             font_weight,
         ))
-            .clone()
+        .clone()
     }
 
     /// Returns shared source-aware geometry for a styled text run.
@@ -860,7 +860,10 @@ mod family_metrics_tests {
         );
 
         assert_eq!(first_shape_calls, 1);
-        assert_eq!(canvas.rasterizer.borrow().shape_call_count(), first_shape_calls);
+        assert_eq!(
+            canvas.rasterizer.borrow().shape_call_count(),
+            first_shape_calls
+        );
         assert_ne!(first.metrics.line_count, second.metrics.line_count);
     }
 

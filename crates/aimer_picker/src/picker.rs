@@ -2,12 +2,12 @@
 
 use core::fmt;
 
+use super::semantics::DatePickerSemantics;
 use super::{
     Calendar, CalendarError, CancelReason, Date, DateBounds, DateSelection, DateSelectionMode,
     FocusRestorer, FocusTarget, OverlayConsumer, OverlayRequest, PickerOutcome, PickerOverlay,
     PickerSession, PickerSessionError,
 };
-use super::semantics::DatePickerSemantics;
 
 /// Errors returned by [`DatePicker`] operations.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -33,12 +33,17 @@ impl fmt::Display for DatePickerError {
         match self {
             Self::Calendar(error) => error.fmt(formatter),
             Self::Closed => formatter.write_str("date picker is closed"),
-            Self::ModeMismatch => formatter.write_str("initial selection does not match picker mode"),
+            Self::ModeMismatch => {
+                formatter.write_str("initial selection does not match picker mode")
+            }
             Self::IncompleteRange => formatter.write_str("date range is incomplete"),
             Self::MissingHost => formatter.write_str("picker overlay host is missing"),
             Self::UnsupportedHost => formatter.write_str("picker overlay host is unsupported"),
             Self::DismissalNotAllowed(reason) => {
-                write!(formatter, "picker overlay dismissal is disabled for {reason:?}")
+                write!(
+                    formatter,
+                    "picker overlay dismissal is disabled for {reason:?}"
+                )
             }
         }
     }
@@ -83,7 +88,11 @@ impl DatePicker {
 
     /// Creates a bounded single-date picker.
     pub fn try_new(initial: Option<Date>, bounds: DateBounds) -> Result<Self, DatePickerError> {
-        Self::try_with_selection(DateSelection::Single(initial), bounds, DateSelectionMode::Single)
+        Self::try_with_selection(
+            DateSelection::Single(initial),
+            bounds,
+            DateSelectionMode::Single,
+        )
     }
 
     /// Creates a range picker with an explicit reverse-order and same-day
@@ -109,7 +118,10 @@ impl DatePicker {
         let mut calendar = Calendar::try_new(focus, bounds, mode)?;
         install_selection(&mut calendar, initial)?;
         let selection = calendar.selection();
-        Ok(Self { calendar, session: PickerSession::new(selection) })
+        Ok(Self {
+            calendar,
+            session: PickerSession::new(selection),
+        })
     }
 
     /// Returns a picker that marks the supplied dates unavailable.
@@ -252,7 +264,9 @@ impl DatePicker {
             return Err(DatePickerError::IncompleteRange);
         }
         self.session.set_draft(draft)?;
-        Ok(self.session.confirm_with_overlay(overlay, consumer, focus)?)
+        Ok(self
+            .session
+            .confirm_with_overlay(overlay, consumer, focus)?)
     }
 
     /// Cancels the current draft and closes the picker.
@@ -325,7 +339,9 @@ fn selection_matches_mode(selection: DateSelection, mode: DateSelectionMode) -> 
 fn initial_focus(selection: DateSelection, bounds: DateBounds) -> Date {
     let candidate = match selection {
         DateSelection::Single(Some(date)) => Some(date),
-        DateSelection::Range { start: Some(date), .. } => Some(date),
+        DateSelection::Range {
+            start: Some(date), ..
+        } => Some(date),
         DateSelection::Single(None) | DateSelection::Range { start: None, .. } => None,
     };
     candidate
@@ -334,20 +350,36 @@ fn initial_focus(selection: DateSelection, bounds: DateBounds) -> Date {
         .unwrap_or_else(|| Date::try_new(1970, 1, 1).expect("the epoch is a valid date"))
 }
 
-fn install_selection(calendar: &mut Calendar, selection: DateSelection) -> Result<(), CalendarError> {
+fn install_selection(
+    calendar: &mut Calendar,
+    selection: DateSelection,
+) -> Result<(), CalendarError> {
     match selection {
         DateSelection::Single(Some(date)) => {
             calendar.select(date)?;
         }
-        DateSelection::Single(None) | DateSelection::Range { start: None, end: None } => {}
-        DateSelection::Range { start: Some(start), end: None } => {
+        DateSelection::Single(None)
+        | DateSelection::Range {
+            start: None,
+            end: None,
+        } => {}
+        DateSelection::Range {
+            start: Some(start),
+            end: None,
+        } => {
             calendar.select(start)?;
         }
-        DateSelection::Range { start: Some(start), end: Some(end) } => {
+        DateSelection::Range {
+            start: Some(start),
+            end: Some(end),
+        } => {
             calendar.select(start)?;
             calendar.select(end)?;
         }
-        DateSelection::Range { start: None, end: Some(end) } => {
+        DateSelection::Range {
+            start: None,
+            end: Some(end),
+        } => {
             calendar.select(end)?;
         }
     }

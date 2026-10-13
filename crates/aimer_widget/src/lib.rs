@@ -12,7 +12,6 @@ pub mod key;
 pub mod layout_cache;
 pub mod page_storage;
 mod paint_damage;
-#[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
 pub mod platform_brightness;
 pub mod pointer_claim;
 #[doc(hidden)]
@@ -83,7 +82,7 @@ pub static CALLED : CalledCounter = CalledCounter::new();
 /// Borrowing through `Deref` or `AsRef` provides a `dyn Element` view with
 /// normal dynamic dispatch and no adapter call. The name of [`Element::boxed`]
 /// is retained for source familiarity.
-pub type AnyElement = aimer_rubick::Rubick<dyn Element, 1>;
+pub type AnyElement = aimer_rubick::Rubick<dyn Element, 4>;
 
 /// An owned, type-erased [`Widget`] with inline storage and heap fallback.
 ///
@@ -144,7 +143,7 @@ pub use crate::components::element::{
 pub use crate::components::context::InheritedStates;
 #[doc(hidden)]
 pub use crate::components::element::{
-    VisibleWindow, may_skip_settled_offscreen, retained_element_settled, retained_visible_window,
+    VisibleWindow, may_escape_ancestor_clips, may_skip_settled_offscreen, retained_element_settled, retained_visible_window,
     retained_visible_window_of_current, set_scroll_only_frame, set_settled_offscreen_skip,
     animation_only_targets, is_animation_only_frame, run_animation_only_pass,
     set_animation_only_frame, with_v2_animation_only_context, request_isolated_animation_frame, request_isolated_subtree_animation_frame, set_frame_rebuilt_roots, traversal_counts, keep_element_reachable, KeepReachable, preserving_dirty_paths, rebuild_replaced_subtree, rebuild_keepalive_count, rebuild_descent_count, rebuild_visit_count, rebuild_dirty_children, structural_search_count, stable_generation_cursor, stable_generations_since, note_state_update_marked,

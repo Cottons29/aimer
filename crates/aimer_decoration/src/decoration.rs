@@ -1,8 +1,28 @@
 use std::rc::Rc;
 
+use crate::BoxDecoration;
 use aimer_attribute::{ResolvedSize, Vec2d};
 use aimer_canvas::Canvas;
-use crate::BoxDecoration;
+use aimer_rubick::{ErasedFrom, Rubick};
+
+mod any_decor;
+mod components;
+
+#[cfg(test)]
+mod components_tests;
+
+/// An owned, type-erased [`Decoration`] with eight words of inline capacity.
+///
+/// Construct with [`Decoration::notype`]. Small, suitably aligned values stay
+/// inline; larger or over-aligned values use Rubick's pooled heap storage.
+/// The owner forwards painting, child geometry, backgrounds and revisions.
+pub type AnyDecor = Rubick<dyn Decoration, 8>;
+
+// SAFETY: Unsizing the null pointer supplies exactly D's Decoration vtable
+// with a null data address. The template is never dereferenced.
+unsafe impl<D: Decoration + 'static> ErasedFrom<D> for dyn Decoration {
+    const TEMPLATE: *const Self = std::ptr::null::<D>() as *const dyn Decoration;
+}
 
 /// Paints a box and optionally describes its child insets and clipping.
 ///
@@ -42,13 +62,26 @@ pub trait Decoration {
     /// canvas, change layout, or perform application side effects here.
     fn paint(&self, canvas: &Canvas, origin: Vec2d, size: ResolvedSize, scale: f32);
 
+    /// Paints a layer and propagates its declared background to later layers.
+    /// Composite decorations override this to propagate each leaf exactly once.
+    #[doc(hidden)]
+    #[inline]
+    fn paint_layer(&self, canvas: &Canvas, origin: Vec2d, size: ResolvedSize, scale: f32) {
+        self.paint(canvas, origin, size, scale);
+        canvas.add_background_color(self.background_color());
+    }
+
     /// Paints with a container's fallback background when no background is supplied.
     ///
     /// The default fills the box before calling [`Decoration::paint`]. A
     /// decoration with a shaped background can override this to incorporate
     /// the fallback into its existing background command.
     fn paint_with_background(
-        &self, canvas: &Canvas, origin: Vec2d, size: ResolvedSize, scale: f32,
+        &self,
+        canvas: &Canvas,
+        origin: Vec2d,
+        size: ResolvedSize,
+        scale: f32,
         background: Option<aimer_color::prelude::Color>,
     ) {
         if self.background_color().is_none() {
@@ -122,21 +155,59 @@ pub trait Decoration {
     fn revision(&self) -> u64 {
         0
     }
+
+    /// Consumes this decoration and erases its concrete type into [`AnyDecor`].
+    ///
+    /// Small values stay inline. Heap storage uses the active UI allocator, or
+    /// Rubick's thread-local pool outside a UI allocation scope. Nothing is
+    /// cloned, and an existing `AnyDecor` is returned unchanged.
+    ///
+    /// ```
+    /// use aimer_decoration::{AnyDecor, BorderRadius, BoxShadow, Decoration};
+    ///
+    /// let layers: Vec<AnyDecor> = vec![
+    ///     BorderRadius::from(12).notype(),
+    ///     BoxShadow::new().blur(8.0).notype(),
+    /// ];
+    /// ```
+    #[inline]
+    fn notype(self) -> AnyDecor
+    where
+        Self: Sized + 'static,
+    {
+        AnyDecor::erase(self)
+    }
 }
 
 impl Decoration for BoxDecoration {
     #[inline]
     fn paint(&self, canvas: &Canvas, origin: Vec2d, size: ResolvedSize, scale: f32) {
-        self.record_local_v2(canvas, origin, size.width * scale, size.height * scale, scale);
+        self.record_local_v2(
+            canvas,
+            origin,
+            size.width * scale,
+            size.height * scale,
+            scale,
+        );
     }
 
     #[inline]
     fn paint_with_background(
-        &self, canvas: &Canvas, origin: Vec2d, size: ResolvedSize, scale: f32,
+        &self,
+        canvas: &Canvas,
+        origin: Vec2d,
+        size: ResolvedSize,
+        scale: f32,
         background: Option<aimer_color::prelude::Color>,
     ) {
-        self.record_local_v2_with_background(canvas, origin, size.width * scale,
-            size.height * scale, scale, background);
+        self.record_local_v2_with_background(
+            canvas,
+            origin,
+            size.width * scale,
+            size.height * scale,
+            scale,
+            background,
+        );
     }
 
     #[inline]
@@ -151,23 +222,30 @@ impl Decoration for BoxDecoration {
                 aimer_attribute::Dimension::Auto => 0.0,
                 aimer_attribute::Dimension::Px(value) => value,
                 aimer_attribute::Dimension::Percent(value) => parent * (value / 100.0),
-            }.max(0.0)
+            }
+            .max(0.0)
         };
-        [resolve(self.border.left.stroke, size.width),
-         resolve(self.border.top.stroke, size.height),
-         resolve(self.border.right.stroke, size.width),
-         resolve(self.border.bottom.stroke, size.height)]
+        [
+            resolve(self.border.left.stroke, size.width),
+            resolve(self.border.top.stroke, size.height),
+            resolve(self.border.right.stroke, size.width),
+            resolve(self.border.bottom.stroke, size.height),
+        ]
     }
 
     #[inline]
     fn child_clip_radius(&self, size: ResolvedSize, scale: f32) -> Option<[f32; 4]> {
         let [left, top, right, bottom] = self.content_insets(size, scale);
-        let radii = self.border_radius.resolve(size.width * scale, size.height * scale, scale)
+        let radii = self
+            .border_radius
+            .resolve(size.width * scale, size.height * scale, scale)
             .map(|radius| radius / scale);
-        Some([(radii[0] - top.max(left)).max(0.0),
-              (radii[1] - top.max(right)).max(0.0),
-              (radii[2] - bottom.max(right)).max(0.0),
-              (radii[3] - bottom.max(left)).max(0.0)])
+        Some([
+            (radii[0] - top.max(left)).max(0.0),
+            (radii[1] - top.max(right)).max(0.0),
+            (radii[2] - bottom.max(right)).max(0.0),
+            (radii[3] - bottom.max(left)).max(0.0),
+        ])
     }
 
     #[inline]
@@ -182,11 +260,18 @@ impl Decoration for BoxDecoration {
 
     #[inline]
     fn revision(&self) -> u64 {
-        self.background_color.get().map_or(0, |color| u64::from(color.as_u32()) + 1)
+        self.background_color
+            .get()
+            .map_or(0, |color| u64::from(color.as_u32()) + 1)
     }
 }
 
 impl<D: Decoration + ?Sized> Decoration for Box<D> {
+    #[inline]
+    fn paint_layer(&self, canvas: &Canvas, origin: Vec2d, size: ResolvedSize, scale: f32) {
+        self.as_ref().paint_layer(canvas, origin, size, scale);
+    }
+
     #[inline]
     fn paint(&self, canvas: &Canvas, origin: Vec2d, size: ResolvedSize, scale: f32) {
         self.as_ref().paint(canvas, origin, size, scale);
@@ -194,10 +279,15 @@ impl<D: Decoration + ?Sized> Decoration for Box<D> {
 
     #[inline]
     fn paint_with_background(
-        &self, canvas: &Canvas, origin: Vec2d, size: ResolvedSize, scale: f32,
+        &self,
+        canvas: &Canvas,
+        origin: Vec2d,
+        size: ResolvedSize,
+        scale: f32,
         background: Option<aimer_color::prelude::Color>,
     ) {
-        self.as_ref().paint_with_background(canvas, origin, size, scale, background);
+        self.as_ref()
+            .paint_with_background(canvas, origin, size, scale, background);
     }
 
     #[inline]
@@ -233,16 +323,26 @@ impl<D: Decoration + ?Sized> Decoration for Box<D> {
 
 impl<D: Decoration + ?Sized> Decoration for Rc<D> {
     #[inline]
+    fn paint_layer(&self, canvas: &Canvas, origin: Vec2d, size: ResolvedSize, scale: f32) {
+        self.as_ref().paint_layer(canvas, origin, size, scale);
+    }
+
+    #[inline]
     fn paint(&self, canvas: &Canvas, origin: Vec2d, size: ResolvedSize, scale: f32) {
         self.as_ref().paint(canvas, origin, size, scale);
     }
 
     #[inline]
     fn paint_with_background(
-        &self, canvas: &Canvas, origin: Vec2d, size: ResolvedSize, scale: f32,
+        &self,
+        canvas: &Canvas,
+        origin: Vec2d,
+        size: ResolvedSize,
+        scale: f32,
         background: Option<aimer_color::prelude::Color>,
     ) {
-        self.as_ref().paint_with_background(canvas, origin, size, scale, background);
+        self.as_ref()
+            .paint_with_background(canvas, origin, size, scale, background);
     }
 
     #[inline]
@@ -275,4 +375,3 @@ impl<D: Decoration + ?Sized> Decoration for Rc<D> {
         self.as_ref().revision()
     }
 }
-

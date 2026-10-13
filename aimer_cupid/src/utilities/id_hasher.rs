@@ -83,8 +83,16 @@ mod tests {
         low.dedup();
         high.sort_unstable();
         high.dedup();
-        assert!(low.len() >= 160, "only {} distinct low bytes for 256 ids", low.len());
-        assert!(high.len() >= 80, "only {} distinct tags for 256 ids", high.len());
+        assert!(
+            low.len() >= 160,
+            "only {} distinct low bytes for 256 ids",
+            low.len()
+        );
+        assert!(
+            high.len() >= 80,
+            "only {} distinct tags for 256 ids",
+            high.len()
+        );
     }
 
     #[test]

@@ -3,8 +3,8 @@ use quote::{format_ident, quote};
 use syn::ext::IdentExt;
 use syn::visit_mut::{self, VisitMut};
 use syn::{
-    Data, DeriveInput, Fields, GenericArgument, GenericParam, LitInt, LitStr, Path,
-    PathArguments, Type, TypePath, parse_quote,
+    Data, DeriveInput, Fields, GenericArgument, GenericParam, LitInt, LitStr, Path, PathArguments,
+    Type, TypePath, parse_quote,
 };
 
 #[derive(Clone, Copy)]
@@ -63,7 +63,10 @@ struct CallbackField {
 pub(crate) fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
     let name = &input.ident;
     let Data::Struct(data) = &input.data else {
-        return Err(syn::Error::new_spanned(name, "PortableWidget requires a struct"));
+        return Err(syn::Error::new_spanned(
+            name,
+            "PortableWidget requires a struct",
+        ));
     };
     let fields = match &data.fields {
         Fields::Named(fields) => fields.named.iter().collect::<Vec<_>>(),
@@ -86,7 +89,14 @@ pub(crate) fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
         quote!(::aimer_widget::portable::__anteros::BUILTIN_WIDGET_SCHEMA_VERSION)
     };
     let widget_canonical = widget_identity.as_ref().map_or_else(
-        || quote!(concat!("aimer.widget:", module_path!(), "::", stringify!(#name))),
+        || {
+            quote!(concat!(
+                "aimer.widget:",
+                module_path!(),
+                "::",
+                stringify!(#name)
+            ))
+        },
         |identity| quote!(#identity),
     );
     let mut properties = Vec::new();
@@ -99,11 +109,8 @@ pub(crate) fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
 
     for field in fields {
         let field_name = field.ident.as_ref().expect("named field");
-        let source_discriminator = field_source_discriminator(
-            widget_identity.as_deref(),
-            name,
-            field_name,
-        );
+        let source_discriminator =
+            field_source_discriminator(widget_identity.as_deref(), name, field_name);
         if has_attribute(field, "portable_skip") {
             continue;
         }
@@ -161,8 +168,7 @@ pub(crate) fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
             max_completion_bytes,
             max_callback_fuel,
             max_retained_resources,
-        )) =
-            callback_attribute(field)?
+        )) = callback_attribute(field)?
         {
             let callback_version = if (callback_major, callback_minor) == (1, 0) {
                 quote!(::aimer_widget::portable::__anteros::BUILTIN_WIDGET_SCHEMA_VERSION)
@@ -172,12 +178,8 @@ pub(crate) fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
                     #callback_minor,
                 ))
             };
-            let canonical = field_canonical(
-                "aimer.event:",
-                widget_identity.as_deref(),
-                name,
-                field_name,
-            );
+            let canonical =
+                field_canonical("aimer.event:", widget_identity.as_deref(), name, field_name);
             let callback_metadata = if async_capable {
                 quote! {
                     ::aimer_widget::portable::__anteros::CallbackSchemaMetadata::from_canonical_name(
@@ -245,8 +247,10 @@ pub(crate) fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
                 #reflection.value_schema()
             )
         });
-        let (option_value, value_type) = optional_value_type(field_type)
-            .map_or_else(|| (false, field_type.clone()), |value| (true, value.clone()));
+        let (option_value, value_type) = optional_value_type(field_type).map_or_else(
+            || (false, field_type.clone()),
+            |value| (true, value.clone()),
+        );
         let optional = option_value || default_optional;
         lowered_properties.push(LoweredProperty {
             name: field_name.clone(),
@@ -272,10 +276,15 @@ pub(crate) fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
             quote!(::aimer_widget::portable::__anteros::ChildCardinality::exactly(1))
         }
         Some(ChildKind::Optional) => {
-            quote!(::aimer_widget::portable::__anteros::ChildCardinality::new(0, 1))
+            quote!(::aimer_widget::portable::__anteros::ChildCardinality::new(
+                0, 1
+            ))
         }
         Some(ChildKind::Collection) => {
-            quote!(::aimer_widget::portable::__anteros::ChildCardinality::new(0, u32::MAX))
+            quote!(::aimer_widget::portable::__anteros::ChildCardinality::new(
+                0,
+                u32::MAX
+            ))
         }
     };
     let mut generics = input.generics.clone();
@@ -344,8 +353,7 @@ fn portable_lowering(
     validator: Option<&Path>,
 ) -> TokenStream {
     let name = &input.ident;
-    let (base_impl_generics, type_generics, base_where_clause) =
-        input.generics.split_for_impl();
+    let (base_impl_generics, type_generics, base_where_clause) = input.generics.split_for_impl();
     let mut feature_generics = input.generics.clone();
     feature_generics
         .make_where_clause()
@@ -556,9 +564,10 @@ fn portable_lowering(
             let mut __aimer_portable_callbacks = ::std::vec::Vec::new();
         }
     };
-    let validation = validator.map_or_else(TokenStream::new, |validator| {
-        quote!(#validator(&self, ctx, source)?;)
-    });
+    let validation = validator.map_or_else(
+        TokenStream::new,
+        |validator| quote!(#validator(&self, ctx, source)?;),
+    );
 
     quote! {
         #[cfg(not(feature = "portable-guest"))]
@@ -698,48 +707,51 @@ fn native_materializer(
     let (impl_generics, _, where_clause) = impl_generics.split_for_impl();
     let registration = native_registration(name, target_type.clone(), register);
 
-    let decoders = properties.iter().enumerate().map(|(property_index, property)| {
-        let field = &property.name;
-        let local = format_ident!(
-            "__aimer_materialized_{}",
-            field.unraw(),
-            span = field.span(),
-        );
-        let property_id = format_ident!(
-            "__AIMER_MATERIALIZED_PROPERTY_ID_{}",
-            property_index,
-            span = field.span(),
-        );
-        let value_type = &property.value_type;
-        let canonical = &property.canonical;
-        if property.optional {
-            quote! {
-                const #property_id: ::aimer_widget::portable::__anteros::PropertyId =
-                    ::aimer_widget::portable::__anteros::PropertyId::from_canonical_name(
-                        #canonical,
-                    );
-                let #local: ::std::option::Option<#value_type> =
-                    ::aimer_widget::portable::optional_materialized_property(
-                        document,
-                        &node,
-                        #property_id,
-                    )?;
+    let decoders = properties
+        .iter()
+        .enumerate()
+        .map(|(property_index, property)| {
+            let field = &property.name;
+            let local = format_ident!(
+                "__aimer_materialized_{}",
+                field.unraw(),
+                span = field.span(),
+            );
+            let property_id = format_ident!(
+                "__AIMER_MATERIALIZED_PROPERTY_ID_{}",
+                property_index,
+                span = field.span(),
+            );
+            let value_type = &property.value_type;
+            let canonical = &property.canonical;
+            if property.optional {
+                quote! {
+                    const #property_id: ::aimer_widget::portable::__anteros::PropertyId =
+                        ::aimer_widget::portable::__anteros::PropertyId::from_canonical_name(
+                            #canonical,
+                        );
+                    let #local: ::std::option::Option<#value_type> =
+                        ::aimer_widget::portable::optional_materialized_property(
+                            document,
+                            &node,
+                            #property_id,
+                        )?;
+                }
+            } else {
+                quote! {
+                    const #property_id: ::aimer_widget::portable::__anteros::PropertyId =
+                        ::aimer_widget::portable::__anteros::PropertyId::from_canonical_name(
+                            #canonical,
+                        );
+                    let #local: #value_type =
+                        ::aimer_widget::portable::required_materialized_property(
+                            document,
+                            &node,
+                            #property_id,
+                        )?;
+                }
             }
-        } else {
-            quote! {
-                const #property_id: ::aimer_widget::portable::__anteros::PropertyId =
-                    ::aimer_widget::portable::__anteros::PropertyId::from_canonical_name(
-                        #canonical,
-                    );
-                let #local: #value_type =
-                    ::aimer_widget::portable::required_materialized_property(
-                        document,
-                        &node,
-                        #property_id,
-                    )?;
-            }
-        }
-    });
+        });
     let builders = properties.iter().map(|property| {
         let field = &property.name;
         let local = format_ident!(
@@ -814,11 +826,7 @@ fn native_materializer(
     })
 }
 
-fn native_registration(
-    name: &syn::Ident,
-    target_type: TokenStream,
-    register: bool,
-) -> TokenStream {
+fn native_registration(name: &syn::Ident, target_type: TokenStream, register: bool) -> TokenStream {
     if !register {
         return TokenStream::new();
     }
@@ -853,11 +861,7 @@ fn native_registration(
     }
 }
 
-fn schema_registration(
-    name: &syn::Ident,
-    target_type: TokenStream,
-    register: bool,
-) -> TokenStream {
+fn schema_registration(name: &syn::Ident, target_type: TokenStream, register: bool) -> TokenStream {
     if !register {
         return TokenStream::new();
     }
@@ -899,9 +903,11 @@ fn materializer_target(
     let Data::Struct(data) = &input.data else {
         unreachable!("the derive already requires a struct");
     };
-    let child_field = data.fields.iter().find(|field| {
-        child_attribute(field).ok().flatten().is_some()
-    }).expect("required child field was recorded");
+    let child_field = data
+        .fields
+        .iter()
+        .find(|field| child_attribute(field).ok().flatten().is_some())
+        .expect("required child field was recorded");
     let Type::Path(TypePath { qself: None, path }) = &child_field.ty else {
         return Err(syn::Error::new_spanned(
             &child_field.ty,
@@ -914,7 +920,9 @@ fn materializer_target(
             "automatic portable materialization requires a required child type to be a type-generic identifier; use `materializer = path`",
         ));
     };
-    let matching_parameters = input.generics.type_params()
+    let matching_parameters = input
+        .generics
+        .type_params()
         .filter(|parameter| parameter.ident == *child_ident)
         .count();
     if matching_parameters != 1 {
@@ -931,28 +939,35 @@ fn materializer_target(
         .and_then(|parameter| parameter.default.clone())
         .unwrap_or_else(|| parse_quote!(::aimer_widget::RequiredChild));
     let mut impl_generics = input.generics.clone();
-    TypeReplacement { ident: child_ident, replacement: &replacement }
-        .visit_generics_mut(&mut impl_generics);
+    TypeReplacement {
+        ident: child_ident,
+        replacement: &replacement,
+    }
+    .visit_generics_mut(&mut impl_generics);
     impl_generics.params = impl_generics.params.into_iter().filter(|parameter| {
         !matches!(parameter, GenericParam::Type(parameter) if parameter.ident == *child_ident)
     }).collect();
-    let arguments = input.generics.params.iter().map(|parameter| match parameter {
-        GenericParam::Lifetime(parameter) => {
-            let lifetime = &parameter.lifetime;
-            quote!(#lifetime)
-        }
-        GenericParam::Type(parameter) if parameter.ident == *child_ident => {
-            quote!(#replacement)
-        }
-        GenericParam::Type(parameter) => {
-            let ident = &parameter.ident;
-            quote!(#ident)
-        }
-        GenericParam::Const(parameter) => {
-            let ident = &parameter.ident;
-            quote!(#ident)
-        }
-    });
+    let arguments = input
+        .generics
+        .params
+        .iter()
+        .map(|parameter| match parameter {
+            GenericParam::Lifetime(parameter) => {
+                let lifetime = &parameter.lifetime;
+                quote!(#lifetime)
+            }
+            GenericParam::Type(parameter) if parameter.ident == *child_ident => {
+                quote!(#replacement)
+            }
+            GenericParam::Type(parameter) => {
+                let ident = &parameter.ident;
+                quote!(#ident)
+            }
+            GenericParam::Const(parameter) => {
+                let ident = &parameter.ident;
+                quote!(#ident)
+            }
+        });
     Ok((impl_generics, quote!(#name <#(#arguments),*>)))
 }
 
@@ -1097,7 +1112,10 @@ fn widget_options(input: &DeriveInput) -> syn::Result<WidgetOptions> {
 fn parse_version(value: &LitStr) -> syn::Result<(u16, u16)> {
     let version = value.value();
     let Some((major, minor)) = version.split_once('.') else {
-        return Err(syn::Error::new_spanned(value, "version must be `major.minor`"));
+        return Err(syn::Error::new_spanned(
+            value,
+            "version must be `major.minor`",
+        ));
     };
     let major = major
         .parse()
@@ -1109,7 +1127,10 @@ fn parse_version(value: &LitStr) -> syn::Result<(u16, u16)> {
 }
 
 fn has_attribute(field: &syn::Field, name: &str) -> bool {
-    field.attrs.iter().any(|attribute| attribute.path().is_ident(name))
+    field
+        .attrs
+        .iter()
+        .any(|attribute| attribute.path().is_ident(name))
 }
 
 fn child_attribute(field: &syn::Field) -> syn::Result<Option<ChildAttribute>> {
@@ -1127,8 +1148,7 @@ fn child_attribute(field: &syn::Field) -> syn::Result<Option<ChildAttribute>> {
             if meta.path.is_ident("optional") {
                 optional = true;
                 Ok(())
-            }
-            else if meta.path.is_ident("discriminator") {
+            } else if meta.path.is_ident("discriminator") {
                 let value: LitInt = meta.value()?.parse()?;
                 discriminator = Some(value.base10_parse()?);
                 Ok(())

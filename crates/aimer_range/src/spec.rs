@@ -13,12 +13,7 @@ pub struct RangeSpec {
 impl RangeSpec {
     /// Creates a range using [`ReversedBoundsPolicy::Reject`].
     pub fn new(min: f64, max: f64, step: f64) -> Result<Self, RangeError> {
-        Self::with_reversed_bounds_policy(
-            min,
-            max,
-            step,
-            ReversedBoundsPolicy::Reject,
-        )
+        Self::with_reversed_bounds_policy(min, max, step, ReversedBoundsPolicy::Reject)
     }
 
     /// Creates a range with an explicit policy for reversed bounds.
@@ -133,11 +128,7 @@ impl RangeSpec {
     /// `position` is measured from the start of a track and `track_length`
     /// must be non-negative. A zero-length track is valid and maps every
     /// position to the minimum.
-    pub fn value_at_position(
-        &self,
-        position: f64,
-        track_length: f64,
-    ) -> Result<f64, RangeError> {
+    pub fn value_at_position(&self, position: f64, track_length: f64) -> Result<f64, RangeError> {
         require_finite(RangeField::Position, position)?;
         validate_track_length(track_length)?;
 
@@ -156,11 +147,7 @@ impl RangeSpec {
     /// The value is first clamped and stepped using the same rules as
     /// [`Self::clamp_and_snap`], making this operation the inverse of
     /// [`Self::value_at_position`] up to the configured step.
-    pub fn position_for_value(
-        &self,
-        value: f64,
-        track_length: f64,
-    ) -> Result<f64, RangeError> {
+    pub fn position_for_value(&self, value: f64, track_length: f64) -> Result<f64, RangeError> {
         validate_track_length(track_length)?;
         let value = self.clamp_and_snap_field(RangeField::Value, value)?;
         if self.min == self.max || track_length == 0.0 {

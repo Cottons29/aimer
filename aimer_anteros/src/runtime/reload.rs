@@ -309,10 +309,7 @@ impl<E> ReloadReplay<E> {
         for (event_index, event) in self.events.into_iter().enumerate() {
             match dispatch(event) {
                 Ok(()) => delivered_events += 1,
-                Err(error) => failures.push(ReloadReplayFailure {
-                    event_index,
-                    error,
-                }),
+                Err(error) => failures.push(ReloadReplayFailure { event_index, error }),
             }
         }
         ReloadReplayReport {
@@ -415,10 +412,7 @@ pub enum ReloadCommitError<P, E> {
     /// The transaction token or staged-candidate state was invalid.
     Transaction(ReloadTransactionError),
     /// Candidate preflight failed; the candidate was retired and old events resumed.
-    Preflight {
-        error: P,
-        replay: ReloadReplay<E>,
-    },
+    Preflight { error: P, replay: ReloadReplay<E> },
 }
 
 impl<P, E> ReloadCommitError<P, E> {
@@ -573,11 +567,9 @@ impl<G: ReloadGuest, R, E> ReloadCoordinator<G, R, E> {
         preflight: impl FnOnce(&ReloadSnapshot<G, R>, &ReloadSnapshot<G, R>) -> Result<(), P>,
         commit: impl FnOnce(&mut ReloadSnapshot<G, R>, &mut ReloadSnapshot<G, R>),
     ) -> Result<ReloadCommit<E>, ReloadCommitError<P, E>> {
-        self.commit_prepared(
-            transaction,
-            preflight,
-            |old, candidate, ()| commit(old, candidate),
-        )
+        self.commit_prepared(transaction, preflight, |old, candidate, ()| {
+            commit(old, candidate)
+        })
     }
 
     /// Prepares and atomically installs the current candidate at a host safe point.
@@ -593,9 +585,9 @@ impl<G: ReloadGuest, R, E> ReloadCoordinator<G, R, E> {
         preflight: impl FnOnce(&ReloadSnapshot<G, R>, &ReloadSnapshot<G, R>) -> Result<T, P>,
         commit: impl FnOnce(&mut ReloadSnapshot<G, R>, &mut ReloadSnapshot<G, R>, T),
     ) -> Result<ReloadCommit<E>, ReloadCommitError<P, E>> {
-        let current = self
-            .current
-            .ok_or(ReloadCommitError::Transaction(ReloadTransactionError::NoTransaction))?;
+        let current = self.current.ok_or(ReloadCommitError::Transaction(
+            ReloadTransactionError::NoTransaction,
+        ))?;
         if transaction != current {
             return Err(ReloadCommitError::Transaction(
                 ReloadTransactionError::Superseded {

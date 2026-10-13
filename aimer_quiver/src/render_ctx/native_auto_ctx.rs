@@ -1,7 +1,7 @@
 use aimer_cupid::AntiAlias;
+use aimer_cupid::canvas::CupidCanvas;
 use aimer_cupid::damage_region::DamageSet;
 use aimer_cupid::frame::{Frame, FramePacket};
-use aimer_cupid::canvas::CupidCanvas;
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
@@ -118,13 +118,15 @@ impl NativeAutoApi {
         self.build_frame_packet(|canvas, width, height| {
             draw(canvas, width, height);
             (1.0, DamageSet::full(width, height))
-        }).map(FramePacket::into_frame)
+        })
+        .map(FramePacket::into_frame)
     }
 
     /// Records a damage-carrying packet without presenting it.
-    pub fn build_frame_packet(&mut self,
-        draw: impl FnOnce(&CupidCanvas, u32, u32) -> (f32, DamageSet)) -> Option<FramePacket>
-    {
+    pub fn build_frame_packet(
+        &mut self,
+        draw: impl FnOnce(&CupidCanvas, u32, u32) -> (f32, DamageSet),
+    ) -> Option<FramePacket> {
         match &mut self.active {
             Some(ActiveBackend::Vulkan(api)) => api.build_frame_packet(draw),
             Some(ActiveBackend::OpenGl(api)) => api.build_frame_packet(draw),

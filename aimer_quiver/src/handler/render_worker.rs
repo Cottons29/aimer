@@ -1,13 +1,17 @@
 //! Delivers GPU outcomes without moving application callbacks off the UI thread.
-use aimer_widget::Widget;
-use winit::event_loop::ActiveEventLoop;
 use super::AimerApplicationHandler;
 use crate::aimer_app::FrameRequestKind;
+use aimer_widget::Widget;
+use winit::event_loop::ActiveEventLoop;
 
 impl<W: Widget + 'static> AimerApplicationHandler<W> {
     pub(crate) fn admit_render_frame(&mut self) -> bool {
-        if let Some(size) = self.pending_resize.take() { self.render_ctx.resize(size); }
-        if self.render_ctx.can_begin_frame() { return true; }
+        if let Some(size) = self.pending_resize.take() {
+            self.render_ctx.resize(size);
+        }
+        if self.render_ctx.can_begin_frame() {
+            return true;
+        }
         self.render_ctx.defer_frame();
         false
     }
@@ -15,12 +19,17 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
     pub(crate) fn request_deferred_render_frame(&self) {
         // Resuming deferred work is not a new invalidation. Preserve its
         // scoped/scroll reason through the window's redraw observer.
-        let kind = self.frame_request_reason.get().unwrap_or(FrameRequestKind::Full);
+        let kind = self
+            .frame_request_reason
+            .get()
+            .unwrap_or(FrameRequestKind::Full);
         crate::aimer_app::with_frame_request_kind(kind, || {
             #[cfg(target_os = "ios")]
             aimer_events::window::request_animation_frame();
             #[cfg(not(target_os = "ios"))]
-            if let Some(window) = &self.window { window.request_redraw(); }
+            if let Some(window) = &self.window {
+                window.request_redraw();
+            }
         });
     }
 
@@ -29,11 +38,15 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         crate::first_frame::notify_first_frame_presented(completed.presented);
         #[cfg(all(target_os = "windows", feature = "native", not(feature = "wgpu")))]
         if completed.presented && self.show_window_after_first_frame {
-            if let Some(window) = self.native_window() { window.set_visible(true); }
+            if let Some(window) = self.native_window() {
+                window.set_visible(true);
+            }
             self.show_window_after_first_frame = false;
         }
         if self.render_ctx.is_closing() {
-            if self.render_ctx.is_stopped() { event_loop.exit(); }
+            if self.render_ctx.is_stopped() {
+                event_loop.exit();
+            }
             return;
         }
         if completed.retry {

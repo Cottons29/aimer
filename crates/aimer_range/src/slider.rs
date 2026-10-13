@@ -275,22 +275,14 @@ impl<T: RangeValue> Slider<T> {
 
     /// Converts a pointer coordinate on a track to a stepped value.
     #[inline]
-    pub fn value_at_position(
-        &self,
-        position: f64,
-        track_length: f64,
-    ) -> Result<T, RangeError> {
+    pub fn value_at_position(&self, position: f64, track_length: f64) -> Result<T, RangeError> {
         let spec = self.spec.as_ref().map_err(|error| *error)?;
         Ok(T::from_f64(spec.value_at_position(position, track_length)?))
     }
 
     /// Converts a value to its coordinate on a track.
     #[inline]
-    pub fn position_for_value(
-        &self,
-        value: T,
-        track_length: f64,
-    ) -> Result<f64, RangeError> {
+    pub fn position_for_value(&self, value: T, track_length: f64) -> Result<f64, RangeError> {
         let spec = self.spec.as_ref().map_err(|error| *error)?;
         spec.position_for_value(value.to_f64(), track_length)
     }
@@ -314,13 +306,7 @@ impl<T: RangeValue> Slider<T> {
         let min = self.min().to_f64();
         let max = self.max().to_f64();
         let step = self.step_value.to_f64();
-        RangeSemantics::from_slider(
-            min,
-            max,
-            step,
-            self.value.to_f64(),
-            !self.disabled,
-        )
+        RangeSemantics::from_slider(min, max, step, self.value.to_f64(), !self.disabled)
     }
 
     pub(crate) fn widget_width(&self) -> f32 {
@@ -345,9 +331,10 @@ impl<T: RangeValue> Slider<T> {
 
     pub(crate) fn canonical_value(&self, value: T) -> Result<T, RangeError> {
         let spec = self.spec.as_ref().map_err(|error| *error)?;
-        Ok(T::from_f64(
-            spec.clamp_and_snap_field(super::RangeField::Value, value.to_f64())?,
-        ))
+        Ok(T::from_f64(spec.clamp_and_snap_field(
+            super::RangeField::Value,
+            value.to_f64(),
+        )?))
     }
 
     fn refresh_spec(&mut self) {

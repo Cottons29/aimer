@@ -65,8 +65,14 @@ impl DragAxis {
     pub fn constrain(self, start: Vec2d, pos: Vec2d) -> Vec2d {
         match self {
             Self::Free => pos,
-            Self::Vertical => Vec2d { x: start.x, y: pos.y },
-            Self::Horizontal => Vec2d { x: pos.x, y: start.y },
+            Self::Vertical => Vec2d {
+                x: start.x,
+                y: pos.y,
+            },
+            Self::Horizontal => Vec2d {
+                x: pos.x,
+                y: start.y,
+            },
         }
     }
 }

@@ -329,8 +329,7 @@ impl Widget for Spinner {
         // Text glyphs keep this fallback renderer portable and cheap. A host
         // that has a vector indicator can use `phase()` to replace the visual
         // while retaining the same deterministic motion model.
-        let glyph = ["◴", "◷", "◶", "◵"]
-            [(self.phase * 4.0).floor().clamp(0.0, 3.0) as usize];
+        let glyph = ["◴", "◷", "◶", "◵"][(self.phase * 4.0).floor().clamp(0.0, 3.0) as usize];
         SizedBox::new()
             .width(self.size)
             .height(self.size)

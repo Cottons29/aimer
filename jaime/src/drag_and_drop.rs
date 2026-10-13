@@ -114,11 +114,18 @@ impl State<DragBoard> for DragBoardState {
                     .horizontal_alignment(BoxAlignment::Start)
                     .children(vec![
                         heading("Drag and drop: move a card between columns", app_theme),
-                        subheading(match self.last_refused {
-                            Some(title) => format!("\u{201c}{title}\u{201d} was refused by Done"),
-                            None => "Drag a card. The locked one cannot reach Done.".to_owned(),
-                        }, app_theme),
-                        SizedBox::new().height(24).boxed(),
+                        subheading(
+                            match self.last_refused {
+                                Some(title) => {
+                                    format!("\u{201c}{title}\u{201d} was refused by Done")
+                                }
+                                None => "Drag a card. The locked one cannot reach Done.".to_owned(),
+                            },
+                            app_theme,
+                        ),
+                        SizedBox::new()
+                            .height(24)
+                            .boxed(),
                         Expanded::new()
                             .child(
                                 Row::new()
@@ -147,8 +154,12 @@ impl DragBoardState {
         let title = COLUMNS[index];
         let accent = match index {
             0 => app_theme.primary_color,
-            1 => app_theme.primary_color.lighten(0.15),
-            _ => app_theme.primary_color.lighten(0.30),
+            1 => app_theme
+                .primary_color
+                .lighten(0.15),
+            _ => app_theme
+                .primary_color
+                .lighten(0.30),
         };
         let cards: Vec<Card> = self
             .cards
@@ -180,11 +191,17 @@ impl DragBoardState {
     }
 
     fn is_locked(&self, id: CardId) -> bool {
-        self.cards.iter().any(|card| card.id == id && card.locked)
+        self.cards
+            .iter()
+            .any(|card| card.id == id && card.locked)
     }
 
     fn move_card(&mut self, id: CardId, column: usize) {
-        if let Some(card) = self.cards.iter_mut().find(|card| card.id == id) {
+        if let Some(card) = self
+            .cards
+            .iter_mut()
+            .find(|card| card.id == id)
+        {
             card.column = column;
             self.last_refused = None;
         }
@@ -226,7 +243,9 @@ fn column_body(
 ) -> AnyWidget {
     let border = match (state.is_hovered, state.will_accept) {
         (true, true) => accent,
-        (true, false) => app_theme.primary_color.darken(0.35),
+        (true, false) => app_theme
+            .primary_color
+            .darken(0.35),
         _ => crate::theme::muted_text(&app_theme),
     };
 
@@ -264,23 +283,28 @@ fn column_heading(title: &'static str, accent: Color) -> AnyWidget {
         .child(
             Text::new(title)
                 .text_align(TextAlign::MidLeft)
-                .text_style(TextStyle::new().font_size(17).color(accent)),
+                .text_style(
+                    TextStyle::new()
+                        .font_size(17)
+                        .color(accent),
+                ),
         )
         .boxed()
 }
 
 /// One card tile, at `alpha` so the same shape serves as content, feedback and
 /// the dimmed placeholder left behind.
-fn card_tile(
-    title: &'static str,
-    locked: bool,
-    alpha: f32,
-    app_theme: ThemeData,
-) -> AnyWidget {
+fn card_tile(title: &'static str, locked: bool, alpha: f32, app_theme: ThemeData) -> AnyWidget {
     let background = if locked {
-        app_theme.primary_color.darken(0.35).with_alpha(alpha)
+        app_theme
+            .primary_color
+            .darken(0.35)
+            .with_alpha(alpha)
     } else {
-        app_theme.background_color.lighten(0.12).with_alpha(alpha)
+        app_theme
+            .background_color
+            .lighten(0.12)
+            .with_alpha(alpha)
     };
 
     Container::new()
@@ -293,11 +317,17 @@ fn card_tile(
                 .border_radius(10),
         )
         .child(
-            Text::new(title).text_align(TextAlign::MidLeft).text_style(
-                TextStyle::new()
-                    .font_size(15)
-                    .color(app_theme.on_surface_color.with_alpha(alpha)),
-            ),
+            Text::new(title)
+                .text_align(TextAlign::MidLeft)
+                .text_style(
+                    TextStyle::new()
+                        .font_size(15)
+                        .color(
+                            app_theme
+                                .on_surface_color
+                                .with_alpha(alpha),
+                        ),
+                ),
         )
         .boxed()
 }
@@ -308,7 +338,11 @@ fn heading(text: &'static str, app_theme: ThemeData) -> AnyWidget {
         .child(
             Text::new(text)
                 .text_align(TextAlign::MidLeft)
-                .text_style(TextStyle::new().font_size(24).color(app_theme.on_background_color)),
+                .text_style(
+                    TextStyle::new()
+                        .font_size(24)
+                        .color(app_theme.on_background_color),
+                ),
         )
         .boxed()
 }
@@ -317,11 +351,13 @@ fn subheading(text: String, app_theme: ThemeData) -> AnyWidget {
     Container::new()
         .height(Dimension::Px(24.0))
         .child(
-            Text::new(text).text_align(TextAlign::MidLeft).text_style(
-                TextStyle::new()
-                    .font_size(15)
-                    .color(crate::theme::muted_text(&app_theme)),
-            ),
+            Text::new(text)
+                .text_align(TextAlign::MidLeft)
+                .text_style(
+                    TextStyle::new()
+                        .font_size(15)
+                        .color(crate::theme::muted_text(&app_theme)),
+                ),
         )
         .boxed()
 }

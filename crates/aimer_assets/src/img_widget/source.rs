@@ -7,11 +7,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use aimer_utils::error;
 use aimer_cupid::draw_cmd_v2::ImageResource;
-use aimer_widget::base::{BuildContext, WindowHandle};
+use aimer_utils::error;
 #[cfg(not(target_arch = "wasm32"))]
 use aimer_venus::Venus;
+use aimer_widget::base::{BuildContext, WindowHandle};
 use crossbeam::channel::{Receiver, Sender, TryRecvError, unbounded};
 use once_cell::sync::Lazy;
 
@@ -165,9 +165,7 @@ fn prune_decoded_cache<K, S>(
                 remove_cache_key(access, &key);
             }
         }
-        if total_bytes <= DECODED_CACHE_BUDGET_BYTES
-            && cache.len() <= DECODED_CACHE_MAX_ENTRIES
-        {
+        if total_bytes <= DECODED_CACHE_BUDGET_BYTES && cache.len() <= DECODED_CACHE_MAX_ENTRIES {
             // Do not scan the remaining cold tail once both bounds are met;
             // keeping it would only make a later visible hit pay a decode.
             break;
@@ -193,16 +191,10 @@ fn new_retained_image_resource(
     intrinsic_height: u32,
     rgba: Vec<u8>,
 ) -> Arc<ImageResource> {
-    let texture_id = aimer_cupid::draw_cmd::DrawList::image_texture_id(
-        &rgba,
-        upload_width,
-        upload_height,
-    );
-    let revision = aimer_cupid::draw_cmd::DrawList::image_content_revision(
-        &rgba,
-        upload_width,
-        upload_height,
-    );
+    let texture_id =
+        aimer_cupid::draw_cmd::DrawList::image_texture_id(&rgba, upload_width, upload_height);
+    let revision =
+        aimer_cupid::draw_cmd::DrawList::image_content_revision(&rgba, upload_width, upload_height);
     Arc::new(
         ImageResource::rgba8_with_intrinsic_size(
             texture_id,
@@ -221,13 +213,8 @@ fn materialize_retained_resource(state: &mut ImageCacheState) -> Option<Arc<Imag
     let current = std::mem::replace(state, ImageCacheState::Loading);
     match current {
         ImageCacheState::Ready(bytes, upload_width, upload_height, width, height) => {
-            let resource = new_retained_image_resource(
-                upload_width,
-                upload_height,
-                width,
-                height,
-                bytes,
-            );
+            let resource =
+                new_retained_image_resource(upload_width, upload_height, width, height, bytes);
             let id = resource.texture_id();
             *state = ImageCacheState::Loaded(id, width, height, resource.clone());
             Some(resource)
@@ -255,9 +242,7 @@ fn cached_retained_resource<K: Clone + Eq + Hash>(
         return None;
     }
     let now = touch_cache_key(access, key);
-    let resource = cache
-        .get_mut(key)
-        .and_then(materialize_retained_resource);
+    let resource = cache.get_mut(key).and_then(materialize_retained_resource);
     prune_image_cache(cache, access, now);
     resource
 }
@@ -589,10 +574,7 @@ impl ImageProvider for ImageSource {
         }
     }
 
-    fn retained_image_resource(
-        &self,
-        _ctx: &BuildContext,
-    ) -> Option<Arc<ImageResource>> {
+    fn retained_image_resource(&self, _ctx: &BuildContext) -> Option<Arc<ImageResource>> {
         let cached = IMAGE_CACHES.with(|caches| {
             let caches = caches.borrow();
             match self {
@@ -600,10 +582,7 @@ impl ImageProvider for ImageSource {
                 ImageSource::Asset(key) => {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
-                        caches
-                            .asset
-                            .get(key)
-                            .and_then(loaded_retained_resource)
+                        caches.asset.get(key).and_then(loaded_retained_resource)
                     }
                     #[cfg(target_arch = "wasm32")]
                     {
@@ -612,20 +591,13 @@ impl ImageProvider for ImageSource {
                         } else {
                             format!("/{key}")
                         };
-                        caches
-                            .network
-                            .get(&url)
-                            .and_then(loaded_retained_resource)
+                        caches.network.get(&url).and_then(loaded_retained_resource)
                     }
                 }
-                ImageSource::File(path) => caches
-                    .file
-                    .get(path)
-                    .and_then(loaded_retained_resource),
-                ImageSource::Network(url) | ImageSource::NetworkWithHeaders(url, _) => caches
-                    .network
-                    .get(url)
-                    .and_then(loaded_retained_resource),
+                ImageSource::File(path) => caches.file.get(path).and_then(loaded_retained_resource),
+                ImageSource::Network(url) | ImageSource::NetworkWithHeaders(url, _) => {
+                    caches.network.get(url).and_then(loaded_retained_resource)
+                }
             }
         });
         if cached.is_some() || matches!(self, ImageSource::Id(_)) {
@@ -647,18 +619,14 @@ impl ImageProvider for ImageSource {
                     } else {
                         format!("/{key}")
                     };
-                    IMAGE_CACHES.with(|caches| {
-                        caches.borrow_mut().retained_network_resource(&url)
-                    })
+                    IMAGE_CACHES.with(|caches| caches.borrow_mut().retained_network_resource(&url))
                 }
             }
             ImageSource::File(path) => {
                 IMAGE_CACHES.with(|caches| caches.borrow_mut().retained_file_resource(path))
             }
             ImageSource::Network(url) | ImageSource::NetworkWithHeaders(url, _) => {
-                IMAGE_CACHES.with(|caches| {
-                    caches.borrow_mut().retained_network_resource(url)
-                })
+                IMAGE_CACHES.with(|caches| caches.borrow_mut().retained_network_resource(url))
             }
         }
     }
@@ -669,11 +637,7 @@ impl ImageSource {
         drain_cache_updates();
 
         match IMAGE_CACHES.with(|caches| caches.borrow_mut().lookup_file(path)) {
-            CacheLookup::Loaded {
-                id,
-                width,
-                height,
-            } => {
+            CacheLookup::Loaded { id, width, height } => {
                 ctx.canvas.set_texture_size(id, width, height);
                 Success(id)
             }
@@ -684,13 +648,8 @@ impl ImageSource {
                 width,
                 height,
             } => {
-                let resource = new_retained_image_resource(
-                    upload_width,
-                    upload_height,
-                    width,
-                    height,
-                    bytes,
-                );
+                let resource =
+                    new_retained_image_resource(upload_width, upload_height, width, height, bytes);
                 let id = resource.texture_id();
                 ctx.canvas.set_texture_size(id, width, height);
                 IMAGE_CACHES.with(|caches| {
@@ -790,11 +749,7 @@ impl ImageSource {
         drain_cache_updates();
 
         match IMAGE_CACHES.with(|caches| caches.borrow_mut().lookup_asset(&key_owned)) {
-            CacheLookup::Loaded {
-                id,
-                width,
-                height,
-            } => {
+            CacheLookup::Loaded { id, width, height } => {
                 ctx.canvas.set_texture_size(id, width, height);
                 Success(id)
             }
@@ -805,13 +760,8 @@ impl ImageSource {
                 width,
                 height,
             } => {
-                let resource = new_retained_image_resource(
-                    upload_width,
-                    upload_height,
-                    width,
-                    height,
-                    bytes,
-                );
+                let resource =
+                    new_retained_image_resource(upload_width, upload_height, width, height, bytes);
                 let id = resource.texture_id();
                 ctx.canvas.set_texture_size(id, width, height);
                 IMAGE_CACHES.with(|caches| {
@@ -948,11 +898,7 @@ impl ImageSource {
         let url_owned = url.to_string();
 
         match IMAGE_CACHES.with(|caches| caches.borrow_mut().lookup_network(&url_owned)) {
-            CacheLookup::Loaded {
-                id,
-                width,
-                height,
-            } => {
+            CacheLookup::Loaded { id, width, height } => {
                 ctx.canvas.set_texture_size(id, width, height);
                 Success(id)
             }
@@ -963,13 +909,8 @@ impl ImageSource {
                 width,
                 height,
             } => {
-                let resource = new_retained_image_resource(
-                    upload_width,
-                    upload_height,
-                    width,
-                    height,
-                    bytes,
-                );
+                let resource =
+                    new_retained_image_resource(upload_width, upload_height, width, height, bytes);
                 let id = resource.texture_id();
                 ctx.canvas.set_texture_size(id, width, height);
                 IMAGE_CACHES.with(|caches| {
@@ -1027,10 +968,7 @@ impl ImageSource {
                         {
                             Ok(state) => state,
                             Err(error) => {
-                                error!(
-                                    "Failed to fetch network image ({}): {}",
-                                    url_owned, error
-                                );
+                                error!("Failed to fetch network image ({}): {}", url_owned, error);
                                 ImageCacheState::Error(error)
                             }
                         };
@@ -1257,11 +1195,7 @@ impl ImageSource {
                 let rgba_bytes = image.into_raw();
 
                 Ok(ImageCacheState::Ready(
-                    rgba_bytes,
-                    width,
-                    height,
-                    width,
-                    height,
+                    rgba_bytes, width, height, width, height,
                 ))
             }
             Err(_) => {
@@ -1278,9 +1212,9 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        ImageCacheState, ImageCacheUpdate, IMAGE_CACHES, DECODED_CACHE_BUDGET_BYTES,
-        DECODED_CACHE_IDLE_ACCESSES, constrained_browser_image_size, drain_cache_updates,
-        image_mime_type, prune_decoded_cache, send_cache_update,
+        DECODED_CACHE_BUDGET_BYTES, DECODED_CACHE_IDLE_ACCESSES, IMAGE_CACHES, ImageCacheState,
+        ImageCacheUpdate, constrained_browser_image_size, drain_cache_updates, image_mime_type,
+        prune_decoded_cache, send_cache_update,
     };
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -1289,8 +1223,7 @@ mod tests {
         use aimer_canvas::{FrameCanvas, InnerCanvas};
         use aimer_widget::base::{BuildContext, ResolvedSize, WindowHandle};
 
-        static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> =
-            std::sync::OnceLock::new();
+        static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
         let runtime = RUNTIME.get_or_init(|| {
             tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -1360,7 +1293,10 @@ mod tests {
             let (mut stream, _) = listener.accept().unwrap();
             let mut request = [0_u8; 4096];
             let length = stream.read(&mut request).unwrap();
-            request_copy.lock().unwrap().extend_from_slice(&request[..length]);
+            request_copy
+                .lock()
+                .unwrap()
+                .extend_from_slice(&request[..length]);
             write!(
                 stream,
                 "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -1376,17 +1312,14 @@ mod tests {
         let url = format!("http://{address}/image.png");
         let mut headers = HashMap::new();
         headers.insert("X-Aimer-Test".to_owned(), "venus".to_owned());
-        let mut result = super::ImageSource::load_network_image_with_headers(
-            &context, &url, &headers,
-        );
+        let mut result =
+            super::ImageSource::load_network_image_with_headers(&context, &url, &headers);
         for _ in 0..500 {
             if matches!(result, crate::ImageResult::Success(_)) {
                 break;
             }
             venus.run_microtasks();
-            result = super::ImageSource::load_network_image_with_headers(
-                &context, &url, &headers,
-            );
+            result = super::ImageSource::load_network_image_with_headers(&context, &url, &headers);
             std::thread::sleep(Duration::from_millis(1));
         }
         Venus::uninstall();
@@ -1394,9 +1327,11 @@ mod tests {
 
         assert!(matches!(result, crate::ImageResult::Success(_)));
         let request = request_bytes.lock().unwrap();
-        assert!(request
-            .windows(b"X-Aimer-Test: venus".len())
-            .any(|window| window.eq_ignore_ascii_case(b"X-Aimer-Test: venus")));
+        assert!(
+            request
+                .windows(b"X-Aimer-Test: venus".len())
+                .any(|window| window.eq_ignore_ascii_case(b"X-Aimer-Test: venus"))
+        );
     }
 
     #[test]

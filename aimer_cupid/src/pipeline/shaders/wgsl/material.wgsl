@@ -536,12 +536,22 @@ fn light_edge(pixel: vec2<f32>) -> vec4<f32> {
     let radius = min(selected_radius(point, material.radii), min(half_size.x, half_size.y));
     let q = abs(point) - half_size + vec2<f32>(radius);
     let outer = max(q, vec2<f32>(0.0));
+    // Smooth only the lighting normal across straight/curved joins. Keep
+    // the exact SDF for coverage; limiting the blend to flat spans preserves circles.
+    let blend = min(vec2<f32>(material.detail.w), max(half_size - vec2<f32>(radius), vec2<f32>(0.0)));
+    let join = max(blend - abs(q), vec2<f32>(0.0));
+    let lighting_outer = outer + join * join / max(4.0 * blend, vec2<f32>(0.0001));
     var outward = select(vec2<f32>(0.0, 1.0), vec2<f32>(1.0, 0.0), q.x > q.y);
-    if dot(outer, outer) > 0.0 { outward = normalize(outer); }
+    if dot(lighting_outer, lighting_outer) > 0.0 { outward = normalize(lighting_outer); }
     outward *= sign(point);
     let distance = length(outer) + min(max(q.x, q.y), 0.0) - radius;
-    let coverage = max(sdf_alpha(distance) - sdf_alpha(distance + material.detail.w), 0.0);
-    let facing = pow(max(dot(outward, material.effect.zw), 0.0), 2.4);
+    // A cubic inward falloff has no solid band or abrupt inner boundary.
+    // Grazing light narrows the bevel; the opposite side catches a weaker reflection.
+    let alignment = dot(outward, material.effect.zw);
+    let width = max(material.detail.w * (0.35 + 0.65 * abs(alignment)), 0.0001);
+    let remaining = 1.0 - clamp(max(-distance, 0.0) / width, 0.0, 1.0);
+    let coverage = sdf_alpha(distance) * remaining * remaining * remaining;
+    let facing = pow(abs(alignment), 2.4) * select(material.light.w, 1.0, alignment >= 0.0);
     let alpha = clamp(coverage * facing * material.detail.x * material.border_color.a
         * material.effect.y * clip_alpha(pixel), 0.0, 1.0);
     let rgb = material.border_color.rgb;

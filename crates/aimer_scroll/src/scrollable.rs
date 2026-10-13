@@ -11,20 +11,23 @@ pub use core::raw_scroll;
 pub use input::{device_contact, handle_scroll, scroll_frame};
 pub use physics::{constants, overscroll_source, scroll_behavior, spring, velocity_history};
 pub use platform::recovery_end;
-pub use rendering::{cache_extent, draw_scroll, scroll_bar};
-pub use state::{controller, scroll_storage};
 #[cfg(any(target_arch = "wasm32", test))]
 pub use platform::{web_overscroll, web_recovery_end};
+pub use rendering::{cache_extent, draw_scroll, scroll_bar};
+pub use state::{controller, scroll_storage};
 
 use std::cell::{Cell, RefCell};
 use std::marker::PhantomData;
 use std::rc::Rc;
 
-use aimer_widget::InteractionBounds;
+use crate::scrollable::raw_scroll::RawScrollableContainer;
+pub use crate::scrollable::scroll_bar::*;
+use crate::scrollable::scroll_bar::{reserved_viewport, track_width};
 use aimer_attribute::position::Vec2d;
 #[allow(unused)]
 use aimer_macro::key;
 use aimer_utils::callback::Callback;
+use aimer_widget::InteractionBounds;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
     AnyElement, AnyWidget, ChildBuilder, Element, Key, RequiredChild, State, StateUpdater,
@@ -34,16 +37,13 @@ use controller::ScrollState;
 pub use controller::{DragMode, ScrollController};
 pub use overscroll_source::{OverscrollSource, OverscrollSources};
 pub use scroll_behavior::{ScrollAxis, ScrollBehavior};
-use crate::scrollable::raw_scroll::RawScrollableContainer;
-pub use crate::scrollable::scroll_bar::*;
-use crate::scrollable::scroll_bar::{reserved_viewport, track_width};
 
 /// Bounded, versioned configuration preserved when a Scrollable crosses the
 /// portable guest/host boundary.
 #[derive(Clone, Copy, Debug, PartialEq, aimer_macro::PortableValue)]
 #[portable_value(
     id = "aimer.value:aimer_scroll::scrollable::ScrollPortableConfig",
-    max_encoded_bytes = 128,
+    max_encoded_bytes = 128
 )]
 pub struct ScrollPortableConfig {
     /// The axis on which content may overflow.
@@ -460,10 +460,8 @@ impl<W: Widget + 'static> aimer_widget::PortableWidget for Scrollable<W> {
         self,
         ctx: &mut aimer_widget::portable::PortableBuildContext,
         source: aimer_widget::portable::SourceFingerprint,
-    ) -> Result<
-        aimer_widget::portable::PortableNodeId,
-        aimer_widget::portable::PortableBuildError,
-    > {
+    ) -> Result<aimer_widget::portable::PortableNodeId, aimer_widget::portable::PortableBuildError>
+    {
         let property_id = aimer_widget::portable::__anteros::PropertyId::from_canonical_name(
             "aimer.property:aimer_scroll::scrollable::Scrollable:config",
         );
@@ -857,16 +855,15 @@ mod tests {
     use std::cell::Cell;
     use std::rc::Rc;
 
+    use super::{
+        BuildContext, OverscrollSource, OverscrollSources, ScrollAxis, ScrollBarPlacement,
+        Scrollable, resolved_overscroll_sources, resolved_parent_extent, scroll_storage,
+    };
+    use crate::controller::ScrollState;
     use aimer_attribute::position::Vec2d;
     use aimer_attribute::size::ResolvedSize;
     use aimer_widget::base::WindowHandle;
     use aimer_widget::{AnyElement, ErrorWidget, Key, State, StatefulWidget, Widget};
-    use crate::controller::ScrollState;
-    use super::{
-        scroll_storage, BuildContext, OverscrollSource, OverscrollSources, ScrollAxis,
-        ScrollBarPlacement, Scrollable, resolved_overscroll_sources, resolved_parent_extent,
-    };
-
 
     #[test]
     fn i_want_to_know_size_of_it() {
@@ -874,7 +871,6 @@ mod tests {
         eprintln!("size of Scrollable: {}", size_of::<Scrollable>());
         // eprintln!("size of ScrollableFrame::State: {}", size_of::<ScrollableFrame::State>());
         eprintln!("Size of ScrollState: {}", size_of::<ScrollState>());
-
     }
 
     fn assert_stateful_widget<W: StatefulWidget>() {}
@@ -903,8 +899,14 @@ mod tests {
     fn scrollable_defaults_to_floating_scroll_bars() {
         let scrollable = Scrollable::new();
 
-        assert_eq!(scrollable.scroll_bar_placement, ScrollBarPlacement::Floating);
-        assert_eq!(scrollable.config.scroll_bar_placement, ScrollBarPlacement::Floating);
+        assert_eq!(
+            scrollable.scroll_bar_placement,
+            ScrollBarPlacement::Floating
+        );
+        assert_eq!(
+            scrollable.config.scroll_bar_placement,
+            ScrollBarPlacement::Floating
+        );
     }
 
     #[test]
@@ -938,10 +940,13 @@ mod tests {
             .create_state();
         let element = state.build(&ctx).to_element(&ctx);
 
-        assert_eq!(element.computed_size(&ctx), ResolvedSize {
-            width: 320.0,
-            height: 180.0,
-        });
+        assert_eq!(
+            element.computed_size(&ctx),
+            ResolvedSize {
+                width: 320.0,
+                height: 180.0,
+            }
+        );
     }
 
     #[tokio::test]
@@ -1179,10 +1184,7 @@ mod tests {
             .set(Vec2d { x: 0.0, y: 300.0 });
 
         // List B has its own remembered position.
-        scroll_storage::save_offset(
-            &Key::Value("list-b".into()),
-            Vec2d { x: 0.0, y: 120.0 },
-        );
+        scroll_storage::save_offset(&Key::Value("list-b".into()), Vec2d { x: 0.0, y: 120.0 });
 
         // Swap to list B.
         state.adopt_config_from(
@@ -1202,7 +1204,7 @@ mod tests {
         );
     }
 
-fn default_scrollable() -> Scrollable<ErrorWidget> {
+    fn default_scrollable() -> Scrollable<ErrorWidget> {
         Scrollable::new().child(ErrorWidget::new("content"))
     }
 
@@ -1210,13 +1212,7 @@ fn default_scrollable() -> Scrollable<ErrorWidget> {
     async fn a_default_scrollable_does_not_restore_an_old_offset_after_teardown() {
         let ctx = context();
         let first = default_scrollable().create_state();
-        scroll_storage::save_offset(
-            &first.key,
-            Vec2d {
-                x: 0.0,
-                y: -48.0,
-            },
-        );
+        scroll_storage::save_offset(&first.key, Vec2d { x: 0.0, y: -48.0 });
 
         let recreated = default_scrollable().create_state();
         recreated.build(&ctx).to_element(&ctx);
@@ -1233,11 +1229,11 @@ fn default_scrollable() -> Scrollable<ErrorWidget> {
 #[cfg(all(test, feature = "portable-guest"))]
 mod portable_layout_tests {
     use aimer_widget::base::BuildContext;
+    use aimer_widget::portable::__anteros::{Version, WIDGET_SIZED_BOX, WidgetDocumentView};
     use aimer_widget::portable::{
         PortableBuildContext, PortableLimits, PortableWidgetLimits, PortableWidgetSchema,
         SourceFingerprint, StableId128,
     };
-    use aimer_widget::portable::__anteros::{Version, WIDGET_SIZED_BOX, WidgetDocumentView};
     use aimer_widget::{AnyElement, ErrorWidget, PortableWidget, Widget};
 
     use super::{ScrollBar, Scrollable};
@@ -1255,16 +1251,11 @@ mod portable_layout_tests {
             self,
             ctx: &mut PortableBuildContext,
             source: SourceFingerprint,
-        ) -> Result<aimer_widget::portable::PortableNodeId, aimer_widget::portable::PortableBuildError>
-        {
-            ctx.push_node(
-                WIDGET_SIZED_BOX,
-                Version::new(1, 0),
-                None,
-                source,
-                &[],
-                &[],
-            )
+        ) -> Result<
+            aimer_widget::portable::PortableNodeId,
+            aimer_widget::portable::PortableBuildError,
+        > {
+            ctx.push_node(WIDGET_SIZED_BOX, Version::new(1, 0), None, source, &[], &[])
         }
     }
 
@@ -1272,8 +1263,7 @@ mod portable_layout_tests {
         PortableBuildContext::new(
             1,
             1,
-            PortableWidgetLimits::new(32, 32, 32, 32, 1_024, 8_192)
-                .with_max_blob_bytes(64),
+            PortableWidgetLimits::new(32, 32, 32, 32, 1_024, 8_192).with_max_blob_bytes(64),
             PortableLimits::new(8, 16, 64, 128, 1_024),
         )
         .unwrap()
@@ -1298,7 +1288,9 @@ mod portable_layout_tests {
         let node = view.node(root.index()).unwrap();
         assert_eq!(
             node.widget_type(),
-            <Scrollable<Leaf> as PortableWidgetSchema>::SCHEMA.widget().id()
+            <Scrollable<Leaf> as PortableWidgetSchema>::SCHEMA
+                .widget()
+                .id()
         );
         assert_eq!(node.children().collect::<Vec<_>>(), vec![0]);
     }

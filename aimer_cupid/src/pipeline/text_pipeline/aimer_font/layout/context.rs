@@ -3,9 +3,9 @@
 
 use super::super::FontMetrics;
 use super::{
-    checked_add, checked_mul, ensure, malformed, next_unignored, previous_unignored, read_u16,
-    read_u32, relative_offset, slice_from, ClassDef, Gdef, LayoutGlyph, LayoutTableState,
-    SfntError, SfntFace, Tag, ARAB_TAG, CALT_TAG, GSUB_TAG, MAX_CONTEXT_DEPTH,
+    ARAB_TAG, CALT_TAG, ClassDef, GSUB_TAG, Gdef, LayoutGlyph, LayoutTableState, MAX_CONTEXT_DEPTH,
+    SfntError, SfntFace, Tag, checked_add, checked_mul, ensure, malformed, next_unignored,
+    previous_unignored, read_u16, read_u32, relative_offset, slice_from,
 };
 
 pub(super) fn apply_arabic_contextual_substitutions(
@@ -45,17 +45,14 @@ pub(super) fn apply_contextual_substitutions(
     record_candidate_glyphs(glyphs, candidates, &mut seen_glyphs);
 
     for feature_tag in feature_tags {
-        let lookup_indices = gsub.feature_lookup_indices(script_tag, std::slice::from_ref(feature_tag));
+        let lookup_indices =
+            gsub.feature_lookup_indices(script_tag, std::slice::from_ref(feature_tag));
         for lookup_index in lookup_indices {
             let lookup = gsub.lookup(*lookup_index)?;
             for subtable_offset in &lookup.subtable_offsets {
                 let subtable = slice_from(table, *subtable_offset, GSUB_TAG)?;
-                if context_subtable_may_match(
-                    subtable,
-                    lookup.lookup_type,
-                    candidates,
-                    0,
-                )? == Some(false)
+                if context_subtable_may_match(subtable, lookup.lookup_type, candidates, 0)?
+                    == Some(false)
                 {
                     continue;
                 }
@@ -140,12 +137,7 @@ fn context_subtable_may_match(
                 return Err(malformed(GSUB_TAG));
             }
             let coverage_offsets_end = checked_add(6, checked_mul(glyph_count, 2)?)?;
-            ensure(
-                subtable,
-                6,
-                checked_mul(glyph_count, 2)?,
-                GSUB_TAG,
-            )?;
+            ensure(subtable, 6, checked_mul(glyph_count, 2)?, GSUB_TAG)?;
             ensure(
                 subtable,
                 coverage_offsets_end,
@@ -334,8 +326,12 @@ fn apply_gsub_context_format1(
             first_index += 1;
             continue;
         }
-        let Some(rule_set_index) =
-            super::coverage_index(subtable, coverage_offset, glyphs[first_index].glyph_id, GSUB_TAG)?
+        let Some(rule_set_index) = super::coverage_index(
+            subtable,
+            coverage_offset,
+            glyphs[first_index].glyph_id,
+            GSUB_TAG,
+        )?
         else {
             first_index += 1;
             continue;
@@ -386,21 +382,13 @@ fn apply_gsub_context_format1(
             let mut previous_index = first_index;
             let mut matched = true;
             for input_index in 0..input_count {
-                let Some(candidate) = next_unignored(
-                    glyphs,
-                    previous_index.saturating_add(1),
-                    lookup_flags,
-                    gdef,
-                )?
+                let Some(candidate) =
+                    next_unignored(glyphs, previous_index.saturating_add(1), lookup_flags, gdef)?
                 else {
                     matched = false;
                     break;
                 };
-                let expected = read_u16(
-                    subtable,
-                    input_offset + input_index * 2,
-                    GSUB_TAG,
-                )?;
+                let expected = read_u16(subtable, input_offset + input_index * 2, GSUB_TAG)?;
                 if glyphs[candidate].glyph_id != expected {
                     matched = false;
                     break;
@@ -454,12 +442,7 @@ fn apply_gsub_context_format2(
     let coverage_offset = usize::from(read_u16(subtable, 2, GSUB_TAG)?);
     let class_definition_offset = usize::from(read_u16(subtable, 4, GSUB_TAG)?);
     let class_set_count = usize::from(read_u16(subtable, 6, GSUB_TAG)?);
-    ensure(
-        subtable,
-        8,
-        checked_mul(class_set_count, 2)?,
-        GSUB_TAG,
-    )?;
+    ensure(subtable, 8, checked_mul(class_set_count, 2)?, GSUB_TAG)?;
     let class_definition = ClassDef::new(subtable, class_definition_offset, GSUB_TAG)?;
     let mut changed = false;
     let mut first_index = 0;
@@ -527,25 +510,15 @@ fn apply_gsub_context_format2(
             let mut previous_index = first_index;
             let mut matched = true;
             for input_index in 0..input_count {
-                let Some(candidate) = next_unignored(
-                    glyphs,
-                    previous_index.saturating_add(1),
-                    lookup_flags,
-                    gdef,
-                )?
+                let Some(candidate) =
+                    next_unignored(glyphs, previous_index.saturating_add(1), lookup_flags, gdef)?
                 else {
                     matched = false;
                     break;
                 };
-                let expected_class = read_u16(
-                    subtable,
-                    input_offset + input_index * 2,
-                    GSUB_TAG,
-                )?;
-                let actual_class = class_definition_class(
-                    class_definition.as_ref(),
-                    glyphs[candidate].glyph_id,
-                )?;
+                let expected_class = read_u16(subtable, input_offset + input_index * 2, GSUB_TAG)?;
+                let actual_class =
+                    class_definition_class(class_definition.as_ref(), glyphs[candidate].glyph_id)?;
                 if actual_class != expected_class {
                     matched = false;
                     break;
@@ -648,10 +621,7 @@ fn apply_gsub_context_format3(
     Ok(changed)
 }
 
-fn class_definition_class(
-    definition: Option<&ClassDef>,
-    glyph_id: u16,
-) -> Result<u16, SfntError> {
+fn class_definition_class(definition: Option<&ClassDef>, glyph_id: u16) -> Result<u16, SfntError> {
     definition.map_or(Ok(0), |definition| definition.class(glyph_id))
 }
 
@@ -673,11 +643,7 @@ fn match_coverage_sequence(
     input_indices.push(first_index);
     if super::coverage_index(
         subtable,
-        usize::from(read_u16(
-            subtable,
-            coverage_offsets_start,
-            GSUB_TAG,
-        )?),
+        usize::from(read_u16(subtable, coverage_offsets_start, GSUB_TAG)?),
         glyphs[first_index].glyph_id,
         GSUB_TAG,
     )?
@@ -688,21 +654,14 @@ fn match_coverage_sequence(
 
     let mut previous_index = first_index;
     for position in 1..glyph_count {
-        let Some(candidate) = next_unignored(
-            glyphs,
-            previous_index.saturating_add(1),
-            lookup_flags,
-            gdef,
-        )?
+        let Some(candidate) =
+            next_unignored(glyphs, previous_index.saturating_add(1), lookup_flags, gdef)?
         else {
             return Ok(None);
         };
         let coverage_offset = usize::from(read_u16(
             subtable,
-            checked_add(
-                coverage_offsets_start,
-                checked_mul(position, 2)?,
-            )?,
+            checked_add(coverage_offsets_start, checked_mul(position, 2)?)?,
             GSUB_TAG,
         )?);
         if super::coverage_index(
@@ -746,8 +705,12 @@ fn apply_gsub_chain_context_format1(
             first_index += 1;
             continue;
         }
-        let Some(rule_set_index) =
-            super::coverage_index(subtable, coverage_offset, glyphs[first_index].glyph_id, GSUB_TAG)?
+        let Some(rule_set_index) = super::coverage_index(
+            subtable,
+            coverage_offset,
+            glyphs[first_index].glyph_id,
+            GSUB_TAG,
+        )?
         else {
             first_index += 1;
             continue;
@@ -849,12 +812,7 @@ fn apply_gsub_chain_context_format2(
         GSUB_TAG,
     )?;
     let class_set_count = usize::from(read_u16(subtable, 10, GSUB_TAG)?);
-    ensure(
-        subtable,
-        12,
-        checked_mul(class_set_count, 2)?,
-        GSUB_TAG,
-    )?;
+    ensure(subtable, 12, checked_mul(class_set_count, 2)?, GSUB_TAG)?;
     let mut changed = false;
     let mut first_index = 0;
 
@@ -955,12 +913,7 @@ fn match_gsub_chain_rule_format2(
     let mut cursor = rule_offset;
     let backtrack_count = usize::from(read_u16(subtable, cursor, GSUB_TAG)?);
     cursor = checked_add(cursor, 2)?;
-    ensure(
-        subtable,
-        cursor,
-        checked_mul(backtrack_count, 2)?,
-        GSUB_TAG,
-    )?;
+    ensure(subtable, cursor, checked_mul(backtrack_count, 2)?, GSUB_TAG)?;
     let mut previous_index = first_index;
     for index in 0..backtrack_count {
         let Some(candidate) = previous_unignored(glyphs, previous_index, lookup_flags, gdef)?
@@ -1023,12 +976,7 @@ fn match_gsub_chain_rule_format2(
 
     let lookahead_count = usize::from(read_u16(subtable, cursor, GSUB_TAG)?);
     cursor = checked_add(cursor, 2)?;
-    ensure(
-        subtable,
-        cursor,
-        checked_mul(lookahead_count, 2)?,
-        GSUB_TAG,
-    )?;
+    ensure(subtable, cursor, checked_mul(lookahead_count, 2)?, GSUB_TAG)?;
     let mut lookahead_index = last_input_index;
     for index in 0..lookahead_count {
         let Some(candidate) = next_unignored(
@@ -1127,10 +1075,7 @@ fn apply_gsub_chain_context_format3(
             };
             let coverage_offset = usize::from(read_u16(
                 subtable,
-                checked_add(
-                    backtrack_offsets_start,
-                    checked_mul(index, 2)?,
-                )?,
+                checked_add(backtrack_offsets_start, checked_mul(index, 2)?)?,
                 GSUB_TAG,
             )?);
             if super::coverage_index(
@@ -1164,10 +1109,7 @@ fn apply_gsub_chain_context_format3(
             };
             let coverage_offset = usize::from(read_u16(
                 subtable,
-                checked_add(
-                    lookahead_offsets_start,
-                    checked_mul(index, 2)?,
-                )?,
+                checked_add(lookahead_offsets_start, checked_mul(index, 2)?)?,
                 GSUB_TAG,
             )?);
             if super::coverage_index(
@@ -1217,12 +1159,7 @@ fn match_gsub_chain_rule_format1(
     let mut cursor = rule_offset;
     let backtrack_count = usize::from(read_u16(subtable, cursor, GSUB_TAG)?);
     cursor = checked_add(cursor, 2)?;
-    ensure(
-        subtable,
-        cursor,
-        checked_mul(backtrack_count, 2)?,
-        GSUB_TAG,
-    )?;
+    ensure(subtable, cursor, checked_mul(backtrack_count, 2)?, GSUB_TAG)?;
     let mut previous_index = first_index;
     for index in 0..backtrack_count {
         let Some(candidate) = previous_unignored(glyphs, previous_index, lookup_flags, gdef)?
@@ -1281,12 +1218,7 @@ fn match_gsub_chain_rule_format1(
 
     let lookahead_count = usize::from(read_u16(subtable, cursor, GSUB_TAG)?);
     cursor = checked_add(cursor, 2)?;
-    ensure(
-        subtable,
-        cursor,
-        checked_mul(lookahead_count, 2)?,
-        GSUB_TAG,
-    )?;
+    ensure(subtable, cursor, checked_mul(lookahead_count, 2)?, GSUB_TAG)?;
     let mut lookahead_index = last_input_index;
     for index in 0..lookahead_count {
         let Some(candidate) = next_unignored(
@@ -1422,8 +1354,13 @@ mod tests {
         let non_matching = [glyph(43)];
 
         assert_eq!(
-            context_subtable_may_match(&subtable, 5, &matching.iter().map(|g| g.glyph_id).collect::<Vec<_>>(), 0)
-                .expect("valid contextual subtable"),
+            context_subtable_may_match(
+                &subtable,
+                5,
+                &matching.iter().map(|g| g.glyph_id).collect::<Vec<_>>(),
+                0
+            )
+            .expect("valid contextual subtable"),
             Some(true)
         );
         assert_eq!(

@@ -19,23 +19,23 @@ use std::cell::Cell;
 use std::hint::black_box;
 use std::time::Instant;
 
+use aimer::animation::{
+    Animated, AnimatedBuilder, AnimatedPaint, AnimationController, AnimationEffect, Curve,
+};
+use aimer::events::element::{ElementEvent, KeyAction, Modifiers, NamedKey};
+use aimer::events::pointer::{PointerButton, PointerInfo};
+use aimer::input::button::Button;
+use aimer::modal::ModalHost;
 use aimer::quiver::winit::{
     dpi::{PhysicalPosition, PhysicalSize},
     event::{DeviceId, MouseScrollDelta, TouchPhase, WindowEvent},
 };
-use aimer::events::element::{ElementEvent, KeyAction, Modifiers, NamedKey};
-use aimer::events::pointer::{PointerButton, PointerInfo};
 use aimer::{
     AimerApp, Align, AnyElement, AnyWidget, BuildContext, Color, Column, Container, Drawable,
     Element, EventDispatcher, EventElement, Expanded, FocusBehavior, FocusNode, Focusable,
-    HeadlessOptions, LayoutElement, Positioned, Rebuildable, Scrollable, SizedBox, Stack, Vec2d,
-    VisitorElement, Widget, OverflowBehavior,
+    HeadlessOptions, LayoutElement, OverflowBehavior, Positioned, Rebuildable, Scrollable,
+    SizedBox, Stack, Vec2d, VisitorElement, Widget,
 };
-use aimer::animation::{
-    Animated, AnimatedBuilder, AnimatedPaint, AnimationController, AnimationEffect, Curve,
-};
-use aimer::input::button::Button;
-use aimer::modal::ModalHost;
 
 const ROUNDS: usize = 7;
 const WARMUP_FRAMES: usize = 8;
@@ -106,9 +106,7 @@ fn row(index: usize) -> AnyWidget {
 }
 
 fn eager_column(count: usize) -> AnyWidget {
-    Column::new()
-        .children((0..count).map(row))
-        .boxed()
+    Column::new().children((0..count).map(row)).boxed()
 }
 
 fn scrollable_column(count: usize) -> AnyWidget {
@@ -178,10 +176,7 @@ fn animated_column(count: usize) -> AnyWidget {
 fn animated_probe() -> AnyWidget {
     let controller = AnimationController::with_millis(1_000, Curve::Linear);
     controller.forward_from_first_tick();
-    AnimatedBuilder::new(controller, |_value| {
-        SizedBox::new().width(1.0).height(1.0)
-    })
-    .boxed()
+    AnimatedBuilder::new(controller, |_value| SizedBox::new().width(1.0).height(1.0)).boxed()
 }
 
 /// A retained opacity wrapper around one stable child. The controller is
@@ -189,12 +184,9 @@ fn animated_probe() -> AnyWidget {
 fn retained_paint_probe() -> AnyWidget {
     let controller = AnimationController::with_millis(1_000, Curve::Linear);
     controller.forward_from_first_tick();
-    AnimatedPaint::new(
-        controller,
-        SizedBox::new().width(1.0).height(1.0),
-    )
-    .opacity()
-    .boxed()
+    AnimatedPaint::new(controller, SizedBox::new().width(1.0).height(1.0))
+        .opacity()
+        .boxed()
 }
 
 fn retained_paint_column(count: usize) -> AnyWidget {
@@ -244,11 +236,7 @@ fn stable_column_with_animation(count: usize) -> AnyWidget {
 /// A direct-child uniform column that exercises the compact stride table.
 fn uniform_size_column(count: usize) -> AnyWidget {
     Column::new()
-        .children((0..count).map(|_| {
-            SizedBox::new()
-                .width(800.0)
-                .height(20.0)
-        }))
+        .children((0..count).map(|_| SizedBox::new().width(800.0).height(20.0)))
         .boxed()
 }
 
@@ -485,8 +473,7 @@ fn measure_cached_frames(name: &str, build: impl Fn() -> AnyWidget) {
         measurements
             .samples
             .push(start.elapsed().as_secs_f64() * 1e6 / MEASURED_FRAMES as f64);
-        measurements.allocations_per_frame +=
-            allocations() as f64 / MEASURED_FRAMES as f64;
+        measurements.allocations_per_frame += allocations() as f64 / MEASURED_FRAMES as f64;
     }
 
     measurements.allocations_per_frame /= ROUNDS as f64;
@@ -624,10 +611,7 @@ fn measure_framework_dispatch(name: &str, count: usize, focusable: bool) {
             modifiers: Modifiers::default(),
         }
     } else {
-        ElementEvent::PointerMove(PointerInfo::mouse(
-            Vec2d::default(),
-            PointerButton::Primary,
-        ))
+        ElementEvent::PointerMove(PointerInfo::mouse(Vec2d::default(), PointerButton::Primary))
     };
 
     let mut samples = Vec::with_capacity(ROUNDS);
@@ -694,15 +678,15 @@ fn main() {
 
     println!("\nresize workloads");
     for count in [256, 2_048] {
-        measure_resizes(&format!("eager column: {count} rows"), move || eager_column(count));
-        measure_resizes(
-            &format!("layered column: {count} rows"),
-            move || layered_column(count),
-        );
-        measure_resizes(
-            &format!("layered stack: {count} rows"),
-            move || layered_stack(count),
-        );
+        measure_resizes(&format!("eager column: {count} rows"), move || {
+            eager_column(count)
+        });
+        measure_resizes(&format!("layered column: {count} rows"), move || {
+            layered_column(count)
+        });
+        measure_resizes(&format!("layered stack: {count} rows"), move || {
+            layered_stack(count)
+        });
     }
     measure_resizes(&windowed_name, windowed_list);
 
@@ -734,30 +718,28 @@ fn main() {
 
     println!("\npointer hit-test workloads");
     for count in EAGER_COUNTS {
-        measure_pointer_moves(&format!("eager column: {count} rows"), move || eager_column(count));
-        measure_pointer_moves(
-            &format!("layered column: {count} rows"),
-            move || layered_column(count),
-        );
-        measure_pointer_moves(
-            &format!("layered stack: {count} rows"),
-            move || layered_stack(count),
-        );
+        measure_pointer_moves(&format!("eager column: {count} rows"), move || {
+            eager_column(count)
+        });
+        measure_pointer_moves(&format!("layered column: {count} rows"), move || {
+            layered_column(count)
+        });
+        measure_pointer_moves(&format!("layered stack: {count} rows"), move || {
+            layered_stack(count)
+        });
         if count != 32 {
-            measure_pointer_moves(
-                &format!("sparse layered stack: {count} rows"),
-                move || sparse_layered_stack(count),
-            );
+            measure_pointer_moves(&format!("sparse layered stack: {count} rows"), move || {
+                sparse_layered_stack(count)
+            });
         }
     }
     measure_pointer_moves(&windowed_name, windowed_list);
 
     println!("\nscroll workloads");
     for count in [256, 2_048] {
-        measure_scrolls(
-            &format!("scrollable column: {count} rows"),
-            move || scrollable_column(count),
-        );
+        measure_scrolls(&format!("scrollable column: {count} rows"), move || {
+            scrollable_column(count)
+        });
     }
     println!("\nwrapped-column regression");
     for count in [256, 2_048] {
@@ -776,37 +758,35 @@ fn main() {
 
     println!("\nstateful and focusable workloads");
     for count in EAGER_COUNTS {
-        measure_cached_frames(
-            &format!("focusable column: {count} controls"),
-            move || focusable_column(count),
-        );
-        measure_cached_frames(
-            &format!("stateful column: {count} buttons"),
-            move || stateful_column(count),
-        );
+        measure_cached_frames(&format!("focusable column: {count} controls"), move || {
+            focusable_column(count)
+        });
+        measure_cached_frames(&format!("stateful column: {count} buttons"), move || {
+            stateful_column(count)
+        });
     }
 
     println!("\nanimation workloads");
     measure_cached_frames("animation framework shell", animated_probe);
     measure_cached_frames("retained paint framework shell", retained_paint_probe);
-    measure_cached_frames("compositor animation framework shell", compositor_animation_probe);
+    measure_cached_frames(
+        "compositor animation framework shell",
+        compositor_animation_probe,
+    );
     for count in [256, 2_048] {
-        measure_cached_frames(
-            &format!("animated column: {count} rows"),
-            move || animated_column(count),
-        );
+        measure_cached_frames(&format!("animated column: {count} rows"), move || {
+            animated_column(count)
+        });
         measure_cached_frames(
             &format!("stable column + animation: {count} rows"),
             move || stable_column_with_animation(count),
         );
-        measure_cached_frames(
-            &format!("retained paint column: {count} rows"),
-            move || retained_paint_column(count),
-        );
+        measure_cached_frames(&format!("retained paint column: {count} rows"), move || {
+            retained_paint_column(count)
+        });
         measure_cached_frames(
             &format!("compositor animation column: {count} rows"),
             move || compositor_animation_column(count),
         );
     }
-
 }

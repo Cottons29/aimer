@@ -25,13 +25,13 @@ use std::time::Instant;
 
 use aimer::events::element::ElementEvent;
 use aimer::events::pointer::PointerButton;
-use aimer::{
-    AnyElement, AnyWidget, AnyWidgetExt, BuildContext, Color, Column, Drawable, Element,
-    EventDispatcher, EventElement, LayoutElement, Rebuildable, SizedBox, StatelessElement,
-    Vec2d, VisitorElement, Widget, broadcast_event,
-};
 use aimer::events::pointer::PointerInfo;
 use aimer::quiver::winit::dpi::PhysicalSize;
+use aimer::{
+    AnyElement, AnyWidget, AnyWidgetExt, BuildContext, Color, Column, Drawable, Element,
+    EventDispatcher, EventElement, LayoutElement, Rebuildable, SizedBox, StatelessElement, Vec2d,
+    VisitorElement, Widget, broadcast_event,
+};
 use aimer_canvas::{FrameCanvas, InnerCanvas};
 use aimer_widget::base::WindowHandle;
 
@@ -55,9 +55,7 @@ fn row(index: usize) -> AnyWidget {
 }
 
 fn phase_widget(count: usize) -> AnyWidget {
-    Column::new()
-        .children((0..count).map(row))
-        .boxed()
+    Column::new().children((0..count).map(row)).boxed()
 }
 
 fn context(runtime: &tokio::runtime::Runtime) -> BuildContext<'static> {
@@ -112,7 +110,10 @@ fn percentile(values: &[f64], fraction: f64) -> f64 {
     values[index]
 }
 
-fn build_tree(count: usize, runtime: &tokio::runtime::Runtime) -> (BuildContext<'static>, AnyElement) {
+fn build_tree(
+    count: usize,
+    runtime: &tokio::runtime::Runtime,
+) -> (BuildContext<'static>, AnyElement) {
     let context = context(runtime);
     let root = phase_widget(count).into_element(&context);
     (context, root)
@@ -144,9 +145,9 @@ fn measure_layout(count: usize, runtime: &tokio::runtime::Runtime) {
             root.invalidate_layout();
             black_box(root.layout(&context));
         }
-        samples.values.push(
-            start.elapsed().as_secs_f64() * 1e6 / MEASURED_OPERATIONS as f64,
-        );
+        samples
+            .values
+            .push(start.elapsed().as_secs_f64() * 1e6 / MEASURED_OPERATIONS as f64);
     }
     samples.print(&format!("{count} nodes: layout (invalidate + measure)"));
 }
@@ -163,9 +164,9 @@ fn measure_layout_invalidation(count: usize, runtime: &tokio::runtime::Runtime) 
         for _ in 0..MEASURED_OPERATIONS {
             root.invalidate_layout();
         }
-        samples.values.push(
-            start.elapsed().as_secs_f64() * 1e6 / MEASURED_OPERATIONS as f64,
-        );
+        samples
+            .values
+            .push(start.elapsed().as_secs_f64() * 1e6 / MEASURED_OPERATIONS as f64);
     }
     samples.print(&format!("{count} nodes: layout invalidation (marker)"));
 }
@@ -187,9 +188,9 @@ fn measure_draw(count: usize, runtime: &tokio::runtime::Runtime) {
             context.canvas.begin_frame();
             root.update(&context);
         }
-        samples.values.push(
-            start.elapsed().as_secs_f64() * 1e6 / MEASURED_OPERATIONS as f64,
-        );
+        samples
+            .values
+            .push(start.elapsed().as_secs_f64() * 1e6 / MEASURED_OPERATIONS as f64);
     }
     samples.print(&format!("{count} nodes: draw (cached frame)"));
 }
@@ -217,9 +218,9 @@ fn measure_reconciliation(count: usize, runtime: &tokio::runtime::Runtime) {
             root.mark_needs_rebuild();
             root.rebuild_if_dirty(&context);
         }
-        samples.values.push(
-            start.elapsed().as_secs_f64() * 1e6 / MEASURED_OPERATIONS as f64,
-        );
+        samples
+            .values
+            .push(start.elapsed().as_secs_f64() * 1e6 / MEASURED_OPERATIONS as f64);
     }
     samples.print(&format!("{count} nodes: reconcile (dirty tree)"));
 }
@@ -248,9 +249,9 @@ fn measure_clean_reconciliation(count: usize, runtime: &tokio::runtime::Runtime)
         for _ in 0..MEASURED_OPERATIONS {
             gated.rebuild_if_dirty(&context);
         }
-        gated_samples.values.push(
-            start.elapsed().as_secs_f64() * 1e6 / MEASURED_OPERATIONS as f64,
-        );
+        gated_samples
+            .values
+            .push(start.elapsed().as_secs_f64() * 1e6 / MEASURED_OPERATIONS as f64);
 
         let mut ungated_elapsed = 0.0;
         for _ in 0..MEASURED_OPERATIONS {
@@ -261,7 +262,9 @@ fn measure_clean_reconciliation(count: usize, runtime: &tokio::runtime::Runtime)
             ungated.rebuild_if_dirty(&context);
             ungated_elapsed += start.elapsed().as_secs_f64() * 1e6;
         }
-        ungated_samples.values.push(ungated_elapsed / MEASURED_OPERATIONS as f64);
+        ungated_samples
+            .values
+            .push(ungated_elapsed / MEASURED_OPERATIONS as f64);
     }
     gated_samples.print(&format!("{count} nodes: reconcile (clean, gated)"));
     ungated_samples.print(&format!("{count} nodes: reconcile (clean, old walk)"));
@@ -368,18 +371,15 @@ fn measure_hit_testing(count: usize) {
             hit_test_only(root.as_ref(), pos, &mut visited);
             black_box(visited);
         }
-        samples.values.push(
-            start.elapsed().as_secs_f64() * 1e6 / MEASURED_OPERATIONS as f64,
-        );
+        samples
+            .values
+            .push(start.elapsed().as_secs_f64() * 1e6 / MEASURED_OPERATIONS as f64);
     }
     samples.print(&format!("{count} nodes: hit testing (pure walk)"));
 }
 
 fn pointer_event() -> ElementEvent {
-    ElementEvent::PointerMove(PointerInfo::mouse(
-        Vec2d::default(),
-        PointerButton::Primary,
-    ))
+    ElementEvent::PointerMove(PointerInfo::mouse(Vec2d::default(), PointerButton::Primary))
 }
 
 fn measure_event_dispatch(count: usize) {
@@ -396,9 +396,9 @@ fn measure_event_dispatch(count: usize) {
         for _ in 0..MEASURED_OPERATIONS {
             let _ = black_box(dispatcher.dispatch(root.as_ref(), Vec2d::default(), &event));
         }
-        samples.values.push(
-            start.elapsed().as_secs_f64() * 1e6 / MEASURED_OPERATIONS as f64,
-        );
+        samples
+            .values
+            .push(start.elapsed().as_secs_f64() * 1e6 / MEASURED_OPERATIONS as f64);
     }
     samples.print(&format!("{count} nodes: pointer dispatch (production)"));
 }
@@ -424,11 +424,15 @@ fn measure_event_delivery(count: usize, retained: bool) {
         for _ in 0..MEASURED_OPERATIONS {
             let _ = black_box(broadcast());
         }
-        samples.values.push(
-            start.elapsed().as_secs_f64() * 1e6 / MEASURED_OPERATIONS as f64,
-        );
+        samples
+            .values
+            .push(start.elapsed().as_secs_f64() * 1e6 / MEASURED_OPERATIONS as f64);
     }
-    let path = if retained { "cached broadcast" } else { "broadcast" };
+    let path = if retained {
+        "cached broadcast"
+    } else {
+        "broadcast"
+    };
     samples.print(&format!("{count} nodes: event delivery ({path})"));
 }
 
@@ -458,9 +462,9 @@ fn measure_focus(count: usize) {
         for _ in 0..MEASURED_OPERATIONS {
             let _ = black_box(dispatcher.dispatch(root.as_ref(), Vec2d::default(), &event));
         }
-        samples.values.push(
-            start.elapsed().as_secs_f64() * 1e6 / MEASURED_OPERATIONS as f64,
-        );
+        samples
+            .values
+            .push(start.elapsed().as_secs_f64() * 1e6 / MEASURED_OPERATIONS as f64);
     }
     samples.print(&format!("{count} nodes: focus traversal (Tab)"));
 }

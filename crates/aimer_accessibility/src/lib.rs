@@ -29,7 +29,7 @@ pub use tree::{
     SemanticTree, TreeError,
 };
 pub use validation::{
-    contrast_ratio, validate_contrast, validate_touch_target, Bounds, BoundsError, Color,
-    ColorError, ContrastError, TouchTargetAxis, TouchTargetError, TouchTargetPolicy,
-    TouchTargetPolicyError,
+    Bounds, BoundsError, Color, ColorError, ContrastError, TouchTargetAxis, TouchTargetError,
+    TouchTargetPolicy, TouchTargetPolicyError, contrast_ratio, validate_contrast,
+    validate_touch_target,
 };

@@ -1,21 +1,21 @@
+#[cfg(feature = "portable-guest")]
+use super::{
+    FONT_STYLE_NORMAL_TAG, FONT_WEIGHT_NORMAL_TAG, OPTIONAL_NONE_TAG, TEXT_DECORATION_SOLID_TAG,
+    TEXT_OVERFLOW_WRAP_TAG,
+};
+#[cfg(feature = "portable-guest")]
+use aimer_widget::portable::__anteros::WidgetProperty;
 use aimer_widget::portable::__anteros::{
     ModelLimits, PropertyId, PropertyValue, Version, WidgetDocument, WidgetDocumentView,
     WidgetNode, WidgetSchemaId,
-};
-use aimer_widget::portable::{
-    PortableMaterializeProperty, PortableProperty, PortablePropertyConversion,
 };
 #[cfg(feature = "portable-guest")]
 use aimer_widget::portable::{
     PortableBuildContext, PortableBuildError, PortableEncodeProperty, PortableLimits,
     PortableWidgetLimits, SourceFingerprint, StableId128,
 };
-#[cfg(feature = "portable-guest")]
-use aimer_widget::portable::__anteros::WidgetProperty;
-#[cfg(feature = "portable-guest")]
-use super::{
-    FONT_STYLE_NORMAL_TAG, FONT_WEIGHT_NORMAL_TAG, OPTIONAL_NONE_TAG,
-    TEXT_DECORATION_SOLID_TAG, TEXT_OVERFLOW_WRAP_TAG,
+use aimer_widget::portable::{
+    PortableMaterializeProperty, PortableProperty, PortablePropertyConversion,
 };
 
 use super::super::layout_spacing::{LayoutSpacing, Spacing};
@@ -236,8 +236,7 @@ fn layout_spacing_materializes_every_spacing_variant_from_its_canonical_blob() {
     let image = widget_document(&blob);
     let document = WidgetDocumentView::decode(&image, LIMITS).unwrap();
 
-    let spacing =
-        LayoutSpacing::from_awir(&document, PROPERTY, PropertyValue::BlobRef(0)).unwrap();
+    let spacing = LayoutSpacing::from_awir(&document, PROPERTY, PropertyValue::BlobRef(0)).unwrap();
 
     assert!(
         spacing
@@ -656,7 +655,6 @@ fn assert_invalid_line_height_blob(blob: &[u8]) {
 }
 
 fn complete_decoration_blob() -> Vec<u8> {
-
     let mut blob = vec![1];
     push_border_slice(&mut blob, 1, 1, 2.0, Color::RED);
     push_border_slice(&mut blob, 2, 2, 5.0, Color::GREEN);

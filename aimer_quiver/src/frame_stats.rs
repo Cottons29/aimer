@@ -403,10 +403,22 @@ impl FrameAccumulator {
     fn take(&self) -> (FrameBreakdown, FrameTimingStats) {
         let (cpu_frame, (cpu_frame_p95, cpu_frame_p95_saturated)) = self.cpu_frame.take();
         let (gpu_frame, (gpu_frame_p95, gpu_frame_p95_saturated)) = self.gpu_frame.take();
-        (FrameBreakdown { build: self.build.take().0, encode: self.encode.take().0,
-            present: self.present.take().0 },
-         FrameTimingStats { pipeline: pipeline::take(), cpu_frame, cpu_frame_p95,
-            cpu_frame_p95_saturated, gpu_frame, gpu_frame_p95, gpu_frame_p95_saturated })
+        (
+            FrameBreakdown {
+                build: self.build.take().0,
+                encode: self.encode.take().0,
+                present: self.present.take().0,
+            },
+            FrameTimingStats {
+                pipeline: pipeline::take(),
+                cpu_frame,
+                cpu_frame_p95,
+                cpu_frame_p95_saturated,
+                gpu_frame,
+                gpu_frame_p95,
+                gpu_frame_p95_saturated,
+            },
+        )
     }
 
     fn reset(&self) {
@@ -491,9 +503,7 @@ impl AtomicPhase {
             }
         }
         (
-            Duration::from_nanos(
-                PERCENTILE_BUCKET_COUNT as u64 * PERCENTILE_BUCKET_WIDTH_NANOS,
-            ),
+            Duration::from_nanos(PERCENTILE_BUCKET_COUNT as u64 * PERCENTILE_BUCKET_WIDTH_NANOS),
             true,
         )
     }
@@ -501,20 +511,30 @@ impl AtomicPhase {
     fn take(&self) -> (PhaseSamples, (Duration, bool)) {
         // Each counter is drained with a swap, so a concurrent worker sample
         // belongs to this or the following window rather than being erased.
-        let samples = PhaseSamples { samples: self.samples.swap(0, Ordering::Relaxed),
-            total: Duration::from_nanos(self.nanos.swap(0, Ordering::Relaxed)) };
+        let samples = PhaseSamples {
+            samples: self.samples.swap(0, Ordering::Relaxed),
+            total: Duration::from_nanos(self.nanos.swap(0, Ordering::Relaxed)),
+        };
         #[cfg(feature = "frame-stats")]
         let percentile = {
-            let buckets = std::array::from_fn::<_, PERCENTILE_BUCKET_COUNT, _>(|i|
-                self.percentile_buckets[i].swap(0, Ordering::Relaxed));
+            let buckets = std::array::from_fn::<_, PERCENTILE_BUCKET_COUNT, _>(|i| {
+                self.percentile_buckets[i].swap(0, Ordering::Relaxed)
+            });
             let count: u64 = buckets.iter().sum();
             let rank = count.saturating_mul(95).saturating_add(99) / 100;
             let mut cumulative = 0;
-            let index = buckets.iter().position(|count| { cumulative += count; cumulative >= rank });
-            if count == 0 { (Duration::ZERO, false) } else {
+            let index = buckets.iter().position(|count| {
+                cumulative += count;
+                cumulative >= rank
+            });
+            if count == 0 {
+                (Duration::ZERO, false)
+            } else {
                 let index = index.unwrap_or(PERCENTILE_BUCKET_COUNT - 1);
-                (Duration::from_nanos((index as u64 + 1) * PERCENTILE_BUCKET_WIDTH_NANOS),
-                    index + 1 == PERCENTILE_BUCKET_COUNT)
+                (
+                    Duration::from_nanos((index as u64 + 1) * PERCENTILE_BUCKET_WIDTH_NANOS),
+                    index + 1 == PERCENTILE_BUCKET_COUNT,
+                )
             }
         };
         #[cfg(not(feature = "frame-stats"))]
@@ -848,7 +868,14 @@ pub fn record_frame_content(
         work,
     );
     #[cfg(not(feature = "frame-stats"))]
-    let _ = (drawn_nodes, draw_list, text_cache_hits, text_cache_misses, rebuild, work);
+    let _ = (
+        drawn_nodes,
+        draw_list,
+        text_cache_hits,
+        text_cache_misses,
+        rebuild,
+        work,
+    );
 }
 
 /// Takes a periodic debug report and resets the two frame accumulators.
@@ -911,13 +938,19 @@ impl PhaseTimer {
 
     /// Records UI occupancy through recording and nonblocking submission.
     #[inline]
-    pub(crate) fn finish_ui_frame(self) { self.finish_pipeline(pipeline::Phase::Ui); }
+    pub(crate) fn finish_ui_frame(self) {
+        self.finish_pipeline(pipeline::Phase::Ui);
+    }
     /// Records time waiting for a worker to start the submitted frame.
     #[inline]
-    pub(crate) fn finish_queue(self) { self.finish_pipeline(pipeline::Phase::Queue); }
+    pub(crate) fn finish_queue(self) {
+        self.finish_pipeline(pipeline::Phase::Queue);
+    }
     /// Records drawable acquisition separately from command encoding.
     #[inline]
-    pub(crate) fn finish_acquire(self) { self.finish_pipeline(pipeline::Phase::Acquire); }
+    pub(crate) fn finish_acquire(self) {
+        self.finish_pipeline(pipeline::Phase::Acquire);
+    }
     fn finish_pipeline(self, phase: pipeline::Phase) {
         #[cfg(feature = "frame-stats")]
         pipeline::record(phase, self.started.elapsed());

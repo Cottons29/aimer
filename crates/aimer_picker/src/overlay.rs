@@ -47,7 +47,10 @@ impl fmt::Display for PickerSessionError {
             Self::MissingHost => formatter.write_str("picker overlay host is missing"),
             Self::UnsupportedHost => formatter.write_str("picker overlay host is unsupported"),
             Self::DismissalNotAllowed(reason) => {
-                write!(formatter, "picker overlay dismissal is disabled for {reason:?}")
+                write!(
+                    formatter,
+                    "picker overlay dismissal is disabled for {reason:?}"
+                )
             }
         }
     }
@@ -71,7 +74,11 @@ pub struct PickerSession<T> {
 impl<T: Clone> PickerSession<T> {
     /// Creates a closed session with `value` as both committed and draft state.
     pub fn new(value: T) -> Self {
-        Self { committed: value.clone(), draft: value, open: false }
+        Self {
+            committed: value.clone(),
+            draft: value,
+            open: false,
+        }
     }
 
     /// Opens the session and resets its draft from the committed value.
@@ -124,7 +131,10 @@ impl<T: Clone> PickerSession<T> {
         }
         self.draft = self.committed.clone();
         self.open = false;
-        Ok(PickerOutcome::Cancelled { reason, value: self.committed.clone() })
+        Ok(PickerOutcome::Cancelled {
+            reason,
+            value: self.committed.clone(),
+        })
     }
 
     /// Closes an open session as a programmatic cancellation.

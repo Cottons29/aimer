@@ -290,11 +290,7 @@ impl BatchExecutor {
         serial_threshold: usize,
         worker_starts: Arc<AtomicUsize>,
     ) -> Self {
-        Self::with_configuration_and_worker_counter(
-            workers,
-            serial_threshold,
-            Some(worker_starts),
-        )
+        Self::with_configuration_and_worker_counter(workers, serial_threshold, Some(worker_starts))
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -342,9 +338,7 @@ impl BatchExecutor {
         }
 
         #[cfg(not(target_arch = "wasm32"))]
-        if jobs.len() >= self.serial_threshold
-            && self.workers > 1
-        {
+        if jobs.len() >= self.serial_threshold && self.workers > 1 {
             return self.execute_parallel(jobs, &make_context, &prepare);
         }
 
@@ -385,9 +379,7 @@ impl BatchExecutor {
         }
 
         #[cfg(not(target_arch = "wasm32"))]
-        if jobs.len() >= self.serial_threshold
-            && self.workers > 1
-            && self.persistent_pool.is_some()
+        if jobs.len() >= self.serial_threshold && self.workers > 1 && self.persistent_pool.is_some()
         {
             return self.execute_persistent_parallel(jobs, make_context, prepare);
         }
@@ -608,10 +600,12 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{Duration, Instant};
 
+    use super::{BatchExecutor, IndexedJob, PreparationBatch, PreparedResult};
     use crate::font::{FontFamily, FontStyle, FontWeight};
     use crate::text_pipeline::glyph_rasterizer::GlyphRasterizer;
-    use crate::text_pipeline::text_layout::{ShapedText, layout_shaped_text_result, shape_text_styled};
-    use super::{BatchExecutor, IndexedJob, PreparationBatch, PreparedResult};
+    use crate::text_pipeline::text_layout::{
+        ShapedText, layout_shaped_text_result, shape_text_styled,
+    };
 
     #[derive(Clone)]
     struct LayoutProbe {
@@ -797,11 +791,7 @@ mod tests {
     #[test]
     fn persistent_executor_reuses_worker_threads_across_batches() {
         let worker_starts = Arc::new(AtomicUsize::new(0));
-        let executor = BatchExecutor::for_test_with_worker_counter(
-            2,
-            1,
-            worker_starts.clone(),
-        );
+        let executor = BatchExecutor::for_test_with_worker_counter(2, 1, worker_starts.clone());
         let mut batch = PreparationBatch::new();
         for value in 0..8 {
             batch.push(value, value);
@@ -810,11 +800,7 @@ mod tests {
 
         let execute = || {
             executor
-                .execute_persistent_with_context(
-                    jobs.clone(),
-                    || (),
-                    |_, job| Some(job.input),
-                )
+                .execute_persistent_with_context(jobs.clone(), || (), |_, job| Some(job.input))
                 .unwrap()
                 .len()
         };
@@ -854,21 +840,21 @@ mod tests {
         failed_batch.push("good", 1_u64);
         failed_batch.push("bad", 2_u64);
         let failed_jobs: Arc<[IndexedJob<&str, u64>]> = failed_batch.jobs().to_vec().into();
-        assert!(executor
-            .execute_persistent_with_context(
-                failed_jobs,
-                || (),
-                |_, job| (job.key != "bad").then_some(job.input),
-            )
-            .is_err());
+        assert!(
+            executor
+                .execute_persistent_with_context(
+                    failed_jobs,
+                    || (),
+                    |_, job| (job.key != "bad").then_some(job.input),
+                )
+                .is_err()
+        );
 
-        assert!(executor
-            .execute_persistent_with_context(
-                jobs,
-                || (),
-                |_, job| Some(job.input),
-            )
-            .is_ok());
+        assert!(
+            executor
+                .execute_persistent_with_context(jobs, || (), |_, job| Some(job.input),)
+                .is_ok()
+        );
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -883,9 +869,7 @@ mod tests {
 
         let inputs = (0..JOB_COUNT)
             .map(|index| {
-                Arc::<str>::from(format!(
-                    "{SAMPLE} persistent-worker-batch-{index} {SAMPLE}"
-                ))
+                Arc::<str>::from(format!("{SAMPLE} persistent-worker-batch-{index} {SAMPLE}"))
             })
             .collect::<Vec<_>>();
         let jobs: Arc<[IndexedJob<usize, Arc<str>>]> = inputs
@@ -1027,7 +1011,11 @@ mod tests {
         }
         let layout_scoped_elapsed = layout_scoped_start.elapsed();
 
-        println!("persistent executor shaping: persistent={persistent_elapsed:?}, scoped={scoped_elapsed:?}, iterations={ITERATIONS}, jobs={JOB_COUNT}");
-        println!("persistent executor layout: persistent={layout_persistent_elapsed:?}, scoped={layout_scoped_elapsed:?}, iterations={ITERATIONS}, jobs={JOB_COUNT}");
+        println!(
+            "persistent executor shaping: persistent={persistent_elapsed:?}, scoped={scoped_elapsed:?}, iterations={ITERATIONS}, jobs={JOB_COUNT}"
+        );
+        println!(
+            "persistent executor layout: persistent={layout_persistent_elapsed:?}, scoped={layout_scoped_elapsed:?}, iterations={ITERATIONS}, jobs={JOB_COUNT}"
+        );
     }
 }

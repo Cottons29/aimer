@@ -82,7 +82,9 @@ impl State<FileDropShowcase> for FileDropShowcaseState {
                              they arrive as one batch.",
                             app_theme,
                         ),
-                        SizedBox::new().height(24).boxed(),
+                        SizedBox::new()
+                            .height(24)
+                            .boxed(),
                         Expanded::new()
                             .child(
                                 Column::new()
@@ -128,7 +130,9 @@ impl FileDropShowcaseState {
     /// A zone with no filter at all.
     fn anything_zone(&self, app_theme: ThemeData) -> AnyWidget {
         let updater = self.updater;
-        let received = self.anything.clone();
+        let received = self
+            .anything
+            .clone();
 
         DropZone::new()
             .on_drop(move |paths: Vec<PathBuf>| {
@@ -139,7 +143,9 @@ impl FileDropShowcaseState {
             .child(move |state: DragTargetState| {
                 zone_body(
                     "Anything",
-                    app_theme.primary_color.lighten(0.12),
+                    app_theme
+                        .primary_color
+                        .lighten(0.12),
                     state,
                     &received.0,
                     received.1,
@@ -207,7 +213,11 @@ fn zone_heading(title: &'static str, accent: Color) -> AnyWidget {
         .child(
             Text::new(title)
                 .text_align(TextAlign::MidLeft)
-                .text_style(TextStyle::new().font_size(17).color(accent)),
+                .text_style(
+                    TextStyle::new()
+                        .font_size(17)
+                        .color(accent),
+                ),
         )
         .boxed()
 }
@@ -241,7 +251,11 @@ fn path_row(path: &Path, app_theme: ThemeData) -> AnyWidget {
         .child(
             Text::new(name)
                 .text_align(TextAlign::MidLeft)
-                .text_style(TextStyle::new().font_size(13).color(app_theme.on_surface_color)),
+                .text_style(
+                    TextStyle::new()
+                        .font_size(13)
+                        .color(app_theme.on_surface_color),
+                ),
         )
         .boxed()
 }
@@ -252,7 +266,11 @@ fn heading(text: &'static str, app_theme: ThemeData) -> AnyWidget {
         .child(
             Text::new(text)
                 .text_align(TextAlign::MidLeft)
-                .text_style(TextStyle::new().font_size(24).color(app_theme.on_background_color)),
+                .text_style(
+                    TextStyle::new()
+                        .font_size(24)
+                        .color(app_theme.on_background_color),
+                ),
         )
         .boxed()
 }

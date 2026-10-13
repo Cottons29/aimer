@@ -1,8 +1,8 @@
-mod render;
 mod magnification_style;
+mod render;
 
-pub use render::MaterialPipeline;
 pub use magnification_style::MagnificationStyle;
+pub use render::MaterialPipeline;
 
 /// Reserved custom-pipeline name for W14 material requests.
 pub const MATERIAL_PIPELINE_NAME: &str = "aimer.material";
@@ -122,6 +122,7 @@ pub struct MaterialRequest {
     /// Liquid distortion strength.
     pub distortion_strength: f32,
     /// Liquid edge-lighting strength.
+    /// For [`MaterialKind::LightEdge`], opposing reflection relative to the primary highlight.
     pub edge_lighting: f32,
     /// Liquid specular strength.
     pub specular_highlight: f32,
@@ -186,12 +187,28 @@ impl MaterialRequest {
             interaction: 0.0,
             blob_amount: 0.0,
             blob_seed: 0.5,
-            magnification: if kind == MaterialKind::Magnification { 1.5 } else { 0.45 },
+            magnification: if kind == MaterialKind::Magnification {
+                1.5
+            } else {
+                0.45
+            },
             tip_pull: 0.0,
             chromatic_aberration: 0.3,
-            bevel_radius: if kind == MaterialKind::Magnification { 16.0 } else { 28.0 },
-            magnification_style: if kind == MaterialKind::Magnification { MagnificationStyle::DEFAULT } else { MagnificationStyle::NONE },
-            bulge_strength: if kind == MaterialKind::Magnification { 0.25 } else { 0.0 },
+            bevel_radius: if kind == MaterialKind::Magnification {
+                16.0
+            } else {
+                28.0
+            },
+            magnification_style: if kind == MaterialKind::Magnification {
+                MagnificationStyle::DEFAULT
+            } else {
+                MagnificationStyle::NONE
+            },
+            bulge_strength: if kind == MaterialKind::Magnification {
+                0.25
+            } else {
+                0.0
+            },
             light_angle: 225.0,
             quality: 2,
             motion_policy: MaterialMotionPolicy::Full,
@@ -286,18 +303,32 @@ impl MaterialRequest {
         self.blob_seed = normalize(self.blob_seed, 0.5, 0.0, 1.0);
         self.magnification = if self.kind == MaterialKind::Magnification {
             normalize(self.magnification, 1.5, 1.0, 8.0)
-        } else { normalize(self.magnification, 0.45, 0.0, 1.0) };
+        } else {
+            normalize(self.magnification, 0.45, 0.0, 1.0)
+        };
         self.tip_pull = normalize(self.tip_pull, 0.0, 0.0, 1.0);
         self.chromatic_aberration = normalize(self.chromatic_aberration, 0.3, 0.0, 1.0);
-        self.bevel_radius = normalize(self.bevel_radius,
-            if self.kind == MaterialKind::Magnification { 16.0 } else { 28.0 }, 0.0, 512.0);
+        self.bevel_radius = normalize(
+            self.bevel_radius,
+            if self.kind == MaterialKind::Magnification {
+                16.0
+            } else {
+                28.0
+            },
+            0.0,
+            512.0,
+        );
         if self.kind == MaterialKind::Magnification {
             self.bulge_strength = normalize(self.bulge_strength, 0.25, 0.0, 1.0);
         } else {
             self.magnification_style = MagnificationStyle::NONE;
             self.bulge_strength = 0.0;
         }
-        self.light_angle = if self.light_angle.is_finite() { self.light_angle.rem_euclid(360.0) } else { 225.0 };
+        self.light_angle = if self.light_angle.is_finite() {
+            self.light_angle.rem_euclid(360.0)
+        } else {
+            225.0
+        };
         self.quality = self.quality.clamp(1, 4);
         if self.motion_policy == MaterialMotionPolicy::Reduced {
             self.distortion_strength = 0.0;
@@ -326,10 +357,13 @@ impl MaterialRequest {
             _ => return Err(MaterialDecodeError::UnsupportedVersion),
         };
         if bytes.len() != expected {
-            return Err(MaterialDecodeError::InvalidLength { expected, actual: bytes.len() });
+            return Err(MaterialDecodeError::InvalidLength {
+                expected,
+                actual: bytes.len(),
+            });
         }
-        let kind = MaterialKind::from_wire(reader.u8()?)
-            .ok_or(MaterialDecodeError::UnsupportedKind)?;
+        let kind =
+            MaterialKind::from_wire(reader.u8()?).ok_or(MaterialDecodeError::UnsupportedKind)?;
         let motion_policy = MaterialMotionPolicy::from_wire(reader.u8()?)
             .ok_or(MaterialDecodeError::UnsupportedMotionPolicy)?;
         let quality = reader.u8()?;
@@ -372,8 +406,11 @@ impl MaterialRequest {
         let chromatic_aberration = reader.f32()?;
         let bevel_radius = reader.f32()?;
         let (magnification_style, bulge_strength) = if version == 1 {
-            if kind == MaterialKind::Magnification { (MagnificationStyle::DEFAULT, 0.25) }
-            else { (MagnificationStyle::NONE, 0.0) }
+            if kind == MaterialKind::Magnification {
+                (MagnificationStyle::DEFAULT, 0.25)
+            } else {
+                (MagnificationStyle::NONE, 0.0)
+            }
         } else {
             let style = MagnificationStyle::from_bits(reader.u32()?)
                 .ok_or(MaterialDecodeError::InvalidMagnificationStyle)?;
@@ -583,15 +620,29 @@ pub struct MaterialStagePlan {
 }
 
 /// Selects a bounded GPU/fallback plan for a request.
-pub fn plan_material(request: MaterialRequest, capabilities: MaterialCapabilities) -> MaterialStagePlan {
+pub fn plan_material(
+    request: MaterialRequest,
+    capabilities: MaterialCapabilities,
+) -> MaterialStagePlan {
     let request = request.normalized();
     let inert_lens = request.kind == MaterialKind::Magnification
-        && !(request.magnification_style.contains(MagnificationStyle::UNIFORM) && request.magnification != 1.0
-            || request.magnification_style.contains(MagnificationStyle::BULGE) && request.bulge_strength > 0.0
-            || request.magnification_style.contains(MagnificationStyle::REFRACTION) && request.bevel_radius > 0.0);
+        && !(request
+            .magnification_style
+            .contains(MagnificationStyle::UNIFORM)
+            && request.magnification != 1.0
+            || request
+                .magnification_style
+                .contains(MagnificationStyle::BULGE)
+                && request.bulge_strength > 0.0
+            || request
+                .magnification_style
+                .contains(MagnificationStyle::REFRACTION)
+                && request.bevel_radius > 0.0);
     let inert_edge = request.kind == MaterialKind::LightEdge
-        && (request.border_width == 0.0 || request.specular_highlight == 0.0
-            || request.border_color[3] == 0.0 || request.opacity == 0.0);
+        && (request.border_width == 0.0
+            || request.specular_highlight == 0.0
+            || request.border_color[3] == 0.0
+            || request.opacity == 0.0);
     if request.bounds[2] <= 0.0 || request.bounds[3] <= 0.0 || inert_lens || inert_edge {
         return MaterialStagePlan {
             path: MaterialRenderPath::Skip,
@@ -604,8 +655,11 @@ pub fn plan_material(request: MaterialRequest, capabilities: MaterialCapabilitie
 
     if request.kind == MaterialKind::LightEdge {
         return MaterialStagePlan {
-            path: MaterialRenderPath::Gpu, fallback_reason: None, intermediate: None,
-            phase: 0.0, distortion_strength: 0.0,
+            path: MaterialRenderPath::Gpu,
+            fallback_reason: None,
+            intermediate: None,
+            phase: 0.0,
+            distortion_strength: 0.0,
         };
     }
 
@@ -624,8 +678,7 @@ pub fn plan_material(request: MaterialRequest, capabilities: MaterialCapabilitie
     } else {
         None
     };
-    let path = fallback_reason
-        .map_or(MaterialRenderPath::Gpu, |_| MaterialRenderPath::Fallback);
+    let path = fallback_reason.map_or(MaterialRenderPath::Gpu, |_| MaterialRenderPath::Fallback);
     MaterialStagePlan {
         path,
         fallback_reason,
@@ -656,21 +709,32 @@ pub fn bounded_intermediate_extent(
     capabilities: MaterialCapabilities,
 ) -> Option<IntermediateExtent> {
     let request = request.normalized();
-    if request.kind == MaterialKind::LightEdge { return None; }
-    let full_resolution = matches!(request.kind, MaterialKind::BackdropFilter | MaterialKind::Magnification);
+    if request.kind == MaterialKind::LightEdge {
+        return None;
+    }
+    let full_resolution = matches!(
+        request.kind,
+        MaterialKind::BackdropFilter | MaterialKind::Magnification
+    );
     let max_dimension = if full_resolution {
         capabilities.max_surface_dimension
     } else {
-        capabilities.max_surface_dimension.min(MAX_INTERMEDIATE_DIMENSION)
+        capabilities
+            .max_surface_dimension
+            .min(MAX_INTERMEDIATE_DIMENSION)
     };
     if max_dimension == 0 {
         return None;
     }
-    let downsample = if full_resolution { 1.0 } else { match request.quality {
-        1 => 4.0,
-        2 => 2.0,
-        _ => 1.0,
-    } };
+    let downsample = if full_resolution {
+        1.0
+    } else {
+        match request.quality {
+            1 => 4.0,
+            2 => 2.0,
+            _ => 1.0,
+        }
+    };
     let width = (request.bounds[2] / downsample).ceil().max(1.0);
     let height = (request.bounds[3] / downsample).ceil().max(1.0);
     if !width.is_finite()
@@ -683,7 +747,11 @@ pub fn bounded_intermediate_extent(
     let width = width as u32;
     let height = height as u32;
     let pixels = u64::from(width).checked_mul(u64::from(height))?;
-    if pixels > capabilities.max_intermediate_pixels.min(MAX_INTERMEDIATE_PIXELS) {
+    if pixels
+        > capabilities
+            .max_intermediate_pixels
+            .min(MAX_INTERMEDIATE_PIXELS)
+    {
         return None;
     }
     Some(IntermediateExtent {
@@ -724,19 +792,27 @@ impl<'a> PacketReader<'a> {
     }
 
     fn bytes<const N: usize>(&mut self) -> Result<&'a [u8; N], MaterialDecodeError> {
-        let end = self.position.checked_add(N).ok_or(MaterialDecodeError::InvalidLength {
-            expected: MATERIAL_PACKET_LEN,
-            actual: self.bytes.len(),
-        })?;
-        let slice = self.bytes.get(self.position..end).ok_or(MaterialDecodeError::InvalidLength {
-            expected: MATERIAL_PACKET_LEN,
-            actual: self.bytes.len(),
-        })?;
+        let end = self
+            .position
+            .checked_add(N)
+            .ok_or(MaterialDecodeError::InvalidLength {
+                expected: MATERIAL_PACKET_LEN,
+                actual: self.bytes.len(),
+            })?;
+        let slice =
+            self.bytes
+                .get(self.position..end)
+                .ok_or(MaterialDecodeError::InvalidLength {
+                    expected: MATERIAL_PACKET_LEN,
+                    actual: self.bytes.len(),
+                })?;
         self.position = end;
-        slice.try_into().map_err(|_| MaterialDecodeError::InvalidLength {
-            expected: MATERIAL_PACKET_LEN,
-            actual: self.bytes.len(),
-        })
+        slice
+            .try_into()
+            .map_err(|_| MaterialDecodeError::InvalidLength {
+                expected: MATERIAL_PACKET_LEN,
+                actual: self.bytes.len(),
+            })
     }
 
     fn u8(&mut self) -> Result<u8, MaterialDecodeError> {

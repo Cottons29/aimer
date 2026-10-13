@@ -3,13 +3,8 @@
 use std::hint::black_box;
 use std::time::Instant;
 
-use aimer::quiver::winit::{
-    dpi::PhysicalSize,
-    event::WindowEvent,
-};
-use aimer::{
-    AimerApp, AnyWidget, HeadlessOptions, RichText, TextSpan, Widget,
-};
+use aimer::quiver::winit::{dpi::PhysicalSize, event::WindowEvent};
+use aimer::{AimerApp, AnyWidget, HeadlessOptions, RichText, TextSpan, Widget};
 
 const FRAME_WIDTH: u32 = 800;
 const FRAME_HEIGHT: u32 = 700;

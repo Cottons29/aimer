@@ -88,7 +88,11 @@ fn main() {
     let in_runs = average(runs, iterations);
     let key_preparation = average(key_total, iterations);
 
-    let profile = if cfg!(debug_assertions) { "debug" } else { "release" };
+    let profile = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    };
     println!(
         "{profile} cold glyph rasterization: {glyphs_per_pass} distinct glyphs, {iterations} iterations"
     );
@@ -96,7 +100,10 @@ fn main() {
         "one glyph at a time: {one_at_a_time:?} ({:?} per glyph)",
         one_at_a_time / glyphs
     );
-    println!("in runs:             {in_runs:?} ({:?} per glyph)", in_runs / glyphs);
+    println!(
+        "in runs:             {in_runs:?} ({:?} per glyph)",
+        in_runs / glyphs
+    );
     println!(
         "key preparation:     {key_preparation:?} ({:?} per glyph)",
         key_preparation / glyphs

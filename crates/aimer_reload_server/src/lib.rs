@@ -1,8 +1,8 @@
 //! Development-only app listener for authenticated Aimer module reloads.
 
-use std::io;
-use std::collections::VecDeque;
 use std::cell::RefCell;
+use std::collections::VecDeque;
+use std::io;
 use std::net::{SocketAddr, TcpListener, ToSocketAddrs};
 use std::time::{Duration, Instant};
 
@@ -301,8 +301,8 @@ where
         let now = Instant::now();
         let mut failures = security.failures.borrow_mut();
         match failures.window_started_at {
-            Some(started_at)
-                if now.duration_since(started_at) < security.policy.failure_window => {}
+            Some(started_at) if now.duration_since(started_at) < security.policy.failure_window => {
+            }
             _ => {
                 failures.window_started_at = Some(now);
                 failures.count = 0;
@@ -413,13 +413,7 @@ mod tests {
         .unwrap();
         let address = listener.local_addr().unwrap();
         let server = thread::spawn(move || listener.accept_once().unwrap());
-        let metadata = ModuleMetadata::new(
-            [0x21; 16],
-            [0x31; 16],
-            1,
-            0,
-            [0x41; 32],
-        );
+        let metadata = ModuleMetadata::new([0x21; 16], [0x31; 16], 1, 0, [0x41; 32]);
         let mut stream = TcpStream::connect(address).unwrap();
 
         let result = send_reload_command(
@@ -478,15 +472,8 @@ mod tests {
         for _ in 0..2 {
             let mut stream = TcpStream::connect(address).unwrap();
             assert_eq!(
-                send_reload_command(
-                    &mut stream,
-                    &credentials,
-                    limits,
-                    73,
-                    metadata,
-                    module,
-                )
-                .unwrap(),
+                send_reload_command(&mut stream, &credentials, limits, 73, metadata, module,)
+                    .unwrap(),
                 expected
             );
         }
@@ -505,11 +492,7 @@ mod tests {
         let credentials = SessionCredentials::from_parts([0x11; 16], [0xA5; 32]);
         let wrong_credentials = SessionCredentials::from_parts([0x11; 16], [0x5A; 32]);
         let limits = ProtocolLimits::new(1024, Duration::from_secs(1));
-        let security = ListenerSecurity::new(
-            Duration::from_secs(60),
-            1,
-            Duration::from_secs(60),
-        );
+        let security = ListenerSecurity::new(Duration::from_secs(60), 1, Duration::from_secs(60));
         let executions = Arc::new(AtomicU32::new(0));
         let sink_executions = Arc::clone(&executions);
         let listener = ReloadCommandListener::bind_secure(
@@ -536,14 +519,7 @@ mod tests {
         let metadata = ModuleMetadata::new([1; 16], [2; 16], 1, 0, [3; 32]);
 
         let mut stream = TcpStream::connect(address).unwrap();
-        let _ = send_reload_command(
-            &mut stream,
-            &wrong_credentials,
-            limits,
-            1,
-            metadata,
-            b"bad",
-        );
+        let _ = send_reload_command(&mut stream, &wrong_credentials, limits, 1, metadata, b"bad");
         let mut stream = TcpStream::connect(address).unwrap();
         let _ = send_reload_command(
             &mut stream,
@@ -613,23 +589,18 @@ mod tests {
         let credentials = SessionCredentials::from_parts([0x11; 16], [0xA5; 32]);
         let limits = ProtocolLimits::new(1024, Duration::from_secs(1));
         let (received_tx, received_rx) = mpsc::channel();
-        let listener = ReloadListener::bind(
-            "127.0.0.1:0",
-            credentials.clone(),
-            limits,
-            move |module| {
+        let listener =
+            ReloadListener::bind("127.0.0.1:0", credentials.clone(), limits, move |module| {
                 received_tx.send(module).unwrap();
                 Ok(())
-            },
-        )
-        .unwrap();
+            })
+            .unwrap();
         let address = listener.local_addr().unwrap();
         let server = thread::spawn(move || listener.accept_once().unwrap());
         let module = b"\0asm\x01\0\0\0";
         let mut stream = TcpStream::connect(address).unwrap();
 
-        let acknowledgement =
-            send_module(&mut stream, &credentials, limits, 41, module).unwrap();
+        let acknowledgement = send_module(&mut stream, &credentials, limits, 41, module).unwrap();
         let server_acknowledgement = server.join().unwrap();
 
         assert_eq!(acknowledgement, server_acknowledgement);
@@ -644,16 +615,12 @@ mod tests {
         let client_credentials = SessionCredentials::from_parts([0x11; 16], [0x5A; 32]);
         let limits = ProtocolLimits::new(1024, Duration::from_secs(1));
         let (received_tx, received_rx) = mpsc::channel();
-        let listener = ReloadListener::bind(
-            "127.0.0.1:0",
-            server_credentials,
-            limits,
-            move |module| {
+        let listener =
+            ReloadListener::bind("127.0.0.1:0", server_credentials, limits, move |module| {
                 received_tx.send(module).unwrap();
                 Ok(())
-            },
-        )
-        .unwrap();
+            })
+            .unwrap();
         let address = listener.local_addr().unwrap();
         let server = thread::spawn(move || listener.accept_once());
         let mut stream = TcpStream::connect(address).unwrap();
@@ -684,15 +651,10 @@ mod tests {
         let credentials = SessionCredentials::from_parts([0x11; 16], [0xA5; 32]);
         let limits = ProtocolLimits::new(1024, Duration::from_secs(1));
         let (received_tx, received_rx) = mpsc::channel();
-        let listener = ReloadListener::bind(
-            "127.0.0.1:0",
-            credentials,
-            limits,
-            move |module| {
-                received_tx.send(module).unwrap();
-                Ok(())
-            },
-        )
+        let listener = ReloadListener::bind("127.0.0.1:0", credentials, limits, move |module| {
+            received_tx.send(module).unwrap();
+            Ok(())
+        })
         .unwrap();
         let address = listener.local_addr().unwrap();
         let server = thread::spawn(move || listener.accept_once());
@@ -752,16 +714,12 @@ mod tests {
         let wrong_credentials = SessionCredentials::from_parts([0x11; 16], [0x5A; 32]);
         let limits = ProtocolLimits::new(1024, Duration::from_secs(1));
         let (received_tx, received_rx) = mpsc::channel();
-        let listener = ReloadListener::bind(
-            "127.0.0.1:0",
-            credentials.clone(),
-            limits,
-            move |module| {
+        let listener =
+            ReloadListener::bind("127.0.0.1:0", credentials.clone(), limits, move |module| {
                 received_tx.send(module).unwrap();
                 Ok(())
-            },
-        )
-        .unwrap();
+            })
+            .unwrap();
         let address = listener.local_addr().unwrap();
         let server = thread::spawn(move || {
             let first = listener.accept_once();
@@ -797,13 +755,8 @@ mod tests {
     fn authenticated_frames_do_not_expose_module_bytes_to_the_transport() {
         let credentials = SessionCredentials::from_parts([0x11; 16], [0xA5; 32]);
         let limits = ProtocolLimits::new(1024, Duration::from_secs(1));
-        let listener = ReloadListener::bind(
-            "127.0.0.1:0",
-            credentials.clone(),
-            limits,
-            |_| Ok(()),
-        )
-        .unwrap();
+        let listener =
+            ReloadListener::bind("127.0.0.1:0", credentials.clone(), limits, |_| Ok(())).unwrap();
         let address = listener.local_addr().unwrap();
         let server = thread::spawn(move || listener.accept_once().unwrap());
         let module = b"AIMER-CONFIDENTIAL-WASM-MODULE";
@@ -818,9 +771,11 @@ mod tests {
         send_module(&mut recording, &credentials, limits, 99, module).unwrap();
         server.join().unwrap();
 
-        assert!(!recording
-            .written
-            .windows(module.len())
-            .any(|window| window == module));
+        assert!(
+            !recording
+                .written
+                .windows(module.len())
+                .any(|window| window == module)
+        );
     }
 }

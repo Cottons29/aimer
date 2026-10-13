@@ -3,8 +3,8 @@ use std::rc::Rc;
 
 use web_sys::{
     GpuBindGroup, GpuBindGroupLayout, GpuBuffer, GpuCommandEncoder, GpuIndexFormat,
-    GpuPipelineLayout, GpuRenderPassEncoder, GpuRenderPipeline, GpuSampler,
-    GpuShaderModule, GpuTexture, GpuTextureView,
+    GpuPipelineLayout, GpuRenderPassEncoder, GpuRenderPipeline, GpuSampler, GpuShaderModule,
+    GpuTexture, GpuTextureView,
 };
 
 use crate::backend::{GpuRenderPass, IndexFormat};
@@ -70,10 +70,7 @@ pub struct WebGpuCommandEncoder {
 
 impl WebGpuCommandEncoder {
     pub(super) fn new(raw: GpuCommandEncoder) -> Self {
-        Self {
-            raw,
-            surface: None,
-        }
+        Self { raw, surface: None }
     }
 
     pub(super) fn texture_view(&mut self, view: &WebGpuTextureView) -> GpuTextureView {
@@ -126,7 +123,12 @@ impl GpuRenderPass<super::WebGpuBackend> for WebGpuRenderPass<'_> {
         self.raw.set_pipeline(&pipeline.0);
     }
 
-    fn set_bind_group(&mut self, index: u32, bind_group: &WebGpuBindGroup, dynamic_offsets: &[u32]) {
+    fn set_bind_group(
+        &mut self,
+        index: u32,
+        bind_group: &WebGpuBindGroup,
+        dynamic_offsets: &[u32],
+    ) {
         if dynamic_offsets.is_empty() {
             self.raw.set_bind_group(index, Some(&bind_group.0));
         } else {
@@ -161,12 +163,13 @@ impl GpuRenderPass<super::WebGpuBackend> for WebGpuRenderPass<'_> {
     }
 
     fn draw(&mut self, vertices: std::ops::Range<u32>, instances: std::ops::Range<u32>) {
-        self.raw.draw_with_instance_count_and_first_vertex_and_first_instance(
-            vertices.end.saturating_sub(vertices.start),
-            instances.end.saturating_sub(instances.start),
-            vertices.start,
-            instances.start,
-        );
+        self.raw
+            .draw_with_instance_count_and_first_vertex_and_first_instance(
+                vertices.end.saturating_sub(vertices.start),
+                instances.end.saturating_sub(instances.start),
+                vertices.start,
+                instances.start,
+            );
     }
 
     fn draw_indexed(

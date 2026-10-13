@@ -1,4 +1,3 @@
-
 use aimer_attribute::position::Vec2d;
 use aimer_cupid::canvas::CupidCanvas;
 use aimer_cupid::font::{FontFamily, FontStyle, TextLanguage};

@@ -1,24 +1,20 @@
 use aimer_widget::portable::__anteros::{
-    LAYOUT_SPACING_VALUE_MAXIMUM_ENCODED_BYTES,
-    LAYOUT_SPACING_VALUE_NAME, LAYOUT_SPACING_VALUE_VERSION,
-    LINE_HEIGHT_VALUE_MAXIMUM_ENCODED_BYTES, LINE_HEIGHT_VALUE_NAME,
-    LINE_HEIGHT_VALUE_VERSION,
-    TEXT_STYLE_VALUE_MAXIMUM_ENCODED_BYTES, TEXT_STYLE_VALUE_NAME, TEXT_STYLE_VALUE_VERSION,
-    PropertyId, PropertyValue, ValueSchemaMetadata, WidgetDocumentView,
+    LAYOUT_SPACING_VALUE_MAXIMUM_ENCODED_BYTES, LAYOUT_SPACING_VALUE_NAME,
+    LAYOUT_SPACING_VALUE_VERSION, LINE_HEIGHT_VALUE_MAXIMUM_ENCODED_BYTES, LINE_HEIGHT_VALUE_NAME,
+    LINE_HEIGHT_VALUE_VERSION, PropertyId, PropertyValue, TEXT_STYLE_VALUE_MAXIMUM_ENCODED_BYTES,
+    TEXT_STYLE_VALUE_NAME, TEXT_STYLE_VALUE_VERSION, ValueSchemaMetadata, WidgetDocumentView,
 };
+#[cfg(feature = "portable-guest")]
+use aimer_widget::portable::{PortableBuildContext, PortableBuildError, PortableEncodeProperty};
 use aimer_widget::portable::{
     PortableMaterializeError, PortableMaterializeProperty, PortableProperty,
     PortablePropertyConversion, PortablePropertyReflection,
 };
-#[cfg(feature = "portable-guest")]
-use aimer_widget::portable::{
-    PortableBuildContext, PortableBuildError, PortableEncodeProperty,
-};
 
 use super::layout_spacing::{LayoutSpacing, Spacing};
 use super::text_style::{
-    FontFamily, FontStyle, FontWeight, LineHeight, TextAlign, TextDecoration,
-    TextDecorationLine, TextDecorationStyle, TextOverflow, TextShadow, TextStyle, TextTransform,
+    FontFamily, FontStyle, FontWeight, LineHeight, TextAlign, TextDecoration, TextDecorationLine,
+    TextDecorationStyle, TextOverflow, TextShadow, TextStyle, TextTransform,
 };
 use aimer_color::prelude::Color;
 
@@ -575,8 +571,7 @@ impl<'a> WireReader<'a> {
     }
 
     fn text_decoration(&mut self) -> Result<TextDecoration, PortableMaterializeError> {
-        let line = TextDecorationLine::from_bits(self.u8()?)
-            .ok_or_else(|| self.invalid_value())?;
+        let line = TextDecorationLine::from_bits(self.u8()?).ok_or_else(|| self.invalid_value())?;
         let style = match self.u8()? {
             TEXT_DECORATION_SOLID_TAG => TextDecorationStyle::Solid,
             TEXT_DECORATION_DOUBLE_TAG => TextDecorationStyle::Double,

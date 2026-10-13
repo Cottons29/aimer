@@ -513,7 +513,9 @@ mod tests {
 
     #[test]
     fn once_holds_exactly_one_gesture() {
-        let tap = GestureEvent::Tap { pointer: pointer(1.0, 2.0) };
+        let tap = GestureEvent::Tap {
+            pointer: pointer(1.0, 2.0),
+        };
         let output = GestureOutput::once(tap);
 
         assert_eq!(output.len(), 1);

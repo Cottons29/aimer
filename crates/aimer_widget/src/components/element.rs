@@ -41,7 +41,7 @@ mod scoped_rebuild;
 #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
 mod animation_only;
 #[cfg(any(target_arch = "wasm32", feature = "portable-guest"))]
-#[path = "animation_only_stub.rs"]
+#[path = "element/animation_only_stub.rs"]
 mod animation_only;
 mod compositor_applied;
 mod node;
@@ -73,6 +73,7 @@ pub use scoped_rebuild::{
 use scoped_rebuild::{note_scoped_rebuild, note_unscoped_tree_change};
 use node::ElementNode;
 pub use retained_window::{
+    may_escape_ancestor_clips,
     VisibleWindow, may_skip_settled_offscreen, retained_element_settled, retained_visible_window,
     retained_visible_window_of_current, set_scroll_only_frame, set_settled_offscreen_skip,
 };

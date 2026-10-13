@@ -11,9 +11,9 @@ use aimer_widget::{
 };
 
 use crate::ScrollAxis;
-use crate::scrollable::constants::SNAP_EPSILON;
 use crate::raw_scroll::{DragMode, RawScrollableContainer};
 use crate::scrollable::cache_extent::cache_rect;
+use crate::scrollable::constants::SNAP_EPSILON;
 use crate::scrollable::recovery_end::finish_overscroll_recovery;
 
 fn snap_scroll_offset(offset: Vec2d) -> Vec2d {
@@ -60,7 +60,9 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
     }
 
     #[inline]
-    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+    fn retained_v2_interaction_disagreement(
+        &self,
+    ) -> Option<aimer_widget::InteractionDisagreement> {
         self.bounds.disagreement("Scrollable")
     }
 
@@ -94,7 +96,8 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
         if child.id() == self.child.id() {
             let mut child_ctx = ctx.clone();
             child_ctx.box_constraint.min_width = child_ctx.box_constraint.min_width.min(viewport_w);
-            child_ctx.box_constraint.min_height = child_ctx.box_constraint.min_height.min(viewport_h);
+            child_ctx.box_constraint.min_height =
+                child_ctx.box_constraint.min_height.min(viewport_h);
             child_ctx.box_constraint.max_width = viewport_w;
             child_ctx.box_constraint.max_height = viewport_h;
             child_ctx.parent_size = ResolvedSize {
@@ -105,9 +108,7 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
                 ScrollAxis::Vertical => child_ctx.box_constraint.max_height = f32::MAX,
                 ScrollAxis::Horizontal => child_ctx.box_constraint.max_width = f32::MAX,
             }
-            let offset = snap_scroll_offset(
-                self.ctrl.visual_offset(self.ctrl.scroll_offset.get()),
-            );
+            let offset = snap_scroll_offset(self.ctrl.visual_offset(self.ctrl.scroll_offset.get()));
             child_ctx.parent_pos.x += offset.x;
             child_ctx.parent_pos.y += offset.y;
             child_ctx.visible_rect = Some(cache_rect(
@@ -134,10 +135,10 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
                 width: self.vertical_bar_width,
                 height: viewport_h,
             };
-            bar_ctx.parent_pos.x += self.ctrl.scroll_bar_placement.cross_offset(
-                viewport_w,
-                self.vertical_bar_width,
-            );
+            bar_ctx.parent_pos.x += self
+                .ctrl
+                .scroll_bar_placement
+                .cross_offset(viewport_w, self.vertical_bar_width);
             return Some(bar_ctx);
         }
         if self
@@ -151,10 +152,10 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
                 width: viewport_w,
                 height: self.horizontal_bar_height,
             };
-            bar_ctx.parent_pos.y += self.ctrl.scroll_bar_placement.cross_offset(
-                viewport_h,
-                self.horizontal_bar_height,
-            );
+            bar_ctx.parent_pos.y += self
+                .ctrl
+                .scroll_bar_placement
+                .cross_offset(viewport_h, self.horizontal_bar_height);
             return Some(bar_ctx);
         }
         None
@@ -180,9 +181,7 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
             let child_ctx = self.retained_v2_child_context(ctx, child)?;
             let size = child.content_size(&child_ctx);
             let position = child.pos().unwrap_or_default();
-            let offset = snap_scroll_offset(
-                self.ctrl.visual_offset(self.ctrl.scroll_offset.get()),
-            );
+            let offset = snap_scroll_offset(self.ctrl.visual_offset(self.ctrl.scroll_offset.get()));
             let x = position.x + offset.x;
             let y = position.y + offset.y;
             let bounds = Rect::new(
@@ -282,10 +281,14 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
         // against its estimate and before any commands enter retained paint.
         let mut prepare_ctx = ctx.clone();
         prepare_ctx.box_constraint.min_width = prepare_ctx.box_constraint.min_width.min(viewport_w);
-        prepare_ctx.box_constraint.min_height = prepare_ctx.box_constraint.min_height.min(viewport_h);
+        prepare_ctx.box_constraint.min_height =
+            prepare_ctx.box_constraint.min_height.min(viewport_h);
         prepare_ctx.box_constraint.max_width = viewport_w;
         prepare_ctx.box_constraint.max_height = viewport_h;
-        prepare_ctx.parent_size = ResolvedSize { width: viewport_w, height: viewport_h };
+        prepare_ctx.parent_size = ResolvedSize {
+            width: viewport_w,
+            height: viewport_h,
+        };
         match self.ctrl.axis {
             ScrollAxis::Vertical => prepare_ctx.box_constraint.max_height = f32::MAX,
             ScrollAxis::Horizontal => prepare_ctx.box_constraint.max_width = f32::MAX,
@@ -309,7 +312,10 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
             let offset = self.ctrl.scroll_offset.get();
             prepare_ctx.visible_rect = Some(cache_rect(
                 self.ctrl.axis,
-                Vec2d { x: -offset.x, y: -offset.y },
+                Vec2d {
+                    x: -offset.x,
+                    y: -offset.y,
+                },
                 (viewport_w, viewport_h),
                 Vec2d::ZERO,
             ));
@@ -319,7 +325,12 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
                 break;
             }
             self.refresh_content_size_after_draw(
-                ctx, viewport_w, viewport_h, content_size, true, preserve_content_end,
+                ctx,
+                viewport_w,
+                viewport_h,
+                content_size,
+                true,
+                preserve_content_end,
             );
             content_size = refined;
         }
@@ -543,11 +554,7 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
                 .retained_clip(&child_ctx)
                 .map(|child_clip| intersect_rect(viewport_clip, child_clip))
                 .or(Some(viewport_clip));
-            let _ = aimer_widget::update_v2_render_node_geometry(
-                self.child.id(),
-                bounds,
-                clip,
-            );
+            let _ = aimer_widget::update_v2_render_node_geometry(self.child.id(), bounds, clip);
 
             if let Some(vertical_bar) = &self.vertical_scroll_bar {
                 let active = matches!(self.ctrl.axis, ScrollAxis::Vertical);
@@ -564,11 +571,8 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
                 } else {
                     Rect::new(0.0, 0.0, 0.0, 0.0)
                 };
-                let _ = aimer_widget::update_v2_render_node_geometry(
-                    vertical_bar.id(),
-                    bounds,
-                    None,
-                );
+                let _ =
+                    aimer_widget::update_v2_render_node_geometry(vertical_bar.id(), bounds, None);
             }
             if let Some(horizontal_bar) = &self.horizontal_scroll_bar {
                 let active = matches!(self.ctrl.axis, ScrollAxis::Horizontal);
@@ -585,11 +589,8 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
                 } else {
                     Rect::new(0.0, 0.0, 0.0, 0.0)
                 };
-                let _ = aimer_widget::update_v2_render_node_geometry(
-                    horizontal_bar.id(),
-                    bounds,
-                    None,
-                );
+                let _ =
+                    aimer_widget::update_v2_render_node_geometry(horizontal_bar.id(), bounds, None);
             }
         }
 

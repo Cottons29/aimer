@@ -1,21 +1,6 @@
 extern crate self as aimer;
 
 pub use aimer_accessibility as accessibility;
-pub use aimer_canvas as canvas;
-pub use aimer_collapsible as collapsible;
-pub use aimer_cupid as cupid;
-pub use aimer_data_view as data_view;
-pub use aimer_decoration as decoration;
-pub use aimer_feedback as feedback;
-pub use aimer_form as form;
-pub use aimer_i18n as i18n;
-pub use aimer_media as media;
-pub use aimer_navigation as navigation;
-pub use aimer_picker as picker;
-pub use aimer_range as range;
-pub use aimer_selection as selection;
-pub use aimer_shape as shape;
-pub use aimer_storage as storage;
 pub use aimer_anteros as anteros;
 #[cfg(target_arch = "wasm32")]
 pub use aimer_anteros::WasmCapabilityTransport;
@@ -27,33 +12,42 @@ pub use aimer_assets::{
 pub use aimer_attribute::dimension::Dimension;
 pub use aimer_attribute::position::Vec2d;
 pub use aimer_attribute::size::{ResolvedSize, Size};
+pub use aimer_canvas as canvas;
+pub use aimer_collapsible as collapsible;
+pub use aimer_collapsible::{CollapsibleList, ListBody, ListHeader};
 pub use aimer_color::prelude::*;
 pub use aimer_container::*;
-pub use aimer_decoration::*;
-pub use aimer_collapsible::{CollapsibleList, ListBody, ListHeader};
 pub use aimer_ctxmenu::{
     ContextMenu, ContextMenuDismiss, ContextMenuItem, ContextMenuRows, ContextMenuShape,
     ContextMenuStyle,
 };
+pub use aimer_cupid as cupid;
+pub use aimer_data_view as data_view;
+pub use aimer_decoration as decoration;
+pub use aimer_decoration::*;
+pub use aimer_dnd as dnd;
 pub use aimer_dnd::{
     DragAxis, DragOverlay, DragPayload, DragSession, DragStartMode, DragTarget, DragTargetState,
     Draggable, DropZone, FileDrop,
 };
-pub use aimer_dnd as dnd;
-pub use aimer_shape::*;
 pub use aimer_events as events;
 pub use aimer_events::element::ElementEvent;
+pub use aimer_feedback as feedback;
 pub use aimer_flex::*;
 pub use aimer_focus as focus;
 pub use aimer_focus::{
     FocusBehavior, FocusCallback, FocusCandidate, FocusManager, FocusNode, FocusTransition,
     FocusTrap, FocusTrapId, active_focus_trap,
 };
+pub use aimer_form as form;
 pub use aimer_grid::*;
 pub use aimer_haptics as haptics;
 pub use aimer_haptics::{HapticFeedback, HapticKind};
+pub use aimer_i18n as i18n;
 pub use aimer_input as input;
-pub use aimer_macro::{PortableValue, Router, StatefulWidget, StatelessWidget, Theme, capability, key, main};
+pub use aimer_macro::{
+    PortableValue, Router, StatefulWidget, StatelessWidget, Theme, capability, key, main,
+};
 #[cfg(feature = "markdown")]
 pub use aimer_markdown::{
     Alignment as MarkdownAlignment, Block as MarkdownBlock, BlockRule as MarkdownBlockRule,
@@ -67,11 +61,20 @@ pub use aimer_markdown::{
     LinkHandler as MarkdownLinkHandler, MarkdownError, MarkdownImage, MarkdownTheme,
     MarkdownViewer,
 };
+pub use aimer_media as media;
+pub use aimer_navigation as navigation;
+pub use aimer_persist as persist;
+pub use aimer_picker as picker;
+pub use aimer_range as range;
+pub use aimer_selection as selection;
+pub use aimer_shape as shape;
+pub use aimer_shape::*;
+pub use aimer_storage as storage;
 pub mod modal {
     pub use aimer_modal::{
         Anchor, AnchorHandle, Floating, FloatingAlign, FloatingPlacement, FloatingSide, Modal,
-        ModalAnimation, ModalController, ModalHandle, ModalHost, ModalId, OverflowPolicy, OverlayLayer,
-        OverlayLayerHandle, PlacementSpec, resolve_placement,
+        ModalAnimation, ModalController, ModalHandle, ModalHost, ModalId, OverflowPolicy,
+        OverlayLayer, OverlayLayerHandle, PlacementSpec, resolve_placement,
     };
 }
 #[cfg(feature = "provider")]
@@ -84,8 +87,8 @@ pub use aimer_quiver as quiver;
 pub use aimer_quiver::frame_stats;
 #[cfg(not(aimer_portable_guest))]
 pub use aimer_quiver::{
-    self, AimerApp, FIRST_FRAME_RENDERED_EVENT, HeadlessAimerApp, HeadlessOptions, RenderMode, WindowAttr,
-    set_first_frame_rendered_callback,
+    self, AimerApp, FIRST_FRAME_RENDERED_EVENT, HeadlessAimerApp, HeadlessOptions, RenderMode,
+    WindowAttr, set_first_frame_rendered_callback,
 };
 
 pub use aimer_scroll::*;
@@ -94,11 +97,11 @@ pub use aimer_space::*;
 pub use aimer_svg as svg;
 #[cfg(feature = "svg")]
 pub use aimer_svg::{
-    RawSvg, Svg, SvgAspectAlign, SvgAspectMode, SvgCallback, SvgColor, SvgDiagnostic,
-    SvgDocument, SvgError, SvgFillRule, SvgFitError, SvgFitPolicy, SvgGradient, SvgGradientStop,
+    RawSvg, Svg, SvgAspectAlign, SvgAspectMode, SvgCallback, SvgColor, SvgDiagnostic, SvgDocument,
+    SvgError, SvgFillRule, SvgFitError, SvgFitPolicy, SvgGradient, SvgGradientStop,
     SvgGradientUnits, SvgHit, SvgLimits, SvgLoadState, SvgLoader, SvgNodeId, SvgNodeMetadata,
-    SvgNodePaint, SvgPaint, SvgPath, SvgPreserveAspectRatio, SvgSelector, SvgSource, SvgSpreadMethod,
-    SvgStyle, SvgTransform, SvgViewBox,
+    SvgNodePaint, SvgPaint, SvgPath, SvgPreserveAspectRatio, SvgSelector, SvgSource,
+    SvgSpreadMethod, SvgStyle, SvgTransform, SvgViewBox,
 };
 pub use aimer_text::{RichText, SelectionArea, SpanStyle, Text, TextButton, TextSpan};
 pub use aimer_text::{
@@ -107,11 +110,11 @@ pub use aimer_text::{
 };
 pub use aimer_venus as venus;
 pub use aimer_venus::{TaskScope, Venus, yield_if_over_budget, yield_now};
-pub use aimer_widget::base::BuildContext;
-pub use aimer_widget::{self, Key, State, StatefulWidget, StatelessWidget, Widget, *};
 #[cfg(feature = "portable-guest")]
 #[doc(hidden)]
 pub use aimer_wasm_guest;
+pub use aimer_widget::base::BuildContext;
+pub use aimer_widget::{self, Key, State, StatefulWidget, StatelessWidget, Widget, *};
 
 pub use aimer_native as native;
 
@@ -148,7 +151,8 @@ mod public_api_tests {
 // Macro re-export
 pub mod macros {
     pub use aimer_macro::{
-        PortableValue, Router, StatefulWidget, StatelessWidget, Theme, capability, key, main, widget,
+        PortableValue, Router, StatefulWidget, StatelessWidget, Theme, capability, key, main,
+        widget,
     };
 }
 
@@ -170,7 +174,6 @@ pub mod console {
 pub use aimer_provider as provider;
 pub use aimer_router as router;
 pub use wasm_bindgen;
-
 
 pub use aimer_std::case;
 pub mod share {
@@ -197,8 +200,8 @@ mod tests {
         use std::time::Duration;
 
         use aimer::{
-            AnyWidget, AsyncBuilder, AsyncSnapshot, BoxAlignment, Column, Container, Key, ScrollAxis,
-            ScrollController, Scrollable, SizedBox, Widget,
+            AnyWidget, AsyncBuilder, AsyncSnapshot, BoxAlignment, Column, Container, Key,
+            ScrollAxis, ScrollController, Scrollable, SizedBox, Widget,
         };
         use aimer_quiver::AimerApp;
 
@@ -219,9 +222,14 @@ mod tests {
         /// detail screen: the `Scrollable` is part of what the request rebuilds, so the
         /// loading state and the post are measured by two different container elements
         /// standing in the same place.
-        fn detail_page(snapshot: &AsyncSnapshot<u32, String>, controller: &ScrollController) -> AnyWidget {
+        fn detail_page(
+            snapshot: &AsyncSnapshot<u32, String>,
+            controller: &ScrollController,
+        ) -> AnyWidget {
             let (content, key) = match snapshot {
-                AsyncSnapshot::Waiting => (SizedBox::new().height(40).boxed(), Key::from("first-post")),
+                AsyncSnapshot::Waiting => {
+                    (SizedBox::new().height(40).boxed(), Key::from("first-post"))
+                }
                 AsyncSnapshot::Error(_) => (SizedBox::new().height(40).boxed(), Key::unique()),
                 AsyncSnapshot::Data(height) => (
                     SizedBox::new().height(*height).boxed(),
@@ -330,6 +338,7 @@ mod tests {
     }
 
     mod box_child {
+        use aimer::input::button::Button;
         use aimer::input::gesture::gesture_detector::GestureDetector;
         use aimer::input::mouse_region::MouseRegion;
         use aimer::style::AnimatedTheme;
@@ -337,7 +346,6 @@ mod tests {
             Align, AnyWidget, AspectRatio, Container, Expanded, Opacity, Positioned, Scrollable,
             SizedBox, ZeroSizedBox,
         };
-        use aimer::input::button::Button;
         #[cfg(feature = "provider")]
         use aimer::{Provider, StoreProvider};
 
@@ -374,12 +382,7 @@ mod tests {
         use aimer::anteros::CapabilityResult;
         use aimer::capability;
 
-        #[capability(
-            name = "haptics",
-            id = "com.example.haptics",
-            abi = 1,
-            since = "1.0.0",
-        )]
+        #[capability(name = "haptics", id = "com.example.haptics", abi = 1, since = "1.0.0")]
         trait Haptics {
             fn trigger(&self, kind: u32) -> CapabilityResult<bool>;
         }
@@ -404,11 +407,15 @@ mod tests {
         use std::any::TypeId;
 
         use aimer_container::{AspectRatio, Container, Opacity, SizedBox, ZeroSizedBox};
-        use aimer_flex::{BoxAlignment, Column, Expanded, Flex, FlexDirection, OverflowBehavior, Row};
+        use aimer_flex::{
+            BoxAlignment, Column, Expanded, Flex, FlexDirection, OverflowBehavior, Row,
+        };
         use aimer_grid::{
             Grid, GridAlignment, GridError, GridItem, GridOverflow, GridPlacement, GridTrack,
         };
-        use aimer_scroll::{DragMode, ScrollAxis, ScrollBar, ScrollBehavior, ScrollController, Scrollable};
+        use aimer_scroll::{
+            DragMode, ScrollAxis, ScrollBar, ScrollBehavior, ScrollController, Scrollable,
+        };
         use aimer_space::{Align, Alignment, Positioned, Stack};
 
         #[test]
@@ -470,7 +477,7 @@ mod tests {
 
         use aimer::quiver::winit::dpi::PhysicalPosition;
         use aimer::quiver::winit::event::{DeviceId, ElementState, MouseButton, WindowEvent};
-        use aimer::{AimerApp, AnyWidget, Container, Row, SizedBox, Stack, Positioned, Widget};
+        use aimer::{AimerApp, AnyWidget, Container, Positioned, Row, SizedBox, Stack, Widget};
         use aimer_dnd::{DragTarget, DragTargetState, Draggable};
 
         /// The value carried by a drag in these tests.
@@ -496,7 +503,6 @@ mod tests {
                 .child(tile(100))
                 .boxed()
         }
-
 
         /// A 100x100 target that records everything it accepts.
         fn column(accepted: Accepted) -> AnyWidget {
@@ -541,9 +547,8 @@ mod tests {
         #[test]
         fn a_card_dropped_on_a_target_is_accepted_once() {
             let accepted: Accepted = Rc::new(RefCell::new(Vec::new()));
-            let page = Container::new().child(
-                Row::new().children([card(CardId(1)), column(accepted.clone())]),
-            );
+            let page = Container::new()
+                .child(Row::new().children([card(CardId(1)), column(accepted.clone())]));
 
             let mut app = AimerApp::start_headless(page);
             app.render_frame();
@@ -557,9 +562,8 @@ mod tests {
         #[test]
         fn a_press_that_does_not_travel_drops_nothing() {
             let accepted: Accepted = Rc::new(RefCell::new(Vec::new()));
-            let page = Container::new().child(
-                Row::new().children([card(CardId(1)), column(accepted.clone())]),
-            );
+            let page = Container::new()
+                .child(Row::new().children([card(CardId(1)), column(accepted.clone())]));
 
             let mut app = AimerApp::start_headless(page);
             app.render_frame();
@@ -578,8 +582,8 @@ mod tests {
                 .feedback(|| tile(100))
                 .child(tile(100))
                 .boxed();
-            let page = Container::new()
-                .child(Row::new().children([unrelated, column(accepted.clone())]));
+            let page =
+                Container::new().child(Row::new().children([unrelated, column(accepted.clone())]));
 
             let mut app = AimerApp::start_headless(page);
             app.render_frame();
@@ -618,23 +622,25 @@ mod tests {
             let below: Accepted = Rc::new(RefCell::new(Vec::new()));
             let above: Accepted = Rc::new(RefCell::new(Vec::new()));
 
-            let page = Container::new().child(Stack::new().children([
-                Positioned::new()
-                    .left(0.0)
-                    .top(0.0)
-                    .child(card(CardId(3)))
-                    .boxed(),
-                Positioned::new()
-                    .left(150.0)
-                    .top(0.0)
-                    .child(column(below.clone()))
-                    .boxed(),
-                Positioned::new()
-                    .left(150.0)
-                    .top(0.0)
-                    .child(column(above.clone()))
-                    .boxed(),
-            ]));
+            let page = Container::new().child(
+                Stack::new().children([
+                    Positioned::new()
+                        .left(0.0)
+                        .top(0.0)
+                        .child(card(CardId(3)))
+                        .boxed(),
+                    Positioned::new()
+                        .left(150.0)
+                        .top(0.0)
+                        .child(column(below.clone()))
+                        .boxed(),
+                    Positioned::new()
+                        .left(150.0)
+                        .top(0.0)
+                        .child(column(above.clone()))
+                        .boxed(),
+                ]),
+            );
 
             let mut app = AimerApp::start_headless(page);
             app.render_frame();
@@ -660,7 +666,9 @@ mod tests {
 
         use aimer::quiver::winit::dpi::PhysicalPosition;
         use aimer::quiver::winit::event::{DeviceId, WindowEvent};
-        use aimer::{AimerApp, AnyWidget, Container, DragTargetState, DropZone, Row, SizedBox, Widget};
+        use aimer::{
+            AimerApp, AnyWidget, Container, DragTargetState, DropZone, Row, SizedBox, Widget,
+        };
 
         /// Every batch a zone received, in the order they arrived.
         type Batches = Rc<RefCell<Vec<Vec<PathBuf>>>>;
@@ -668,8 +676,13 @@ mod tests {
         /// Whether a zone is currently highlighted, sampled on its last build.
         type Highlighted = Rc<RefCell<bool>>;
 
-        fn zone(batches: Batches, highlighted: Highlighted, extensions: Option<&[&str]>) -> AnyWidget {
-            let zone = DropZone::new().on_drop(move |paths: Vec<PathBuf>| batches.borrow_mut().push(paths));
+        fn zone(
+            batches: Batches,
+            highlighted: Highlighted,
+            extensions: Option<&[&str]>,
+        ) -> AnyWidget {
+            let zone = DropZone::new()
+                .on_drop(move |paths: Vec<PathBuf>| batches.borrow_mut().push(paths));
             let zone = match extensions {
                 Some(extensions) => zone.extensions(extensions.to_vec()),
                 None => zone,
@@ -678,7 +691,7 @@ mod tests {
                 *highlighted.borrow_mut() = state.is_hovered;
                 SizedBox::new().width(100).height(100)
             })
-                .boxed()
+            .boxed()
         }
 
         fn batches() -> Batches {
@@ -790,11 +803,8 @@ mod tests {
         fn a_zone_restricted_by_extension_ignores_everything_else() {
             let received = batches();
             let lit = highlighted();
-            let page = Container::new().child(zone(
-                received.clone(),
-                lit.clone(),
-                Some(&["png", "jpg"]),
-            ));
+            let page =
+                Container::new().child(zone(received.clone(), lit.clone(), Some(&["png", "jpg"])));
 
             let mut app = AimerApp::start_headless(page);
             app.render_frame();
@@ -840,7 +850,10 @@ mod tests {
             point_at(&mut app, 150.0, 50.0);
             app.render_frame();
             assert!(!*left_lit.borrow(), "the zone the file left stayed lit");
-            assert!(*right_lit.borrow(), "the zone the file moved onto never lit");
+            assert!(
+                *right_lit.borrow(),
+                "the zone the file moved onto never lit"
+            );
 
             // And off both of them, onto the background.
             point_at(&mut app, 150.0, 250.0);
@@ -868,7 +881,10 @@ mod tests {
             drop_file(&mut app, "/tmp/a.png");
             app.render_frame();
 
-            assert!(left.borrow().is_empty(), "the zone the file only passed over fired");
+            assert!(
+                left.borrow().is_empty(),
+                "the zone the file only passed over fired"
+            );
             assert_eq!(right.borrow().len(), 1);
             assert_eq!(right.borrow()[0], vec![PathBuf::from("/tmp/a.png")]);
         }
@@ -909,12 +925,13 @@ mod tests {
         use std::cell::Cell;
         use std::rc::Rc;
 
+        use aimer::modal::{
+            Anchor, AnchorHandle, Floating, FloatingAlign, FloatingSide, ModalHandle,
+        };
         use aimer::style::{LayoutSpacing, Spacing};
-        use aimer::modal::{Anchor, AnchorHandle, Floating, FloatingAlign, FloatingSide, ModalHandle};
         use aimer::{
-            AnyElement, BuildContext, Container, Dimension, Drawable, Element,
-            EventElement, LayoutElement, Rebuildable,
-            ResolvedSize, SizedBox, VisitorElement, Widget,
+            AnyElement, BuildContext, Container, Dimension, Drawable, Element, EventElement,
+            LayoutElement, Rebuildable, ResolvedSize, SizedBox, VisitorElement, Widget,
         };
 
         /// Records where its parent placed it during the paint pass.
@@ -937,7 +954,7 @@ mod tests {
                         height: 60.0,
                     },
                 }
-                    .boxed()
+                .boxed()
             }
         }
 
@@ -1054,12 +1071,13 @@ mod tests {
     mod font_registry {
         use aimer::style::TextStyle;
         use aimer::{Color, RichText, SpanStyle, TextSpan};
-        use aimer_assets::{FontError, FontFamily, FontRegistration, FontRegistry, FontStyle, FontWeight};
+        use aimer_assets::{
+            FontError, FontFamily, FontRegistration, FontRegistry, FontStyle, FontWeight,
+        };
 
         // Test-only fixture: production builds do not pull the optional
         // bundled-fonts feature merely to exercise registration validation.
-        const TEST_FONT: &[u8] =
-            include_bytes!("../aimer_cupid/fonts/JetBrainsMono-Regular.ttf");
+        const TEST_FONT: &[u8] = include_bytes!("../aimer_cupid/fonts/JetBrainsMono-Regular.ttf");
 
         #[test]
         fn named_font_registration_is_validated_and_stable() {
@@ -1071,14 +1089,14 @@ mod tests {
                 weight: FontWeight::Normal,
                 style: FontStyle::Normal,
             })
-                .expect("valid font bytes should register");
+            .expect("valid font bytes should register");
             let bold_family = FontRegistry::register(FontRegistration {
                 family: " aimer registry test mono ",
                 bytes: TEST_FONT,
                 weight: FontWeight::Bold,
                 style: FontStyle::Normal,
             })
-                .expect("a second variant should register under the same normalized family");
+            .expect("a second variant should register under the same normalized family");
 
             assert_eq!(family, bold_family);
 
@@ -1115,7 +1133,7 @@ mod tests {
                 weight: FontWeight::Normal,
                 style: FontStyle::Normal,
             })
-                .unwrap();
+            .unwrap();
             let base = TextStyle::new().font_family(family);
             let span = TextSpan::root([
                 TextSpan::new("let "),
@@ -1144,8 +1162,8 @@ mod tests {
         use std::rc::Rc;
 
         use aimer::{
-            AimerApp, AnyElement, BuildContext, Drawable, Element, EventElement, Grid, GridItem, GridTrack,
-            LayoutElement, Rebuildable, ResolvedSize, VisitorElement, Widget,
+            AimerApp, AnyElement, BuildContext, Drawable, Element, EventElement, Grid, GridItem,
+            GridTrack, LayoutElement, Rebuildable, ResolvedSize, VisitorElement, Widget,
         };
 
         #[derive(Clone)]
@@ -1162,7 +1180,7 @@ mod tests {
                 SizeProbeElement {
                     observed: self.observed.clone(),
                 }
-                    .boxed()
+                .boxed()
             }
         }
 
@@ -1311,9 +1329,9 @@ mod tests {
         use std::cell::Cell;
         use std::rc::Rc;
 
+        use aimer::provider::media_query::MediaQuery;
         use aimer::quiver::winit::dpi::PhysicalSize;
         use aimer::quiver::winit::event::WindowEvent;
-        use aimer::provider::media_query::MediaQuery;
         use aimer::{
             AimerApp, AnyElement, BuildContext, Column, Element, SizedBox, StatelessElement, Widget,
         };
@@ -1378,7 +1396,7 @@ mod tests {
                     None,
                     "Probe",
                 )
-                    .boxed()
+                .boxed()
             }
         }
 
@@ -1399,7 +1417,10 @@ mod tests {
             app.render_frame();
             assert_eq!(watching_builds.get(), 1);
             assert_eq!(indifferent_builds.get(), 1);
-            assert!(!compact.get(), "the window starts wider than the breakpoint");
+            assert!(
+                !compact.get(),
+                "the window starts wider than the breakpoint"
+            );
 
             app.send_window_event(WindowEvent::Resized(PhysicalSize::new(390, 844)));
             app.render_frame();
@@ -1489,7 +1510,11 @@ mod tests {
         use aimer::quiver::winit::window::CursorIcon;
         use aimer::{AimerApp, RichText, SelectionArea, Text, TextSpan};
 
-        fn hover(app: &mut aimer::quiver::aimer_app::HeadlessAimerApp<impl aimer::Widget + 'static>, x: f64, y: f64) {
+        fn hover(
+            app: &mut aimer::quiver::aimer_app::HeadlessAimerApp<impl aimer::Widget + 'static>,
+            x: f64,
+            y: f64,
+        ) {
             app.send_window_event(WindowEvent::CursorMoved {
                 device_id: DeviceId::dummy(),
                 position: PhysicalPosition::new(x, y),
@@ -1499,7 +1524,8 @@ mod tests {
 
         #[test]
         fn hovering_a_rich_text_link_uses_the_pointer_cursor() {
-            let text = RichText::new(TextSpan::new("Aimer").link("https://aimer.dev")).on_link(|_| {});
+            let text =
+                RichText::new(TextSpan::new("Aimer").link("https://aimer.dev")).on_link(|_| {});
             let mut app = AimerApp::start_headless(text);
             app.render_frame();
 
@@ -1510,7 +1536,8 @@ mod tests {
 
         #[test]
         fn hovering_selectable_text_inside_a_region_uses_the_text_cursor() {
-            let mut app = AimerApp::start_headless(SelectionArea::new().child(Text::new("Selectable")));
+            let mut app =
+                AimerApp::start_headless(SelectionArea::new().child(Text::new("Selectable")));
             app.render_frame();
 
             hover(&mut app, 1.0, 1.0);
@@ -1546,7 +1573,8 @@ mod tests {
         };
         use aimer::{
             AnyWidget, BoxAlignment, Column, Container, PointerKey, ScrollAxis, ScrollController,
-            Scrollable, SelectionArea, SizedBox, Text, Widget, is_pointer_claimed, release_all_pointers,
+            Scrollable, SelectionArea, SizedBox, Text, Widget, is_pointer_claimed,
+            release_all_pointers,
         };
         use aimer_quiver::AimerApp;
 
@@ -1646,7 +1674,12 @@ mod tests {
 
         /// Drags a finger from `(x, from)` to `(x, to)`, in the phases a touch screen
         /// reports.
-        fn touch_drag_up<W: Widget + 'static>(app: &mut HeadlessApp<W>, x: f64, from: f64, to: f64) {
+        fn touch_drag_up<W: Widget + 'static>(
+            app: &mut HeadlessApp<W>,
+            x: f64,
+            from: f64,
+            to: f64,
+        ) {
             let contact = |phase, y| {
                 WindowEvent::Touch(Touch {
                     device_id: DeviceId::dummy(),
@@ -1671,7 +1704,12 @@ mod tests {
         /// Drags a finger the way a thumb actually moves a page: far enough to hand the
         /// gesture to the scroll view, and for longer than the hold a touch selection
         /// waits for, so a press the view forgot to revoke has time to ripen.
-        fn touch_scroll_slowly<W: Widget + 'static>(app: &mut HeadlessApp<W>, x: f64, from: f64, to: f64) {
+        fn touch_scroll_slowly<W: Widget + 'static>(
+            app: &mut HeadlessApp<W>,
+            x: f64,
+            from: f64,
+            to: f64,
+        ) {
             let contact = |phase, y| {
                 WindowEvent::Touch(Touch {
                     device_id: DeviceId::dummy(),
@@ -1819,7 +1857,8 @@ mod tests {
             drag_up(&mut app, 40.0, PRESS_Y, RELEASE_Y);
 
             assert_eq!(
-                controller.offset().y, 0.0,
+                controller.offset().y,
+                0.0,
                 "the drag selected text, so the scroll view must not have moved"
             );
         }
@@ -1890,11 +1929,11 @@ mod tests {
         use std::time::Duration;
 
         use aimer::animation::{Curve, ImplicitAnimatedBuilder};
+        use aimer::input::button::Button;
         use aimer::quiver::aimer_app::HeadlessAimerApp;
         use aimer::quiver::winit::dpi::PhysicalPosition;
         use aimer::quiver::winit::event::{DeviceId, ElementState, MouseButton, WindowEvent};
         use aimer::style::LayoutSpacing;
-        use aimer::input::button::Button;
         use aimer::{
             AimerApp, AnyElement, BuildContext, Container, Direction, Resizable, ResolvedSize,
             SizedBox, State, StateUpdater, StatefulElement, StatefulWidget, Widget,
@@ -1919,7 +1958,9 @@ mod tests {
         impl Widget for SideBarLike {
             fn to_element(self, ctx: &BuildContext) -> AnyElement {
                 let key = Widget::key(&self);
-                StatefulElement::new_with_name(self, ctx, "SideBarLike", key).0.boxed()
+                StatefulElement::new_with_name(self, ctx, "SideBarLike", key)
+                    .0
+                    .boxed()
             }
         }
 
@@ -1976,13 +2017,11 @@ mod tests {
                                 });
                             })
                             .child(
-                                Container::new()
-                                    .padding(LayoutSpacing::all(12.0))
-                                    .child(
-                                        Button::new()
-                                            .on_press(move || presses.set(presses.get() + 1))
-                                            .child(SizedBox::new().width(100.0).height(40.0)),
-                                    ),
+                                Container::new().padding(LayoutSpacing::all(12.0)).child(
+                                    Button::new()
+                                        .on_press(move || presses.set(presses.get() + 1))
+                                        .child(SizedBox::new().width(100.0).height(40.0)),
+                                ),
                             )
                     },
                 )
@@ -2089,11 +2128,11 @@ mod tests {
         use std::thread::sleep;
         use std::time::Duration;
 
+        use aimer::modal::ModalHost;
         use aimer::quiver::aimer_app::HeadlessAimerApp;
         use aimer::quiver::winit::event::WindowEvent;
         use aimer::quiver::winit::window::Theme as SystemTheme;
         use aimer::style::{AnimatedTheme, Theme, ThemeData, ThemeMode};
-        use aimer::modal::ModalHost;
         use aimer::{
             AimerApp, AnyElement, BuildContext, Color, Element, SizedBox, State, StateUpdater,
             StatefulElement, StatefulWidget, StatelessElement, Widget,
@@ -2128,14 +2167,17 @@ mod tests {
                     None,
                     "Probe",
                 )
-                    .boxed()
+                .boxed()
             }
         }
 
         impl aimer::PortableWidget for Probe {}
 
         /// Announces the appearance the system switched to, the way the platform does.
-        fn switch_system_to<W: Widget + 'static>(app: &mut HeadlessAimerApp<W>, theme: SystemTheme) {
+        fn switch_system_to<W: Widget + 'static>(
+            app: &mut HeadlessAimerApp<W>,
+            theme: SystemTheme,
+        ) {
             app.send_window_event(WindowEvent::ThemeChanged(theme));
             app.render_frame();
         }
@@ -2373,11 +2415,11 @@ mod tests {
         //! anywhere. The delta must reach the field that owns the session even when
         //! the pointer no longer rests on that field.
 
+        use aimer::input::{TextEditingController, input::TextField};
         use aimer::quiver::aimer_app::AimerNativePlatformEvent;
         use aimer::quiver::winit::dpi::PhysicalPosition;
         use aimer::quiver::winit::event::{DeviceId, ElementState, MouseButton, WindowEvent};
         use aimer::style::{LayoutSpacing, Spacing};
-        use aimer::input::{input::TextField, TextEditingController};
         use aimer::{AimerApp, Container, Widget};
         use aimer_events::text_editing::{NativeTextRange, TextEditingDelta};
 
@@ -2542,17 +2584,17 @@ mod tests {
 
         use aimer::animation::{AnimatedSwitcher, Curve};
         use aimer::base::{ResolvedSize, Size, Vec2d};
+        use aimer::modal::ModalHost;
+        use aimer::quiver::aimer_app::HeadlessAimerApp;
         use aimer::router::{
             Navigator, NavigatorController, NavigatorInstance, Outlet, Route, Router, Shell,
         };
-        use aimer::quiver::aimer_app::HeadlessAimerApp;
         use aimer::style::{AnimatedTheme, Theme, ThemeData};
-        use aimer::modal::ModalHost;
         use aimer::{
-            AimerApp, AnyElement, AnyWidget, AsyncBuilder, AsyncSnapshot, BuildContext, Column, Container,
-            Drawable, Element, EventElement, Expanded, LayoutElement, Rebuildable, ScrollAxis, Scrollable,
-            SizedBox, State, StateUpdater, StatefulElement, StatefulWidget, StatelessElement,
-            VisitorElement, Widget,
+            AimerApp, AnyElement, AnyWidget, AsyncBuilder, AsyncSnapshot, BuildContext, Column,
+            Container, Drawable, Element, EventElement, Expanded, LayoutElement, Rebuildable,
+            ScrollAxis, Scrollable, SizedBox, State, StateUpdater, StatefulElement, StatefulWidget,
+            StatelessElement, VisitorElement, Widget,
         };
 
         /// Height of the loaded content: taller than the headless viewport, so a frame
@@ -2620,11 +2662,11 @@ mod tests {
                     Self::Blog => Shell::new(AppShell, |_| {
                         transitioned_page("blog", BlogListPage.boxed()).boxed()
                     })
-                        .boxed(),
+                    .boxed(),
                     Self::Learn => Shell::new(AppShell, |_| {
                         transitioned_page("learn", LearnPage.boxed()).boxed()
                     })
-                        .boxed(),
+                    .boxed(),
                 }
             }
         }
@@ -2699,18 +2741,24 @@ mod tests {
                         let theme = ThemeData::of(ctx);
                         Container::new()
                             .color(theme.background_color)
-                            .child(Column::new().children([
-                                SizedBox::new().height(40).boxed(),
-                                Expanded::new()
-                                    .child(Container::new().color(theme.background_color).child(Outlet))
-                                    .boxed(),
-                            ]))
+                            .child(
+                                Column::new().children([
+                                    SizedBox::new().height(40).boxed(),
+                                    Expanded::new()
+                                        .child(
+                                            Container::new()
+                                                .color(theme.background_color)
+                                                .child(Outlet),
+                                        )
+                                        .boxed(),
+                                ]),
+                            )
                             .to_element(ctx)
                     },
                     None,
                     "ThemedFrame",
                 )
-                    .boxed()
+                .boxed()
             }
 
             fn debug_name(&self) -> &'static str {
@@ -2746,21 +2794,19 @@ mod tests {
 
                         Container::new()
                             .color(theme.background_color)
-                            .child(
-                                Scrollable::new().axis(ScrollAxis::Vertical).child(
-                                    Container::new().child(Column::new().children([
-                                        SizedBox::new().height(32).boxed(),
-                                        content,
-                                        SizedBox::new().height(48).boxed(),
-                                    ])),
-                                ),
-                            )
+                            .child(Scrollable::new().axis(ScrollAxis::Vertical).child(
+                                Container::new().child(Column::new().children([
+                                    SizedBox::new().height(32).boxed(),
+                                    content,
+                                    SizedBox::new().height(48).boxed(),
+                                ])),
+                            ))
                             .to_element(ctx)
                     },
                     None,
                     "BlogListPage",
                 )
-                    .boxed()
+                .boxed()
             }
 
             fn debug_name(&self) -> &'static str {
@@ -2800,21 +2846,19 @@ mod tests {
 
                         Container::new()
                             .color(theme.background_color)
-                            .child(
-                                Scrollable::new().axis(ScrollAxis::Vertical).child(
-                                    Container::new().child(Column::new().children([
-                                        SizedBox::new().height(32).boxed(),
-                                        content,
-                                        SizedBox::new().height(48).boxed(),
-                                    ])),
-                                ),
-                            )
+                            .child(Scrollable::new().axis(ScrollAxis::Vertical).child(
+                                Container::new().child(Column::new().children([
+                                    SizedBox::new().height(32).boxed(),
+                                    content,
+                                    SizedBox::new().height(48).boxed(),
+                                ])),
+                            ))
                             .to_element(ctx)
                     },
                     None,
                     "LearnPage",
                 )
-                    .boxed()
+                .boxed()
             }
 
             fn debug_name(&self) -> &'static str {
@@ -2853,7 +2897,7 @@ mod tests {
                     label: self.label,
                     child: SizedBox::new().height(self.height).to_element(ctx),
                 }
-                    .boxed()
+                .boxed()
             }
 
             fn debug_name(&self) -> &'static str {
@@ -2943,9 +2987,10 @@ mod tests {
 
         /// Starts the application on the blog route and draws until its request landed.
         fn app_on_the_loaded_blog_route() -> HeadlessAimerApp<ModalHost<Navigator<TestRoute>>> {
-            let mut app = AimerApp::start_headless(Navigator::<TestRoute>::new(TestRoute::Blog, |route| {
-                route.boxed()
-            }));
+            let mut app =
+                AimerApp::start_headless(Navigator::<TestRoute>::new(TestRoute::Blog, |route| {
+                    route.boxed()
+                }));
 
             app.render_frame();
             sleep(Duration::from_millis(100));
@@ -3041,10 +3086,10 @@ mod tests {
 
         use aimer::animation::{AnimatedSwitcher, Curve};
         use aimer::base::{ResolvedSize, Size, Vec2d};
+        use aimer::modal::ModalHost;
         use aimer::quiver::aimer_app::HeadlessAimerApp;
         use aimer::router::{Navigator, Outlet, Route, Router, Shell};
         use aimer::style::{AnimatedTheme, Theme, ThemeData};
-        use aimer::modal::ModalHost;
         use aimer::{
             AimerApp, AnyElement, AnyWidget, BuildContext, Column, Container, Drawable, Element,
             EventElement, Expanded, Key, LayoutElement, Rebuildable, ScrollAxis, Scrollable,
@@ -3105,11 +3150,11 @@ mod tests {
                         Curve::FastOutSlowIn,
                         HomePage.boxed(),
                     )
-                        .child_key("home")
-                        .key(ROUTE_SWITCHER_KEY)
-                        .boxed()
-                })
+                    .child_key("home")
+                    .key(ROUTE_SWITCHER_KEY)
                     .boxed()
+                })
+                .boxed()
             }
         }
 
@@ -3183,18 +3228,24 @@ mod tests {
                         let theme = ThemeData::of(ctx);
                         Container::new()
                             .color(theme.background_color)
-                            .child(Column::new().children([
-                                SizedBox::new().height(40).boxed(),
-                                Expanded::new()
-                                    .child(Container::new().color(theme.background_color).child(Outlet))
-                                    .boxed(),
-                            ]))
+                            .child(
+                                Column::new().children([
+                                    SizedBox::new().height(40).boxed(),
+                                    Expanded::new()
+                                        .child(
+                                            Container::new()
+                                                .color(theme.background_color)
+                                                .child(Outlet),
+                                        )
+                                        .boxed(),
+                                ]),
+                            )
                             .to_element(ctx)
                     },
                     None,
                     "ThemedFrame",
                 )
-                    .boxed()
+                .boxed()
             }
 
             fn debug_name(&self) -> &'static str {
@@ -3226,16 +3277,16 @@ mod tests {
             fn build(&self, ctx: &BuildContext) -> impl Widget {
                 let theme = ThemeData::of(ctx);
                 Container::new().color(theme.background_color).child(
-                    Scrollable::new()
-                        .axis(ScrollAxis::Vertical)
-                        .child(Column::new().children([
+                    Scrollable::new().axis(ScrollAxis::Vertical).child(
+                        Column::new().children([
                             SizedBox::new().height(32).boxed(),
                             SelectionSection {
                                 key: Some(SECTION_KEY.into()),
                             }
-                                .boxed(),
+                            .boxed(),
                             SizedBox::new().height(48).boxed(),
-                        ])),
+                        ]),
+                    ),
                 )
             }
         }
@@ -3289,9 +3340,8 @@ mod tests {
                 // The real section hands this same clone to its buttons' callback, so a
                 // test drives exactly the updater a tap would.
                 SELECTION.replace(Some(self.state));
-                Container::new()
-                    .color(theme.background_color)
-                    .child(Column::new().children([
+                Container::new().color(theme.background_color).child(
+                    Column::new().children([
                         Container::new()
                             .height(120)
                             .child(
@@ -3300,12 +3350,13 @@ mod tests {
                                     Curve::FastOutSlowIn,
                                     Marker::new(index),
                                 )
-                                    .child_key(PLATFORMS[index % PLATFORMS.len()])
-                                    .key(SWITCHER_KEY),
+                                .child_key(PLATFORMS[index % PLATFORMS.len()])
+                                .key(SWITCHER_KEY),
                             )
                             .boxed(),
                         SizedBox::new().height(40).boxed(),
-                    ]))
+                    ]),
+                )
             }
         }
 
@@ -3348,7 +3399,7 @@ mod tests {
                     index: self.index,
                     child: SizedBox::new().height(80).to_element(ctx),
                 }
-                    .boxed()
+                .boxed()
             }
 
             fn debug_name(&self) -> &'static str {
@@ -3455,9 +3506,10 @@ mod tests {
         }
 
         fn app_on_the_selected_section() -> HeadlessAimerApp<ModalHost<Navigator<HomeRoute>>> {
-            let mut app = AimerApp::start_headless(Navigator::<HomeRoute>::new(HomeRoute, |route| {
-                route.boxed()
-            }));
+            let mut app =
+                AimerApp::start_headless(Navigator::<HomeRoute>::new(HomeRoute, |route| {
+                    route.boxed()
+                }));
 
             app.render_frame();
             select(1);
@@ -3549,8 +3601,8 @@ mod tests {
         use std::thread::sleep;
         use std::time::{Duration, Instant};
 
-        use aimer::quiver::aimer_app::HeadlessAimerApp;
         use aimer::modal::ModalHost;
+        use aimer::quiver::aimer_app::HeadlessAimerApp;
         use aimer::{AimerApp, SizedBox, Venus};
 
         /// The application under test: what it draws is irrelevant, only that it is a
@@ -3598,11 +3650,11 @@ mod tests {
     }
 
     mod widget_attribute {
-        use aimer::*;
         use aimer::portable::{
-            AimerReflectionType, DecodeError, Decoder, EncodeError, Encoder, FieldDescriptor, FieldKind,
-            PortableApply, PortableEncode, StableId128, TypeSchema,
+            AimerReflectionType, DecodeError, Decoder, EncodeError, Encoder, FieldDescriptor,
+            FieldKind, PortableApply, PortableEncode, StableId128, TypeSchema,
         };
+        use aimer::*;
 
         #[widget(Stateless)]
         struct TupleAttributeStateless(String);
@@ -3633,9 +3685,8 @@ mod tests {
 
         struct TupleAttributeStatefulState(i32);
 
-        const TUPLE_STATE_FIELDS: &[FieldDescriptor] = &[
-            FieldDescriptor::new("value", "i32", FieldKind::Retained),
-        ];
+        const TUPLE_STATE_FIELDS: &[FieldDescriptor] =
+            &[FieldDescriptor::new("value", "i32", FieldKind::Retained)];
         const TUPLE_STATE_SCHEMA: TypeSchema = TypeSchema::new(
             "TupleAttributeStatefulState",
             StableId128::from_path("aimer.type.v1", "tests::TupleAttributeStatefulState"),
@@ -3693,9 +3744,8 @@ mod tests {
 
         struct EnumAttributeStatefulState(i32);
 
-        const ENUM_STATE_FIELDS: &[FieldDescriptor] = &[
-            FieldDescriptor::new("value", "i32", FieldKind::Retained),
-        ];
+        const ENUM_STATE_FIELDS: &[FieldDescriptor] =
+            &[FieldDescriptor::new("value", "i32", FieldKind::Retained)];
         const ENUM_STATE_SCHEMA: TypeSchema = TypeSchema::new(
             "EnumAttributeStatefulState",
             StableId128::from_path("aimer.type.v1", "tests::EnumAttributeStatefulState"),
@@ -3772,24 +3822,20 @@ mod tests {
         //! generated code against the real traits, which is the only way to catch a
         //! path that resolves inside the macro crate but not at the call site.
 
+        use aimer::portable::{
+            AimerReflectionType, DecodeError, Decoder, EncodeError, Encoder, FieldDescriptor,
+            FieldKind, PortableApply, PortableEncode, StableId128, TypeSchema,
+        };
         use aimer::router::Route;
         use aimer::*;
-        use aimer::portable::{
-            AimerReflectionType, DecodeError, Decoder, EncodeError, Encoder, FieldDescriptor, FieldKind,
-            PortableApply, PortableEncode, StableId128, TypeSchema,
-        };
 
         macro_rules! impl_portable_i32_state {
             ($fields:ident, $schema:ident, $state:ty, $field:tt) => {
-                const $fields: &[FieldDescriptor] = &[
-                    FieldDescriptor::new("value", "i32", FieldKind::Retained),
-                ];
+                const $fields: &[FieldDescriptor] =
+                    &[FieldDescriptor::new("value", "i32", FieldKind::Retained)];
                 const $schema: TypeSchema = TypeSchema::new(
                     stringify!($state),
-                    StableId128::from_path(
-                        "aimer.type.v1",
-                        concat!("tests::", stringify!($state)),
-                    ),
+                    StableId128::from_path("aimer.type.v1", concat!("tests::", stringify!($state))),
                     $fields,
                 );
 
@@ -3857,7 +3903,12 @@ mod tests {
             count: i32,
         }
 
-        impl_portable_i32_state!(COUNTER_STATE_FIELDS, COUNTER_STATE_SCHEMA, CounterState, count);
+        impl_portable_i32_state!(
+            COUNTER_STATE_FIELDS,
+            COUNTER_STATE_SCHEMA,
+            CounterState,
+            count
+        );
 
         impl StatefulWidget for Counter {
             type State = CounterState;
@@ -3988,7 +4039,7 @@ mod tests {
                 Greeting {
                     name: "route".to_string(),
                 }
-                    .boxed()
+                .boxed()
             }
         }
 
@@ -3997,7 +4048,7 @@ mod tests {
                 Greeting {
                     name: "dash".to_string(),
                 }
-                    .boxed()
+                .boxed()
             }
         }
 
@@ -4068,7 +4119,7 @@ mod tests {
                 AppRoute::Profile {
                     name: "john".to_string()
                 }
-                    .format(),
+                .format(),
                 "/profile/john"
             );
         }
@@ -4098,7 +4149,8 @@ mod tests {
 
         #[test]
         fn the_router_derive_resolves_a_named_route() {
-            let params = std::collections::HashMap::from([("name".to_string(), "john".to_string())]);
+            let params =
+                std::collections::HashMap::from([("name".to_string(), "john".to_string())]);
 
             assert_eq!(
                 AppRoute::resolve_named("profile", &params),
@@ -4110,7 +4162,7 @@ mod tests {
                 AppRoute::Profile {
                     name: "john".to_string()
                 }
-                    .name(),
+                .name(),
                 Some("profile")
             );
         }

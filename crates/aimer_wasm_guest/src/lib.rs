@@ -12,9 +12,9 @@ use aimer_anteros::{
     AsyncCallbackEventView, CallbackEventView, ModelLimits, StableId128, StateBundleView,
 };
 
+pub use aimer_anteros as anteros;
 pub use diagnostic::{GuestError, MAX_GUEST_PANIC_PAYLOAD_BYTES};
 pub use exports::{ExportedGuest, GuestAdapter, GuestLimits};
-pub use aimer_anteros as anteros;
 
 /// Portable application behavior invoked by the generated guest exports.
 ///
@@ -64,10 +64,7 @@ pub trait GuestProgram: Send {
     /// The default is an idle guest, preserving compatibility for modules that
     /// do not advertise async callback lowering. A non-empty result is a
     /// complete canonical `AWIR` image and is visible only at this boundary.
-    fn poll_async(
-        &mut self,
-        _limits: ModelLimits,
-    ) -> Result<Option<Vec<u8>>, GuestError> {
+    fn poll_async(&mut self, _limits: ModelLimits) -> Result<Option<Vec<u8>>, GuestError> {
         Ok(None)
     }
 
@@ -88,7 +85,9 @@ pub trait GuestProgram: Send {
         _event: &AsyncCallbackEventView<'_>,
         _limits: ModelLimits,
     ) -> Result<Option<Vec<u8>>, GuestError> {
-        Err(GuestError::new(aimer_anteros::AbiStatus::UnsupportedVersion))
+        Err(GuestError::new(
+            aimer_anteros::AbiStatus::UnsupportedVersion,
+        ))
     }
 
     /// Exports the complete canonical `ASTA` state snapshot.
@@ -111,8 +110,7 @@ pub trait GuestProgram: Send {
 }
 
 /// A registered callback that mutates portable guest state.
-pub type CallbackHandler<S> =
-    fn(&mut S, &CallbackEventView<'_>) -> Result<bool, GuestError>;
+pub type CallbackHandler<S> = fn(&mut S, &CallbackEventView<'_>) -> Result<bool, GuestError>;
 
 /// A bounded stable-identity callback table for one guest program.
 ///
@@ -307,11 +305,11 @@ macro_rules! export_guest {
 #[cfg(test)]
 mod tests {
     mod diagnostic_exports {
+        use crate::{GuestAdapter, GuestError, GuestLimits, GuestProgram};
         use aimer_anteros::{
             AbiResult, AbiStatus, GuestDiagnostic, GuestDiagnosticCategory, GuestOperation,
             ModelLimits,
         };
-        use crate::{GuestAdapter, GuestError, GuestLimits, GuestProgram};
 
         #[derive(Default)]
         struct FailingProgram;
@@ -367,9 +365,16 @@ mod tests {
 
             let diagnostic = error.diagnostic().unwrap();
             assert_eq!(diagnostic.operation(), GuestOperation::Build);
-            assert_eq!(diagnostic.category(), GuestDiagnosticCategory::UnsupportedWidget);
+            assert_eq!(
+                diagnostic.category(),
+                GuestDiagnosticCategory::UnsupportedWidget
+            );
             assert_eq!(diagnostic.widget(), Some("Container"));
-            assert!(error.to_string().contains("aimer_build: unsupported widget Container at source"));
+            assert!(
+                error
+                    .to_string()
+                    .contains("aimer_build: unsupported widget Container at source")
+            );
         }
 
         // The inline unit-test binary contains the guest-contract fixture too,
@@ -406,15 +411,15 @@ mod tests {
     }
 
     mod guest_contract {
+        use crate::{CallbackRegistry, GuestAdapter, GuestError, GuestLimits, GuestProgram};
         use aimer_anteros::{
             AbiStatus, AbiVersion, ApplicationManifest, AsyncCallbackEvent, AsyncCallbackEventView,
-            AsyncTaskId, CallbackBinding, CallbackEvent, CallbackEventView, CURRENT_ABI_VERSION,
-            EventId, ManifestView, ModelLimits, StableId128, StateBundle, StateBundleView,
-            StateEntry, StatePolicy, Version, WidgetDocument, WidgetDocumentView, WidgetNode,
-            WidgetSchemaId,
-            CALLBACK_EVENT_FORMAT_VERSION, STATE_FORMAT_VERSION, WIDGET_IR_FORMAT_VERSION,
+            AsyncTaskId, CALLBACK_EVENT_FORMAT_VERSION, CURRENT_ABI_VERSION, CallbackBinding,
+            CallbackEvent, CallbackEventView, EventId, ManifestView, ModelLimits,
+            STATE_FORMAT_VERSION, StableId128, StateBundle, StateBundleView, StateEntry,
+            StatePolicy, Version, WIDGET_IR_FORMAT_VERSION, WidgetDocument, WidgetDocumentView,
+            WidgetNode, WidgetSchemaId,
         };
-        use crate::{CallbackRegistry, GuestAdapter, GuestError, GuestLimits, GuestProgram};
 
         const LIMITS: ModelLimits = ModelLimits::new(1_024, 16, 64, 64).max_widget_depth(8);
         const PROGRAM_ID: StableId128 = StableId128::from_bytes([0x11; 16]);
@@ -469,13 +474,12 @@ mod tests {
                 limits: ModelLimits,
             ) -> Result<Option<Vec<u8>>, GuestError> {
                 let rebuild = self.callbacks.dispatch(&mut self.value, event)?;
-                rebuild.then(|| widget_image(self.value, limits)).transpose()
+                rebuild
+                    .then(|| widget_image(self.value, limits))
+                    .transpose()
             }
 
-            fn poll_async(
-                &mut self,
-                limits: ModelLimits,
-            ) -> Result<Option<Vec<u8>>, GuestError> {
+            fn poll_async(&mut self, limits: ModelLimits) -> Result<Option<Vec<u8>>, GuestError> {
                 widget_image(self.value, limits).map(Some)
             }
 
@@ -542,16 +546,31 @@ mod tests {
             let mut guest = GuestAdapter::new(CounterProgram::default(), guest_limits).unwrap();
 
             let manifest = guest.manifest().unwrap();
-            assert_eq!(ManifestView::decode(&manifest, LIMITS).unwrap().program_id(), PROGRAM_ID);
+            assert_eq!(
+                ManifestView::decode(&manifest, LIMITS)
+                    .unwrap()
+                    .program_id(),
+                PROGRAM_ID
+            );
 
             let initial = guest.build().unwrap();
-            assert_eq!(WidgetDocumentView::decode(&initial, LIMITS).unwrap().document_revision(), 0);
+            assert_eq!(
+                WidgetDocumentView::decode(&initial, LIMITS)
+                    .unwrap()
+                    .document_revision(),
+                0
+            );
 
             let event = CallbackEvent::new(7, 1, CALLBACK_ID, EventId::new(1), VERSION, 1, &[])
                 .encode(LIMITS)
                 .unwrap();
             let updated = guest.dispatch_event(&event).unwrap().unwrap();
-            assert_eq!(WidgetDocumentView::decode(&updated, LIMITS).unwrap().document_revision(), 1);
+            assert_eq!(
+                WidgetDocumentView::decode(&updated, LIMITS)
+                    .unwrap()
+                    .document_revision(),
+                1
+            );
 
             let state = guest.export_state().unwrap();
             assert_eq!(
@@ -571,25 +590,26 @@ mod tests {
         fn adapter_polls_guest_async_work_and_validates_completion_documents() {
             let guest_limits = GuestLimits::new(LIMITS, 2, 2_048, 16);
             let mut guest = GuestAdapter::new(CounterProgram::default(), guest_limits).unwrap();
-            let event = AsyncCallbackEvent::complete(
-                7,
-                1,
-                CALLBACK_ID,
-                AsyncTaskId::new(11),
-                &[],
-            )
-            .encode(LIMITS)
-            .unwrap();
+            let event = AsyncCallbackEvent::complete(7, 1, CALLBACK_ID, AsyncTaskId::new(11), &[])
+                .encode(LIMITS)
+                .unwrap();
 
             assert!(guest.dispatch_async_event(&event).unwrap().is_none());
             let image = guest.poll_async().unwrap().unwrap();
-            assert_eq!(WidgetDocumentView::decode(&image, LIMITS).unwrap().generation_id(), 7);
+            assert_eq!(
+                WidgetDocumentView::decode(&image, LIMITS)
+                    .unwrap()
+                    .generation_id(),
+                7
+            );
         }
 
         #[test]
         fn callback_registry_rejects_duplicate_and_unknown_callback_identities() {
             let mut callbacks = CallbackRegistry::<u8>::new().max_callbacks(1);
-            callbacks.register(CALLBACK_ID, |_state, _event| Ok(false)).unwrap();
+            callbacks
+                .register(CALLBACK_ID, |_state, _event| Ok(false))
+                .unwrap();
             assert_eq!(
                 callbacks.register(CALLBACK_ID, |_state, _event| Ok(false)),
                 Err(GuestError::new(AbiStatus::DuplicateId))
@@ -638,10 +658,7 @@ mod tests {
                     Ok(b"not state".to_vec())
                 }
 
-                fn import_state(
-                    &mut self,
-                    _state: &StateBundleView<'_>,
-                ) -> Result<(), GuestError> {
+                fn import_state(&mut self, _state: &StateBundleView<'_>) -> Result<(), GuestError> {
                     Ok(())
                 }
             }
@@ -681,16 +698,19 @@ mod tests {
             assert_eq!(initialized.status(), AbiStatus::Ok);
             assert_eq!(initialized.value(), 0);
 
-            let manifest_probe = aimer_anteros::AbiResult::from_packed(aimer_manifest(0, 0)).unwrap();
+            let manifest_probe =
+                aimer_anteros::AbiResult::from_packed(aimer_manifest(0, 0)).unwrap();
             assert_eq!(manifest_probe.status(), AbiStatus::BufferTooSmall);
             assert!(manifest_probe.value() > 0);
-            let interleaved_build = aimer_anteros::AbiResult::from_packed(aimer_build(0, 0)).unwrap();
+            let interleaved_build =
+                aimer_anteros::AbiResult::from_packed(aimer_build(0, 0)).unwrap();
             assert_eq!(interleaved_build.status(), AbiStatus::InvalidArgument);
 
             let allocation = aimer_anteros::AbiResult::from_packed(aimer_alloc(0, 1)).unwrap();
             assert_eq!(allocation.status(), AbiStatus::InvalidArgument);
             assert_eq!(aimer_dealloc(0, 1, 1), AbiStatus::InvalidArgument as i32);
-            let state_import = aimer_anteros::AbiResult::from_packed(aimer_import_state(0, 0)).unwrap();
+            let state_import =
+                aimer_anteros::AbiResult::from_packed(aimer_import_state(0, 0)).unwrap();
             assert_eq!(state_import.status(), AbiStatus::InvalidArgument);
         }
     }
@@ -710,8 +730,9 @@ mod tests {
 
         #[test]
         fn compiled_guest_runs_manifest_widget_callback_and_state_transfer_through_anteros() {
-            let artifact = std::env::var_os("AIMER_WASM_GUEST_FIXTURE")
-                .expect("AIMER_WASM_GUEST_FIXTURE must name the compiled stateful_guest.wasm artifact");
+            let artifact = std::env::var_os("AIMER_WASM_GUEST_FIXTURE").expect(
+                "AIMER_WASM_GUEST_FIXTURE must name the compiled stateful_guest.wasm artifact",
+            );
             let module = fs::read(artifact).unwrap();
             let runtime = Runtime::new(
                 RuntimeConfig::new()
@@ -723,7 +744,10 @@ mod tests {
             );
             let mut active = runtime.instantiate(&module).unwrap();
 
-            assert_eq!(active.manifest(LIMITS).unwrap().view().program_id(), PROGRAM_ID);
+            assert_eq!(
+                active.manifest(LIMITS).unwrap().view().program_id(),
+                PROGRAM_ID
+            );
             assert_eq!(active.build(LIMITS).unwrap().view().document_revision(), 0);
 
             let event = CallbackEvent::new(
@@ -754,7 +778,10 @@ mod tests {
             let migrated = candidate.migrate_state(state.as_bytes(), LIMITS).unwrap();
             assert_eq!(migrated.as_bytes(), state.as_bytes());
             candidate.import_state(state.as_bytes(), LIMITS).unwrap();
-            assert_eq!(candidate.build(LIMITS).unwrap().view().document_revision(), 1);
+            assert_eq!(
+                candidate.build(LIMITS).unwrap().view().document_revision(),
+                1
+            );
         }
     }
 }

@@ -7,8 +7,8 @@ use ash::vk;
 use super::*;
 
 mod copy;
-pub(super) use copy::{copy_buffer_to_texture, copy_texture_to_buffer, copy_texture_to_texture};
 use super::pipeline::VulkanRenderPassObject;
+pub(super) use copy::{copy_buffer_to_texture, copy_texture_to_buffer, copy_texture_to_texture};
 
 pub(super) struct PendingBufferUpload {
     pub(super) staging: VulkanBuffer,
@@ -64,9 +64,15 @@ impl VulkanCommandEncoder {
         collect_finished(&shared);
         let pool_info = vk::CommandPoolCreateInfo::default()
             .queue_family_index(shared.graphics_family)
-            .flags(vk::CommandPoolCreateFlags::TRANSIENT | vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
+            .flags(
+                vk::CommandPoolCreateFlags::TRANSIENT
+                    | vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER,
+            );
         let pool = unsafe {
-            shared.core.device.create_command_pool(&pool_info, None)
+            shared
+                .core
+                .device
+                .create_command_pool(&pool_info, None)
                 .expect("create Vulkan command pool")
         };
         let allocate_info = vk::CommandBufferAllocateInfo::default()
@@ -74,13 +80,19 @@ impl VulkanCommandEncoder {
             .level(vk::CommandBufferLevel::PRIMARY)
             .command_buffer_count(1);
         let raw = unsafe {
-            shared.core.device.allocate_command_buffers(&allocate_info)
+            shared
+                .core
+                .device
+                .allocate_command_buffers(&allocate_info)
                 .expect("allocate Vulkan command buffer")[0]
         };
         let begin = vk::CommandBufferBeginInfo::default()
             .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
         unsafe {
-            shared.core.device.begin_command_buffer(raw, &begin)
+            shared
+                .core
+                .device
+                .begin_command_buffer(raw, &begin)
                 .expect("begin Vulkan command buffer");
         }
         let _ = label;
@@ -127,7 +139,11 @@ impl VulkanCommandEncoder {
                 &[vk::BufferCopy {
                     src_offset: 0,
                     dst_offset: upload.offset,
-                    size: upload.staging.0.size.min(upload.destination.0.size.saturating_sub(upload.offset)),
+                    size: upload
+                        .staging
+                        .0
+                        .size
+                        .min(upload.destination.0.size.saturating_sub(upload.offset)),
                 }],
             );
         }
@@ -157,14 +173,21 @@ impl VulkanCommandEncoder {
             .image_offset(vk::Offset3D {
                 x: upload.origin.x as i32,
                 y: upload.origin.y as i32,
-                z: if matches!(upload.destination.0.size.2, 1) { 0 } else { upload.origin.z as i32 },
+                z: if matches!(upload.destination.0.size.2, 1) {
+                    0
+                } else {
+                    upload.origin.z as i32
+                },
             })
             .image_extent(vk::Extent3D {
                 width: upload.extent.width,
                 height: upload.extent.height,
-                depth: if upload.destination.0.size.2 > 1 && upload.extent.depth_or_array_layers > 1 {
+                depth: if upload.destination.0.size.2 > 1 && upload.extent.depth_or_array_layers > 1
+                {
                     upload.extent.depth_or_array_layers
-                } else { 1 },
+                } else {
+                    1
+                },
             });
         unsafe {
             self.shared.core.device.cmd_pipeline_barrier(
@@ -191,7 +214,12 @@ impl VulkanCommandEncoder {
                 &[region],
             );
         }
-        let final_layout = if upload.destination.0.usage.contains(&TextureUsage::TextureBinding) {
+        let final_layout = if upload
+            .destination
+            .0
+            .usage
+            .contains(&TextureUsage::TextureBinding)
+        {
             vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
         } else {
             vk::ImageLayout::GENERAL
@@ -235,13 +263,28 @@ impl VulkanCommandEncoder {
     }
 
     fn current_layout(&self, texture: &VulkanTexture) -> vk::ImageLayout {
-        self.layouts.iter().rev().find_map(|(candidate, layout)| {
-            Arc::ptr_eq(&candidate.0, &texture.0).then_some(*layout)
-        }).unwrap_or_else(|| *texture.0.layout.lock().expect("Vulkan image layout mutex is not poisoned"))
+        self.layouts
+            .iter()
+            .rev()
+            .find_map(|(candidate, layout)| {
+                Arc::ptr_eq(&candidate.0, &texture.0).then_some(*layout)
+            })
+            .unwrap_or_else(|| {
+                *texture
+                    .0
+                    .layout
+                    .lock()
+                    .expect("Vulkan image layout mutex is not poisoned")
+            })
     }
 
     fn set_layout(&mut self, texture: &VulkanTexture, layout: vk::ImageLayout) {
-        if let Some((_, current)) = self.layouts.iter_mut().rev().find(|(candidate, _)| Arc::ptr_eq(&candidate.0, &texture.0)) {
+        if let Some((_, current)) = self
+            .layouts
+            .iter_mut()
+            .rev()
+            .find(|(candidate, _)| Arc::ptr_eq(&candidate.0, &texture.0))
+        {
             *current = layout;
         } else {
             self.layouts.push((texture.clone(), layout));
@@ -290,17 +333,30 @@ impl VulkanCommandEncoder {
 
     pub(super) fn submit_with_uploads(mut self, mut uploads: VulkanCommandEncoder) {
         unsafe {
-            uploads.shared.core.device.end_command_buffer(uploads.raw)
+            uploads
+                .shared
+                .core
+                .device
+                .end_command_buffer(uploads.raw)
                 .expect("end Vulkan upload command buffer");
-            self.shared.core.device.end_command_buffer(self.raw)
+            self.shared
+                .core
+                .device
+                .end_command_buffer(self.raw)
                 .expect("end Vulkan render command buffer");
         }
         let semaphore = unsafe {
-            self.shared.core.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
+            self.shared
+                .core
+                .device
+                .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
                 .expect("create Vulkan upload dependency semaphore")
         };
         let fence = unsafe {
-            self.shared.core.device.create_fence(&vk::FenceCreateInfo::default(), None)
+            self.shared
+                .core
+                .device
+                .create_fence(&vk::FenceCreateInfo::default(), None)
                 .expect("create Vulkan render submission fence")
         };
         let upload_buffers = [uploads.raw];
@@ -316,25 +372,48 @@ impl VulkanCommandEncoder {
             .wait_dst_stage_mask(&render_wait_stages)
             .command_buffers(&render_buffers);
         let submits = [upload_submit, render_submit];
-        let queue_guard = self.shared.queue_lock.lock().expect("Vulkan graphics queue mutex is not poisoned");
-        let result = unsafe { self.shared.core.device.queue_submit(self.shared.graphics_queue, &submits, fence) };
+        let queue_guard = self
+            .shared
+            .queue_lock
+            .lock()
+            .expect("Vulkan graphics queue mutex is not poisoned");
+        let result = unsafe {
+            self.shared
+                .core
+                .device
+                .queue_submit(self.shared.graphics_queue, &submits, fence)
+        };
         drop(queue_guard);
         if let Err(error) = result {
             unsafe {
                 self.shared.core.device.destroy_semaphore(semaphore, None);
                 self.shared.core.device.destroy_fence(fence, None);
-                self.shared.core.device.destroy_command_pool(uploads.pool, None);
-                self.shared.core.device.destroy_command_pool(self.pool, None);
+                self.shared
+                    .core
+                    .device
+                    .destroy_command_pool(uploads.pool, None);
+                self.shared
+                    .core
+                    .device
+                    .destroy_command_pool(self.pool, None);
             }
             uploads.submitted = true;
             self.submitted = true;
             panic!("submit Vulkan upload and render command buffers: {error:?}");
         }
         for (texture, layout) in &uploads.layouts {
-            *texture.0.layout.lock().expect("Vulkan image layout mutex is not poisoned") = *layout;
+            *texture
+                .0
+                .layout
+                .lock()
+                .expect("Vulkan image layout mutex is not poisoned") = *layout;
         }
         for (texture, layout) in &self.layouts {
-            *texture.0.layout.lock().expect("Vulkan image layout mutex is not poisoned") = *layout;
+            *texture
+                .0
+                .layout
+                .lock()
+                .expect("Vulkan image layout mutex is not poisoned") = *layout;
         }
         let upload_pool = std::mem::replace(&mut uploads.pool, vk::CommandPool::null());
         let render_pool = std::mem::replace(&mut self.pool, vk::CommandPool::null());
@@ -342,13 +421,17 @@ impl VulkanCommandEncoder {
         retained.append(&mut self.retained);
         uploads.submitted = true;
         self.submitted = true;
-        self.shared.in_flight.lock().expect("Vulkan in-flight mutex is not poisoned").push(InFlight {
-            core: self.shared.core.clone(),
-            pools: vec![upload_pool, render_pool],
-            fence,
-            semaphores: vec![semaphore],
-            _retained: retained,
-        });
+        self.shared
+            .in_flight
+            .lock()
+            .expect("Vulkan in-flight mutex is not poisoned")
+            .push(InFlight {
+                core: self.shared.core.clone(),
+                pools: vec![upload_pool, render_pool],
+                fence,
+                semaphores: vec![semaphore],
+                _retained: retained,
+            });
         collect_finished(&self.shared);
     }
 
@@ -359,11 +442,17 @@ impl VulkanCommandEncoder {
         retained_semaphores: Vec<vk::Semaphore>,
     ) {
         unsafe {
-            self.shared.core.device.end_command_buffer(self.raw)
+            self.shared
+                .core
+                .device
+                .end_command_buffer(self.raw)
                 .expect("end Vulkan command buffer");
         }
         let fence = unsafe {
-            self.shared.core.device.create_fence(&vk::FenceCreateInfo::default(), None)
+            self.shared
+                .core
+                .device
+                .create_fence(&vk::FenceCreateInfo::default(), None)
                 .expect("create Vulkan submission fence")
         };
         let command_buffers = [self.raw];
@@ -372,14 +461,23 @@ impl VulkanCommandEncoder {
         let signal_semaphores = signal_semaphore.into_iter().collect::<Vec<_>>();
         let mut submit = vk::SubmitInfo::default().command_buffers(&command_buffers);
         if !wait_semaphores.is_empty() {
-            submit = submit.wait_semaphores(&wait_semaphores).wait_dst_stage_mask(&wait_stages);
+            submit = submit
+                .wait_semaphores(&wait_semaphores)
+                .wait_dst_stage_mask(&wait_stages);
         }
         if !signal_semaphores.is_empty() {
             submit = submit.signal_semaphores(&signal_semaphores);
         }
-        let queue_lock = self.shared.queue_lock.lock().expect("Vulkan graphics queue mutex is not poisoned");
+        let queue_lock = self
+            .shared
+            .queue_lock
+            .lock()
+            .expect("Vulkan graphics queue mutex is not poisoned");
         let result = unsafe {
-            self.shared.core.device.queue_submit(self.shared.graphics_queue, &[submit], fence)
+            self.shared
+                .core
+                .device
+                .queue_submit(self.shared.graphics_queue, &[submit], fence)
         };
         drop(queue_lock);
         if let Err(error) = result {
@@ -388,24 +486,35 @@ impl VulkanCommandEncoder {
                     self.shared.core.device.destroy_semaphore(semaphore, None);
                 }
                 self.shared.core.device.destroy_fence(fence, None);
-                self.shared.core.device.destroy_command_pool(self.pool, None);
+                self.shared
+                    .core
+                    .device
+                    .destroy_command_pool(self.pool, None);
             }
             self.submitted = true;
             panic!("submit Vulkan command buffer: {error:?}");
         }
         for (texture, layout) in &self.layouts {
-            *texture.0.layout.lock().expect("Vulkan image layout mutex is not poisoned") = *layout;
+            *texture
+                .0
+                .layout
+                .lock()
+                .expect("Vulkan image layout mutex is not poisoned") = *layout;
         }
         let pool = std::mem::replace(&mut self.pool, vk::CommandPool::null());
         let retained = std::mem::take(&mut self.retained);
         self.submitted = true;
-        self.shared.in_flight.lock().expect("Vulkan in-flight mutex is not poisoned").push(InFlight {
-            core: self.shared.core.clone(),
-            pools: vec![pool],
-            fence,
-            semaphores: retained_semaphores,
-            _retained: retained,
-        });
+        self.shared
+            .in_flight
+            .lock()
+            .expect("Vulkan in-flight mutex is not poisoned")
+            .push(InFlight {
+                core: self.shared.core.clone(),
+                pools: vec![pool],
+                fence,
+                semaphores: retained_semaphores,
+                _retained: retained,
+            });
         collect_finished(&self.shared);
     }
 }
@@ -413,15 +522,25 @@ impl VulkanCommandEncoder {
 impl Drop for VulkanCommandEncoder {
     fn drop(&mut self) {
         if !self.submitted && self.pool != vk::CommandPool::null() {
-            unsafe { self.shared.core.device.destroy_command_pool(self.pool, None) };
+            unsafe {
+                self.shared
+                    .core
+                    .device
+                    .destroy_command_pool(self.pool, None)
+            };
         }
     }
 }
 
 impl Drop for VulkanShared {
     fn drop(&mut self) {
-        unsafe { let _ = self.core.device.device_wait_idle(); }
-        let mut in_flight = self.in_flight.lock().expect("Vulkan in-flight mutex is not poisoned");
+        unsafe {
+            let _ = self.core.device.device_wait_idle();
+        }
+        let mut in_flight = self
+            .in_flight
+            .lock()
+            .expect("Vulkan in-flight mutex is not poisoned");
         for finished in in_flight.drain(..) {
             unsafe {
                 finished.core.device.destroy_fence(finished.fence, None);
@@ -449,8 +568,16 @@ impl<'a> GpuRenderPass<VulkanBackend> for VulkanRenderPass<'a> {
         self.encoder.retain((*pipeline).clone());
     }
 
-    fn set_bind_group(&mut self, index: u32, bind_group: &VulkanBindGroup, dynamic_offsets: &[u32]) {
-        let pipeline = self.pipeline.as_ref().expect("set a Vulkan pipeline before binding groups");
+    fn set_bind_group(
+        &mut self,
+        index: u32,
+        bind_group: &VulkanBindGroup,
+        dynamic_offsets: &[u32],
+    ) {
+        let pipeline = self
+            .pipeline
+            .as_ref()
+            .expect("set a Vulkan pipeline before binding groups");
         let sets = [bind_group.0.raw];
         unsafe {
             self.encoder.shared.core.device.cmd_bind_descriptor_sets(
@@ -468,7 +595,14 @@ impl<'a> GpuRenderPass<VulkanBackend> for VulkanRenderPass<'a> {
     fn set_vertex_buffer(&mut self, slot: u32, buffer: &VulkanBuffer, offset: u64) {
         let buffers = [buffer.0.raw];
         let offsets = [offset];
-        unsafe { self.encoder.shared.core.device.cmd_bind_vertex_buffers(self.encoder.raw, slot, &buffers, &offsets) };
+        unsafe {
+            self.encoder.shared.core.device.cmd_bind_vertex_buffers(
+                self.encoder.raw,
+                slot,
+                &buffers,
+                &offsets,
+            )
+        };
         self.encoder.retain((*buffer).clone());
     }
 
@@ -477,19 +611,35 @@ impl<'a> GpuRenderPass<VulkanBackend> for VulkanRenderPass<'a> {
             IndexFormat::Uint16 => vk::IndexType::UINT16,
             IndexFormat::Uint32 => vk::IndexType::UINT32,
         };
-        unsafe { self.encoder.shared.core.device.cmd_bind_index_buffer(self.encoder.raw, buffer.0.raw, offset, format) };
+        unsafe {
+            self.encoder.shared.core.device.cmd_bind_index_buffer(
+                self.encoder.raw,
+                buffer.0.raw,
+                offset,
+                format,
+            )
+        };
         self.encoder.retain((*buffer).clone());
     }
 
     fn set_scissor_rect(&mut self, x: u32, y: u32, width: u32, height: u32) {
         let scissor = [vk::Rect2D {
-            offset: vk::Offset2D { x: x.min(i32::MAX as u32) as i32, y: y.min(i32::MAX as u32) as i32 },
+            offset: vk::Offset2D {
+                x: x.min(i32::MAX as u32) as i32,
+                y: y.min(i32::MAX as u32) as i32,
+            },
             extent: vk::Extent2D {
                 width: width.min(self.extent.width.saturating_sub(x)),
                 height: height.min(self.extent.height.saturating_sub(y)),
             },
         }];
-        unsafe { self.encoder.shared.core.device.cmd_set_scissor(self.encoder.raw, 0, &scissor) };
+        unsafe {
+            self.encoder
+                .shared
+                .core
+                .device
+                .cmd_set_scissor(self.encoder.raw, 0, &scissor)
+        };
     }
 
     fn draw(&mut self, vertices: Range<u32>, instances: Range<u32>) {
@@ -520,7 +670,13 @@ impl<'a> GpuRenderPass<VulkanBackend> for VulkanRenderPass<'a> {
 
 impl Drop for VulkanRenderPass<'_> {
     fn drop(&mut self) {
-        unsafe { self.encoder.shared.core.device.cmd_end_render_pass(self.encoder.raw) };
+        unsafe {
+            self.encoder
+                .shared
+                .core
+                .device
+                .cmd_end_render_pass(self.encoder.raw)
+        };
     }
 }
 
@@ -544,22 +700,30 @@ pub(super) fn begin_render_pass<'a>(
             vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL
         };
         let initial = encoder.current_layout(texture);
-        attachments.push(vk::AttachmentDescription::default()
-            .format(texture.0.format)
-            .samples(texture_sample_count(texture))
-            .load_op(load_op(color.ops.load))
-            .store_op(store_op(color.ops.store))
-            .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
-            .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
-            .initial_layout(initial)
-            .final_layout(final_layout));
-        color_refs.push(vk::AttachmentReference::default()
-            .attachment((attachments.len() - 1) as u32)
-            .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL));
+        attachments.push(
+            vk::AttachmentDescription::default()
+                .format(texture.0.format)
+                .samples(texture_sample_count(texture))
+                .load_op(load_op(color.ops.load))
+                .store_op(store_op(color.ops.store))
+                .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+                .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+                .initial_layout(initial)
+                .final_layout(final_layout),
+        );
+        color_refs.push(
+            vk::AttachmentReference::default()
+                .attachment((attachments.len() - 1) as u32)
+                .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL),
+        );
         views.push(color.view.0.raw);
         framebuffer_views.push((*color.view).clone());
         clear_values.push(match color.ops.load {
-            LoadOp::Clear(color) => vk::ClearValue { color: vk::ClearColorValue { float32: color.map(|channel| channel as f32) } },
+            LoadOp::Clear(color) => vk::ClearValue {
+                color: vk::ClearColorValue {
+                    float32: color.map(|channel| channel as f32),
+                },
+            },
             LoadOp::Load => vk::ClearValue::default(),
         });
     }
@@ -574,23 +738,29 @@ pub(super) fn begin_render_pass<'a>(
                 vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL
             };
             let initial = encoder.current_layout(texture);
-            attachments.push(vk::AttachmentDescription::default()
-                .format(texture.0.format)
-                .samples(vk::SampleCountFlags::TYPE_1)
-                .load_op(vk::AttachmentLoadOp::DONT_CARE)
-                .store_op(vk::AttachmentStoreOp::STORE)
-                .initial_layout(initial)
-                .final_layout(final_layout));
-            resolve_refs.push(vk::AttachmentReference::default()
-                .attachment((attachments.len() - 1) as u32)
-                .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL));
+            attachments.push(
+                vk::AttachmentDescription::default()
+                    .format(texture.0.format)
+                    .samples(vk::SampleCountFlags::TYPE_1)
+                    .load_op(vk::AttachmentLoadOp::DONT_CARE)
+                    .store_op(vk::AttachmentStoreOp::STORE)
+                    .initial_layout(initial)
+                    .final_layout(final_layout),
+            );
+            resolve_refs.push(
+                vk::AttachmentReference::default()
+                    .attachment((attachments.len() - 1) as u32)
+                    .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL),
+            );
             views.push(resolve_target.0.raw);
             framebuffer_views.push((*resolve_target).clone());
             clear_values.push(vk::ClearValue::default());
         } else {
-            resolve_refs.push(vk::AttachmentReference::default()
-                .attachment(vk::ATTACHMENT_UNUSED)
-                .layout(vk::ImageLayout::UNDEFINED));
+            resolve_refs.push(
+                vk::AttachmentReference::default()
+                    .attachment(vk::ATTACHMENT_UNUSED)
+                    .layout(vk::ImageLayout::UNDEFINED),
+            );
         }
     }
     let depth_ref = desc.depth_stencil_attachment.as_ref().map(|depth| {
@@ -599,10 +769,30 @@ pub(super) fn begin_render_pass<'a>(
         let mut attachment = vk::AttachmentDescription::default()
             .format(texture.0.format)
             .samples(texture_sample_count(texture))
-            .load_op(depth.depth_ops.map(|ops| load_op(ops.load)).unwrap_or(vk::AttachmentLoadOp::DONT_CARE))
-            .store_op(depth.depth_ops.map(|ops| store_op(ops.store)).unwrap_or(vk::AttachmentStoreOp::DONT_CARE))
-            .stencil_load_op(depth.stencil_ops.map(|ops| load_op(ops.load)).unwrap_or(vk::AttachmentLoadOp::DONT_CARE))
-            .stencil_store_op(depth.stencil_ops.map(|ops| store_op(ops.store)).unwrap_or(vk::AttachmentStoreOp::DONT_CARE))
+            .load_op(
+                depth
+                    .depth_ops
+                    .map(|ops| load_op(ops.load))
+                    .unwrap_or(vk::AttachmentLoadOp::DONT_CARE),
+            )
+            .store_op(
+                depth
+                    .depth_ops
+                    .map(|ops| store_op(ops.store))
+                    .unwrap_or(vk::AttachmentStoreOp::DONT_CARE),
+            )
+            .stencil_load_op(
+                depth
+                    .stencil_ops
+                    .map(|ops| load_op(ops.load))
+                    .unwrap_or(vk::AttachmentLoadOp::DONT_CARE),
+            )
+            .stencil_store_op(
+                depth
+                    .stencil_ops
+                    .map(|ops| store_op(ops.store))
+                    .unwrap_or(vk::AttachmentStoreOp::DONT_CARE),
+            )
             .initial_layout(initial)
             .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
         if !depth.depth_ops.is_some() && !depth.stencil_ops.is_some() {
@@ -613,8 +803,20 @@ pub(super) fn begin_render_pass<'a>(
         framebuffer_views.push((*depth.view).clone());
         clear_values.push(vk::ClearValue {
             depth_stencil: vk::ClearDepthStencilValue {
-                depth: depth.depth_ops.map(|ops| match ops.load { LoadOp::Clear(value) => value, LoadOp::Load => 1.0 }).unwrap_or(1.0),
-                stencil: depth.stencil_ops.map(|ops| match ops.load { LoadOp::Clear(value) => value, LoadOp::Load => 0 }).unwrap_or(0),
+                depth: depth
+                    .depth_ops
+                    .map(|ops| match ops.load {
+                        LoadOp::Clear(value) => value,
+                        LoadOp::Load => 1.0,
+                    })
+                    .unwrap_or(1.0),
+                stencil: depth
+                    .stencil_ops
+                    .map(|ops| match ops.load {
+                        LoadOp::Clear(value) => value,
+                        LoadOp::Load => 0,
+                    })
+                    .unwrap_or(0),
             },
         });
         vk::AttachmentReference::default()
@@ -624,7 +826,11 @@ pub(super) fn begin_render_pass<'a>(
     let mut subpass_desc = vk::SubpassDescription::default()
         .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
         .color_attachments(&color_refs);
-    if desc.color_attachments.iter().any(|attachment| attachment.resolve_target.is_some()) {
+    if desc
+        .color_attachments
+        .iter()
+        .any(|attachment| attachment.resolve_target.is_some())
+    {
         subpass_desc = subpass_desc.resolve_attachments(&resolve_refs);
     }
     if let Some(depth_ref) = depth_ref.as_ref() {
@@ -636,15 +842,29 @@ pub(super) fn begin_render_pass<'a>(
             .src_subpass(vk::SUBPASS_EXTERNAL)
             .dst_subpass(0)
             .src_stage_mask(vk::PipelineStageFlags::ALL_COMMANDS)
-            .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS)
+            .dst_stage_mask(
+                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                    | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+            )
             .src_access_mask(vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE)
-            .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_READ | vk::AccessFlags::COLOR_ATTACHMENT_WRITE | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE),
+            .dst_access_mask(
+                vk::AccessFlags::COLOR_ATTACHMENT_READ
+                    | vk::AccessFlags::COLOR_ATTACHMENT_WRITE
+                    | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ
+                    | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+            ),
         vk::SubpassDependency::default()
             .src_subpass(0)
             .dst_subpass(vk::SUBPASS_EXTERNAL)
-            .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS)
+            .src_stage_mask(
+                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                    | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+            )
             .dst_stage_mask(vk::PipelineStageFlags::ALL_COMMANDS)
-            .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE)
+            .src_access_mask(
+                vk::AccessFlags::COLOR_ATTACHMENT_WRITE
+                    | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+            )
             .dst_access_mask(vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE),
     ];
     let render_pass_info = vk::RenderPassCreateInfo::default()
@@ -652,11 +872,22 @@ pub(super) fn begin_render_pass<'a>(
         .subpasses(&subpass)
         .dependencies(&dependencies);
     let render_pass = unsafe {
-        encoder.shared.core.device.create_render_pass(&render_pass_info, None)
+        encoder
+            .shared
+            .core
+            .device
+            .create_render_pass(&render_pass_info, None)
             .expect("create Vulkan render pass")
     };
-    let extent = desc.color_attachments.first().map(|attachment| attachment.view.0.texture.0.size)
-        .or_else(|| desc.depth_stencil_attachment.as_ref().map(|attachment| attachment.view.0.texture.0.size))
+    let extent = desc
+        .color_attachments
+        .first()
+        .map(|attachment| attachment.view.0.texture.0.size)
+        .or_else(|| {
+            desc.depth_stencil_attachment
+                .as_ref()
+                .map(|attachment| attachment.view.0.texture.0.size)
+        })
         .unwrap_or((1, 1, 1));
     let framebuffer_info = vk::FramebufferCreateInfo::default()
         .render_pass(render_pass)
@@ -665,7 +896,11 @@ pub(super) fn begin_render_pass<'a>(
         .height(extent.1.max(1))
         .layers(1);
     let framebuffer = unsafe {
-        encoder.shared.core.device.create_framebuffer(&framebuffer_info, None)
+        encoder
+            .shared
+            .core
+            .device
+            .create_framebuffer(&framebuffer_info, None)
             .expect("create Vulkan framebuffer")
     };
     let pass_object = Arc::new(super::pipeline::VulkanRenderPassObject {
@@ -680,48 +915,86 @@ pub(super) fn begin_render_pass<'a>(
     });
     for attachment in desc.color_attachments {
         let texture = &attachment.view.0.texture;
-        encoder.set_layout(texture, if texture.0.presentable {
-            vk::ImageLayout::PRESENT_SRC_KHR
-        } else if texture.0.usage.contains(&TextureUsage::TextureBinding) {
-            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-        } else {
-            vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL
-        });
-        encoder.retain((*attachment.view).clone());
-        if let Some(resolve) = attachment.resolve_target {
-            let texture = &resolve.0.texture;
-            encoder.set_layout(texture, if texture.0.presentable {
+        encoder.set_layout(
+            texture,
+            if texture.0.presentable {
                 vk::ImageLayout::PRESENT_SRC_KHR
             } else if texture.0.usage.contains(&TextureUsage::TextureBinding) {
                 vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
             } else {
                 vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL
-            });
+            },
+        );
+        encoder.retain((*attachment.view).clone());
+        if let Some(resolve) = attachment.resolve_target {
+            let texture = &resolve.0.texture;
+            encoder.set_layout(
+                texture,
+                if texture.0.presentable {
+                    vk::ImageLayout::PRESENT_SRC_KHR
+                } else if texture.0.usage.contains(&TextureUsage::TextureBinding) {
+                    vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+                } else {
+                    vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL
+                },
+            );
             encoder.retain((*resolve).clone());
         }
     }
     if let Some(depth) = desc.depth_stencil_attachment.as_ref() {
-        encoder.set_layout(&depth.view.0.texture, vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+        encoder.set_layout(
+            &depth.view.0.texture,
+            vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+        );
         encoder.retain((*depth.view).clone());
     }
     let begin_info = vk::RenderPassBeginInfo::default()
         .render_pass(render_pass)
         .framebuffer(framebuffer)
-        .render_area(vk::Rect2D { offset: vk::Offset2D { x: 0, y: 0 }, extent: vk::Extent2D { width: extent.0.max(1), height: extent.1.max(1) } })
+        .render_area(vk::Rect2D {
+            offset: vk::Offset2D { x: 0, y: 0 },
+            extent: vk::Extent2D {
+                width: extent.0.max(1),
+                height: extent.1.max(1),
+            },
+        })
         .clear_values(&clear_values);
     unsafe {
-        encoder.shared.core.device.cmd_begin_render_pass(encoder.raw, &begin_info, vk::SubpassContents::INLINE);
-        encoder.shared.core.device.cmd_set_viewport(encoder.raw, 0, &[vk::Viewport {
-            x: 0.0, y: 0.0, width: extent.0.max(1) as f32, height: extent.1.max(1) as f32, min_depth: 0.0, max_depth: 1.0,
-        }]);
-        encoder.shared.core.device.cmd_set_scissor(encoder.raw, 0, &[vk::Rect2D {
-            offset: vk::Offset2D { x: 0, y: 0 },
-            extent: vk::Extent2D { width: extent.0.max(1), height: extent.1.max(1) },
-        }]);
+        encoder.shared.core.device.cmd_begin_render_pass(
+            encoder.raw,
+            &begin_info,
+            vk::SubpassContents::INLINE,
+        );
+        encoder.shared.core.device.cmd_set_viewport(
+            encoder.raw,
+            0,
+            &[vk::Viewport {
+                x: 0.0,
+                y: 0.0,
+                width: extent.0.max(1) as f32,
+                height: extent.1.max(1) as f32,
+                min_depth: 0.0,
+                max_depth: 1.0,
+            }],
+        );
+        encoder.shared.core.device.cmd_set_scissor(
+            encoder.raw,
+            0,
+            &[vk::Rect2D {
+                offset: vk::Offset2D { x: 0, y: 0 },
+                extent: vk::Extent2D {
+                    width: extent.0.max(1),
+                    height: extent.1.max(1),
+                },
+            }],
+        );
     }
     VulkanRenderPass {
         encoder,
-        extent: vk::Extent2D { width: extent.0.max(1), height: extent.1.max(1) },
+        extent: vk::Extent2D {
+            width: extent.0.max(1),
+            height: extent.1.max(1),
+        },
         pipeline: None,
     }
 }
@@ -740,7 +1013,10 @@ impl Drop for VulkanFramebuffer {
 }
 
 pub(super) fn collect_finished(shared: &Arc<VulkanShared>) {
-    let mut in_flight = shared.in_flight.lock().expect("Vulkan in-flight mutex is not poisoned");
+    let mut in_flight = shared
+        .in_flight
+        .lock()
+        .expect("Vulkan in-flight mutex is not poisoned");
     let mut index = 0;
     while index < in_flight.len() {
         let status = unsafe { shared.core.device.get_fence_status(in_flight[index].fence) };
@@ -762,7 +1038,10 @@ pub(super) fn collect_finished(shared: &Arc<VulkanShared>) {
 }
 
 pub(super) fn collect_all(shared: &Arc<VulkanShared>) {
-    let mut in_flight = shared.in_flight.lock().expect("Vulkan in-flight mutex is not poisoned");
+    let mut in_flight = shared
+        .in_flight
+        .lock()
+        .expect("Vulkan in-flight mutex is not poisoned");
     for finished in in_flight.drain(..) {
         unsafe {
             finished.core.device.destroy_fence(finished.fence, None);
@@ -804,25 +1083,74 @@ fn texture_aspect(format: vk::Format, requested: TextureAspect) -> vk::ImageAspe
 
 fn layout_source(layout: vk::ImageLayout) -> (vk::PipelineStageFlags, vk::AccessFlags) {
     match layout {
-        vk::ImageLayout::UNDEFINED => (vk::PipelineStageFlags::TOP_OF_PIPE, vk::AccessFlags::empty()),
-        vk::ImageLayout::TRANSFER_DST_OPTIMAL => (vk::PipelineStageFlags::TRANSFER, vk::AccessFlags::TRANSFER_WRITE),
-        vk::ImageLayout::TRANSFER_SRC_OPTIMAL => (vk::PipelineStageFlags::TRANSFER, vk::AccessFlags::TRANSFER_READ),
-        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL => (vk::PipelineStageFlags::FRAGMENT_SHADER, vk::AccessFlags::SHADER_READ),
-        vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL => (vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT, vk::AccessFlags::COLOR_ATTACHMENT_READ | vk::AccessFlags::COLOR_ATTACHMENT_WRITE),
-        vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL => (vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS, vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE),
-        vk::ImageLayout::PRESENT_SRC_KHR => (vk::PipelineStageFlags::BOTTOM_OF_PIPE, vk::AccessFlags::MEMORY_READ),
-        _ => (vk::PipelineStageFlags::ALL_COMMANDS, vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE),
+        vk::ImageLayout::UNDEFINED => (
+            vk::PipelineStageFlags::TOP_OF_PIPE,
+            vk::AccessFlags::empty(),
+        ),
+        vk::ImageLayout::TRANSFER_DST_OPTIMAL => (
+            vk::PipelineStageFlags::TRANSFER,
+            vk::AccessFlags::TRANSFER_WRITE,
+        ),
+        vk::ImageLayout::TRANSFER_SRC_OPTIMAL => (
+            vk::PipelineStageFlags::TRANSFER,
+            vk::AccessFlags::TRANSFER_READ,
+        ),
+        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL => (
+            vk::PipelineStageFlags::FRAGMENT_SHADER,
+            vk::AccessFlags::SHADER_READ,
+        ),
+        vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL => (
+            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+            vk::AccessFlags::COLOR_ATTACHMENT_READ | vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+        ),
+        vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL => (
+            vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS
+                | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+            vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ
+                | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+        ),
+        vk::ImageLayout::PRESENT_SRC_KHR => (
+            vk::PipelineStageFlags::BOTTOM_OF_PIPE,
+            vk::AccessFlags::MEMORY_READ,
+        ),
+        _ => (
+            vk::PipelineStageFlags::ALL_COMMANDS,
+            vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE,
+        ),
     }
 }
 
 fn layout_destination(layout: vk::ImageLayout) -> (vk::PipelineStageFlags, vk::AccessFlags) {
     match layout {
-        vk::ImageLayout::TRANSFER_DST_OPTIMAL => (vk::PipelineStageFlags::TRANSFER, vk::AccessFlags::TRANSFER_WRITE),
-        vk::ImageLayout::TRANSFER_SRC_OPTIMAL => (vk::PipelineStageFlags::TRANSFER, vk::AccessFlags::TRANSFER_READ),
-        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL => (vk::PipelineStageFlags::FRAGMENT_SHADER, vk::AccessFlags::SHADER_READ),
-        vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL => (vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT, vk::AccessFlags::COLOR_ATTACHMENT_READ | vk::AccessFlags::COLOR_ATTACHMENT_WRITE),
-        vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL => (vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS, vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE),
-        vk::ImageLayout::PRESENT_SRC_KHR => (vk::PipelineStageFlags::BOTTOM_OF_PIPE, vk::AccessFlags::MEMORY_READ),
-        _ => (vk::PipelineStageFlags::ALL_COMMANDS, vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE),
+        vk::ImageLayout::TRANSFER_DST_OPTIMAL => (
+            vk::PipelineStageFlags::TRANSFER,
+            vk::AccessFlags::TRANSFER_WRITE,
+        ),
+        vk::ImageLayout::TRANSFER_SRC_OPTIMAL => (
+            vk::PipelineStageFlags::TRANSFER,
+            vk::AccessFlags::TRANSFER_READ,
+        ),
+        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL => (
+            vk::PipelineStageFlags::FRAGMENT_SHADER,
+            vk::AccessFlags::SHADER_READ,
+        ),
+        vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL => (
+            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+            vk::AccessFlags::COLOR_ATTACHMENT_READ | vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+        ),
+        vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL => (
+            vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS
+                | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+            vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ
+                | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+        ),
+        vk::ImageLayout::PRESENT_SRC_KHR => (
+            vk::PipelineStageFlags::BOTTOM_OF_PIPE,
+            vk::AccessFlags::MEMORY_READ,
+        ),
+        _ => (
+            vk::PipelineStageFlags::ALL_COMMANDS,
+            vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE,
+        ),
     }
 }

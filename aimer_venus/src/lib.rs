@@ -1,6 +1,8 @@
 #![doc = include_str!("../README.md")]
 
 mod budget;
+mod lifecycle;
+mod panic_hook;
 // The browser has no threads to offload onto, and `requestIdleCallback` plus a
 // budgeted idle phase is what takes its place there.
 #[cfg(not(target_arch = "wasm32"))]
@@ -16,6 +18,8 @@ pub use crate::budget::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use crate::offload::{OffloadPool, Offloaded};
+pub use crate::lifecycle::{Lifecycle, LifecycleSubscription, notify_lifecycle, on_lifecycle};
+pub use crate::panic_hook::install_panic_hook;
 pub use crate::poll_context::PollContext;
 pub use crate::scheduler::{LocalScheduler, is_polling_task};
 pub use crate::task::{Notifier, Phase, ScopeId, TaskId, TaskScope};
@@ -103,7 +107,10 @@ mod frame_overhead {
 
         for _ in 0..8 {
             drive_one_empty_frame(&venus);
-            assert!(!venus.has_ready_work(), "an idle frame claimed to have work");
+            assert!(
+                !venus.has_ready_work(),
+                "an idle frame claimed to have work"
+            );
         }
     }
 }
@@ -131,15 +138,25 @@ mod runtime_spec {
         let venus = Venus::new();
         let seen = Rc::new(Cell::new(None));
 
-        assert!(!crate::is_polling_task(), "nothing is polling before a task runs");
+        assert!(
+            !crate::is_polling_task(),
+            "nothing is polling before a task runs"
+        );
         let observed = seen.clone();
         venus.spawn(async move {
             observed.set(Some(crate::is_polling_task()));
         });
         venus.run_microtasks();
 
-        assert_eq!(seen.get(), Some(true), "the task saw that it was being polled");
-        assert!(!crate::is_polling_task(), "and it is over once the poll returns");
+        assert_eq!(
+            seen.get(),
+            Some(true),
+            "the task saw that it was being polled"
+        );
+        assert!(
+            !crate::is_polling_task(),
+            "and it is over once the poll returns"
+        );
     }
 
     /// The bound the whole design exists to delete: a task captures an `Rc` — a

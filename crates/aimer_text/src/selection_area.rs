@@ -413,11 +413,7 @@ mod tests {
 
     /// A region spanning `0..100` in both axes with one painted participant
     /// holding a single ten-by-twenty glyph box.
-    fn region() -> (
-        SelectionAreaElement,
-        Rc<SelectionSlot>,
-        Rc<TextGeometry>,
-    ) {
+    fn region() -> (SelectionAreaElement, Rc<SelectionSlot>, Rc<TextGeometry>) {
         let window = WindowHandle::headless(winit::dpi::PhysicalSize::new(200, 200), 1.0);
         let session = SelectionSession::new(
             window.clone(),
@@ -427,10 +423,8 @@ mod tests {
         let text: Rc<str> = Rc::from("a");
         let geometry = Rc::new(TextGeometry::new(window));
         let slot = session.register(Rc::clone(&text), Rc::downgrade(&geometry) as _);
-        *geometry.regions.borrow_mut() = vec![TextHitRegion::new(
-            0..1,
-            Bounds::new(0.0, 0.0, 10.0, 20.0),
-        )];
+        *geometry.regions.borrow_mut() =
+            vec![TextHitRegion::new(0..1, Bounds::new(0.0, 0.0, 10.0, 20.0))];
         geometry.bounds.save(1.0, 0.0, 0.0, 10.0, 20.0);
         slot.stamp();
         session.begin_frame();
@@ -613,7 +607,10 @@ mod tests {
         let (region, _slot, _geometry) = region();
         region.session.select_all();
 
-        assert!(region.session.handle_circles().is_none(), "a mouse selection");
+        assert!(
+            region.session.handle_circles().is_none(),
+            "a mouse selection"
+        );
         assert_eq!(
             region.pos_start_end(),
             region.child.pos_start_end(),
@@ -744,9 +741,10 @@ mod tests {
     fn the_press_that_started_the_regions_own_gesture_keeps_the_selection() {
         let (region, slot, _geometry) = region();
         let pointer = PointerKey::new(PointerSource::Mouse, 0);
-        region
-            .session
-            .begin(crate::selection::SelectionPoint::new(Rc::clone(&slot), 0), pointer);
+        region.session.begin(
+            crate::selection::SelectionPoint::new(Rc::clone(&slot), 0),
+            pointer,
+        );
         region.session.extend_to_position(9.0, 10.0, pointer);
         assert_eq!(slot.selected_range(), Some(0..1));
 
@@ -759,11 +757,10 @@ mod tests {
     #[test]
     fn selection_area_publishes_its_derived_property_and_required_child() {
         use aimer_anteros::ChildCardinality;
-        use aimer_widget::portable::PortableWidgetSchema;
         use aimer_widget::RequiredChild;
+        use aimer_widget::portable::PortableWidgetSchema;
 
-        let schema =
-            <super::SelectionArea<RequiredChild> as PortableWidgetSchema>::SCHEMA;
+        let schema = <super::SelectionArea<RequiredChild> as PortableWidgetSchema>::SCHEMA;
 
         assert_eq!(
             schema.widget().canonical_name(),
@@ -785,11 +782,11 @@ mod tests {
     #[test]
     fn selection_area_lowering_retains_color_and_lowers_its_child() {
         use aimer_anteros::WidgetDocumentView;
-        use aimer_widget::portable::{
-            PortableBuildContext, PortableLimits, PortableWidgetLimits, SourceFingerprint,
-            StableId128, PortableWidgetSchema,
-        };
         use aimer_widget::PortableWidget;
+        use aimer_widget::portable::{
+            PortableBuildContext, PortableLimits, PortableWidgetLimits, PortableWidgetSchema,
+            SourceFingerprint, StableId128,
+        };
 
         let mut context = PortableBuildContext::new(
             1,

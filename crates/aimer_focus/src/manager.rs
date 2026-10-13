@@ -359,7 +359,9 @@ impl<Id: Copy + Eq + Hash> FocusManager<Id> {
 
         if target.is_none() {
             for candidate in candidates {
-                if candidate.autofocus && self.autofocus_seen.insert(candidate.id) && target.is_none()
+                if candidate.autofocus
+                    && self.autofocus_seen.insert(candidate.id)
+                    && target.is_none()
                 {
                     target = Some(candidate.clone());
                 }
@@ -571,8 +573,7 @@ mod tests {
         first.request_focus();
         synchronize(&mut manager, &[candidate(1, &first)]);
         second.request_focus();
-        let transition =
-            synchronize(&mut manager, &[candidate(1, &first), candidate(2, &second)]);
+        let transition = synchronize(&mut manager, &[candidate(1, &first), candidate(2, &second)]);
 
         assert!(
             transition
@@ -769,7 +770,11 @@ mod tests {
 
         drop(inner);
         synchronize(&mut manager, &candidates);
-        assert_eq!(manager.focused(), None, "the outer trap still confines focus");
+        assert_eq!(
+            manager.focused(),
+            None,
+            "the outer trap still confines focus"
+        );
 
         drop(outer);
         synchronize(&mut manager, &candidates);

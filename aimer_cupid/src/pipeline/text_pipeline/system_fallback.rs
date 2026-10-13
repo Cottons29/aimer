@@ -120,7 +120,8 @@ struct FallbackStore {
 
 impl FallbackStore {
     fn record_by_id(&self, font_id: FontId) -> Option<&FontRecord> {
-        self.records.get(font_id.checked_sub(SYSTEM_FALLBACK_ID_BASE)? as usize)
+        self.records
+            .get(font_id.checked_sub(SYSTEM_FALLBACK_ID_BASE)? as usize)
     }
 
     /// Returns the id of `face`, registering it when it is seen the first time.
@@ -342,8 +343,13 @@ pub(crate) fn system_primary_font() -> Option<FontRecord> {
         feature = "apple-core-text"
     ))]
     {
-        return fallback_for_codepoint('A', ScriptRequirement::EMPTY, REGULAR_WEIGHT)
-            .filter(|record| record.glyph_index('A').is_some_and(|glyph_id| glyph_id != 0));
+        return fallback_for_codepoint('A', ScriptRequirement::EMPTY, REGULAR_WEIGHT).filter(
+            |record| {
+                record
+                    .glyph_index('A')
+                    .is_some_and(|glyph_id| glyph_id != 0)
+            },
+        );
     }
 
     #[cfg(not(all(
@@ -706,8 +712,7 @@ fn record_decodes_codepoint(record: &FontRecord, codepoint: char) -> bool {
     if record.is_color {
         return true;
     }
-    face
-        .outline(glyph_id)
+    face.outline(glyph_id)
         .ok()
         .flatten()
         .is_some_and(|outline| !outline.contours.is_empty())
@@ -822,13 +827,7 @@ fn resolve_face_for_codepoint(
         for strict_weight in [true, false] {
             for accept_platform in [false, true] {
                 if let Some(face) = candidates.iter().find_map(|source| {
-                    face_drawing(
-                        source,
-                        &required,
-                        weight,
-                        accept_platform,
-                        strict_weight,
-                    )
+                    face_drawing(source, &required, weight, accept_platform, strict_weight)
                 }) {
                     return Some(face);
                 }
@@ -839,13 +838,7 @@ fn resolve_face_for_codepoint(
     for strict_weight in [true, false] {
         for accept_platform in [false, true] {
             if let Some(face) = candidates.iter().find_map(|source| {
-                face_drawing(
-                    source,
-                    &[codepoint],
-                    weight,
-                    accept_platform,
-                    strict_weight,
-                )
+                face_drawing(source, &[codepoint], weight, accept_platform, strict_weight)
             }) {
                 return Some(face);
             }
@@ -903,7 +896,9 @@ fn face_drawing(
         }
         FaceSource::Memory { bytes, .. } => {
             let (collection_index, is_color) =
-                face_in_data_drawing(bytes.as_ref(), required, weight, strict_weight, |_, _| false)?;
+                face_in_data_drawing(bytes.as_ref(), required, weight, strict_weight, |_, _| {
+                    false
+                })?;
             Some(ResolvedFace {
                 source: source.clone(),
                 collection_index,
@@ -938,10 +933,9 @@ fn face_in_data_drawing(
 ) -> Option<(u32, bool)> {
     let mut candidates = Vec::new();
     for collection_index in 0..64 {
-        let Ok(face) = crate::text_pipeline::aimer_font::SfntFace::from_bytes(
-            data,
-            collection_index,
-        ) else {
+        let Ok(face) =
+            crate::text_pipeline::aimer_font::SfntFace::from_bytes(data, collection_index)
+        else {
             break;
         };
         let is_color = face.has_color_tables() || face.has_apple_private_color_tables();
@@ -952,15 +946,9 @@ fn face_in_data_drawing(
             if glyph_id == 0 {
                 return false;
             }
-            let has_outline = face
-                .outline(glyph_id)
-                .ok()
-                .flatten()
-                .is_some()
+            let has_outline = face.outline(glyph_id).ok().flatten().is_some()
                 || face.cff_outline(glyph_id).ok().flatten().is_some();
-            is_color
-                || has_outline
-                || platform_draws(collection_index, glyph_id)
+            is_color || has_outline || platform_draws(collection_index, glyph_id)
         };
         if required.iter().all(draws) {
             let design = face.design_weight().unwrap_or(REGULAR_WEIGHT);
@@ -1000,12 +988,10 @@ mod tests {
     ))]
     #[test]
     fn portable_profile_does_not_resolve_apple_system_faces() {
-        assert!(resolve_face_for_codepoint(
-            '吗',
-            ScriptRequirement::probes('吗'),
-            REGULAR_WEIGHT,
-        )
-        .is_none());
+        assert!(
+            resolve_face_for_codepoint('吗', ScriptRequirement::probes('吗'), REGULAR_WEIGHT,)
+                .is_none()
+        );
     }
 
     /// The `wght` value an emphasized run asks its faces to be designed at.
@@ -1055,12 +1041,8 @@ mod tests {
     #[test]
     fn caches_the_selected_glyph_with_the_stable_face_answer() {
         let requirement = ScriptRequirement::probes('你');
-        let (record, glyph_id) = fallback_glyph_for_codepoint(
-            '你',
-            requirement,
-            REGULAR_WEIGHT,
-        )
-        .expect("the platform fallback must expose a drawable Han glyph");
+        let (record, glyph_id) = fallback_glyph_for_codepoint('你', requirement, REGULAR_WEIGHT)
+            .expect("the platform fallback must expose a drawable Han glyph");
         assert_ne!(glyph_id, 0);
 
         let store = STORE.read().expect("fallback store read lock");
@@ -1323,8 +1305,12 @@ mod tests {
             .chars()
             .filter(|codepoint| !script_probes(*codepoint).is_empty())
             .map(|codepoint| {
-                let record = fallback_for_codepoint(codepoint, ScriptRequirement::probes(codepoint), REGULAR_WEIGHT)
-                    .expect("han must resolve");
+                let record = fallback_for_codepoint(
+                    codepoint,
+                    ScriptRequirement::probes(codepoint),
+                    REGULAR_WEIGHT,
+                )
+                .expect("han must resolve");
                 (codepoint, record.id, record.collection_index)
             })
             .collect();
@@ -1365,12 +1351,9 @@ mod tests {
             "apple systems always ship a japanese face carrying 你 but not 吗"
         );
 
-        let chosen = resolve_face_for_codepoint(
-            '你',
-            ScriptRequirement::probes('你'),
-            REGULAR_WEIGHT,
-        )
-        .expect("han must resolve");
+        let chosen =
+            resolve_face_for_codepoint('你', ScriptRequirement::probes('你'), REGULAR_WEIGHT)
+                .expect("han must resolve");
         let FaceSource::File(chosen_path) = &chosen.source else {
             return; // A reassembled face is never one of the partial files.
         };
@@ -1414,8 +1397,8 @@ mod tests {
     ))]
     #[test]
     fn the_han_face_draws_the_probes_it_was_chosen_for() {
-        let record =
-            fallback_for_codepoint('你', ScriptRequirement::probes('你'), REGULAR_WEIGHT).expect("han must resolve");
+        let record = fallback_for_codepoint('你', ScriptRequirement::probes('你'), REGULAR_WEIGHT)
+            .expect("han must resolve");
 
         assert!(record_draws_all(&record, script_probes('你')));
     }
@@ -1438,8 +1421,12 @@ mod tests {
     #[test]
     fn resolved_faces_can_actually_be_rasterized() {
         for codepoint in ['你', '好', '！', '，'] {
-            let record = fallback_for_codepoint(codepoint, ScriptRequirement::probes(codepoint), REGULAR_WEIGHT)
-                .expect("must resolve");
+            let record = fallback_for_codepoint(
+                codepoint,
+                ScriptRequirement::probes(codepoint),
+                REGULAR_WEIGHT,
+            )
+            .expect("must resolve");
             let glyph_id = record
                 .glyph_index(codepoint)
                 .expect("a resolved face maps the codepoint");

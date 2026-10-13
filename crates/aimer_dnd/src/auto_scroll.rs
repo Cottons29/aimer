@@ -33,12 +33,7 @@ pub struct ScrollViewport {
 impl ScrollViewport {
     /// Creates a viewport snapshot.
     #[inline]
-    pub const fn new(
-        origin: Vec2d,
-        size: Vec2d,
-        offset: Vec2d,
-        max_offset: Vec2d,
-    ) -> Self {
+    pub const fn new(origin: Vec2d, size: Vec2d, offset: Vec2d, max_offset: Vec2d) -> Self {
         Self {
             origin,
             size,
@@ -320,10 +315,8 @@ impl AutoScrollPolicy {
 
         let seconds = elapsed.min(self.max_frame_interval).as_secs_f32();
         let mut delta = Vec2d {
-            x: (velocity.x * seconds)
-                .clamp(-self.max_delta_per_tick, self.max_delta_per_tick),
-            y: (velocity.y * seconds)
-                .clamp(-self.max_delta_per_tick, self.max_delta_per_tick),
+            x: (velocity.x * seconds).clamp(-self.max_delta_per_tick, self.max_delta_per_tick),
+            y: (velocity.y * seconds).clamp(-self.max_delta_per_tick, self.max_delta_per_tick),
         };
         let offset = viewport.clamped_offset();
         delta.x = delta.x.clamp(-offset.x, viewport.max_offset.x - offset.x);
@@ -378,10 +371,7 @@ impl AutoScrollPolicy {
             AutoScrollEdges::TOP,
             AutoScrollEdges::BOTTOM,
         );
-        (
-            Vec2d { x, y },
-            x_edges | y_edges,
-        )
+        (Vec2d { x, y }, x_edges | y_edges)
     }
 }
 
@@ -532,7 +522,10 @@ mod tests {
         ScrollViewport::new(
             Vec2d { x: 10.0, y: 20.0 },
             Vec2d { x: 300.0, y: 200.0 },
-            Vec2d { x: 0.0, y: offset_y },
+            Vec2d {
+                x: 0.0,
+                y: offset_y,
+            },
             Vec2d { x: 0.0, y: 800.0 },
         )
     }
@@ -553,12 +546,7 @@ mod tests {
             policy.velocity(Vec2d { x: 150.0, y: 179.0 }, view),
             Vec2d::ZERO
         );
-        assert!(
-            policy
-                .velocity(Vec2d { x: 150.0, y: 181.0 }, view)
-                .y
-                > 0.0
-        );
+        assert!(policy.velocity(Vec2d { x: 150.0, y: 181.0 }, view).y > 0.0);
     }
 
     #[test]

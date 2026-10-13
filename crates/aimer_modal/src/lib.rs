@@ -12,8 +12,7 @@ pub use animation::ModalAnimation;
 pub use floating::Floating;
 pub use host::{
     ModalController, ModalHandle, ModalHost, ModalId, OverlayContentHandle, OverlayLayer,
-    OverlayLayerHandle,
-    OverlayPainter, prepare_retained_render_tree,
+    OverlayLayerHandle, OverlayPainter, prepare_retained_render_tree,
 };
 pub use modal::Modal;
 pub use placement::{

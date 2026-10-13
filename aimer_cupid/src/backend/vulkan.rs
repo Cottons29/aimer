@@ -41,7 +41,10 @@ pub struct VulkanError {
 
 impl VulkanError {
     fn new(operation: &'static str, message: impl Into<String>) -> Self {
-        Self { operation, message: message.into() }
+        Self {
+            operation,
+            message: message.into(),
+        }
     }
 }
 
@@ -209,7 +212,11 @@ impl VulkanBackend {
     pub fn new_headless() -> Result<Self, VulkanError> {
         let owner = create_instance_owner(&[], false)?;
         let (core, graphics_family, _) = VulkanCore::create(owner, None)?;
-        Ok(Self::from_shared(VulkanShared::new(core, graphics_family, None)))
+        Ok(Self::from_shared(VulkanShared::new(
+            core,
+            graphics_family,
+            None,
+        )))
     }
 
     /// Creates a Vulkan backend and presentation surface for a window.
@@ -268,7 +275,10 @@ impl VulkanBackend {
             .usage(usage)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
         let raw = unsafe {
-            self.shared.core.device.create_buffer(&create_info, None)
+            self.shared
+                .core
+                .device
+                .create_buffer(&create_info, None)
                 .expect("create Vulkan buffer")
         };
         let requirements = unsafe { self.shared.core.device.get_buffer_memory_requirements(raw) };
@@ -280,7 +290,10 @@ impl VulkanBackend {
                 vk::MemoryPropertyFlags::HOST_COHERENT | vk::MemoryPropertyFlags::HOST_CACHED,
             )
         } else {
-            (vk::MemoryPropertyFlags::DEVICE_LOCAL, vk::MemoryPropertyFlags::DEVICE_LOCAL)
+            (
+                vk::MemoryPropertyFlags::DEVICE_LOCAL,
+                vk::MemoryPropertyFlags::DEVICE_LOCAL,
+            )
         };
         let allocation = self.shared.allocator.allocate(
             requirements,
@@ -289,7 +302,10 @@ impl VulkanBackend {
             ResourceClass::Linear,
         );
         unsafe {
-            self.shared.core.device.bind_buffer_memory(raw, allocation.memory(), allocation.offset())
+            self.shared
+                .core
+                .device
+                .bind_buffer_memory(raw, allocation.memory(), allocation.offset())
                 .expect("bind Vulkan buffer memory");
         }
         VulkanBuffer(Arc::new(VulkanBufferInner {
@@ -325,14 +341,21 @@ impl VulkanBackend {
                 depth: desc.size.2.max(1),
             })
             .mip_levels(desc.mip_level_count.max(1))
-            .array_layers(if desc.dimension == TextureDimension::D3 { 1 } else { desc.size.2.max(1) })
+            .array_layers(if desc.dimension == TextureDimension::D3 {
+                1
+            } else {
+                desc.size.2.max(1)
+            })
             .samples(sample_count(desc.sample_count))
             .tiling(vk::ImageTiling::OPTIMAL)
             .usage(texture_usage_flags(&desc.usage, desc.format))
             .sharing_mode(vk::SharingMode::EXCLUSIVE)
             .initial_layout(vk::ImageLayout::UNDEFINED);
         let raw = unsafe {
-            self.shared.core.device.create_image(&create_info, None)
+            self.shared
+                .core
+                .device
+                .create_image(&create_info, None)
                 .expect("create Vulkan image")
         };
         let requirements = unsafe { self.shared.core.device.get_image_memory_requirements(raw) };
@@ -343,7 +366,10 @@ impl VulkanBackend {
             ResourceClass::OptimalImage,
         );
         unsafe {
-            self.shared.core.device.bind_image_memory(raw, allocation.memory(), allocation.offset())
+            self.shared
+                .core
+                .device
+                .bind_image_memory(raw, allocation.memory(), allocation.offset())
                 .expect("bind Vulkan image memory");
         }
         VulkanTexture(Arc::new(VulkanTextureInner {
@@ -375,18 +401,24 @@ impl VulkanCore {
         let mut selected = None;
         for physical_device in physical_devices {
             let properties = unsafe { instance.get_physical_device_properties(physical_device) };
-            let families = unsafe { instance.get_physical_device_queue_family_properties(physical_device) };
-            let graphics = families.iter().position(|family| family.queue_count > 0 && family.queue_flags.contains(vk::QueueFlags::GRAPHICS));
+            let families =
+                unsafe { instance.get_physical_device_queue_family_properties(physical_device) };
+            let graphics = families.iter().position(|family| {
+                family.queue_count > 0 && family.queue_flags.contains(vk::QueueFlags::GRAPHICS)
+            });
             let Some(graphics) = graphics else { continue };
             let present = if let Some(surface) = surface {
                 (0..families.len()).find(|index| {
                     families[*index].queue_count > 0
                         && unsafe {
-                            surface.loader.get_physical_device_surface_support(
-                                physical_device,
-                                *index as u32,
-                                surface.raw,
-                            ).unwrap_or(false)
+                            surface
+                                .loader
+                                .get_physical_device_surface_support(
+                                    physical_device,
+                                    *index as u32,
+                                    surface.raw,
+                                )
+                                .unwrap_or(false)
                         }
                 })
             } else {
@@ -397,9 +429,14 @@ impl VulkanCore {
             }
             let mut swapchain_maintenance1_enabled = false;
             if let Some(surface) = surface {
-                let extensions = unsafe {
-                    instance.enumerate_device_extension_properties(physical_device)
-                }.map_err(|error| VulkanError::new("enumerate Vulkan device extensions", format!("{error:?}")))?;
+                let extensions =
+                    unsafe { instance.enumerate_device_extension_properties(physical_device) }
+                        .map_err(|error| {
+                            VulkanError::new(
+                                "enumerate Vulkan device extensions",
+                                format!("{error:?}"),
+                            )
+                        })?;
                 let has_swapchain = extensions.iter().any(|property| unsafe {
                     CStr::from_ptr(property.extension_name.as_ptr()) == ash::khr::swapchain::NAME
                 });
@@ -411,11 +448,12 @@ impl VulkanCore {
                     && extensions.iter().any(|property| unsafe {
                         CStr::from_ptr(property.extension_name.as_ptr())
                             == ash::ext::swapchain_maintenance1::NAME
-                });
+                    });
                 if has_swapchain_maintenance1 {
-                    let mut maintenance_features = vk::PhysicalDeviceSwapchainMaintenance1FeaturesEXT::default();
-                    let mut features = vk::PhysicalDeviceFeatures2::default()
-                        .push_next(&mut maintenance_features);
+                    let mut maintenance_features =
+                        vk::PhysicalDeviceSwapchainMaintenance1FeaturesEXT::default();
+                    let mut features =
+                        vk::PhysicalDeviceFeatures2::default().push_next(&mut maintenance_features);
                     unsafe {
                         properties2_loader
                             .as_ref()
@@ -449,14 +487,16 @@ impl VulkanCore {
                 });
             }
         }
-        let selected = selected.ok_or_else(|| VulkanError::new(
-            "select Vulkan device",
-            if surface.is_some() {
-                "no device supports graphics, presentation, and VK_KHR_swapchain"
-            } else {
-                "no Vulkan graphics device is available"
-            },
-        ))?;
+        let selected = selected.ok_or_else(|| {
+            VulkanError::new(
+                "select Vulkan device",
+                if surface.is_some() {
+                    "no device supports graphics, presentation, and VK_KHR_swapchain"
+                } else {
+                    "no Vulkan graphics device is available"
+                },
+            )
+        })?;
         let mut unique_families = vec![selected.graphics_family];
         if let Some(present) = selected.present_family
             && !unique_families.contains(&present)
@@ -464,12 +504,16 @@ impl VulkanCore {
             unique_families.push(present);
         }
         let priorities = [1.0_f32];
-        let queue_infos: Vec<_> = unique_families.iter().map(|family| {
-            vk::DeviceQueueCreateInfo::default()
-                .queue_family_index(*family)
-                .queue_priorities(&priorities)
-        }).collect();
-        let available_features = unsafe { instance.get_physical_device_features(selected.physical_device) };
+        let queue_infos: Vec<_> = unique_families
+            .iter()
+            .map(|family| {
+                vk::DeviceQueueCreateInfo::default()
+                    .queue_family_index(*family)
+                    .queue_priorities(&priorities)
+            })
+            .collect();
+        let available_features =
+            unsafe { instance.get_physical_device_features(selected.physical_device) };
         let enabled_features = vk::PhysicalDeviceFeatures::default()
             .sampler_anisotropy(available_features.sampler_anisotropy == vk::TRUE)
             .depth_clamp(available_features.depth_clamp == vk::TRUE)
@@ -482,8 +526,9 @@ impl VulkanCore {
         if selected.swapchain_maintenance1_enabled {
             extension_names.push(ash::ext::swapchain_maintenance1::NAME.as_ptr());
         }
-        let mut maintenance_features = vk::PhysicalDeviceSwapchainMaintenance1FeaturesEXT::default()
-            .swapchain_maintenance1(selected.swapchain_maintenance1_enabled);
+        let mut maintenance_features =
+            vk::PhysicalDeviceSwapchainMaintenance1FeaturesEXT::default()
+                .swapchain_maintenance1(selected.swapchain_maintenance1_enabled);
         let mut device_info = vk::DeviceCreateInfo::default()
             .queue_create_infos(&queue_infos)
             .enabled_extension_names(&extension_names)
@@ -491,9 +536,11 @@ impl VulkanCore {
         if selected.swapchain_maintenance1_enabled {
             device_info = device_info.push_next(&mut maintenance_features);
         }
-        let device = unsafe { instance.create_device(selected.physical_device, &device_info, None) }
-            .map_err(|error| VulkanError::new("create Vulkan device", format!("{error:?}")))?;
-        let memory_properties = unsafe { instance.get_physical_device_memory_properties(selected.physical_device) };
+        let device =
+            unsafe { instance.create_device(selected.physical_device, &device_info, None) }
+                .map_err(|error| VulkanError::new("create Vulkan device", format!("{error:?}")))?;
+        let memory_properties =
+            unsafe { instance.get_physical_device_memory_properties(selected.physical_device) };
         Ok((
             Arc::new(Self {
                 _owner: owner,
@@ -507,7 +554,6 @@ impl VulkanCore {
             selected.present_family,
         ))
     }
-
 }
 
 struct SelectedDevice {
@@ -544,7 +590,8 @@ impl Drop for InstanceOwner {
 impl VulkanShared {
     fn new(core: Arc<VulkanCore>, graphics_family: u32, present_family: Option<u32>) -> Arc<Self> {
         let graphics_queue = unsafe { core.device.get_device_queue(graphics_family, 0) };
-        let present_queue = present_family.map(|family| unsafe { core.device.get_device_queue(family, 0) });
+        let present_queue =
+            present_family.map(|family| unsafe { core.device.get_device_queue(family, 0) });
         let allocator = MemoryAllocator::new(core.clone());
         Arc::new(Self {
             core,
@@ -566,14 +613,14 @@ fn create_instance_owner(
 ) -> Result<Arc<InstanceOwner>, VulkanError> {
     let entry = unsafe { ash::Entry::load() }
         .map_err(|error| VulkanError::new("load Vulkan loader", error.to_string()))?;
-    let validation_requested = cfg!(debug_assertions)
-        || std::env::var_os("AIMER_CUPID_VULKAN_VALIDATION").is_some();
+    let validation_requested =
+        cfg!(debug_assertions) || std::env::var_os("AIMER_CUPID_VULKAN_VALIDATION").is_some();
     let validation_layer_name = c"VK_LAYER_KHRONOS_validation";
     let available_layers = unsafe { entry.enumerate_instance_layer_properties() }
         .map_err(|error| VulkanError::new("enumerate Vulkan layers", format!("{error:?}")))?;
-    let validation_available = available_layers.iter().any(|layer| unsafe {
-        CStr::from_ptr(layer.layer_name.as_ptr()) == validation_layer_name
-    });
+    let validation_available = available_layers
+        .iter()
+        .any(|layer| unsafe { CStr::from_ptr(layer.layer_name.as_ptr()) == validation_layer_name });
     if std::env::var_os("AIMER_CUPID_VULKAN_VALIDATION").is_some() && !validation_available {
         return Err(VulkanError::new(
             "enable Vulkan validation",
@@ -581,10 +628,14 @@ fn create_instance_owner(
         ));
     }
     let available_extensions = unsafe { entry.enumerate_instance_extension_properties(None) }
-        .map_err(|error| VulkanError::new("enumerate Vulkan instance extensions", format!("{error:?}")))?;
-    let has_instance_extension = |name: &CStr| available_extensions.iter().any(|extension| unsafe {
-        CStr::from_ptr(extension.extension_name.as_ptr()) == name
-    });
+        .map_err(|error| {
+            VulkanError::new("enumerate Vulkan instance extensions", format!("{error:?}"))
+        })?;
+    let has_instance_extension = |name: &CStr| {
+        available_extensions
+            .iter()
+            .any(|extension| unsafe { CStr::from_ptr(extension.extension_name.as_ptr()) == name })
+    };
     let debug_utils_available = available_extensions.iter().any(|extension| unsafe {
         CStr::from_ptr(extension.extension_name.as_ptr()) == ash::ext::debug_utils::NAME
     });
@@ -608,7 +659,11 @@ fn create_instance_owner(
         extensions.push(ash::khr::get_surface_capabilities2::NAME.as_ptr());
         extensions.push(ash::ext::surface_maintenance1::NAME.as_ptr());
     }
-    let layers = if enable_validation { vec![validation_layer_name.as_ptr()] } else { Vec::new() };
+    let layers = if enable_validation {
+        vec![validation_layer_name.as_ptr()]
+    } else {
+        Vec::new()
+    };
     let app_name = CString::new("Cupid").expect("static app name has no NUL");
     let app_info = vk::ApplicationInfo::default()
         .application_name(&app_name)
@@ -636,13 +691,17 @@ fn create_instance_owner(
     }
     let instance = unsafe { entry.create_instance(&instance_info, None) }
         .map_err(|error| VulkanError::new("create Vulkan instance", format!("{error:?}")))?;
-    let debug_utils = enable_validation.then(|| ash::ext::debug_utils::Instance::new(&entry, &instance));
+    let debug_utils =
+        enable_validation.then(|| ash::ext::debug_utils::Instance::new(&entry, &instance));
     let debug_messenger = if let Some(debug_utils) = &debug_utils {
         match unsafe { debug_utils.create_debug_utils_messenger(&debug_create, None) } {
             Ok(messenger) => messenger,
             Err(error) => {
                 unsafe { instance.destroy_instance(None) };
-                return Err(VulkanError::new("create Vulkan validation messenger", format!("{error:?}")));
+                return Err(VulkanError::new(
+                    "create Vulkan validation messenger",
+                    format!("{error:?}"),
+                ));
             }
         }
     } else {
@@ -666,39 +725,55 @@ unsafe extern "system" fn validation_callback(
     let message = if callback_data.is_null() || unsafe { (*callback_data).p_message.is_null() } {
         "(Vulkan validation message without text)".to_string()
     } else {
-        unsafe { CStr::from_ptr((*callback_data).p_message) }.to_string_lossy().into_owned()
+        unsafe { CStr::from_ptr((*callback_data).p_message) }
+            .to_string_lossy()
+            .into_owned()
     };
     eprintln!("[Vulkan {severity:?} {message_type:?}] {message}");
     vk::FALSE
 }
 
 fn buffer_usage_flags(usages: &[BufferUsage]) -> vk::BufferUsageFlags {
-    usages.iter().fold(vk::BufferUsageFlags::empty(), |flags, usage| flags | match usage {
-        BufferUsage::Vertex => vk::BufferUsageFlags::VERTEX_BUFFER,
-        BufferUsage::Index => vk::BufferUsageFlags::INDEX_BUFFER,
-        BufferUsage::Uniform => vk::BufferUsageFlags::UNIFORM_BUFFER,
-        BufferUsage::Storage | BufferUsage::ReadOnlyStorage => vk::BufferUsageFlags::STORAGE_BUFFER,
-        BufferUsage::Indirect => vk::BufferUsageFlags::INDIRECT_BUFFER,
-        BufferUsage::CopySrc => vk::BufferUsageFlags::TRANSFER_SRC,
-        BufferUsage::CopyDst => vk::BufferUsageFlags::TRANSFER_DST,
-        BufferUsage::MapRead | BufferUsage::MapWrite => vk::BufferUsageFlags::empty(),
-    })
+    usages
+        .iter()
+        .fold(vk::BufferUsageFlags::empty(), |flags, usage| {
+            flags
+                | match usage {
+                    BufferUsage::Vertex => vk::BufferUsageFlags::VERTEX_BUFFER,
+                    BufferUsage::Index => vk::BufferUsageFlags::INDEX_BUFFER,
+                    BufferUsage::Uniform => vk::BufferUsageFlags::UNIFORM_BUFFER,
+                    BufferUsage::Storage | BufferUsage::ReadOnlyStorage => {
+                        vk::BufferUsageFlags::STORAGE_BUFFER
+                    }
+                    BufferUsage::Indirect => vk::BufferUsageFlags::INDIRECT_BUFFER,
+                    BufferUsage::CopySrc => vk::BufferUsageFlags::TRANSFER_SRC,
+                    BufferUsage::CopyDst => vk::BufferUsageFlags::TRANSFER_DST,
+                    BufferUsage::MapRead | BufferUsage::MapWrite => vk::BufferUsageFlags::empty(),
+                }
+        })
 }
 
 fn texture_usage_flags(usages: &[TextureUsage], format: vk::Format) -> vk::ImageUsageFlags {
-    usages.iter().fold(vk::ImageUsageFlags::empty(), |flags, usage| flags | match usage {
-        TextureUsage::TextureBinding => vk::ImageUsageFlags::SAMPLED,
-        TextureUsage::StorageBinding => vk::ImageUsageFlags::STORAGE,
-        TextureUsage::RenderAttachment => {
-            if image_aspect(format).intersects(vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL) {
-                vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT
-            } else {
-                vk::ImageUsageFlags::COLOR_ATTACHMENT
-            }
-        }
-        TextureUsage::CopySrc => vk::ImageUsageFlags::TRANSFER_SRC,
-        TextureUsage::CopyDst => vk::ImageUsageFlags::TRANSFER_DST,
-    })
+    usages
+        .iter()
+        .fold(vk::ImageUsageFlags::empty(), |flags, usage| {
+            flags
+                | match usage {
+                    TextureUsage::TextureBinding => vk::ImageUsageFlags::SAMPLED,
+                    TextureUsage::StorageBinding => vk::ImageUsageFlags::STORAGE,
+                    TextureUsage::RenderAttachment => {
+                        if image_aspect(format)
+                            .intersects(vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL)
+                        {
+                            vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT
+                        } else {
+                            vk::ImageUsageFlags::COLOR_ATTACHMENT
+                        }
+                    }
+                    TextureUsage::CopySrc => vk::ImageUsageFlags::TRANSFER_SRC,
+                    TextureUsage::CopyDst => vk::ImageUsageFlags::TRANSFER_DST,
+                }
+        })
 }
 
 fn sample_count(count: u32) -> vk::SampleCountFlags {
@@ -716,9 +791,15 @@ fn sample_count(count: u32) -> vk::SampleCountFlags {
 
 fn image_aspect(format: vk::Format) -> vk::ImageAspectFlags {
     match format {
-        vk::Format::D16_UNORM | vk::Format::X8_D24_UNORM_PACK32 | vk::Format::D32_SFLOAT => vk::ImageAspectFlags::DEPTH,
+        vk::Format::D16_UNORM | vk::Format::X8_D24_UNORM_PACK32 | vk::Format::D32_SFLOAT => {
+            vk::ImageAspectFlags::DEPTH
+        }
         vk::Format::S8_UINT => vk::ImageAspectFlags::STENCIL,
-        vk::Format::D16_UNORM_S8_UINT | vk::Format::D24_UNORM_S8_UINT | vk::Format::D32_SFLOAT_S8_UINT => vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL,
+        vk::Format::D16_UNORM_S8_UINT
+        | vk::Format::D24_UNORM_S8_UINT
+        | vk::Format::D32_SFLOAT_S8_UINT => {
+            vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL
+        }
         _ => vk::ImageAspectFlags::COLOR,
     }
 }

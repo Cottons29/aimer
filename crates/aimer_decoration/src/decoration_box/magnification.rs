@@ -1,6 +1,6 @@
 use aimer_attribute::{ResolvedSize, Vec2d};
-use aimer_canvas::{Canvas, MaterialDrawRequest, MaterialKind};
 pub use aimer_canvas::MagnificationStyle;
+use aimer_canvas::{Canvas, MaterialDrawRequest, MaterialKind};
 
 use super::Decoration;
 
@@ -32,7 +32,9 @@ pub struct Magnification {
 
 impl Default for Magnification {
     #[inline]
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Magnification {
@@ -40,7 +42,13 @@ impl Magnification {
     /// The default style enables uniform zoom and refraction on both axes.
     #[inline]
     pub fn new() -> Self {
-        Self { zoom: 1.4, thickness: 16.0, corner_radius: 0.0, style: MagnificationStyle::DEFAULT, bulge: 0.25 }
+        Self {
+            zoom: 1.4,
+            thickness: 16.0,
+            corner_radius: 0.0,
+            style: MagnificationStyle::DEFAULT,
+            bulge: 0.25,
+        }
     }
 
     /// Replaces the effects, axes, and anchors with `style`.
@@ -56,7 +64,10 @@ impl Magnification {
     ///     .zoom(1.2);
     /// ```
     #[inline]
-    pub fn style(mut self, style: MagnificationStyle) -> Self { self.style = style; self }
+    pub fn style(mut self, style: MagnificationStyle) -> Self {
+        self.style = style;
+        self
+    }
 
     /// Sets additional bulge strength, clamped to `0.0..=1.0`.
     ///
@@ -75,7 +86,11 @@ impl Magnification {
     /// one still permits independently enabled bulge and edge refraction.
     #[inline]
     pub fn zoom(mut self, zoom: f32) -> Self {
-        self.zoom = if zoom.is_finite() { zoom.clamp(1.0, 8.0) } else { 1.5 };
+        self.zoom = if zoom.is_finite() {
+            zoom.clamp(1.0, 8.0)
+        } else {
+            1.5
+        };
         self
     }
 
@@ -108,7 +123,8 @@ impl Decoration for Magnification {
         if size.width <= 0.0 || size.height <= 0.0 || !active {
             return;
         }
-        let mut request = MaterialDrawRequest::from_layout(MaterialKind::Magnification, origin, size);
+        let mut request =
+            MaterialDrawRequest::from_layout(MaterialKind::Magnification, origin, size);
         request.magnification = self.zoom;
         request.bevel_radius = self.thickness;
         request.magnification_style = self.style;
@@ -133,5 +149,9 @@ impl Decoration for Magnification {
 
 #[inline]
 fn normalize(value: f32, fallback: f32, max: f32) -> f32 {
-    if value.is_finite() { value.clamp(0.0, max) } else { fallback }
+    if value.is_finite() {
+        value.clamp(0.0, max)
+    } else {
+        fallback
+    }
 }

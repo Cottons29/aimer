@@ -3,13 +3,12 @@
 //! W17 registers this page in the shared showcase. The example uses the
 //! public router API and keeps navigation state in the route controller.
 
+use aimer::input::button::Button;
 use aimer::macros::widget;
 use aimer::navigation::{
     Breadcrumb, BreadcrumbsWidget, NavigationMenuWidget, NavigationSurface, OverflowPolicy,
-    RouteTab, RouteTabBarWidget, Step, StepStatus, StepperWidget, Tab, TabBarWidget,
-    TabViewWidget,
+    RouteTab, RouteTabBarWidget, Step, StepStatus, StepperWidget, Tab, TabBarWidget, TabViewWidget,
 };
-use aimer::input::button::Button;
 use aimer::router::{Navigator, NavigatorController, Router};
 use aimer::{AnyWidget, BuildContext, Column, StatelessWidget, Text, Widget};
 

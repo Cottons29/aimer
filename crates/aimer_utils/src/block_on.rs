@@ -35,16 +35,13 @@ pub trait SyncFuture: Future {
 
 impl<F: Future> SyncFuture for F {}
 
-
 #[cfg(test)]
 mod test {
     use crate::SyncFuture;
 
     #[test]
     fn test_block_on() {
-        let fut = async {
-            10
-        };
+        let fut = async { 10 };
 
         let res = fut.block();
         assert_eq!(res, 10);

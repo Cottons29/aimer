@@ -218,7 +218,10 @@ fn a_scroll_only_frame_leaves_settled_rows_outside_the_viewport_alone() {
     let margin_rows = (0..ROWS)
         .filter(|&index| prepared[index] > 0 && !scene.near_viewport(index, 0.0))
         .count();
-    assert!(margin_rows > 0, "the scene prepared no rows outside the viewport");
+    assert!(
+        margin_rows > 0,
+        "the scene prepared no rows outside the viewport"
+    );
 
     let mut checked_frames = 0;
     let mut revisited_margin = 0;
@@ -240,8 +243,14 @@ fn a_scroll_only_frame_leaves_settled_rows_outside_the_viewport_alone() {
         }
     });
 
-    assert!(checked_frames > 1, "the scroll drew {checked_frames} frames");
-    assert!(revisited_visible > 0, "visible rows must keep being updated");
+    assert!(
+        checked_frames > 1,
+        "the scroll drew {checked_frames} frames"
+    );
+    assert!(
+        revisited_visible > 0,
+        "visible rows must keep being updated"
+    );
     assert_eq!(
         revisited_margin, 0,
         "prepared rows outside the viewport were visited on a scroll-only frame"
@@ -306,7 +315,9 @@ fn rows_are_prepared_before_they_scroll_into_the_viewport() {
         .map(|&count| (count > 0).then_some(0usize))
         .collect::<Vec<_>>();
     let mut first_visible = (0..ROWS)
-        .map(|index| (first_updated[index].is_some() && scene.near_viewport(index, 0.0)).then_some(0usize))
+        .map(|index| {
+            (first_updated[index].is_some() && scene.near_viewport(index, 0.0)).then_some(0usize)
+        })
         .collect::<Vec<_>>();
     let mut frame = 0;
     for _ in 0..6 {
@@ -329,7 +340,10 @@ fn rows_are_prepared_before_they_scroll_into_the_viewport() {
     let mut entered = 0;
     for index in 0..ROWS {
         if let (Some(updated), Some(visible)) = (first_updated[index], first_visible[index]) {
-            assert!(updated <= visible, "row {index} was first updated after it was visible");
+            assert!(
+                updated <= visible,
+                "row {index} was first updated after it was visible"
+            );
             if visible > 0 {
                 entered += 1;
                 assert!(
@@ -370,13 +384,22 @@ fn skipping_draws_exactly_what_a_full_revisit_draws() {
         // whose offset only depends on the distance, must match completely.
         for (frame, (skipped, full)) in skipped_frames.iter().zip(&full_frames).enumerate() {
             if skipped.0 == full.0 {
-                assert_eq!(skipped.1, full.1, "plans differ at frame {frame} after {delta}");
+                assert_eq!(
+                    skipped.1, full.1,
+                    "plans differ at frame {frame} after {delta}"
+                );
             }
         }
 
         let (skipped_end, full_end) = (skipped_frames.last().unwrap(), full_frames.last().unwrap());
-        assert_eq!(skipped_end.0, full_end.0, "settled offsets differ after {delta}");
-        assert_eq!(skipped_end.1, full_end.1, "settled plans differ after {delta}");
+        assert_eq!(
+            skipped_end.0, full_end.0,
+            "settled offsets differ after {delta}"
+        );
+        assert_eq!(
+            skipped_end.1, full_end.1,
+            "settled plans differ after {delta}"
+        );
     }
     aimer_widget::set_settled_offscreen_skip(true);
 }

@@ -8,8 +8,8 @@ use super::frame_upload::FrameUpload;
 use super::image_pipeline::InstanceBufferPolicy;
 use crate::renderer::SvgRenderItem;
 use crate::svg::{
-    SvgColor, SvgColorMatrix, SvgFilterInput, SvgFilterPrimitive, SvgGeometryCache, SvgGradient, SvgMesh, SvgMeshStyle, SvgNode,
-    SvgNodeStyleOverride, SvgPaint, SvgPaintOrder,
+    SvgColor, SvgColorMatrix, SvgFilterInput, SvgFilterPrimitive, SvgGeometryCache, SvgGradient,
+    SvgMesh, SvgMeshStyle, SvgNode, SvgNodeStyleOverride, SvgPaint, SvgPaintOrder,
 };
 use crate::utilities::{Mat3, Rgba8};
 
@@ -34,7 +34,7 @@ impl SvgVertex {
         }
     }
 
-        const GENERIC_ATTRIBUTES: [crate::backend::VertexAttribute; 2] = [
+    const GENERIC_ATTRIBUTES: [crate::backend::VertexAttribute; 2] = [
         crate::backend::VertexAttribute {
             format: crate::backend::VertexFormat::Float32x2,
             offset: std::mem::offset_of!(Self, position) as u64,
@@ -79,13 +79,37 @@ impl SvgInstance {
         }
     }
 
-        const GENERIC_ATTRIBUTES: [crate::backend::VertexAttribute; 6] = [
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, transform_x) as u64, shader_location: 1 },
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, transform_y) as u64, shader_location: 2 },
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Unorm8x4, offset: std::mem::offset_of!(Self, color) as u64, shader_location: 3 },
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, clip_rect) as u64, shader_location: 4 },
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, clip_border_radius) as u64, shader_location: 5 },
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, viewport) as u64, shader_location: 6 },
+    const GENERIC_ATTRIBUTES: [crate::backend::VertexAttribute; 6] = [
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Float32x4,
+            offset: std::mem::offset_of!(Self, transform_x) as u64,
+            shader_location: 1,
+        },
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Float32x4,
+            offset: std::mem::offset_of!(Self, transform_y) as u64,
+            shader_location: 2,
+        },
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Unorm8x4,
+            offset: std::mem::offset_of!(Self, color) as u64,
+            shader_location: 3,
+        },
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Float32x4,
+            offset: std::mem::offset_of!(Self, clip_rect) as u64,
+            shader_location: 4,
+        },
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Float32x4,
+            offset: std::mem::offset_of!(Self, clip_border_radius) as u64,
+            shader_location: 5,
+        },
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Float32x4,
+            offset: std::mem::offset_of!(Self, viewport) as u64,
+            shader_location: 6,
+        },
     ];
 }
 
@@ -97,7 +121,6 @@ struct GpuMesh<B: crate::backend::GpuBackend> {
     bytes: u64,
     last_used: u64,
 }
-
 
 struct PreparedDraw {
     mesh_key: usize,
@@ -122,8 +145,6 @@ pub struct SvgPipeline<B: crate::backend::GpuBackend = crate::backend::DefaultGp
     max_gpu_meshes: usize,
     analytic_aa: bool,
 }
-
-
 
 #[cfg(feature = "wgpu")]
 #[inline]
@@ -154,11 +175,7 @@ impl<B: crate::backend::GpuBackend> SvgPipeline<B> {
     const MAX_GPU_MESHES: usize = 4096;
     /// Creates the pipeline and its GPU resources through the selected
     /// [`GpuBackend`].
-    pub fn new(
-        backend: &B,
-        format: B::TextureFormat,
-        antialiasing: crate::AntiAlias,
-    ) -> Self {
+    pub fn new(backend: &B, format: B::TextureFormat, antialiasing: crate::AntiAlias) -> Self {
         use crate::backend::*;
 
         let shader = backend.create_shader_module(
@@ -247,18 +264,8 @@ impl<B: crate::backend::GpuBackend> SvgPipeline<B> {
         let mut frame_meshes = HashSet::new();
         for item in items {
             let range_start = self.prepared_draws.len();
-            if item.opacity > 0.0
-                && item.destination.width > 0.0
-                && item.destination.height > 0.0
-            {
-                self.prepare_item_generic(
-                    backend,
-                    item,
-                    width,
-                    height,
-                    is_srgb,
-                    &mut frame_meshes,
-                );
+            if item.opacity > 0.0 && item.destination.width > 0.0 && item.destination.height > 0.0 {
+                self.prepare_item_generic(backend, item, width, height, is_srgb, &mut frame_meshes);
             }
             self.item_ranges
                 .push(range_start..self.prepared_draws.len());
@@ -326,44 +333,106 @@ impl<B: crate::backend::GpuBackend> SvgPipeline<B> {
                 SvgPaintOrder::FillAndStroke => {
                     if let Some(paint) = fill {
                         self.prepare_paint_generic(
-                            backend, geometry, paint, transform, opacity,
-                            effects.clip_rect, effects.clip_border_radius, width, height, is_srgb,
-                            &effects.color_matrices, physical_scale, frame_meshes,
+                            backend,
+                            geometry,
+                            paint,
+                            transform,
+                            opacity,
+                            effects.clip_rect,
+                            effects.clip_border_radius,
+                            width,
+                            height,
+                            is_srgb,
+                            &effects.color_matrices,
+                            physical_scale,
+                            frame_meshes,
                         );
                     } else if let Some(id) = fill_pattern {
                         self.prepare_pattern_generic(
-                            backend, item, geometry, id, transform, opacity,
-                            effects.clip_rect, effects.clip_border_radius, width, height, is_srgb,
-                            &effects.color_matrices, physical_scale, frame_meshes,
+                            backend,
+                            item,
+                            geometry,
+                            id,
+                            transform,
+                            opacity,
+                            effects.clip_rect,
+                            effects.clip_border_radius,
+                            width,
+                            height,
+                            is_srgb,
+                            &effects.color_matrices,
+                            physical_scale,
+                            frame_meshes,
                         );
                     }
                     if let Some(paint) = stroke {
                         self.prepare_paint_generic(
-                            backend, geometry, paint, transform, opacity,
-                            effects.clip_rect, effects.clip_border_radius, width, height, is_srgb,
-                            &effects.color_matrices, physical_scale, frame_meshes,
+                            backend,
+                            geometry,
+                            paint,
+                            transform,
+                            opacity,
+                            effects.clip_rect,
+                            effects.clip_border_radius,
+                            width,
+                            height,
+                            is_srgb,
+                            &effects.color_matrices,
+                            physical_scale,
+                            frame_meshes,
                         );
                     }
                 }
                 SvgPaintOrder::StrokeAndFill => {
                     if let Some(paint) = stroke {
                         self.prepare_paint_generic(
-                            backend, geometry, paint, transform, opacity,
-                            effects.clip_rect, effects.clip_border_radius, width, height, is_srgb,
-                            &effects.color_matrices, physical_scale, frame_meshes,
+                            backend,
+                            geometry,
+                            paint,
+                            transform,
+                            opacity,
+                            effects.clip_rect,
+                            effects.clip_border_radius,
+                            width,
+                            height,
+                            is_srgb,
+                            &effects.color_matrices,
+                            physical_scale,
+                            frame_meshes,
                         );
                     }
                     if let Some(paint) = fill {
                         self.prepare_paint_generic(
-                            backend, geometry, paint, transform, opacity,
-                            effects.clip_rect, effects.clip_border_radius, width, height, is_srgb,
-                            &effects.color_matrices, physical_scale, frame_meshes,
+                            backend,
+                            geometry,
+                            paint,
+                            transform,
+                            opacity,
+                            effects.clip_rect,
+                            effects.clip_border_radius,
+                            width,
+                            height,
+                            is_srgb,
+                            &effects.color_matrices,
+                            physical_scale,
+                            frame_meshes,
                         );
                     } else if let Some(id) = fill_pattern {
                         self.prepare_pattern_generic(
-                            backend, item, geometry, id, transform, opacity,
-                            effects.clip_rect, effects.clip_border_radius, width, height, is_srgb,
-                            &effects.color_matrices, physical_scale, frame_meshes,
+                            backend,
+                            item,
+                            geometry,
+                            id,
+                            transform,
+                            opacity,
+                            effects.clip_rect,
+                            effects.clip_border_radius,
+                            width,
+                            height,
+                            is_srgb,
+                            &effects.color_matrices,
+                            physical_scale,
+                            frame_meshes,
                         );
                     }
                 }
@@ -436,8 +505,10 @@ impl<B: crate::backend::GpuBackend> SvgPipeline<B> {
         };
         let root_inverse = svg_transform_matrix(root_inverse);
         let content_transform = match pattern.content_units {
-            crate::svg::SvgResourceUnits::ObjectBoundingBox => Mat3::translate(target_bounds[0], target_bounds[1])
-                .mul(&Mat3::scale(target_bounds[2], target_bounds[3])),
+            crate::svg::SvgResourceUnits::ObjectBoundingBox => {
+                Mat3::translate(target_bounds[0], target_bounds[1])
+                    .mul(&Mat3::scale(target_bounds[2], target_bounds[3]))
+            }
             crate::svg::SvgResourceUnits::UserSpaceOnUse => Mat3::identity(),
         };
         let mut pattern_clip = NodeEffectState {
@@ -459,10 +530,9 @@ impl<B: crate::backend::GpuBackend> SvgPipeline<B> {
                 let x = origin_x + column as f32 * tile_width;
                 let y = origin_y + row as f32 * tile_height;
                 let tile_transform = Mat3::translate(x, y);
-                let Some(tile_screen_rect) = axis_aligned_rect(
-                    target_transform,
-                    [x, y, tile_width, tile_height],
-                ) else {
+                let Some(tile_screen_rect) =
+                    axis_aligned_rect(target_transform, [x, y, tile_width, tile_height])
+                else {
                     return;
                 };
                 let mut tile_clip = NodeEffectState {
@@ -608,10 +678,12 @@ impl<B: crate::backend::GpuBackend> SvgPipeline<B> {
         frame_meshes: &mut HashSet<usize>,
     ) {
         const MAX_GRADIENT_MESH_BYTES: usize = 16 * 1024 * 1024;
-        let Ok(base) = self
-            .geometry_cache
-            .mesh_for_with_analytic_aa(geometry, style, physical_scale, self.analytic_aa)
-        else {
+        let Ok(base) = self.geometry_cache.mesh_for_with_analytic_aa(
+            geometry,
+            style,
+            physical_scale,
+            self.analytic_aa,
+        ) else {
             return;
         };
         let geometry_key = Arc::as_ptr(&base) as usize;
@@ -671,10 +743,12 @@ impl<B: crate::backend::GpuBackend> SvgPipeline<B> {
         physical_scale: f32,
         frame_meshes: &mut HashSet<usize>,
     ) {
-        let Ok(mesh) = self
-            .geometry_cache
-            .mesh_for_with_analytic_aa(geometry, style, physical_scale, self.analytic_aa)
-        else {
+        let Ok(mesh) = self.geometry_cache.mesh_for_with_analytic_aa(
+            geometry,
+            style,
+            physical_scale,
+            self.analytic_aa,
+        ) else {
             return;
         };
         self.prepare_mesh_arc_generic(
@@ -730,7 +804,12 @@ impl<B: crate::backend::GpuBackend> SvgPipeline<B> {
             color: Rgba8::from_unorm([color.r, color.g, color.b, color.a * opacity]),
             clip_rect,
             clip_border_radius,
-            viewport: [width as f32, height as f32, surface_srgb_value(is_srgb), 0.0],
+            viewport: [
+                width as f32,
+                height as f32,
+                surface_srgb_value(is_srgb),
+                0.0,
+            ],
         });
         self.prepared_draws.push(PreparedDraw {
             mesh_key,
@@ -799,11 +878,8 @@ impl<B: crate::backend::GpuBackend> SvgPipeline<B> {
         }
     }
 
-    pub fn draw_item<'a>(
-        &'a self,
-        pass: &mut B::RenderPass<'a>,
-        item_index: usize,
-    ) where
+    pub fn draw_item<'a>(&'a self, pass: &mut B::RenderPass<'a>, item_index: usize)
+    where
         B::RenderPass<'a>: crate::backend::GpuRenderPass<B>,
     {
         use crate::backend::{GpuRenderPass, IndexFormat};
@@ -883,11 +959,11 @@ fn combined_transform(
 }
 
 struct NodeEffectState {
-        clip_rect: [f32; 4],
-        clip_border_radius: [f32; 4],
-        mask_opacity: f32,
-        offset: [f32; 2],
-        color_matrices: Vec<SvgColorMatrix>,
+    clip_rect: [f32; 4],
+    clip_border_radius: [f32; 4],
+    mask_opacity: f32,
+    offset: [f32; 2],
+    color_matrices: Vec<SvgColorMatrix>,
 }
 
 fn resolve_node_effects(
@@ -992,9 +1068,7 @@ fn resolve_node_effects(
             }
             for primitive in filter.primitives.iter() {
                 match primitive {
-                    SvgFilterPrimitive::Offset { input, dx, dy }
-                        if input_is_graphic(input) =>
-                    {
+                    SvgFilterPrimitive::Offset { input, dx, dy } if input_is_graphic(input) => {
                         let scale = match filter.primitive_units {
                             crate::svg::SvgResourceUnits::ObjectBoundingBox => {
                                 [target_bounds[2], target_bounds[3]]
@@ -1040,7 +1114,10 @@ fn simple_mask_opacity(node: &SvgNode, mask_type: crate::svg::SvgMaskType) -> f3
 }
 
 fn input_is_graphic(input: &SvgFilterInput) -> bool {
-    matches!(input, SvgFilterInput::SourceGraphic | SvgFilterInput::Previous)
+    matches!(
+        input,
+        SvgFilterInput::SourceGraphic | SvgFilterInput::Previous
+    )
 }
 
 fn apply_color_matrices(mut color: SvgColor, matrices: &[SvgColorMatrix]) -> SvgColor {
@@ -1133,8 +1210,10 @@ fn resource_rect_to_screen(
 ) -> Option<[f32; 4]> {
     let root_inverse = svg_transform_matrix(item.scene.resources.root_transform.inverse()?);
     let bbox_transform = match units {
-        crate::svg::SvgResourceUnits::ObjectBoundingBox => Mat3::translate(target_bounds[0], target_bounds[1])
-            .mul(&Mat3::scale(target_bounds[2], target_bounds[3])),
+        crate::svg::SvgResourceUnits::ObjectBoundingBox => {
+            Mat3::translate(target_bounds[0], target_bounds[1])
+                .mul(&Mat3::scale(target_bounds[2], target_bounds[3]))
+        }
         crate::svg::SvgResourceUnits::UserSpaceOnUse => Mat3::identity(),
     };
     let mut transform = target_transform.mul(&bbox_transform);
@@ -1172,16 +1251,15 @@ fn rect_geometry_bounds(geometry: &crate::svg::SvgGeometry) -> Option<[f32; 4]> 
     if y0 != y1 || x1 != x2 || y2 != y3 || x3 != x0 || x0 == x1 || y0 == y2 {
         return None;
     }
-    Some([
-        x0.min(*x2),
-        y0.min(*y2),
-        (x1 - x0).abs(),
-        (y2 - y1).abs(),
-    ])
+    Some([x0.min(*x2), y0.min(*y2), (x1 - x0).abs(), (y2 - y1).abs()])
 }
 
 fn axis_aligned_rect(transform: Mat3, rect: [f32; 4]) -> Option<[f32; 4]> {
-    if !transform.cols.iter().flatten().all(|value| value.is_finite())
+    if !transform
+        .cols
+        .iter()
+        .flatten()
+        .all(|value| value.is_finite())
         || transform.cols[0][1].abs() > f32::EPSILON * 8.0
         || transform.cols[1][0].abs() > f32::EPSILON * 8.0
     {
@@ -1193,8 +1271,14 @@ fn axis_aligned_rect(transform: Mat3, rect: [f32; 4]) -> Option<[f32; 4]> {
 }
 
 enum ResolvedPaint<'a> {
-    Solid { color: SvgColor, style: SvgMeshStyle },
-    Gradient { gradient: &'a SvgGradient, style: SvgMeshStyle },
+    Solid {
+        color: SvgColor,
+        style: SvgMeshStyle,
+    },
+    Gradient {
+        gradient: &'a SvgGradient,
+        style: SvgMeshStyle,
+    },
 }
 
 fn resolved_fill<'a>(
@@ -1221,10 +1305,10 @@ fn resolved_fill<'a>(
             Some(ResolvedPaint::Gradient { gradient, style })
         }
         Some(SvgPaint::Pattern { .. }) => None,
-        None => node
-            .fill
-            .as_ref()
-            .map(|fill| ResolvedPaint::Solid { color: fill.color, style }),
+        None => node.fill.as_ref().map(|fill| ResolvedPaint::Solid {
+            color: fill.color,
+            style,
+        }),
     }
 }
 
@@ -1261,11 +1345,11 @@ fn resolved_stroke<'a>(
         return None;
     }
     let style = SvgMeshStyle::Stroke {
-            width: stroke.width,
-            line_cap: stroke.line_cap,
-            line_join: stroke.line_join,
-            miter_limit: stroke.miter_limit,
-        };
+        width: stroke.width,
+        line_cap: stroke.line_cap,
+        line_join: stroke.line_join,
+        miter_limit: stroke.miter_limit,
+    };
     match node_override.map(|value| value.stroke) {
         Some(Some(Some(color))) => return Some(ResolvedPaint::Solid { color, style }),
         Some(Some(None)) => return None,
@@ -1293,7 +1377,15 @@ fn gradient_fingerprint(gradient: &SvgGradient) -> u64 {
     gradient.id().hash(&mut hasher);
     match gradient {
         SvgGradient::Linear {
-            x1, y1, x2, y2, units, transform, spread, stops, ..
+            x1,
+            y1,
+            x2,
+            y2,
+            units,
+            transform,
+            spread,
+            stops,
+            ..
         } => {
             0_u8.hash(&mut hasher);
             for value in [*x1, *y1, *x2, *y2] {
@@ -1305,7 +1397,17 @@ fn gradient_fingerprint(gradient: &SvgGradient) -> u64 {
             hash_stops(stops, &mut hasher);
         }
         SvgGradient::Radial {
-            cx, cy, radius, fx, fy, focal_radius, units, transform, spread, stops, ..
+            cx,
+            cy,
+            radius,
+            fx,
+            fy,
+            focal_radius,
+            units,
+            transform,
+            spread,
+            stops,
+            ..
         } => {
             1_u8.hash(&mut hasher);
             for value in [*cx, *cy, *radius, *fx, *fy, *focal_radius] {
@@ -1322,7 +1424,14 @@ fn gradient_fingerprint(gradient: &SvgGradient) -> u64 {
 
 fn hash_transform(transform: crate::svg::SvgTransform, hasher: &mut impl std::hash::Hasher) {
     use std::hash::Hash;
-    for value in [transform.sx, transform.ky, transform.kx, transform.sy, transform.tx, transform.ty] {
+    for value in [
+        transform.sx,
+        transform.ky,
+        transform.kx,
+        transform.sy,
+        transform.tx,
+        transform.ty,
+    ] {
         value.to_bits().hash(hasher);
     }
 }
@@ -1356,8 +1465,9 @@ fn build_gradient_meshes(
         .sqrt()
         .floor()
         .clamp(1.0, 8.0) as usize;
-    let mut buckets: Vec<(Vec<[f32; 2]>, Vec<f32>, Vec<u32>, Option<SvgColor>)> =
-        (0..SEGMENTS).map(|_| (Vec::new(), Vec::new(), Vec::new(), None)).collect();
+    let mut buckets: Vec<(Vec<[f32; 2]>, Vec<f32>, Vec<u32>, Option<SvgColor>)> = (0..SEGMENTS)
+        .map(|_| (Vec::new(), Vec::new(), Vec::new(), None))
+        .collect();
 
     let mut push_triangle = |triangle: [([f32; 2], f32); 3]| {
         let center = [
@@ -1369,7 +1479,8 @@ fn build_gradient_meshes(
         };
         let bucket_index = ((position * SEGMENTS as f32).floor() as isize)
             .clamp(0, SEGMENTS as isize - 1) as usize;
-        let Some(color) = gradient.color_at_position((bucket_index as f32 + 0.5) / SEGMENTS as f32) else {
+        let Some(color) = gradient.color_at_position((bucket_index as f32 + 0.5) / SEGMENTS as f32)
+        else {
             return;
         };
         let bucket = &mut buckets[bucket_index];
@@ -1383,15 +1494,36 @@ fn build_gradient_meshes(
     };
 
     for indices in base.indices.chunks_exact(3) {
-        let Some(a) = base.vertices.get(indices[0] as usize).zip(base.coverages.get(indices[0] as usize)) else { continue };
-        let Some(b) = base.vertices.get(indices[1] as usize).zip(base.coverages.get(indices[1] as usize)) else { continue };
-        let Some(c) = base.vertices.get(indices[2] as usize).zip(base.coverages.get(indices[2] as usize)) else { continue };
+        let Some(a) = base
+            .vertices
+            .get(indices[0] as usize)
+            .zip(base.coverages.get(indices[0] as usize))
+        else {
+            continue;
+        };
+        let Some(b) = base
+            .vertices
+            .get(indices[1] as usize)
+            .zip(base.coverages.get(indices[1] as usize))
+        else {
+            continue;
+        };
+        let Some(c) = base
+            .vertices
+            .get(indices[2] as usize)
+            .zip(base.coverages.get(indices[2] as usize))
+        else {
+            continue;
+        };
         let point = |i: usize, j: usize| {
             let u = i as f32 / subdivisions as f32;
             let v = j as f32 / subdivisions as f32;
             let w = 1.0 - u - v;
             (
-                [a.0[0] * w + b.0[0] * u + c.0[0] * v, a.0[1] * w + b.0[1] * u + c.0[1] * v],
+                [
+                    a.0[0] * w + b.0[0] * u + c.0[0] * v,
+                    a.0[1] * w + b.0[1] * u + c.0[1] * v,
+                ],
                 *a.1 * w + *b.1 * u + *c.1 * v,
             )
         };
@@ -1424,7 +1556,12 @@ fn build_gradient_meshes(
 }
 
 fn geometry_bounds(geometry: &crate::svg::SvgGeometry) -> [f32; 4] {
-    let mut bounds = [f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY];
+    let mut bounds = [
+        f32::INFINITY,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        f32::NEG_INFINITY,
+    ];
     for command in geometry.commands.iter() {
         let mut include = |x: f32, y: f32| {
             bounds[0] = bounds[0].min(x);
@@ -1435,12 +1572,22 @@ fn geometry_bounds(geometry: &crate::svg::SvgGeometry) -> [f32; 4] {
         match command {
             crate::svg::SvgPathCommand::MoveTo { x, y }
             | crate::svg::SvgPathCommand::LineTo { x, y } => include(*x, *y),
-            crate::svg::SvgPathCommand::QuadraticTo { control_x, control_y, x, y } => {
+            crate::svg::SvgPathCommand::QuadraticTo {
+                control_x,
+                control_y,
+                x,
+                y,
+            } => {
                 include(*control_x, *control_y);
                 include(*x, *y);
             }
             crate::svg::SvgPathCommand::CubicTo {
-                control1_x, control1_y, control2_x, control2_y, x, y,
+                control1_x,
+                control1_y,
+                control2_x,
+                control2_y,
+                x,
+                y,
             } => {
                 include(*control1_x, *control1_y);
                 include(*control2_x, *control2_y);
@@ -1449,7 +1596,12 @@ fn geometry_bounds(geometry: &crate::svg::SvgGeometry) -> [f32; 4] {
             crate::svg::SvgPathCommand::Close => {}
         }
     }
-    [bounds[0], bounds[1], bounds[2] - bounds[0], bounds[3] - bounds[1]]
+    [
+        bounds[0],
+        bounds[1],
+        bounds[2] - bounds[0],
+        bounds[3] - bounds[1],
+    ]
 }
 
 fn transform_scale(transform: Mat3) -> f32 {
@@ -1550,7 +1702,10 @@ mod tests {
 mod resource_tests {
     use std::sync::Arc;
 
-    use crate::svg::{parse_svg_document, SvgColor, SvgGradient, SvgGradientStop, SvgGradientUnits, SvgSpreadMethod, SvgTransform};
+    use crate::svg::{
+        SvgColor, SvgGradient, SvgGradientStop, SvgGradientUnits, SvgSpreadMethod, SvgTransform,
+        parse_svg_document,
+    };
     use crate::utilities::{Mat3, Rect};
 
     #[test]
@@ -1562,7 +1717,11 @@ mod resource_tests {
             </defs><path id="target" d="M0 0h10v10z" clip-path="url(#clip)" mask="url(#mask)"/></svg>"##,
         ).unwrap();
         let scene = Arc::new(parsed.scene);
-        let target = scene.nodes.iter().find(|node| node.svg_id.as_deref() == Some("target")).unwrap();
+        let target = scene
+            .nodes
+            .iter()
+            .find(|node| node.svg_id.as_deref() == Some("target"))
+            .unwrap();
         let item = crate::renderer::SvgRenderItem {
             scene: scene.clone(),
             destination: Rect::new(0.0, 0.0, 10.0, 10.0),
@@ -1591,7 +1750,11 @@ mod resource_tests {
             br#"<svg width="10" height="10"><defs><clipPath id="clip" clipPathUnits="userSpaceOnUse" transform="translate(2 1)"><rect width="5" height="4"/></clipPath></defs><rect id="target" width="10" height="10" clip-path="url(#clip)"/></svg>"#,
         ).unwrap();
         let scene = Arc::new(parsed.scene);
-        let target = scene.nodes.iter().find(|node| node.svg_id.as_deref() == Some("target")).unwrap();
+        let target = scene
+            .nodes
+            .iter()
+            .find(|node| node.svg_id.as_deref() == Some("target"))
+            .unwrap();
         let item = crate::renderer::SvgRenderItem {
             scene: scene.clone(),
             destination: Rect::new(0.0, 0.0, 10.0, 10.0),
@@ -1655,7 +1818,12 @@ mod resource_tests {
         let parsed = parse_svg_document(
             br##"<svg width="10" height="10"><defs><linearGradient id="g"><stop offset="0" stop-color="#ff0000"/><stop offset="1" stop-color="#0000ff"/></linearGradient></defs><path d="M0 0h10v10z" fill="url(#g)"/></svg>"##,
         ).unwrap();
-        let node = parsed.scene.nodes.iter().find(|node| !node.is_definition).unwrap();
+        let node = parsed
+            .scene
+            .nodes
+            .iter()
+            .find(|node| !node.is_definition)
+            .unwrap();
         let geometry = parsed.scene.geometry(node).unwrap();
         let gradient = match node.fill_paint.as_ref().unwrap() {
             crate::svg::SvgPaint::Linear(gradient) => gradient,
@@ -1663,7 +1831,11 @@ mod resource_tests {
         };
         let mut cache = crate::svg::SvgGeometryCache::new(1024 * 1024, 4);
         let base = cache
-            .mesh_for(geometry, crate::svg::SvgMeshStyle::Fill(node.fill_rule), 1.0)
+            .mesh_for(
+                geometry,
+                crate::svg::SvgMeshStyle::Fill(node.fill_rule),
+                1.0,
+            )
             .unwrap();
         let bands = super::build_gradient_meshes(&base, geometry, gradient);
 
@@ -1685,8 +1857,14 @@ mod resource_tests {
             transform: SvgTransform::default(),
             spread: SvgSpreadMethod::Reflect,
             stops: Arc::from([
-                SvgGradientStop { offset: 0.0, color: SvgColor::rgba8(255, 0, 0, 255) },
-                SvgGradientStop { offset: 1.0, color: SvgColor::rgba8(0, 0, 255, 255) },
+                SvgGradientStop {
+                    offset: 0.0,
+                    color: SvgColor::rgba8(255, 0, 0, 255),
+                },
+                SvgGradientStop {
+                    offset: 1.0,
+                    color: SvgColor::rgba8(0, 0, 255, 255),
+                },
             ]),
         };
         let start = gradient.sample_at(0.0, 0.5, [0.0, 0.0, 1.0, 1.0]).unwrap();
@@ -1712,12 +1890,20 @@ mod resource_tests {
             transform: SvgTransform::default(),
             spread: SvgSpreadMethod::Pad,
             stops: Arc::from([
-                SvgGradientStop { offset: 0.0, color: SvgColor::rgba8(255, 0, 0, 255) },
-                SvgGradientStop { offset: 1.0, color: SvgColor::rgba8(0, 0, 255, 255) },
+                SvgGradientStop {
+                    offset: 0.0,
+                    color: SvgColor::rgba8(255, 0, 0, 255),
+                },
+                SvgGradientStop {
+                    offset: 1.0,
+                    color: SvgColor::rgba8(0, 0, 255, 255),
+                },
             ]),
         };
 
-        let position = gradient.position_at(0.75, 0.5, [0.0, 0.0, 1.0, 1.0]).unwrap();
+        let position = gradient
+            .position_at(0.75, 0.5, [0.0, 0.0, 1.0, 1.0])
+            .unwrap();
         assert!((position - (8.0 / 13.0)).abs() < 0.0001);
     }
 
@@ -1727,7 +1913,11 @@ mod resource_tests {
             br#"<svg width="10" height="10"><defs><filter id="fx"><feOffset dx="2" dy="-1"/><feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 1 0"/></filter></defs><rect id="target" width="10" height="10" fill="red" filter="url(#fx)"/></svg>"#,
         ).unwrap();
         let scene = Arc::new(parsed.scene);
-        let target = scene.nodes.iter().find(|node| node.svg_id.as_deref() == Some("target")).unwrap();
+        let target = scene
+            .nodes
+            .iter()
+            .find(|node| node.svg_id.as_deref() == Some("target"))
+            .unwrap();
         let item = crate::renderer::SvgRenderItem {
             scene: scene.clone(),
             destination: Rect::new(0.0, 0.0, 10.0, 10.0),
@@ -1744,10 +1934,8 @@ mod resource_tests {
             scene.geometry(target).unwrap(),
             super::combined_transform(&item, target, None),
         );
-        let blue = super::apply_color_matrices(
-            SvgColor::rgba8(255, 0, 0, 255),
-            &effects.color_matrices,
-        );
+        let blue =
+            super::apply_color_matrices(SvgColor::rgba8(255, 0, 0, 255), &effects.color_matrices);
 
         assert_eq!(effects.offset, [2.0, -1.0]);
         assert_eq!(effects.clip_rect, [-1.0, -1.0, 12.0, 12.0]);

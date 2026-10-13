@@ -23,9 +23,7 @@ use aimer_widget::portable::{
 };
 
 #[cfg(feature = "portable-guest")]
-use aimer_widget::portable::{
-    PortableBuildContext, PortableBuildError, PortableEncodeProperty,
-};
+use aimer_widget::portable::{PortableBuildContext, PortableBuildError, PortableEncodeProperty};
 
 use crate::item::ContextMenuItem;
 use crate::style::ContextMenuStyle;
@@ -68,7 +66,7 @@ impl PortableMenuItems {
     max_entries = 256,
     max_string_bytes = 2_048,
     max_value_bytes = 2_048,
-    max_reconstruction_work = 1_024,
+    max_reconstruction_work = 1_024
 )]
 struct PortableContextMenuItemList {
     items: Vec<PortableContextMenuItem>,
@@ -81,7 +79,7 @@ struct PortableContextMenuItemList {
     max_encoded_bytes = 2_048,
     max_depth = 4,
     max_entries = 8,
-    max_string_bytes = 2_048,
+    max_string_bytes = 2_048
 )]
 struct PortableContextMenuItem {
     label: String,
@@ -94,7 +92,7 @@ struct PortableContextMenuItem {
     version = "1.0",
     max_encoded_bytes = 32,
     max_depth = 4,
-    max_entries = 8,
+    max_entries = 8
 )]
 enum PortableDimension {
     #[portable_value(tag = 0)]
@@ -111,7 +109,7 @@ enum PortableDimension {
     version = "1.0",
     max_encoded_bytes = 32,
     max_depth = 4,
-    max_entries = 8,
+    max_entries = 8
 )]
 enum PortableSpacing {
     #[portable_value(tag = 0)]
@@ -128,7 +126,7 @@ enum PortableSpacing {
     version = "1.0",
     max_encoded_bytes = 16,
     max_depth = 4,
-    max_entries = 4,
+    max_entries = 4
 )]
 enum PortableBorderStyle {
     #[portable_value(tag = 0)]
@@ -147,7 +145,7 @@ enum PortableBorderStyle {
     version = "1.0",
     max_encoded_bytes = 128,
     max_depth = 8,
-    max_entries = 16,
+    max_entries = 16
 )]
 struct PortableBorderSlice {
     style: PortableBorderStyle,
@@ -161,7 +159,7 @@ struct PortableBorderSlice {
     version = "1.0",
     max_encoded_bytes = 64,
     max_depth = 4,
-    max_entries = 8,
+    max_entries = 8
 )]
 enum PortableShadowSide {
     #[portable_value(tag = 0)]
@@ -196,7 +194,7 @@ enum PortableShadowSide {
     version = "1.0",
     max_encoded_bytes = 128,
     max_depth = 8,
-    max_entries = 16,
+    max_entries = 16
 )]
 struct PortableBoxShadow {
     offset_x: f32,
@@ -215,7 +213,7 @@ struct PortableBoxShadow {
     max_encoded_bytes = 4_096,
     max_depth = 12,
     max_entries = 256,
-    max_reconstruction_work = 1_024,
+    max_reconstruction_work = 1_024
 )]
 struct PortableBoxDecoration {
     border: [PortableBorderSlice; 4],
@@ -231,7 +229,7 @@ struct PortableBoxDecoration {
     version = "1.0",
     max_encoded_bytes = 32,
     max_depth = 4,
-    max_entries = 8,
+    max_entries = 8
 )]
 enum PortableFontStyle {
     #[portable_value(tag = 0)]
@@ -250,7 +248,7 @@ enum PortableFontStyle {
     version = "1.0",
     max_encoded_bytes = 32,
     max_depth = 4,
-    max_entries = 8,
+    max_entries = 8
 )]
 enum PortableFontWeight {
     #[portable_value(tag = 0)]
@@ -273,7 +271,7 @@ enum PortableFontWeight {
     version = "1.0",
     max_encoded_bytes = 32,
     max_depth = 4,
-    max_entries = 8,
+    max_entries = 8
 )]
 enum PortableTextOverflow {
     #[portable_value(tag = 0)]
@@ -292,7 +290,7 @@ enum PortableTextOverflow {
     version = "1.0",
     max_encoded_bytes = 16,
     max_depth = 4,
-    max_entries = 4,
+    max_entries = 4
 )]
 enum PortableTextDecorationStyle {
     #[portable_value(tag = 0)]
@@ -313,7 +311,7 @@ enum PortableTextDecorationStyle {
     version = "1.0",
     max_encoded_bytes = 128,
     max_depth = 8,
-    max_entries = 16,
+    max_entries = 16
 )]
 struct PortableTextDecoration {
     line: u8,
@@ -329,7 +327,7 @@ struct PortableTextDecoration {
     version = "1.0",
     max_encoded_bytes = 512,
     max_depth = 12,
-    max_entries = 64,
+    max_entries = 64
 )]
 struct PortableTextStyle {
     font_size: u32,
@@ -351,7 +349,7 @@ struct PortableTextStyle {
     max_entries = 512,
     max_string_bytes = 2_048,
     max_value_bytes = 4_096,
-    max_reconstruction_work = 2_048,
+    max_reconstruction_work = 2_048
 )]
 struct PortableContextMenuStyle {
     panel: PortableBoxDecoration,
@@ -391,13 +389,11 @@ impl PortableMaterializeProperty for crate::shape::ContextMenuShape {
         value: PropertyValue,
     ) -> Result<Self, PortableMaterializeError> {
         match value {
-            PropertyValue::I64(value) if value == ShapeTag::Pill as i64 => {
-                Ok(Self::Pill)
-            }
+            PropertyValue::I64(value) if value == ShapeTag::Pill as i64 => Ok(Self::Pill),
             PropertyValue::I64(value) if value == ShapeTag::List as i64 => Ok(Self::List),
-            PropertyValue::I64(_) => Err(PortableMaterializeError::InvalidPropertyValue {
-                property,
-            }),
+            PropertyValue::I64(_) => {
+                Err(PortableMaterializeError::InvalidPropertyValue { property })
+            }
             _ => Err(PortableMaterializeError::InvalidPropertyType { property }),
         }
     }
@@ -417,9 +413,8 @@ impl PortableEncodeProperty for crate::shape::ContextMenuShape {
 }
 
 impl PortableProperty for PortableMenuItems {
-    const REFLECTION: PortablePropertyReflection = PortablePropertyReflection::custom(
-        PortableContextMenuItemList::SCHEMA,
-    );
+    const REFLECTION: PortablePropertyReflection =
+        PortablePropertyReflection::custom(PortableContextMenuItemList::SCHEMA);
 }
 
 impl PortableMaterializeProperty for PortableMenuItems {
@@ -476,9 +471,8 @@ impl PortableEncodeProperty for PortableMenuItems {
 }
 
 impl PortableProperty for ContextMenuStyle {
-    const REFLECTION: PortablePropertyReflection = PortablePropertyReflection::custom(
-        PortableContextMenuStyle::SCHEMA,
-    );
+    const REFLECTION: PortablePropertyReflection =
+        PortablePropertyReflection::custom(PortableContextMenuStyle::SCHEMA);
 }
 
 impl PortableMaterializeProperty for ContextMenuStyle {
@@ -1005,11 +999,13 @@ mod tests {
         let value = PortableContextMenuStyle::from_native(&ContextMenuStyle::default());
         let mut bytes = value.encode_value().unwrap();
         bytes.push(0);
-        assert!(PortableContextMenuStyle::decode_value(
-            &bytes,
-            PortableContextMenuStyle::SCHEMA.version()
-        )
-        .is_err());
+        assert!(
+            PortableContextMenuStyle::decode_value(
+                &bytes,
+                PortableContextMenuStyle::SCHEMA.version()
+            )
+            .is_err()
+        );
 
         let mut value = value;
         value.label.text_decoration.line = 0x80;

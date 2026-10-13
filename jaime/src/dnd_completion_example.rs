@@ -38,7 +38,11 @@ pub fn dnd_completion_example() -> impl Widget {
                 } else {
                     Color::Rgba(0, 0, 0, 12)
                 })
-                .child(Column::new().gaps(LayoutSpacing::all(Spacing::Px(6))).children(cards))
+                .child(
+                    Column::new()
+                        .gaps(LayoutSpacing::all(Spacing::Px(6)))
+                        .children(cards),
+                )
         });
 
     let files = DropZone::new()
@@ -52,7 +56,9 @@ pub fn dnd_completion_example() -> impl Widget {
                 } else {
                     Color::Rgba(0, 0, 0, 12)
                 })
-                .child(Text::new("Drop PNG/JPEG files here — unsafe batches are rejected").wrapped())
+                .child(
+                    Text::new("Drop PNG/JPEG files here — unsafe batches are rejected").wrapped(),
+                )
         });
 
     Container::new()

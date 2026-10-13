@@ -35,9 +35,10 @@ impl Add<Duration> for Instant {
     type Output = Self;
 
     fn add(self, rhs: Duration) -> Self::Output {
-        Self(self.0.saturating_add(
-            rhs.as_nanos().min(u64::MAX as u128) as u64,
-        ))
+        Self(
+            self.0
+                .saturating_add(rhs.as_nanos().min(u64::MAX as u128) as u64),
+        )
     }
 }
 
@@ -53,13 +54,11 @@ impl Sub for Instant {
 pub(crate) fn set_portable_frame_time(frame: u64) {
     #[cfg(aimer_portable_guest)]
     {
-    const CLOCK_ORIGIN_NANOS: u64 = 1_000_000_000;
-    const FRAME_NANOS: u64 = 16_000_000;
-    PORTABLE_FRAME_TIME_NANOS.with(|time| {
-        time.set(
-            CLOCK_ORIGIN_NANOS.saturating_add(frame.saturating_mul(FRAME_NANOS)),
-        );
-    });
+        const CLOCK_ORIGIN_NANOS: u64 = 1_000_000_000;
+        const FRAME_NANOS: u64 = 16_000_000;
+        PORTABLE_FRAME_TIME_NANOS.with(|time| {
+            time.set(CLOCK_ORIGIN_NANOS.saturating_add(frame.saturating_mul(FRAME_NANOS)));
+        });
     }
 
     #[cfg(not(aimer_portable_guest))]
@@ -441,7 +440,8 @@ mod tests {
 
     #[test]
     fn a_governor_withholds_idle_time_after_an_overrun() {
-        let mut governor = FrameGovernor::new(Duration::from_millis(1)).safety_margin(Duration::ZERO);
+        let mut governor =
+            FrameGovernor::new(Duration::from_millis(1)).safety_margin(Duration::ZERO);
 
         governor.begin_frame();
         assert!(governor.idle_budget().time_remaining() > Duration::ZERO);

@@ -110,7 +110,9 @@ impl fmt::Display for PaintError {
             Self::InvalidColor => f.write_str("shape color must be finite and in 0..=1"),
             Self::InvalidStrokeWidth => f.write_str("stroke width must be finite and positive"),
             Self::InvalidMiterLimit => f.write_str("miter limit must be finite and at least one"),
-            Self::InvalidDash => f.write_str("dash entries must be finite, positive, and bounded with a non-zero sum"),
+            Self::InvalidDash => f.write_str(
+                "dash entries must be finite, positive, and bounded with a non-zero sum",
+            ),
             Self::TooManyDashSegments { limit } => {
                 write!(f, "dash array exceeds the {limit}-entry limit")
             }
@@ -118,7 +120,9 @@ impl fmt::Display for PaintError {
                 write!(f, "dash limit cannot exceed {limit} entries")
             }
             Self::InvalidOpacity => f.write_str("opacity must be finite and in 0..=1"),
-            Self::InvalidTransform => f.write_str("shape transform must be finite and non-singular"),
+            Self::InvalidTransform => {
+                f.write_str("shape transform must be finite and non-singular")
+            }
         }
     }
 }
@@ -227,10 +231,7 @@ impl DashSettings {
     }
 
     /// Validates and creates a dash pattern using the default entry limit.
-    pub fn new(
-        segments: impl IntoIterator<Item = f32>,
-        offset: f32,
-    ) -> Result<Self, PaintError> {
+    pub fn new(segments: impl IntoIterator<Item = f32>, offset: f32) -> Result<Self, PaintError> {
         Self::with_limit(segments, offset, crate::DEFAULT_MAX_DASH_SEGMENTS)
     }
 
@@ -255,18 +256,12 @@ impl DashSettings {
             }
             values.push(value);
         }
-        if values
-            .iter()
-            .any(|value| {
-                !value.is_finite()
-                    || *value <= 0.0
-                    || *value > crate::DEFAULT_MAX_ABS_COORDINATE
-            })
-            || (!values.is_empty() && {
-                let total = values.iter().copied().sum::<f32>();
-                !total.is_finite() || total <= 0.0
-            })
-        {
+        if values.iter().any(|value| {
+            !value.is_finite() || *value <= 0.0 || *value > crate::DEFAULT_MAX_ABS_COORDINATE
+        }) || (!values.is_empty() && {
+            let total = values.iter().copied().sum::<f32>();
+            !total.is_finite() || total <= 0.0
+        }) {
             return Err(PaintError::InvalidDash);
         }
         Ok(Self {

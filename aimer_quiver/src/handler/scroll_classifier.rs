@@ -873,10 +873,7 @@ mod tests {
     #[test]
     fn direct_manipulation_ends_before_post_lift_momentum() {
         let mut scroller = DualScroller::new();
-        scroller.on_pixel_delta(
-            PhysicalPosition::new(2.0, -40.0),
-            TouchPhase::Started,
-        );
+        scroller.on_pixel_delta(PhysicalPosition::new(2.0, -40.0), TouchPhase::Started);
         scroller.on_pixel_delta(PhysicalPosition::new(2.0, -40.0), TouchPhase::Moved);
 
         let held_step = scroller
@@ -886,10 +883,7 @@ mod tests {
         assert!(held_step.is_direct_manipulation);
 
         scroller.on_pixel_delta(PhysicalPosition::new(2.0, -8.0), TouchPhase::Ended);
-        scroller.on_pixel_delta(
-            PhysicalPosition::new(2.0, -4.0),
-            TouchPhase::Started,
-        );
+        scroller.on_pixel_delta(PhysicalPosition::new(2.0, -4.0), TouchPhase::Started);
 
         let momentum_step = scroller
             .tick()
@@ -995,7 +989,10 @@ mod tests {
             "the deferred gesture opens on the frame after the end"
         );
         assert_eq!(
-            phases.iter().filter(|phase| **phase == TouchPhase::Ended).count(),
+            phases
+                .iter()
+                .filter(|phase| **phase == TouchPhase::Ended)
+                .count(),
             1,
             "the deferred gesture stays open until its own boundary is injected"
         );

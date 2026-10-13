@@ -3,8 +3,8 @@ use std::{any::Any, mem::size_of};
 use bytemuck::{Pod, Zeroable};
 
 use super::{
-    MagnificationStyle, MaterialKind, MaterialRequest, MaterialRenderPath, MAX_INTERMEDIATE_DIMENSION,
-    MAX_INTERMEDIATE_PIXELS, MATERIAL_PIPELINE_NAME, plan_material,
+    MATERIAL_PIPELINE_NAME, MAX_INTERMEDIATE_DIMENSION, MAX_INTERMEDIATE_PIXELS,
+    MagnificationStyle, MaterialKind, MaterialRenderPath, MaterialRequest, plan_material,
 };
 
 mod blur;
@@ -76,7 +76,9 @@ impl MaterialUniform {
                 } else if request.kind == MaterialKind::LightEdge {
                     let (sin, cos) = request.light_angle.to_radians().sin_cos();
                     [cos, sin]
-                } else { [request.effective_phase(), request.distortion_strength] };
+                } else {
+                    [request.effective_phase(), request.distortion_strength]
+                };
                 [request.kind as u8 as f32, request.opacity, z, w]
             },
             light: [
@@ -92,13 +94,18 @@ impl MaterialUniform {
                 if request.kind == MaterialKind::LightEdge {
                     (request.border_width * request_scale(&request))
                         .min(request.bounds[2].min(request.bounds[3]) * 0.5)
-                } else { request.border_width },
+                } else {
+                    request.border_width
+                },
             ],
             radii: if request.kind == MaterialKind::LightEdge {
                 let scale = request_scale(&request);
-                request.corner_radii.map(|radius| (radius * scale)
-                    .min(request.bounds[2].min(request.bounds[3]) * 0.5))
-            } else { request.corner_radii },
+                request.corner_radii.map(|radius| {
+                    (radius * scale).min(request.bounds[2].min(request.bounds[3]) * 0.5)
+                })
+            } else {
+                request.corner_radii
+            },
             clip_rect,
             clip_radii,
             // `w` tells the shader whether the bound texture contains the
@@ -120,21 +127,50 @@ impl MaterialUniform {
             liquid: if request.kind == MaterialKind::Magnification {
                 let style = request.magnification_style;
                 let anchor = style.anchor();
-                [request.bounds[0] + request.bounds[2] * anchor[0],
+                [
+                    request.bounds[0] + request.bounds[2] * anchor[0],
                     request.bounds[1] + request.bounds[3] * anchor[1],
-                    if style.contains(MagnificationStyle::UNIFORM) { request.magnification } else { 1.0 },
-                    if style.contains(MagnificationStyle::BULGE) { request.bulge_strength } else { 0.0 }]
-            } else { [request.blob_amount, request.blob_seed, request.magnification, request.tip_pull] },
+                    if style.contains(MagnificationStyle::UNIFORM) {
+                        request.magnification
+                    } else {
+                        1.0
+                    },
+                    if style.contains(MagnificationStyle::BULGE) {
+                        request.bulge_strength
+                    } else {
+                        0.0
+                    },
+                ]
+            } else {
+                [
+                    request.blob_amount,
+                    request.blob_seed,
+                    request.magnification,
+                    request.tip_pull,
+                ]
+            },
             liquid2: {
                 if request.kind == MaterialKind::Magnification {
                     let depth = lens_thickness_pixels(&request);
-                    [request.chromatic_aberration, depth, lens_bevel_width_pixels(&request, depth), 0.0]
+                    [
+                        request.chromatic_aberration,
+                        depth,
+                        lens_bevel_width_pixels(&request, depth),
+                        0.0,
+                    ]
                 } else {
                     let sigma = (blur_radius_pixels(&request) / 3.0).max(0.001);
                     let ratio = if request.kind == MaterialKind::BackdropFilter {
                         (-0.5 / (sigma * sigma)).exp()
-                    } else { 0.0 };
-                    [request.chromatic_aberration, request.bevel_radius, ratio, ratio * ratio]
+                    } else {
+                        0.0
+                    };
+                    [
+                        request.chromatic_aberration,
+                        request.bevel_radius,
+                        ratio,
+                        ratio * ratio,
+                    ]
                 }
             },
         }
@@ -179,19 +215,12 @@ pub struct MaterialPipeline<B: crate::backend::GpuBackend = crate::backend::Defa
     upload: Vec<u8>,
 }
 
-
-
-
 // ── Backend-generic pipeline implementation ─────────────────────────────────
 
 impl<B: crate::backend::GpuBackend> MaterialPipeline<B> {
     /// Creates the pipeline and its GPU resources through the selected
     /// [`GpuBackend`].
-    pub fn new(
-        backend: &B,
-        format: B::TextureFormat,
-        antialiasing: crate::AntiAlias,
-    ) -> Self {
+    pub fn new(backend: &B, format: B::TextureFormat, antialiasing: crate::AntiAlias) -> Self {
         use crate::backend::*;
 
         let bind_group_layout = backend.create_bind_group_layout(&[
@@ -272,7 +301,8 @@ impl<B: crate::backend::GpuBackend> MaterialPipeline<B> {
             &backdrop_view,
         );
 
-        let pipeline = create_material_pipeline(backend, &bind_group_layout, format, antialiasing, false);
+        let pipeline =
+            create_material_pipeline(backend, &bind_group_layout, format, antialiasing, false);
 
         Self {
             pipeline,
@@ -323,11 +353,14 @@ impl<B: crate::backend::GpuBackend> MaterialPipeline<B> {
         }
 
         let texture = backend.create_texture(&TextureDescriptor {
-            label: Some(if available {
-                "material captured backdrop"
-            } else {
-                "material neutral backdrop"
-            }.to_string()),
+            label: Some(
+                if available {
+                    "material captured backdrop"
+                } else {
+                    "material neutral backdrop"
+                }
+                .to_string(),
+            ),
             size: (width, height, 1),
             mip_level_count: 1,
             sample_count: 1,
@@ -353,20 +386,13 @@ impl<B: crate::backend::GpuBackend> MaterialPipeline<B> {
     }
 
     /// Backend-driven equivalent of [`ensure_uniform_capacity`].
-    fn ensure_uniform_capacity_generic(
-        &mut self,
-        backend: &B,
-        required: usize,
-    ) {
+    fn ensure_uniform_capacity_generic(&mut self, backend: &B, required: usize) {
         if required <= self.uniform_capacity {
             return;
         }
-        let capacity = required
-            .next_power_of_two()
-            .min(MAX_REQUESTS_PER_FRAME);
+        let capacity = required.next_power_of_two().min(MAX_REQUESTS_PER_FRAME);
         self.uniform_capacity = capacity;
-        self.uniform_buffer =
-            create_uniform_buffer_generic(backend, self.uniform_stride, capacity);
+        self.uniform_buffer = create_uniform_buffer_generic(backend, self.uniform_stride, capacity);
         self.bind_group = create_bind_group(
             backend,
             &self.bind_group_layout,
@@ -374,34 +400,46 @@ impl<B: crate::backend::GpuBackend> MaterialPipeline<B> {
             self.uniform_stride,
             &self._backdrop_view,
             &self.backdrop_sampler,
-            self.blur.as_ref().map_or(&self._backdrop_view, |blur| &blur.view),
+            self.blur
+                .as_ref()
+                .map_or(&self._backdrop_view, |blur| &blur.view),
         );
     }
 
     /// Equivalent to [`CustomPipeline::prepare`] but routes GPU operations
     /// through the [`GpuBackend`] trait.
-    pub fn prepare(
-        &mut self,
-        ctx: &crate::custom_pipeline::RenderContextGeneric<'_, B>,
-    ) {
+    pub fn prepare(&mut self, ctx: &crate::custom_pipeline::RenderContextGeneric<'_, B>) {
         if self.requests.is_empty() {
             return;
         }
         if self.has_filter && self.filter_pipeline.is_none() {
             self.filter_pipeline = Some(create_material_pipeline(
-                ctx.backend, &self.bind_group_layout, ctx.format, self.antialiasing, true,
+                ctx.backend,
+                &self.bind_group_layout,
+                ctx.format,
+                self.antialiasing,
+                true,
             ));
         }
         let mut capture_extent = [1, 1];
         self.backdrop_regions
             .extend(self.requests.iter().copied().map(|request| {
                 ctx.source_texture
-                    .and_then(|_| backdrop_region(request, ctx.width, ctx.height, self.max_capture_dimension))
-                    .and_then(|region| include_backdrop_region(region, &mut capture_extent, self.max_capture_dimension))
+                    .and_then(|_| {
+                        backdrop_region(request, ctx.width, ctx.height, self.max_capture_dimension)
+                    })
+                    .and_then(|region| {
+                        include_backdrop_region(
+                            region,
+                            &mut capture_extent,
+                            self.max_capture_dimension,
+                        )
+                    })
             }));
         self.backdrop_available = self.backdrop_regions.iter().any(Option::is_some);
         let [backdrop_width, backdrop_height] = capture_extent;
-        let capture_changed = self.backdrop_width != backdrop_width || self.backdrop_height != backdrop_height
+        let capture_changed = self.backdrop_width != backdrop_width
+            || self.backdrop_height != backdrop_height
             || self.backdrop_format != ctx.format;
         let uniform_changed = self.requests.len() > self.uniform_capacity;
         self.ensure_backdrop_texture_generic(
@@ -412,15 +450,32 @@ impl<B: crate::backend::GpuBackend> MaterialPipeline<B> {
             self.backdrop_available,
         );
         self.ensure_uniform_capacity_generic(ctx.backend, self.requests.len());
-        let needs_blur = self.requests.iter().zip(&self.backdrop_regions).any(|(request, region)|
-            request.kind == MaterialKind::BackdropFilter && request.blur_radius > 0.0 && region.is_some());
+        let needs_blur =
+            self.requests
+                .iter()
+                .zip(&self.backdrop_regions)
+                .any(|(request, region)| {
+                    request.kind == MaterialKind::BackdropFilter
+                        && request.blur_radius > 0.0
+                        && region.is_some()
+                });
         if needs_blur {
             let new_blur = self.blur.is_none();
-            let mut blur = self.blur.take().unwrap_or_else(|| blur::BackdropBlur::new(self, ctx.backend));
+            let mut blur = self
+                .blur
+                .take()
+                .unwrap_or_else(|| blur::BackdropBlur::new(self, ctx.backend));
             let texture_changed = blur.prepare(self, ctx.backend, capture_changed);
             if new_blur || texture_changed || capture_changed || uniform_changed {
-                self.bind_group = create_bind_group(ctx.backend, &self.bind_group_layout, &self.uniform_buffer,
-                    self.uniform_stride, &self._backdrop_view, &self.backdrop_sampler, &blur.view);
+                self.bind_group = create_bind_group(
+                    ctx.backend,
+                    &self.bind_group_layout,
+                    &self.uniform_buffer,
+                    self.uniform_stride,
+                    &self._backdrop_view,
+                    &self.backdrop_sampler,
+                    &blur.view,
+                );
             }
             self.blur = Some(blur);
         }
@@ -438,15 +493,19 @@ impl<B: crate::backend::GpuBackend> MaterialPipeline<B> {
             );
             let start = index * stride;
             let end = start + size_of::<MaterialUniform>();
-            self.upload[start..end]
-                .copy_from_slice(bytemuck::bytes_of(&uniform));
+            self.upload[start..end].copy_from_slice(bytemuck::bytes_of(&uniform));
         }
         ctx.backend
             .write_buffer(&self.uniform_buffer, 0, &self.upload);
 
-        if !self.backdrop_available && self.requests.iter().any(|request| request.kind != MaterialKind::LightEdge) {
-            ctx.backend.write_texture(
-                &crate::backend::WriteTextureDescriptor {
+        if !self.backdrop_available
+            && self
+                .requests
+                .iter()
+                .any(|request| request.kind != MaterialKind::LightEdge)
+        {
+            ctx.backend
+                .write_texture(&crate::backend::WriteTextureDescriptor {
                     texture: &self.backdrop_texture,
                     mip_level: 0,
                     origin: crate::backend::Origin3d::ZERO,
@@ -462,8 +521,7 @@ impl<B: crate::backend::GpuBackend> MaterialPipeline<B> {
                         height: 1,
                         depth_or_array_layers: 1,
                     },
-                },
-            );
+                });
         }
     }
 
@@ -477,10 +535,11 @@ impl<B: crate::backend::GpuBackend> MaterialPipeline<B> {
         backend: &B,
         encoder: &mut B::CommandEncoder,
         source_texture: &B::Texture,
+        source_offset: (u32, u32),
         _width: u32,
         _height: u32,
     ) {
-        use crate::backend::{TexelCopyTextureInfo, Extent3d, Origin3d, TextureAspect};
+        use crate::backend::{Extent3d, Origin3d, TexelCopyTextureInfo, TextureAspect};
         let Some(region) = command_index
             .and_then(|index| self.backdrop_regions.get(index))
             .copied()
@@ -488,16 +547,13 @@ impl<B: crate::backend::GpuBackend> MaterialPipeline<B> {
         else {
             return;
         };
+        let (x, y) = backdrop_source_origin(region, source_offset);
         backend.copy_texture_to_texture(
             encoder,
             &TexelCopyTextureInfo {
                 texture: source_texture,
                 mip_level: 0,
-                origin: Origin3d {
-                    x: region.x,
-                    y: region.y,
-                    z: 0,
-                },
+                origin: Origin3d { x, y, z: 0 },
                 aspect: TextureAspect::All,
             },
             &TexelCopyTextureInfo {
@@ -515,18 +571,18 @@ impl<B: crate::backend::GpuBackend> MaterialPipeline<B> {
         if let Some(index) = command_index {
             let request = self.requests[index];
             if request.kind == MaterialKind::BackdropFilter && request.blur_radius > 0.0 {
-                if let Some(blur) = &self.blur { blur.encode(index, backend, encoder); }
+                if let Some(blur) = &self.blur {
+                    blur.encode(index, backend, encoder);
+                }
             }
         }
     }
 
     fn request_from_payload_generic(data: &(dyn Any + Send)) -> Option<MaterialRequest> {
-        data.downcast_ref::<MaterialRequest>()
-            .copied()
-            .or_else(|| {
-                data.downcast_ref::<Vec<u8>>()
-                    .and_then(|bytes| MaterialRequest::decode(bytes).ok())
-            })
+        data.downcast_ref::<MaterialRequest>().copied().or_else(|| {
+            data.downcast_ref::<Vec<u8>>()
+                .and_then(|bytes| MaterialRequest::decode(bytes).ok())
+        })
     }
 
     fn render_command_generic<'pass>(
@@ -541,7 +597,9 @@ impl<B: crate::backend::GpuBackend> MaterialPipeline<B> {
             return;
         };
         let pipeline = if replaces_backdrop(self.requests[index].kind) {
-            let Some(pipeline) = &self.filter_pipeline else { return };
+            let Some(pipeline) = &self.filter_pipeline else {
+                return;
+            };
             pipeline
         } else {
             &self.pipeline
@@ -604,7 +662,9 @@ impl<B: crate::backend::GpuBackend> crate::custom_pipeline::CustomPipelineGeneri
     fn needs_backdrop(&self, command_index: Option<usize>) -> bool {
         self.backdrop_available
             && command_index.is_some_and(|index| {
-                self.backdrop_regions.get(index).is_some_and(Option::is_some)
+                self.backdrop_regions
+                    .get(index)
+                    .is_some_and(Option::is_some)
             })
     }
 
@@ -614,6 +674,7 @@ impl<B: crate::backend::GpuBackend> crate::custom_pipeline::CustomPipelineGeneri
         backend: &B,
         encoder: &mut B::CommandEncoder,
         source_texture: &B::Texture,
+        source_offset: (u32, u32),
         width: u32,
         height: u32,
     ) {
@@ -622,6 +683,7 @@ impl<B: crate::backend::GpuBackend> crate::custom_pipeline::CustomPipelineGeneri
             backend,
             encoder,
             source_texture,
+            source_offset,
             width,
             height,
         );
@@ -641,11 +703,19 @@ fn create_material_pipeline<B: crate::backend::GpuBackend>(
 ) -> B::RenderPipeline {
     use crate::backend::*;
     let shader = backend.create_shader_module(
-        backend.builtin_shader_source(BuiltinShader::Material), "material shader",
+        backend.builtin_shader_source(BuiltinShader::Material),
+        "material shader",
     );
     let pipeline_layout = backend.create_pipeline_layout(&[bind_group_layout]);
     backend.create_render_pipeline(&RenderPipelineDescriptor {
-        label: Some(if replace_backdrop { "backdrop filter pipeline" } else { "material pipeline" }.to_string()),
+        label: Some(
+            if replace_backdrop {
+                "backdrop filter pipeline"
+            } else {
+                "material pipeline"
+            }
+            .to_string(),
+        ),
         layout: Some(&pipeline_layout),
         vertex: VertexState {
             module: &shader,
@@ -657,7 +727,11 @@ fn create_material_pipeline<B: crate::backend::GpuBackend>(
             entry_point: "fs_main",
             targets: &[Some(ColorTargetState {
                 format,
-                blend: if replace_backdrop { None } else { Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING) },
+                blend: if replace_backdrop {
+                    None
+                } else {
+                    Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING)
+                },
                 write_mask: ColorWriteMask::ALL,
             })],
         }),
@@ -677,24 +751,38 @@ fn backdrop_fits_budget(width: u32, height: u32, max_dimension: u32) -> bool {
             .is_some_and(|pixels| pixels <= MAX_INTERMEDIATE_PIXELS)
 }
 
-fn include_backdrop_region(region: BackdropRegion, extent: &mut [u32; 2], max_dimension: u32) -> Option<BackdropRegion> {
+fn include_backdrop_region(
+    region: BackdropRegion,
+    extent: &mut [u32; 2],
+    max_dimension: u32,
+) -> Option<BackdropRegion> {
     let width = extent[0].max(region.width);
     let height = extent[1].max(region.height);
     // Ordered captures share one texture. Individually valid wide and tall
     // regions must not combine into an allocation beyond the pixel budget.
-    if !backdrop_fits_budget(width, height, max_dimension) { return None; }
+    if !backdrop_fits_budget(width, height, max_dimension) {
+        return None;
+    }
     *extent = [width, height];
     Some(region)
 }
 
 #[inline]
 fn replaces_backdrop(kind: MaterialKind) -> bool {
-    matches!(kind, MaterialKind::BackdropFilter | MaterialKind::Magnification)
+    matches!(
+        kind,
+        MaterialKind::BackdropFilter | MaterialKind::Magnification
+    )
 }
 
 #[inline]
 fn lens_thickness_pixels(request: &MaterialRequest) -> f32 {
-    if !request.magnification_style.contains(MagnificationStyle::REFRACTION) { return 0.0; }
+    if !request
+        .magnification_style
+        .contains(MagnificationStyle::REFRACTION)
+    {
+        return 0.0;
+    }
     // Keep thickness logical through bridge normalization so display scaling
     // cannot clamp it back to 512 device pixels before the geometry limit.
     let m = &request.transform;
@@ -710,7 +798,11 @@ fn lens_bevel_width_pixels(request: &MaterialRequest, depth: f32) -> f32 {
     // axis, where the nearest-edge normal jumps. Flatten the bevel before
     // that axis while retaining optical depth for Snell displacement.
     // Zero radii describe deliberately sharp corners and impose no limit.
-    request.corner_radii.iter().copied().filter(|radius| *radius > 0.0)
+    request
+        .corner_radii
+        .iter()
+        .copied()
+        .filter(|radius| *radius > 0.0)
         .fold(depth, f32::min)
 }
 
@@ -733,6 +825,18 @@ fn request_scale(request: &MaterialRequest) -> f32 {
     ((m[0] * m[0] + m[1] * m[1]).sqrt() + (m[3] * m[3] + m[4] * m[4]).sqrt()) * 0.5
 }
 
+/// Where in the source texture a target-local backdrop `region` is read from.
+///
+/// Inside an offscreen opacity group the region is relative to the group's
+/// bounds, which sit at `source_offset` within the whole-frame source.
+#[inline]
+fn backdrop_source_origin(region: BackdropRegion, source_offset: (u32, u32)) -> (u32, u32) {
+    (
+        region.x.saturating_add(source_offset.0),
+        region.y.saturating_add(source_offset.1),
+    )
+}
+
 fn backdrop_region(
     request: MaterialRequest,
     viewport_width: u32,
@@ -744,7 +848,8 @@ fn backdrop_region(
     }
     let request = request.normalized();
     if request.kind == MaterialKind::BackdropFilter
-        && blur_radius_pixels(&request) > MAX_INTERMEDIATE_DIMENSION as f32 {
+        && blur_radius_pixels(&request) > MAX_INTERMEDIATE_DIMENSION as f32
+    {
         return None;
     }
     let blur_expansion = blur_radius_pixels(&request).ceil().max(1.0);
@@ -762,8 +867,7 @@ fn backdrop_region(
     } else if request.kind == MaterialKind::Liquid {
         let ripple_x = (request.bounds[2] * 0.010 * request.distortion_strength).ceil();
         let ripple_y = (request.bounds[3] * 0.009 * request.distortion_strength).ceil();
-        let bevel_expansion =
-            (request.bevel_radius * (1.0 + request.magnification) * 2.5).ceil();
+        let bevel_expansion = (request.bevel_radius * (1.0 + request.magnification) * 2.5).ceil();
         (
             blur_expansion.max(ripple_x).max(bevel_expansion),
             blur_expansion.max(ripple_y).max(bevel_expansion),
@@ -787,8 +891,11 @@ fn backdrop_region(
     let height = bottom.saturating_sub(top);
     // Replacement effects use full-resolution captures. Wide, shallow bars
     // can exceed 2,048 device pixels while staying within the pixel budget.
-    let max_dimension = if replaces_backdrop(request.kind) { max_dimension }
-        else { max_dimension.min(MAX_INTERMEDIATE_DIMENSION) };
+    let max_dimension = if replaces_backdrop(request.kind) {
+        max_dimension
+    } else {
+        max_dimension.min(MAX_INTERMEDIATE_DIMENSION)
+    };
     backdrop_fits_budget(width, height, max_dimension).then_some(BackdropRegion {
         x: left,
         y: top,
@@ -800,8 +907,7 @@ fn backdrop_region(
 // ── Generic helper functions ────────────────────────────────────────────────
 
 fn aligned_uniform_stride_generic<B: crate::backend::GpuBackend>(backend: &B) -> u64 {
-    let alignment =
-        u64::from(backend.limits().min_uniform_buffer_offset_alignment.max(1));
+    let alignment = u64::from(backend.limits().min_uniform_buffer_offset_alignment.max(1));
     let size = size_of::<MaterialUniform>() as u64;
     size.div_ceil(alignment) * alignment
 }
@@ -857,7 +963,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{backdrop_fits_budget, backdrop_region, MaterialUniform};
+    use super::{MaterialUniform, backdrop_fits_budget, backdrop_region};
     use crate::pipeline::material::{MaterialKind, MaterialRequest};
 
     #[test]
@@ -869,7 +975,8 @@ mod tests {
 
     #[test]
     fn gaussian_support_is_bounded_even_at_extreme_device_scales() {
-        let mut request = MaterialRequest::new(MaterialKind::BackdropFilter, [0.0, 0.0, 64.0, 64.0]);
+        let mut request =
+            MaterialRequest::new(MaterialKind::BackdropFilter, [0.0, 0.0, 64.0, 64.0]);
         request.blur_radius = 96.0;
         request.transform[0] = 24.0;
         request.transform[4] = 24.0;

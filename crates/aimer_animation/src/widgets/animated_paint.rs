@@ -177,7 +177,12 @@ impl Drawable for AnimatedPaintElement {
         self.child.sync_paint_geometry(ctx);
         let presentation = self.presentation(progress);
         if !presentation.opacity.is_finite()
-            || !presentation.transform.cols.iter().flatten().all(|value| value.is_finite())
+            || !presentation
+                .transform
+                .cols
+                .iter()
+                .flatten()
+                .all(|value| value.is_finite())
         {
             return false;
         }
@@ -310,11 +315,11 @@ mod tests {
 
         let tree = RenderTree::new();
         let root = tree.add_root(Rect::new(0.0, 0.0, 101.0, 101.0)).unwrap();
-        tree.add_child(root, Rect::new(0.0, 0.0, 10.0, 10.0)).unwrap();
+        tree.add_child(root, Rect::new(0.0, 0.0, 10.0, 10.0))
+            .unwrap();
         let retained = tree.context(root).unwrap();
-        context.with_local_v2_paint_context(retained, |context| {
-            element.sync_local_v2_state(context)
-        })
+        context
+            .with_local_v2_paint_context(retained, |context| element.sync_local_v2_state(context))
     }
 
     struct StableLeaf;
@@ -331,7 +336,6 @@ mod tests {
 
     impl Drawable for StableElement {
         fn update(&self, _context: &BuildContext) {}
-
     }
 
     impl EventElement for StableElement {}
@@ -458,11 +462,11 @@ mod tests {
     #[cfg(feature = "portable-guest")]
     #[test]
     fn portable_lowering_reports_the_native_only_widget() {
+        use aimer_widget::PortableWidget;
         use aimer_widget::portable::{
             PortableBuildContext, PortableLimits, PortableWidgetLimits, SourceFingerprint,
             StableId128,
         };
-        use aimer_widget::PortableWidget;
 
         let mut context = PortableBuildContext::new(
             1,

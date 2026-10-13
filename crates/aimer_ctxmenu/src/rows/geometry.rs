@@ -48,10 +48,7 @@ pub(crate) fn content_size(
             style.row_height,
         )
     } else {
-        (
-            widths[0],
-            style.row_height * label_widths.len() as f32,
-        )
+        (widths[0], style.row_height * label_widths.len() as f32)
     }
 }
 
@@ -64,7 +61,11 @@ pub(crate) fn row_rects(
 ) -> Vec<Bounds> {
     let widths = item_widths(shape, style, label_widths);
     let mut rects = Vec::with_capacity(widths.len());
-    let mut cursor = if shape.is_horizontal() { origin.x } else { origin.y };
+    let mut cursor = if shape.is_horizontal() {
+        origin.x
+    } else {
+        origin.y
+    };
     for width in widths {
         if shape.is_horizontal() {
             rects.push(Bounds::new(cursor, origin.y, width, style.row_height));
@@ -98,12 +99,7 @@ pub(crate) fn union(rects: &[Bounds]) -> Option<Bounds> {
 /// its items tile it edge to edge and the corner is plainly part of the button
 /// beside it. A list does not: the space above its first row and below its last
 /// is the panel's deliberate padding, and a press there must run nothing.
-pub(crate) fn row_at(
-    shape: ContextMenuShape,
-    rects: &[Bounds],
-    x: f32,
-    y: f32,
-) -> Option<usize> {
+pub(crate) fn row_at(shape: ContextMenuShape, rects: &[Bounds], x: f32, y: f32) -> Option<usize> {
     let hit = rects.iter().position(|rect| contains(*rect, x, y));
     if hit.is_some() || !shape.is_horizontal() {
         return hit;
@@ -115,10 +111,7 @@ pub(crate) fn row_at(
 /// Whether `(x, y)` is inside `bounds`, edges included.
 #[inline]
 pub(crate) fn contains(bounds: Bounds, x: f32, y: f32) -> bool {
-    x >= bounds.x
-        && x <= bounds.x + bounds.width
-        && y >= bounds.y
-        && y <= bounds.y + bounds.height
+    x >= bounds.x && x <= bounds.x + bounds.width && y >= bounds.y && y <= bounds.y + bounds.height
 }
 
 #[cfg(test)]
@@ -198,9 +191,17 @@ mod tests {
         let style = list();
         let rects = row_rects(ContextMenuShape::List, &style, at(100.0, 200.0), &LABELS);
 
-        assert_eq!(row_at(ContextMenuShape::List, &rects, 110.0, 205.0), Some(0));
         assert_eq!(
-            row_at(ContextMenuShape::List, &rects, 110.0, 200.0 + style.row_height + 2.0),
+            row_at(ContextMenuShape::List, &rects, 110.0, 205.0),
+            Some(0)
+        );
+        assert_eq!(
+            row_at(
+                ContextMenuShape::List,
+                &rects,
+                110.0,
+                200.0 + style.row_height + 2.0
+            ),
             Some(1)
         );
         assert_eq!(row_at(ContextMenuShape::List, &rects, 0.0, 0.0), None);

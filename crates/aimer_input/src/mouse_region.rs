@@ -2,11 +2,11 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use aimer_attribute::CacheBounds;
-use aimer_widget::InteractionBounds;
 use aimer_events::element::ElementEvent;
 use aimer_events::pointer::PointerSource;
 use aimer_events::window::request_animation_frame;
 use aimer_macro::PortableWidget;
+use aimer_widget::InteractionBounds;
 use aimer_widget::base::*;
 use aimer_widget::{
     AnyElement, AnyWidget, Drawable, Element, EventDispatchContext, EventElement, EventResult,
@@ -49,10 +49,7 @@ pub type SharedPointerState = Rc<Cell<PointerState>>;
 ///                                .child(Text::new("Hover me"));
 /// ```
 #[derive(PortableWidget)]
-#[portable_widget(
-    id = "aimer_input::MouseRegion",
-    schema_only
-)]
+#[portable_widget(id = "aimer_input::MouseRegion", schema_only)]
 pub struct MouseRegion<W = RequiredChild> {
     #[portable_callback(async)]
     pub on_hover_enter: VoidCallback,
@@ -221,7 +218,10 @@ impl<E: Element> RawMouseRegion<E> {
                 if let Some(icon) = self.cursor {
                     self.window.set_cursor(icon);
                 }
-                aimer_utils::pointer_trace!("region enter, bounds {:?}", self.cached_bounds.get_bounds());
+                aimer_utils::pointer_trace!(
+                    "region enter, bounds {:?}",
+                    self.cached_bounds.get_bounds()
+                );
                 Self::execute_void_callback(&self.on_hover_enter);
                 self.current_state.set(PointerState::Inside);
                 request_animation_frame()
@@ -230,7 +230,10 @@ impl<E: Element> RawMouseRegion<E> {
             if self.cursor.is_some() {
                 self.window.set_cursor(winit::window::CursorIcon::Default);
             }
-            aimer_utils::pointer_trace!("region exit, bounds {:?}", self.cached_bounds.get_bounds());
+            aimer_utils::pointer_trace!(
+                "region exit, bounds {:?}",
+                self.cached_bounds.get_bounds()
+            );
             Self::execute_void_callback(&self.on_hover_exit);
             self.current_state.set(PointerState::Outside);
             request_animation_frame()
@@ -472,7 +475,9 @@ impl<E: Element> Drawable for RawMouseRegion<E> {
     }
 
     #[inline]
-    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+    fn retained_v2_interaction_disagreement(
+        &self,
+    ) -> Option<aimer_widget::InteractionDisagreement> {
         self.cached_bounds.disagreement("MouseRegion")
     }
 
@@ -485,7 +490,6 @@ impl<E: Element> Drawable for RawMouseRegion<E> {
         self.sync_hover_from_paint(ctx.cursor_pos);
         self.child.sync_paint_geometry(ctx);
     }
-
 }
 
 #[cfg(test)]
@@ -597,7 +601,10 @@ mod tests {
         let events = Rc::new(Cell::new(0));
         let region = capturing_region(events);
 
-        assert_eq!(region.event_tree_role(), aimer_widget::EventTreeRole::IndexedHitTestBoundary);
+        assert_eq!(
+            region.event_tree_role(),
+            aimer_widget::EventTreeRole::IndexedHitTestBoundary
+        );
         assert_eq!(region.event_tree_bounds(), None);
 
         let mut event_children = 0;
@@ -642,7 +649,10 @@ mod tests {
         aimer_widget::set_pointer_capture_active(true);
 
         region.sync_hover_from_paint(Vec2d { x: 10.0, y: 10.0 });
-        assert!(matches!(state.get(), PointerState::Inside), "the region that owns the press stays hovered");
+        assert!(
+            matches!(state.get(), PointerState::Inside),
+            "the region that owns the press stays hovered"
+        );
 
         region.sync_hover_from_paint(Vec2d { x: 400.0, y: 400.0 });
         aimer_widget::set_pointer_capture_active(false);
@@ -679,7 +689,8 @@ mod tests {
             cached_bounds: bounds,
             child: ResultElement.boxed(),
             window: WindowHandle::headless(PhysicalSize::new(100, 100), 1.0),
-        }.boxed();
+        }
+        .boxed();
 
         let event = ElementEvent::PointerDown(PointerInfo::new(
             aimer_attribute::position::Vec2d { x: 10.0, y: 10.0 },
@@ -688,7 +699,9 @@ mod tests {
             PointerButton::Primary,
         ));
         let result = EventDispatcher::new().dispatch(
-            region.as_ref(), event.get_pointer_pos().unwrap(), &event,
+            region.as_ref(),
+            event.get_pointer_pos().unwrap(),
+            &event,
         );
 
         assert!(result.is_consumed());
@@ -712,7 +725,8 @@ mod tests {
             cached_bounds: bounds,
             child: ResultElement.boxed(),
             window: WindowHandle::headless(PhysicalSize::new(100, 100), 1.0),
-        }.boxed();
+        }
+        .boxed();
 
         let event = ElementEvent::PointerMove(PointerInfo::new(
             aimer_attribute::position::Vec2d { x: 10.0, y: 10.0 },
@@ -721,7 +735,9 @@ mod tests {
             PointerButton::Primary,
         ));
         let result = EventDispatcher::new().dispatch(
-            region.as_ref(), event.get_pointer_pos().unwrap(), &event,
+            region.as_ref(),
+            event.get_pointer_pos().unwrap(),
+            &event,
         );
 
         assert!(result.is_consumed());
@@ -754,8 +770,14 @@ mod tests {
             PointerButton::Primary,
         )));
 
-        assert!(result.is_consumed(), "the icon lives only while the move is claimed");
-        assert!(!result.needs_redraw(), "claiming the cursor repaints nothing");
+        assert!(
+            result.is_consumed(),
+            "the icon lives only while the move is claimed"
+        );
+        assert!(
+            !result.needs_redraw(),
+            "claiming the cursor repaints nothing"
+        );
     }
 
     // With per-move redraws gone, the frame that repaints a hover decoration
@@ -891,10 +913,7 @@ mod tests {
         let _ = dispatcher.dispatch(
             region.as_ref(),
             Vec2d { x: 10.0, y: 10.0 },
-            &ElementEvent::PointerDown(PointerInfo::touch(
-                Vec2d { x: 10.0, y: 10.0 },
-                pointer.id,
-            )),
+            &ElementEvent::PointerDown(PointerInfo::touch(Vec2d { x: 10.0, y: 10.0 }, pointer.id)),
         );
         assert!(dispatcher.is_captured(pointer));
 
@@ -909,10 +928,7 @@ mod tests {
         let _ = dispatcher.dispatch(
             region.as_ref(),
             Vec2d { x: 200.0, y: 200.0 },
-            &ElementEvent::PointerUp(PointerInfo::touch(
-                Vec2d { x: 200.0, y: 200.0 },
-                pointer.id,
-            )),
+            &ElementEvent::PointerUp(PointerInfo::touch(Vec2d { x: 200.0, y: 200.0 }, pointer.id)),
         );
 
         assert_eq!(events.get(), 3);
@@ -941,10 +957,7 @@ mod tests {
         let _ = dispatcher.dispatch(
             root.as_ref(),
             Vec2d { x: 10.0, y: 10.0 },
-            &ElementEvent::PointerDown(PointerInfo::touch(
-                Vec2d { x: 10.0, y: 10.0 },
-                pointer.id,
-            )),
+            &ElementEvent::PointerDown(PointerInfo::touch(Vec2d { x: 10.0, y: 10.0 }, pointer.id)),
         );
         let _ = dispatcher.dispatch(
             root.as_ref(),
@@ -957,10 +970,7 @@ mod tests {
         let _ = dispatcher.dispatch(
             root.as_ref(),
             Vec2d { x: 200.0, y: 200.0 },
-            &ElementEvent::PointerUp(PointerInfo::touch(
-                Vec2d { x: 200.0, y: 200.0 },
-                pointer.id,
-            )),
+            &ElementEvent::PointerUp(PointerInfo::touch(Vec2d { x: 200.0, y: 200.0 }, pointer.id)),
         );
 
         assert_eq!(events.get(), 3);
@@ -977,10 +987,7 @@ mod tests {
         let _ = dispatcher.dispatch(
             root.as_ref(),
             Vec2d { x: 10.0, y: 10.0 },
-            &ElementEvent::PointerDown(PointerInfo::touch(
-                Vec2d { x: 10.0, y: 10.0 },
-                pointer.id,
-            )),
+            &ElementEvent::PointerDown(PointerInfo::touch(Vec2d { x: 10.0, y: 10.0 }, pointer.id)),
         );
         let _ = dispatcher.dispatch(root.as_ref(), Vec2d::default(), &ElementEvent::Cancel);
 
@@ -1021,10 +1028,7 @@ mod tests {
         let _ = dispatcher.dispatch(
             pressed.as_ref(),
             Vec2d { x: 10.0, y: 10.0 },
-            &ElementEvent::PointerDown(PointerInfo::touch(
-                Vec2d { x: 10.0, y: 10.0 },
-                pointer.id,
-            )),
+            &ElementEvent::PointerDown(PointerInfo::touch(Vec2d { x: 10.0, y: 10.0 }, pointer.id)),
         );
         assert!(dispatcher.is_captured(pointer));
 
@@ -1036,13 +1040,14 @@ mod tests {
         let _ = dispatcher.dispatch(
             rebuilt.as_ref(),
             Vec2d { x: 200.0, y: 200.0 },
-            &ElementEvent::PointerUp(PointerInfo::touch(
-                Vec2d { x: 200.0, y: 200.0 },
-                pointer.id,
-            )),
+            &ElementEvent::PointerUp(PointerInfo::touch(Vec2d { x: 200.0, y: 200.0 }, pointer.id)),
         );
 
-        assert_eq!(events.get(), 2, "the child must hear the release it is owed");
+        assert_eq!(
+            events.get(),
+            2,
+            "the child must hear the release it is owed"
+        );
         assert!(!dispatcher.is_captured(pointer));
     }
 }

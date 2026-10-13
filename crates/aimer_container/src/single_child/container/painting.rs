@@ -61,10 +61,18 @@ impl<T: Element, D: Decoration> RawContainer<T, D> {
         let _p_right = self.padding.right.value(box_width, scale);
         let _p_bottom = self.padding.bottom.value(box_height, scale);
 
-        let [b_left, b_top, b_right, b_bottom] = self.decoration_insets(box_width, box_height, scale);
-        let clips_child = self.decoration().child_clip_radius(
-            ResolvedSize { width: box_width / scale, height: box_height / scale }, scale,
-        ).is_some();
+        let [b_left, b_top, b_right, b_bottom] =
+            self.decoration_insets(box_width, box_height, scale);
+        let clips_child = self
+            .decoration()
+            .child_clip_radius(
+                ResolvedSize {
+                    width: box_width / scale,
+                    height: box_height / scale,
+                },
+                scale,
+            )
+            .is_some();
 
         // Draw decoration (background, border, outline)
 
@@ -80,6 +88,7 @@ impl<T: Element, D: Decoration> RawContainer<T, D> {
         });
 
         let mut child_ctx = ctx.clone();
+        child_ctx.paint_background = self.child_paint_background(ctx);
         let content_w = (box_width - p_left - b_left - _p_right - b_right).max(0.0);
         let content_h = (box_height - p_top - b_top - _p_bottom - b_bottom).max(0.0);
         child_ctx.box_constraint.max_width = content_w;
@@ -105,15 +114,11 @@ impl<T: Element, D: Decoration> RawContainer<T, D> {
         // the child's nominal content bounds. That keeps unknown child bounds
         // conservative while still skipping the whole subtree when the clip
         // itself is outside the ancestor viewport.
-        if !clips_child || ctx.is_rect_visible(
-            m_left + clip_x,
-            m_top + clip_y,
-            clip_w,
-            clip_h,
-        ) {
+        if !clips_child || ctx.is_rect_visible(m_left + clip_x, m_top + clip_y, clip_w, clip_h)
+            || aimer_widget::may_escape_ancestor_clips()
+        {
             self.child.update(&child_ctx);
         }
         ctx.canvas.restore();
     }
 }
-

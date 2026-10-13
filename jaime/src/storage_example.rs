@@ -11,13 +11,19 @@ use aimer::{AimerApp, AnyElement, BuildContext, Column, Container, Text, Widget}
 /// Performs a namespaced memory round trip for the visible example and tests.
 pub fn memory_storage_round_trip() -> StorageResult<Option<Vec<u8>>> {
     let storage = MemoryStorage::new();
-    storage.write("preferences", "display-mode", b"dark").block()?;
-    storage.read("preferences", "display-mode").block()
+    storage
+        .write("preferences", "display-mode", b"dark")
+        .block()?;
+    storage
+        .read("preferences", "display-mode")
+        .block()
 }
 
 /// Demonstrates a typed fallback for an invalid storage key.
 pub fn memory_storage_invalid_key_fallback() -> StorageResult<Option<Vec<u8>>> {
-    MemoryStorage::new().read("preferences", "").block()
+    MemoryStorage::new()
+        .read("preferences", "")
+        .block()
 }
 
 /// Builds the storage capability/fallback page without starting an app.

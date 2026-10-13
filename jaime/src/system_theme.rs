@@ -7,10 +7,10 @@
 
 use std::time::Duration;
 
+use aimer::input::button::Button;
 use aimer::macros::widget;
 use aimer::style::*;
 use aimer::*;
-use aimer::input::button::Button;
 
 pub fn start_system_theme_example() {
     AimerApp::start(SystemThemeExample::new())
@@ -78,94 +78,115 @@ impl StatelessWidget for SystemThemePanel {
         // Reading the appearance here rebuilds this panel when the user switches
         // it, which is what keeps the label below truthful.
         let system = ctx.watch_platform_brightness();
-        let showing = self.mode.resolve(system);
-        let following = self.mode.follows_system();
+        let showing = self
+            .mode
+            .resolve(system);
+        let following = self
+            .mode
+            .follows_system();
 
         let toggle_theme = self.updater;
         let toggle_following = self.updater;
 
-        Container::new().color(theme.background_color).child(
-            Column::new()
-                .horizontal_alignment(BoxAlignment::Center)
-                .vertical_alignment(BoxAlignment::Center)
-                .children([
-                    Text::new("System theme sync")
-                        .text_style(
-                            TextStyle::new()
-                                .font_size(32)
-                                .color(theme.on_background_color),
-                        )
-                        .boxed(),
-                    SizedBox::new().height(24).boxed(),
-                    Text::new(format!("The system asks for: {system:?}"))
+        Container::new()
+            .color(theme.background_color)
+            .child(
+                Column::new()
+                    .horizontal_alignment(BoxAlignment::Center)
+                    .vertical_alignment(BoxAlignment::Center)
+                    .children([
+                        Text::new("System theme sync")
+                            .text_style(
+                                TextStyle::new()
+                                    .font_size(32)
+                                    .color(theme.on_background_color),
+                            )
+                            .boxed(),
+                        SizedBox::new()
+                            .height(24)
+                            .boxed(),
+                        Text::new(format!("The system asks for: {system:?}"))
+                            .text_style(
+                                TextStyle::new()
+                                    .font_size(18)
+                                    .color(theme.on_background_color),
+                            )
+                            .boxed(),
+                        SizedBox::new()
+                            .height(8)
+                            .boxed(),
+                        Text::new(if following {
+                            format!("Following the system — showing {showing:?}")
+                        } else {
+                            format!("Ignoring the system — showing {showing:?}")
+                        })
                         .text_style(
                             TextStyle::new()
                                 .font_size(18)
                                 .color(theme.on_background_color),
                         )
                         .boxed(),
-                    SizedBox::new().height(8).boxed(),
-                    Text::new(if following {
-                        format!("Following the system — showing {showing:?}")
-                    } else {
-                        format!("Ignoring the system — showing {showing:?}")
-                    })
-                    .text_style(
-                        TextStyle::new()
-                            .font_size(18)
-                            .color(theme.on_background_color),
-                    )
-                    .boxed(),
-                    SizedBox::new().height(32).boxed(),
-                    // Deciding the appearance is deciding to ignore the system,
-                    // so this button pins the opposite of what is on screen.
-                    theme_button(
-                        if showing.is_dark() {
-                            "Switch to light theme"
-                        } else {
-                            "Switch to dark theme"
-                        },
-                        &theme,
-                        move || {
-                            toggle_theme.set_state(move |state| {
-                                state.mode = if showing.is_dark() {
-                                    ThemeMode::Light
-                                } else {
-                                    ThemeMode::Dark
-                                };
-                            });
-                        },
-                    ),
-                    SizedBox::new().height(16).boxed(),
-                    // Handing the decision back, or taking it away without
-                    // changing what is currently on screen.
-                    theme_button(
-                        if following {
-                            "Ignore the system theme"
-                        } else {
-                            "Follow the system theme"
-                        },
-                        &theme,
-                        move || {
-                            toggle_following.set_state(move |state| {
-                                state.mode = if state.mode.follows_system() {
-                                    match showing {
-                                        Brightness::Light => ThemeMode::Light,
-                                        Brightness::Dark => ThemeMode::Dark,
-                                    }
-                                } else {
-                                    ThemeMode::System
-                                };
-                            });
-                        },
-                    ),
-                ]),
-        )
+                        SizedBox::new()
+                            .height(32)
+                            .boxed(),
+                        // Deciding the appearance is deciding to ignore the system,
+                        // so this button pins the opposite of what is on screen.
+                        theme_button(
+                            if showing.is_dark() {
+                                "Switch to light theme"
+                            } else {
+                                "Switch to dark theme"
+                            },
+                            &theme,
+                            move || {
+                                toggle_theme.set_state(move |state| {
+                                    state.mode = if showing.is_dark() {
+                                        ThemeMode::Light
+                                    } else {
+                                        ThemeMode::Dark
+                                    };
+                                });
+                            },
+                        ),
+                        SizedBox::new()
+                            .height(16)
+                            .boxed(),
+                        // Handing the decision back, or taking it away without
+                        // changing what is currently on screen.
+                        theme_button(
+                            if following {
+                                "Ignore the system theme"
+                            } else {
+                                "Follow the system theme"
+                            },
+                            &theme,
+                            move || {
+                                toggle_following.set_state(move |state| {
+                                    state.mode = if state
+                                        .mode
+                                        .follows_system()
+                                    {
+                                        match showing {
+                                            Brightness::Light => ThemeMode::Light,
+                                            Brightness::Dark => ThemeMode::Dark,
+                                        }
+                                    } else {
+                                        ThemeMode::System
+                                    };
+                                });
+                            },
+                        ),
+                    ]),
+            )
     }
 }
 
 /// One themed button, so the two differ only in what they say and what they do.
-fn theme_button(label: &'static str, theme: &ThemeData, on_press: impl Fn() + 'static) -> AnyWidget {
+fn theme_button(
+    label: &'static str,
+    theme: &ThemeData,
+    on_press: impl Fn() + 'static,
+) -> AnyWidget {
     Container::new()
         .width(Dimension::Px(260.0))
         .height(Dimension::Px(56.0))
@@ -180,7 +201,11 @@ fn theme_button(label: &'static str, theme: &ThemeData, on_press: impl Fn() + 's
                 .child(
                     Text::new(label)
                         .text_align(TextAlign::MidCenter)
-                        .text_style(TextStyle::new().font_size(16).color(theme.on_primary_color)),
+                        .text_style(
+                            TextStyle::new()
+                                .font_size(16)
+                                .color(theme.on_primary_color),
+                        ),
                 ),
         )
         .boxed()

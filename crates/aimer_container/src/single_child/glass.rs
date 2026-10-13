@@ -1,9 +1,9 @@
+use aimer_canvas::{MaterialDrawRequest, MaterialKind};
 use aimer_widget::base::{BuildContext, Color, ResolvedSize, Size, Vec2d};
 use aimer_widget::{
     AnyElement, AnyWidget, Drawable, Element, EventElement, LayoutElement, PortableWidget,
     Rebuildable, RequiredChild, VisitorElement, Widget,
 };
-use aimer_canvas::{MaterialDrawRequest, MaterialKind};
 
 /// The policy used by a material when deciding whether it may animate.
 ///
@@ -168,12 +168,7 @@ impl GlassMaterial {
     /// Sets one corner radius for all four corners.
     #[inline]
     pub fn corner_radius(mut self, corner_radius: f32) -> Self {
-        self.corner_radii = [normalize(
-            corner_radius,
-            16.0,
-            0.0,
-            Self::MAX_CORNER_RADIUS,
-        ); 4];
+        self.corner_radii = [normalize(corner_radius, 16.0, 0.0, Self::MAX_CORNER_RADIUS); 4];
         self
     }
 
@@ -217,12 +212,7 @@ impl GlassMaterial {
     /// Sets the normalized strength of highlights across the glass surface.
     #[inline]
     pub fn specular_highlight(mut self, strength: f32) -> Self {
-        self.specular_highlight = normalize(
-            strength,
-            0.16,
-            0.0,
-            Self::MAX_SPECULAR_HIGHLIGHT,
-        );
+        self.specular_highlight = normalize(strength, 0.16, 0.0, Self::MAX_SPECULAR_HIGHLIGHT);
         self
     }
 
@@ -362,12 +352,7 @@ impl GlassMaterial {
         self.border_width = normalize(self.border_width, 1.0, 0.0, 16.0);
         self.shadow_blur = normalize(self.shadow_blur, 16.0, 0.0, Self::MAX_SHADOW_BLUR);
         self.elevation = normalize(self.elevation, 4.0, 0.0, Self::MAX_ELEVATION);
-        self.edge_lighting = normalize(
-            self.edge_lighting,
-            0.35,
-            0.0,
-            Self::MAX_EDGE_LIGHTING,
-        );
+        self.edge_lighting = normalize(self.edge_lighting, 0.35, 0.0, Self::MAX_EDGE_LIGHTING);
         self.specular_highlight = normalize(
             self.specular_highlight,
             0.16,
@@ -687,7 +672,12 @@ impl Drawable for RawGlass {
                 canvas.draw_shadow_rect(
                     aimer_cupid::utilities::Rect::new(0.0, 0.0, size.width, size.height),
                     v2_color(shadow),
-                    [0.0, material.elevation_value(), material.shadow_blur_value(), 0.0],
+                    [
+                        0.0,
+                        material.elevation_value(),
+                        material.shadow_blur_value(),
+                        0.0,
+                    ],
                     radii,
                     false,
                     [0.0; 3],
@@ -731,7 +721,6 @@ impl Drawable for RawGlass {
     fn retained_v2_paint_outsets(&self, _ctx: &BuildContext) -> Option<[f32; 4]> {
         shadow_outsets(self.material.normalized())
     }
-
 }
 
 impl EventElement for RawGlass {
@@ -807,9 +796,7 @@ fn normalize(value: f32, fallback: f32, min: f32, max: f32) -> f32 {
 #[inline]
 fn with_opacity(color: Color, opacity: f32) -> Color {
     let (red, green, blue, alpha) = color.to_rgba();
-    let alpha = (f32::from(alpha) * opacity)
-        .round()
-        .clamp(0.0, 255.0) as u8;
+    let alpha = (f32::from(alpha) * opacity).round().clamp(0.0, 255.0) as u8;
     Color::Rgba(red, green, blue, alpha)
 }
 
@@ -868,10 +855,16 @@ mod tests {
         assert_eq!(material.saturation_value(), 0.0);
         assert_eq!(material.brightness_value(), 3.0);
         assert_eq!(material.contrast_value(), 1.0);
-        assert_eq!(material.corner_radii_value(), [0.0, 0.0, GlassMaterial::MAX_CORNER_RADIUS, 0.0]);
+        assert_eq!(
+            material.corner_radii_value(),
+            [0.0, 0.0, GlassMaterial::MAX_CORNER_RADIUS, 0.0]
+        );
         assert_eq!(material.shadow_blur_value(), 16.0);
         assert_eq!(material.elevation_value(), 0.0);
-        assert_eq!(material.edge_lighting_value(), GlassMaterial::MAX_EDGE_LIGHTING);
+        assert_eq!(
+            material.edge_lighting_value(),
+            GlassMaterial::MAX_EDGE_LIGHTING
+        );
         assert_eq!(material.specular_highlight_value(), 0.16);
         assert_eq!(material.quality_value(), GlassMaterial::MIN_QUALITY);
     }
@@ -881,16 +874,28 @@ mod tests {
         let material = GlassMaterial::new().blur_intensity(0.75);
 
         assert_eq!(material.blur_intensity_value(), 0.75);
-        assert_eq!(material.blur_radius_value(), GlassMaterial::MAX_BLUR_RADIUS * 0.75);
+        assert_eq!(
+            material.blur_radius_value(),
+            GlassMaterial::MAX_BLUR_RADIUS * 0.75
+        );
 
         let invalid = GlassMaterial::new().blur_intensity(f32::NAN);
-        assert_eq!(invalid.blur_intensity_value(), 16.0 / GlassMaterial::MAX_BLUR_RADIUS);
+        assert_eq!(
+            invalid.blur_intensity_value(),
+            16.0 / GlassMaterial::MAX_BLUR_RADIUS
+        );
     }
 
     #[test]
     fn radii_are_limited_to_half_the_surface_extent() {
         assert_eq!(
-            resolved_radii([100.0, 8.0, 100.0, 0.0], ResolvedSize { width: 40.0, height: 20.0 }),
+            resolved_radii(
+                [100.0, 8.0, 100.0, 0.0],
+                ResolvedSize {
+                    width: 40.0,
+                    height: 20.0
+                }
+            ),
             [10.0, 8.0, 10.0, 0.0]
         );
     }
@@ -906,6 +911,9 @@ mod tests {
     #[test]
     fn reduced_motion_is_a_plain_portable_policy() {
         let material = GlassMaterial::new().motion_policy(MaterialMotionPolicy::Reduced);
-        assert_eq!(material.motion_policy_value(), MaterialMotionPolicy::Reduced);
+        assert_eq!(
+            material.motion_policy_value(),
+            MaterialMotionPolicy::Reduced
+        );
     }
 }

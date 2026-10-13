@@ -37,19 +37,21 @@ pub fn collapsible_list_example() -> impl Widget {
                         ),
                     ),
                 )
-                .body(ListBody::new().child(
-                    Column::new()
-                        .gaps(LayoutSpacing::all(Spacing::Px(10)))
-                        .children([
-                            tag_row("Red", Color::Rgb(255, 82, 82), app_theme),
-                            tag_row("no-weapon-slot", Color::Transparent, app_theme),
-                            tag_row("Orange", Color::Rgb(255, 173, 0), app_theme),
-                            tag_row("Yellow", Color::Rgb(255, 240, 0), app_theme),
-                            tag_row("Green", Color::Rgb(0, 240, 86), app_theme),
-                            tag_row("Blue", Color::Rgb(0, 161, 240), app_theme),
-                            tag_row("Purple", Color::Rgb(219, 82, 240), app_theme),
-                        ]),
-                )),
+                .body(
+                    ListBody::new().child(
+                        Column::new()
+                            .gaps(LayoutSpacing::all(Spacing::Px(10)))
+                            .children([
+                                tag_row("Red", Color::Rgb(255, 82, 82), app_theme),
+                                tag_row("no-weapon-slot", Color::Transparent, app_theme),
+                                tag_row("Orange", Color::Rgb(255, 173, 0), app_theme),
+                                tag_row("Yellow", Color::Rgb(255, 240, 0), app_theme),
+                                tag_row("Green", Color::Rgb(0, 240, 86), app_theme),
+                                tag_row("Blue", Color::Rgb(0, 161, 240), app_theme),
+                                tag_row("Purple", Color::Rgb(219, 82, 240), app_theme),
+                            ]),
+                    ),
+                ),
         )
 }
 

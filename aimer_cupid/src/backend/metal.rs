@@ -27,53 +27,51 @@
 //! the backend's introduction.
 
 use std::ops::Range;
-use std::sync::Mutex;
 #[cfg(feature = "frame-stats")]
 use std::ptr::NonNull;
 #[cfg(feature = "frame-stats")]
 use std::sync::Arc;
+use std::sync::Mutex;
 #[cfg(feature = "frame-stats")]
 use std::time::Duration;
 
 #[cfg(feature = "frame-stats")]
 use block2::RcBlock;
+use objc2::ffi::NSUInteger;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2_foundation::NSString;
-#[cfg(test)]
-use objc2_quartz_core::CAMetalLayer;
 use objc2_metal::{
     MTLBlendFactor, MTLBlendOperation, MTLBlitCommandEncoder, MTLBlitOption, MTLBuffer,
-    MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLColorWriteMask, MTLCompareFunction,
-    MTLCompileOptions, MTLCreateSystemDefaultDevice,
-    MTLClearColor, MTLDevice, MTLLanguageVersion, MTLLibrary, MTLLoadAction,
-    MTLFunction,
-    MTLIndexType, MTLOrigin, MTLPixelFormat, MTLPrimitiveType, MTLRenderCommandEncoder,
-    MTLRenderPassColorAttachmentDescriptor, MTLRenderPassDescriptor,
-    MTLRenderPipelineColorAttachmentDescriptor, MTLRenderPipelineDescriptor,
-    MTLRenderPipelineState, MTLResource, MTLResourceOptions, MTLScissorRect,
+    MTLClearColor, MTLColorWriteMask, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue,
+    MTLCompareFunction, MTLCompileOptions, MTLCreateSystemDefaultDevice, MTLDevice, MTLFunction,
+    MTLIndexType, MTLLanguageVersion, MTLLibrary, MTLLoadAction, MTLOrigin, MTLPixelFormat,
+    MTLPrimitiveType, MTLRenderCommandEncoder, MTLRenderPassColorAttachmentDescriptor,
+    MTLRenderPassDescriptor, MTLRenderPipelineColorAttachmentDescriptor,
+    MTLRenderPipelineDescriptor, MTLRenderPipelineState, MTLResource, MTLResourceOptions,
     MTLSamplerAddressMode, MTLSamplerBorderColor, MTLSamplerDescriptor, MTLSamplerMinMagFilter,
-    MTLSamplerMipFilter, MTLSamplerState, MTLSize, MTLStorageMode, MTLStoreAction, MTLTexture,
-    MTLTextureDescriptor, MTLTextureType, MTLTextureUsage, MTLVertexDescriptor, MTLVertexFormat,
-    MTLVertexStepFunction,
+    MTLSamplerMipFilter, MTLSamplerState, MTLScissorRect, MTLSize, MTLStorageMode, MTLStoreAction,
+    MTLTexture, MTLTextureDescriptor, MTLTextureType, MTLTextureUsage, MTLVertexDescriptor,
+    MTLVertexFormat, MTLVertexStepFunction,
 };
-use objc2::ffi::NSUInteger;
+#[cfg(test)]
+use objc2_quartz_core::CAMetalLayer;
 
 use crate::backend::{
     AddressMode, BackendError, BindGroupEntry, BindGroupLayoutEntry, BindingResource, BindingType,
     BufferDescriptor, BuiltinShader, ColorTargetState, Extent3d, FilterMode, GpuBackend, GpuLimits,
     GpuRenderPass, IndexFormat, LoadOp, Origin3d, RenderPassColorAttachment,
     RenderPassDepthStencilAttachment, RenderPassDescriptor, RenderPipelineDescriptor,
-    SamplerDescriptor, ShaderStage, StoreOp, TextureDescriptor, TextureDimension, TextureUsage,
-    TexelCopyBufferInfo, TexelCopyTextureInfo, VertexBufferLayout, VertexFormat, VertexStepMode,
-    WriteTextureDescriptor,
+    SamplerDescriptor, ShaderStage, StoreOp, TexelCopyBufferInfo, TexelCopyTextureInfo,
+    TextureDescriptor, TextureDimension, TextureUsage, VertexBufferLayout, VertexFormat,
+    VertexStepMode, WriteTextureDescriptor,
 };
 
 pub mod binding;
 mod presentation;
-pub use presentation::{MetalSurface, MetalSurfaceFrame};
-pub use presentation::threaded::{MetalDrawableSource, ScheduledMetalDrawable};
 use presentation::MetalQueueState;
+pub use presentation::threaded::{MetalDrawableSource, ScheduledMetalDrawable};
+pub use presentation::{MetalSurface, MetalSurfaceFrame};
 
 // objc2-metal emits the `Metal` framework link itself, but documents that the
 // symbols `MTLCreateSystemDefaultDevice` resolves through live in
@@ -382,11 +380,9 @@ impl MetalBackend {
         options.setPreserveInvariance(true);
         self.device
             .newLibraryWithSource_options_error(&NSString::from_str(source), Some(&options))
-            .map_err(|error| {
-                BackendError {
-                    operation: "create_shader_module",
-                    message: format!("{label}: {}", error.localizedDescription()),
-                }
+            .map_err(|error| BackendError {
+                operation: "create_shader_module",
+                message: format!("{label}: {}", error.localizedDescription()),
             })
     }
 }
@@ -750,10 +746,7 @@ impl GpuBackend for MetalBackend {
         MetalSampler(sampler)
     }
 
-    fn create_bind_group_layout(
-        &self,
-        entries: &[BindGroupLayoutEntry],
-    ) -> Self::BindGroupLayout {
+    fn create_bind_group_layout(&self, entries: &[BindGroupLayoutEntry]) -> Self::BindGroupLayout {
         MetalBindGroupLayout {
             entries: entries
                 .iter()
@@ -840,9 +833,7 @@ impl GpuBackend for MetalBackend {
             };
             resolved.push(argument);
         }
-        MetalBindGroup {
-            entries: resolved,
-        }
+        MetalBindGroup { entries: resolved }
     }
 
     fn create_pipeline_layout(&self, layouts: &[&Self::BindGroupLayout]) -> Self::PipelineLayout {
@@ -855,7 +846,10 @@ impl GpuBackend for MetalBackend {
         MetalPipelineLayout
     }
 
-    fn create_render_pipeline(&self, desc: &RenderPipelineDescriptor<Self>) -> Self::RenderPipeline {
+    fn create_render_pipeline(
+        &self,
+        desc: &RenderPipelineDescriptor<Self>,
+    ) -> Self::RenderPipeline {
         self.try_create_render_pipeline(desc)
             .unwrap_or_else(|error| panic!("{error}"))
     }
@@ -878,8 +872,11 @@ impl GpuBackend for MetalBackend {
             descriptor.setFragmentFunction(Some(&fragment_function));
             for (index, target) in fragment.targets.iter().enumerate() {
                 let Some(target) = target else { continue };
-                let attachment =
-                    unsafe { descriptor.colorAttachments().objectAtIndexedSubscript(index) };
+                let attachment = unsafe {
+                    descriptor
+                        .colorAttachments()
+                        .objectAtIndexedSubscript(index)
+                };
                 configure_color_target(&attachment, target);
             }
         }
@@ -1059,7 +1056,11 @@ impl GpuBackend for MetalBackend {
 
         let pass_descriptor = MTLRenderPassDescriptor::new();
         for (index, attachment) in desc.color_attachments.iter().enumerate() {
-            let slot = unsafe { pass_descriptor.colorAttachments().objectAtIndexedSubscript(index) };
+            let slot = unsafe {
+                pass_descriptor
+                    .colorAttachments()
+                    .objectAtIndexedSubscript(index)
+            };
             configure_color_attachment(&slot, attachment);
         }
         if let Some(depth) = &desc.depth_stencil_attachment {
@@ -1283,12 +1284,7 @@ impl GpuRenderPass<MetalBackend> for MetalRenderPass<'_> {
         self.topology = pipeline.topology;
     }
 
-    fn set_bind_group(
-        &mut self,
-        index: u32,
-        bind_group: &MetalBindGroup,
-        dynamic_offsets: &[u32],
-    ) {
+    fn set_bind_group(&mut self, index: u32, bind_group: &MetalBindGroup, dynamic_offsets: &[u32]) {
         let encoder = &self.encoder;
         let mut next_offset = 0usize;
         for entry in &bind_group.entries {
@@ -1321,12 +1317,20 @@ impl GpuRenderPass<MetalBackend> for MetalRenderPass<'_> {
                     let argument: &ProtocolObject<dyn MTLBuffer> = buffer;
                     if *vertex {
                         unsafe {
-                            encoder.setVertexBuffer_offset_atIndex(Some(argument), base as NSUInteger, slot)
+                            encoder.setVertexBuffer_offset_atIndex(
+                                Some(argument),
+                                base as NSUInteger,
+                                slot,
+                            )
                         };
                     }
                     if *fragment {
                         unsafe {
-                            encoder.setFragmentBuffer_offset_atIndex(Some(argument), base as NSUInteger, slot)
+                            encoder.setFragmentBuffer_offset_atIndex(
+                                Some(argument),
+                                base as NSUInteger,
+                                slot,
+                            )
                         };
                     }
                 }
@@ -1391,11 +1395,8 @@ impl GpuRenderPass<MetalBackend> for MetalRenderPass<'_> {
         let count = (vertices.end - vertices.start) as NSUInteger;
         let instance_count = (instances.end - instances.start) as NSUInteger;
         let base_instance = instances.start as NSUInteger;
-        let (encoder, topology, start) = (
-            &self.encoder,
-            self.topology,
-            vertices.start as NSUInteger,
-        );
+        let (encoder, topology, start) =
+            (&self.encoder, self.topology, vertices.start as NSUInteger);
         unsafe {
             if base_instance != 0 {
                 encoder.drawPrimitives_vertexStart_vertexCount_instanceCount_baseInstance(
@@ -1443,10 +1444,7 @@ impl GpuRenderPass<MetalBackend> for MetalRenderPass<'_> {
 // ── Conversion helpers ────────────────────────────────────────────────────
 
 fn visible_to(entry: &BindGroupLayoutEntry, stage: ShaderStage) -> bool {
-    entry
-        .visibility
-        .iter()
-        .any(|visible| *visible == stage)
+    entry.visibility.iter().any(|visible| *visible == stage)
 }
 
 fn needs_cpu_access(usages: &[TextureUsage]) -> bool {
@@ -1586,11 +1584,13 @@ fn configure_color_target(
     target: &ColorTargetState<MTLPixelFormat>,
 ) {
     attachment.setPixelFormat(target.format);
-    attachment.setWriteMask(if target.write_mask == crate::backend::ColorWriteMask::NONE {
-        MTLColorWriteMask::None
-    } else {
-        MTLColorWriteMask::All
-    });
+    attachment.setWriteMask(
+        if target.write_mask == crate::backend::ColorWriteMask::NONE {
+            MTLColorWriteMask::None
+        } else {
+            MTLColorWriteMask::All
+        },
+    );
     let Some(blend) = &target.blend else {
         attachment.setBlendingEnabled(false);
         return;
@@ -1689,8 +1689,11 @@ fn build_vertex_descriptor(
     for (slot, layout) in buffers.iter().enumerate() {
         let Some(layout) = layout else { continue };
         let buffer_index = binding::vertex_buffer_index(slot as u32);
-        let buffer_descriptor =
-            unsafe { descriptor.layouts().objectAtIndexedSubscript(buffer_index as NSUInteger) };
+        let buffer_descriptor = unsafe {
+            descriptor
+                .layouts()
+                .objectAtIndexedSubscript(buffer_index as NSUInteger)
+        };
         unsafe {
             buffer_descriptor.setStride(layout.array_stride as NSUInteger);
         }
@@ -1757,17 +1760,17 @@ mod tests {
     use crate::backend::{
         BindGroupEntry, BindGroupLayoutEntry, BindingResource, BindingType, BlendState,
         BufferBindingType, BufferUsage, ColorWriteMask, Operations, PrimitiveState,
-        RenderPassColorAttachment, RenderPassDescriptor, TextureAspect,
-        TexelCopyBufferLayout, VertexAttribute, VertexState,
+        RenderPassColorAttachment, RenderPassDescriptor, TexelCopyBufferLayout, TextureAspect,
+        VertexAttribute, VertexState,
     };
     use crate::damage_region::DamageSet;
+    use crate::draw_cmd::DrawList;
     use crate::draw_cmd_v2::{DrawCommand as V2DrawCommand, RenderFrame, RenderTree};
     use crate::frame::{Frame, FramePacket, FrameRenderMetadata};
     use crate::rect_pipeline::RectInstance;
-    use crate::draw_cmd::DrawList;
     use crate::renderer::RendererImpl;
-    use crate::utilities::{Color, Rect};
     use crate::utilities::Rgba8;
+    use crate::utilities::{Color, Rect};
 
     const SIZE: u32 = 64;
     const FORMAT: MTLPixelFormat = MTLPixelFormat::RGBA8Unorm;
@@ -1849,7 +1852,12 @@ mod tests {
 
     fn pixel_with_stride(data: &[u8], row_bytes: u32, x: u32, y: u32) -> [u8; 4] {
         let offset = (y as usize * row_bytes as usize) + (x as usize * 4);
-        [data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]
+        [
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+        ]
     }
 
     fn assert_pixel_near(data: &[u8], row_bytes: u32, x: u32, y: u32, expected: [u8; 4]) {
@@ -1862,7 +1870,12 @@ mod tests {
         }
     }
 
-    fn record_v2_fill(tree: &RenderTree, node: crate::draw_cmd_v2::RenderNodeId, rect: Rect, color: Color) {
+    fn record_v2_fill(
+        tree: &RenderTree,
+        node: crate::draw_cmd_v2::RenderNodeId,
+        rect: Rect,
+        color: Color,
+    ) {
         tree.context(node)
             .unwrap()
             .begin_recording()
@@ -1901,10 +1914,10 @@ mod tests {
 
         use std::sync::Arc;
 
-        use crate::pipeline::material::{MaterialKind, MaterialRequest, MATERIAL_PIPELINE_NAME};
+        use crate::pipeline::material::{MATERIAL_PIPELINE_NAME, MaterialKind, MaterialRequest};
         use crate::svg::{
-            SvgElementKind, SvgFill, SvgFillRule, SvgGeometry, SvgNode, SvgNodeId,
-            SvgPaintOrder, SvgPathCommand, SvgScene, SvgTransform, SvgViewport,
+            SvgElementKind, SvgFill, SvgFillRule, SvgGeometry, SvgNode, SvgNodeId, SvgPaintOrder,
+            SvgPathCommand, SvgScene, SvgTransform, SvgViewport,
         };
         use crate::utilities::Vec2d;
 
@@ -2052,16 +2065,8 @@ mod tests {
 
         let pixels = backend.read_buffer(&readback, FRAME_BYTES);
         assert_eq!(pixel(&pixels, 12, 12), [0, 0, 255, 255], "image");
-        assert_eq!(
-            pixel(&pixels, 35, 10),
-            [255, 0, 0, 255],
-            "first SVG path"
-        );
-        assert_eq!(
-            pixel(&pixels, 45, 10),
-            [0, 255, 0, 255],
-            "second SVG path"
-        );
+        assert_eq!(pixel(&pixels, 35, 10), [255, 0, 0, 255], "first SVG path");
+        assert_eq!(pixel(&pixels, 45, 10), [0, 255, 0, 255], "second SVG path");
         assert_eq!(
             pixel(&pixels, 55, 10),
             [0, 255, 0, 255],
@@ -2365,7 +2370,11 @@ mod tests {
             sample_count: 1,
             dimension: TextureDimension::D2,
             format: MTLPixelFormat::R8Unorm,
-            usage: vec![TextureUsage::TextureBinding, TextureUsage::CopyDst, TextureUsage::CopySrc],
+            usage: vec![
+                TextureUsage::TextureBinding,
+                TextureUsage::CopyDst,
+                TextureUsage::CopySrc,
+            ],
         });
         backend.write_texture(&WriteTextureDescriptor {
             texture: &texture,
@@ -2659,14 +2668,7 @@ mod tests {
         );
 
         let metadata = || {
-            FrameRenderMetadata::new(
-                1.0,
-                301,
-                1,
-                1,
-                1,
-                DamageSet::new(TARGET_SIZE, TARGET_SIZE),
-            )
+            FrameRenderMetadata::new(1.0, 301, 1, 1, 1, DamageSet::new(TARGET_SIZE, TARGET_SIZE))
         };
         let first_packet = FramePacket::from_v2_direct(
             RenderFrame {
@@ -2747,6 +2749,9 @@ mod tests {
         assert_pixel_near(&updated_pixels, readback_row_bytes, 20, 20, [0, 32, 0, 32]);
         assert_pixel_near(&updated_pixels, readback_row_bytes, 40, 40, [0, 0, 32, 32]);
         assert_pixel_near(&updated_pixels, readback_row_bytes, 70, 70, [64, 64, 0, 64]);
-        assert_eq!(pixel_with_stride(&updated_pixels, readback_row_bytes, 2, 2), [0, 0, 0, 0]);
+        assert_eq!(
+            pixel_with_stride(&updated_pixels, readback_row_bytes, 2, 2),
+            [0, 0, 0, 0]
+        );
     }
 }

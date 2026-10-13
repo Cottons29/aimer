@@ -1,7 +1,7 @@
 use std::cell::Cell;
-use std::rc::Rc;
 #[cfg(feature = "wasm-hot-reload")]
 use std::net::SocketAddr;
+use std::rc::Rc;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
@@ -28,11 +28,11 @@ use winit::platform::android::activity::AndroidApp;
 
 use crate::handler::event_handler::{HeadlessEventAction, WindowEventHandler};
 use crate::handler::{AimerApplicationHandler, StartupHook, WindowRenderTree};
-use crate::render_ctx::AimerRenderContext;
 #[cfg(feature = "wasm-hot-reload")]
 use crate::hot_reload::{LiveReloadConfig, LiveReloadHost};
 #[cfg(feature = "wasm-hot-reload")]
 use crate::reload_protocol::SessionCredentials;
+use crate::render_ctx::AimerRenderContext;
 
 #[cfg(target_os = "android")]
 pub static ANDROID_APP: std::sync::OnceLock<AndroidApp> = std::sync::OnceLock::new();
@@ -41,6 +41,10 @@ static APP_STARTED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone)]
 pub enum AimerNativePlatformEvent {
+    /// The process was asked to terminate (`SIGTERM`, Ctrl-C, a closing
+    /// terminal). The event loop exits in an orderly way, so the app's services
+    /// are told and can save what they hold.
+    ShutdownRequested,
     /// Pointer or hardware-key input from a platform bridge, in logical window
     /// coordinates. Text commits continue through the IME/text-editing path.
     NativeInput {
@@ -197,10 +201,7 @@ static FRAME_READY_PENDING: AtomicU8 = AtomicU8::new(0);
 /// wake that makes a freshly queued callback visible.
 static CALLBACK_READY_PENDING: AtomicBool = AtomicBool::new(false);
 
-fn try_begin_frame_ready_request(
-    pending: &AtomicU8,
-    kind: FrameRequestKind,
-) -> bool {
+fn try_begin_frame_ready_request(pending: &AtomicU8, kind: FrameRequestKind) -> bool {
     let requested = kind.encode();
     loop {
         let current = pending.load(Ordering::Acquire);
@@ -295,11 +296,9 @@ fn request_frame_ready() {
         // JavaScript thread. Wake the canvas directly instead of sending a
         // user event through winit: the web loop may be parked in Wait even
         // though this callback is executing on its owner thread.
-        let _ = request_direct_frame(
-            &FRAME_READY_PENDING,
-            current_frame_request_kind(),
-            || window.request_redraw(),
-        );
+        let _ = request_direct_frame(&FRAME_READY_PENDING, current_frame_request_kind(), || {
+            window.request_redraw()
+        });
         return;
     }
 
@@ -440,7 +439,10 @@ pub extern "C" fn trigger_rust_set_marked_text(ptr: *const u8, len: usize) {
 
     let cursor = preedit_cursor(&text);
     if let Err(e) = proxy.send_event(AimerNativePlatformEvent::SetPreedit { text, cursor }) {
-        aimer_utils::error!("trigger_rust_set_marked_text: failed to send event: {:?}", e);
+        aimer_utils::error!(
+            "trigger_rust_set_marked_text: failed to send event: {:?}",
+            e
+        );
     }
 }
 
@@ -495,20 +497,21 @@ pub extern "C" fn trigger_rust_text_editing_delta(
     } else {
         String::from_utf8_lossy(dereference_ptr(text_ptr, text_len)).into_owned()
     };
-    let composing = (composing_start >= 0 && composing_end >= 0).then(|| {
-        NativeTextRange::new(composing_start as usize, composing_end as usize)
-    });
+    let composing = (composing_start >= 0 && composing_end >= 0)
+        .then(|| NativeTextRange::new(composing_start as usize, composing_end as usize));
     let Some(proxy) = EVENT_PROXY.get() else {
         return;
     };
-    let _ = proxy.send_event(AimerNativePlatformEvent::TextEditingDelta(TextEditingDelta {
-        session_id,
-        revision,
-        replacement: NativeTextRange::new(replace_start, replace_end),
-        replacement_text,
-        selection: NativeTextRange::new(selection_start, selection_end),
-        composing,
-    }));
+    let _ = proxy.send_event(AimerNativePlatformEvent::TextEditingDelta(
+        TextEditingDelta {
+            session_id,
+            revision,
+            replacement: NativeTextRange::new(replace_start, replace_end),
+            replacement_text,
+            selection: NativeTextRange::new(selection_start, selection_end),
+            composing,
+        },
+    ));
 }
 
 // Android software-keyboard forwarding into Rust.
@@ -572,18 +575,14 @@ pub extern "system" fn Java_com_aimer_AimerActivity_nativeTextEditingDelta<'call
             return Ok(());
         }
         let replacement_text = String::from(text.mutf8_chars(env)?);
-        let composing = (composing_start >= 0 && composing_end >= 0).then(|| {
-            NativeTextRange::new(composing_start as usize, composing_end as usize)
-        });
+        let composing = (composing_start >= 0 && composing_end >= 0)
+            .then(|| NativeTextRange::new(composing_start as usize, composing_end as usize));
         if let Some(proxy) = EVENT_PROXY.get() {
             let _ = proxy.send_event(AimerNativePlatformEvent::TextEditingDelta(
                 TextEditingDelta {
                     session_id: session_id as u64,
                     revision: revision as u64,
-                    replacement: NativeTextRange::new(
-                        replace_start as usize,
-                        replace_end as usize,
-                    ),
+                    replacement: NativeTextRange::new(replace_start as usize, replace_end as usize),
                     replacement_text,
                     selection: NativeTextRange::new(
                         selection_start as usize,
@@ -893,14 +892,14 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
 
     /// Builds and draws one frame into the non-presenting in-memory canvas.
     ///
-/// A frame does what a windowed frame does: this frame's share of a scroll
-/// gesture is delivered, a resize the surface has not caught up with is
-/// applied, and the tree is drawn through the shared frame drawer when the
-/// scroll tick or other work requires it. An unchanged no-op scroll tick still
-/// advances the gesture without drawing the tree. An animation that is not
-/// finished asks for the next frame, which
-/// [`take_redraw_request`](Self::take_redraw_request) reports and
-/// [`pump_frames`](Self::pump_frames) acts on.
+    /// A frame does what a windowed frame does: this frame's share of a scroll
+    /// gesture is delivered, a resize the surface has not caught up with is
+    /// applied, and the tree is drawn through the shared frame drawer when the
+    /// scroll tick or other work requires it. An unchanged no-op scroll tick still
+    /// advances the gesture without drawing the tree. An animation that is not
+    /// finished asks for the next frame, which
+    /// [`take_redraw_request`](Self::take_redraw_request) reports and
+    /// [`pump_frames`](Self::pump_frames) acts on.
     pub fn render_frame(&mut self) {
         if self.exit_requested {
             return;
@@ -1049,7 +1048,9 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
     /// loop.
     pub fn send_user_event(&mut self, event: AimerNativePlatformEvent) {
         crate::handler::user_events::handle_user_event(
-            &mut self.app, event, crate::handler::user_events::request_window_redraw,
+            &mut self.app,
+            event,
+            crate::handler::user_events::request_window_redraw,
         );
     }
 
@@ -1153,9 +1154,7 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
     /// Exports the active interpreted state for development diagnostics.
     #[cfg(feature = "wasm-hot-reload")]
     #[inline]
-    pub fn live_reload_state(
-        &mut self,
-    ) -> Result<Option<Vec<u8>>, aimer_anteros::RuntimeError> {
+    pub fn live_reload_state(&mut self) -> Result<Option<Vec<u8>>, aimer_anteros::RuntimeError> {
         match self.app.live_reload.as_mut() {
             Some(host) => host.export_active_state(),
             None => Ok(None),
@@ -1172,7 +1171,10 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
     pub(crate) fn active_element_bounds(
         &self,
         name: &str,
-    ) -> Option<(aimer_attribute::position::Vec2d, aimer_attribute::position::Vec2d)> {
+    ) -> Option<(
+        aimer_attribute::position::Vec2d,
+        aimer_attribute::position::Vec2d,
+    )> {
         fn find(
             element: &dyn aimer_widget::Element,
             name: &str,
@@ -1245,13 +1247,14 @@ impl AimerApp {
     #[inline]
     pub fn new() -> Self {
         #[cfg(feature = "wasm-hot-reload")]
-        let live_reload = crate::hot_reload::take_hot_reload_config().map(
-            |(address, credentials, config)| LiveReloadLaunch {
-                address,
-                credentials,
-                config,
-            },
-        );
+        let live_reload =
+            crate::hot_reload::take_hot_reload_config().map(|(address, credentials, config)| {
+                LiveReloadLaunch {
+                    address,
+                    credentials,
+                    config,
+                }
+            });
         Self {
             child: (),
             antialiasing: AntiAlias::default(),
@@ -1404,7 +1407,9 @@ impl Default for AimerApp {
 impl<W> AimerApp<W> {
     /// Returns the selected mode; browser and headless drivers always execute inline.
     #[inline]
-    pub fn configured_render_mode(&self) -> crate::RenderMode { self.render_mode }
+    pub fn configured_render_mode(&self) -> crate::RenderMode {
+        self.render_mode
+    }
 }
 
 impl<W: Widget + 'static> AimerApp<W> {
@@ -1477,6 +1482,15 @@ fn start_event_loop(
         return;
     }
 
+    // As early as the app controls: the signal mask only covers threads started
+    // after it is set.
+    #[cfg(all(unix, not(any(target_os = "android", target_os = "ios"))))]
+    crate::shutdown_signals::install(|| {
+        EVENT_PROXY
+            .get()
+            .is_some_and(|proxy| proxy.send_event(AimerNativePlatformEvent::ShutdownRequested).is_ok())
+    });
+
     #[cfg(target_arch = "wasm32")]
     console_error_panic_hook::set_once();
 
@@ -1495,6 +1509,9 @@ fn start_event_loop(
             .expect("ANDROID_APP not set")
             .clone();
 
+        // Normally done already by the generated entry point; repeated here for
+        // apps whose hand-written one stored `ANDROID_APP` directly.
+        crate::android_storage::publish_data_dir(&app);
         android_app::set_android_app(app.clone());
 
         // Keep the JNI entry points used by `com.aimer.AimerActivity` reachable.
@@ -1539,6 +1556,10 @@ fn start_event_loop(
     let previous_venus = Venus::uninstall();
     let venus = Venus::new();
     venus.install();
+    // A release build aborts on panic, which ends the process the moment the hook
+    // returns, so the hook is where pending state gets saved. Installed once the
+    // runtime exists: that is what carries a panic on another thread back here.
+    aimer_venus::install_panic_hook();
     // A task that became ready asks for a frame without saying what it will do.
     // What it does asks for its own frames while the frame is prepared, so the
     // wake itself is neutral: a state update it makes keeps the frame scoped,
@@ -1596,7 +1617,7 @@ fn start_event_loop(
             web_scroll_phase: crate::handler::web_scroll_phase::WebScrollPhase::new(),
             pending_widget: Some(widget),
             cursor_pos: crate::handler::event_handler::CURSOR_OUTSIDE_POSITION,
-                touch_pointer: false,
+            touch_pointer: false,
             pressed_button: None,
             current_modifiers: Default::default(),
             ime_composing: false,
@@ -1663,14 +1684,14 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
+    use aimer_attribute::Dimension;
     use aimer_attribute::position::Vec2d;
     use aimer_attribute::size::{ResolvedSize, Size};
-    use aimer_attribute::Dimension;
     use aimer_canvas::Canvas;
+    use aimer_container::SizedBox;
     use aimer_cupid::draw_cmd::DrawCommand;
     use aimer_cupid::draw_cmd_v2::{Rect, RenderNodeId};
     use aimer_cupid::frame::{Frame, FramePacket, FrameRenderMetadata, RetainedRenderPlan};
-    use aimer_container::SizedBox;
     use aimer_events::element::{ElementEvent, ScrollDeltaKind};
     use aimer_events::pointer::{PointerButton, PointerInfo};
     use aimer_flex::{Column, Row};
@@ -1687,45 +1708,48 @@ mod tests {
 
     use super::*;
 
-    #[cfg(not(target_arch = "wasm32"))]
-    mod render_worker;
-    mod broadcast;
-    mod retained_button;
-    mod decoration_box;
-    mod collapsible_animation;
-    mod focus_click;
-    mod loading_damage;
     mod animation_only;
+    mod broadcast;
+    mod lifecycle;
     mod builder_prepass;
-    mod scoped_sync;
-    mod touch_scroll;
-    mod hover_border_damage;
-    mod hover_bar_click;
-    mod theme_switch;
-    mod implicit_animation_plays;
-    mod floating_menu_settles;
-    mod resize_grab_area;
-    mod custom_theme_switch;
-    mod skeleton_to_rows;
-    mod rows_in_resizable;
-    mod collapsed_chevron;
-    mod skeleton_ticks;
-    mod glass_bar_cost;
-    mod resize_live;
-    mod resize_sidebar;
-    mod window_resize;
-    mod ios_input;
     #[cfg(all(feature = "wgpu", target_os = "macos"))]
     mod bypass_target;
-    mod focus_repaint;
-    mod retained_switcher;
-    mod retained_modal;
+    mod collapsed_chevron;
+    mod collapsible_animation;
     mod compositor_reset;
+    mod custom_theme_switch;
+    #[cfg(debug_assertions)]
+    mod debug_overlay;
+    mod decoration_box;
+    mod floating_menu_settles;
+    mod focus_click;
+    mod focus_repaint;
+    mod glass_bar_cost;
+    mod hover_bar_click;
+    mod hover_border_damage;
+    mod implicit_animation_plays;
+    mod ios_input;
+    mod loading_damage;
+    mod post_bar_toggle;
+    #[cfg(not(target_arch = "wasm32"))]
+    mod render_worker;
+    mod resize_grab_area;
+    mod resize_live;
+    mod resize_sidebar;
+    mod retained_button;
+    mod retained_modal;
+    mod retained_switcher;
+    mod rows_in_resizable;
+    mod scoped_sync;
+    mod scalable_overflow;
     mod scroll_frame_kind;
     mod scroll_one_step;
     mod settled_skip;
-    #[cfg(debug_assertions)]
-    mod debug_overlay;
+    mod skeleton_ticks;
+    mod skeleton_to_rows;
+    mod theme_switch;
+    mod touch_scroll;
+    mod window_resize;
 
     static VIRTUALIZED_RENDER_TEST_LOCK: Mutex<()> = Mutex::new(());
 
@@ -1941,19 +1965,18 @@ mod tests {
     }
 
     impl Drawable for HeadlessVirtualizedRowElement {
-
         fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
             true
         }
 
         fn paint_local_v2(&self, ctx: &BuildContext) {
             self.paints.set(self.paints.get() + 1);
-            let (red, green, blue, alpha) = headless_virtualized_row_color(self.row_index).to_rgba();
+            let (red, green, blue, alpha) =
+                headless_virtualized_row_color(self.row_index).to_rgba();
             let canvas = Canvas::of(ctx);
             canvas.fill_rect(Rect::new(0.0, 0.0, 100.0, 20.0), [red, green, blue, alpha]);
             canvas.finish();
         }
-
     }
 
     struct HeadlessHorizontalVirtualizedWidget {
@@ -2176,7 +2199,6 @@ mod tests {
 
     impl aimer_widget::PortableWidget for HeadlessHorizontalItemPaintWidget {}
 
-
     fn paint_horizontal_item(ctx: &BuildContext, paints: &Cell<usize>, color: Color, height: f32) {
         paints.set(paints.get() + 1);
         let (red, green, blue, alpha) = color.to_rgba();
@@ -2218,7 +2240,6 @@ mod tests {
                 80.0,
             );
         }
-
     }
 
     struct HeadlessHorizontalStatefulItemElement {
@@ -2250,7 +2271,6 @@ mod tests {
         fn paint_local_v2(&self, ctx: &BuildContext) {
             paint_horizontal_item(ctx, self.paints.as_ref(), self.color, self.height);
         }
-
     }
 
     fn direct_headless_frame_packet<W: Widget + 'static>(
@@ -2279,10 +2299,7 @@ mod tests {
             .widget_root
             .as_ref()
             .expect("headless frame built the widget root");
-        let _ = app
-            .app
-            .event_dispatcher
-            .dispatch(root.as_ref(), pos, event);
+        let _ = app.app.event_dispatcher.dispatch(root.as_ref(), pos, event);
     }
 
     fn focus_headless_field<W: Widget + 'static>(
@@ -2290,12 +2307,11 @@ mod tests {
         focus_node: &FocusNode,
     ) {
         focus_node.request_focus();
-        dispatch_headless_event(
-            app,
-            Vec2d { x: 0.0, y: 0.0 },
-            &ElementEvent::Cancel,
+        dispatch_headless_event(app, Vec2d { x: 0.0, y: 0.0 }, &ElementEvent::Cancel);
+        assert!(
+            focus_node.has_focus(),
+            "headless dispatcher settled field focus"
         );
-        assert!(focus_node.has_focus(), "headless dispatcher settled field focus");
     }
 
     fn retained_text_field_node<W: Widget + 'static>(
@@ -2419,7 +2435,13 @@ mod tests {
                 && bounds.y < viewport.1
                 && bounds.y + bounds.height > 0.0
             {
-                assert!(app.app.render_tree().draw_list_revision(render_node).unwrap() > 0);
+                assert!(
+                    app.app
+                        .render_tree()
+                        .draw_list_revision(render_node)
+                        .unwrap()
+                        > 0
+                );
                 visible_rows.push(render_node);
             }
             element.visit_children(&mut |child| pending.push(child));
@@ -2450,9 +2472,11 @@ mod tests {
         );
 
         let (_, initial_packet) = direct_headless_frame_packet(&mut app);
-        assert!(initial_packet
-            .render_plan()
-            .is_some_and(|plan| plan.is_complete()));
+        assert!(
+            initial_packet
+                .render_plan()
+                .is_some_and(|plan| plan.is_complete())
+        );
         focus_headless_field(&mut app, &focus_node);
         let (_, focused_packet) = direct_headless_frame_packet(&mut app);
         let (field_id, field_node, focused_revision, bounds) =
@@ -2647,10 +2671,12 @@ mod tests {
             .app
             .render_node_for_element(panel_id)
             .expect("the hosted panel has an independent render node");
-        assert!(menu_packet
-            .render_plan()
-            .and_then(|plan| plan.local_v2_revision(panel_node))
-            .is_some());
+        assert!(
+            menu_packet
+                .render_plan()
+                .and_then(|plan| plan.local_v2_revision(panel_node))
+                .is_some()
+        );
 
         let overlay_id = retained_element_id_named(&app, "ModalOverlay")
             .expect("the modal overlay is a separate retained element");
@@ -2698,7 +2724,10 @@ mod tests {
                 .parent_of(node)
                 .expect("the row parent chain is valid");
         }
-        assert!(reached_overlay, "the rows belong to the modal overlay subtree");
+        assert!(
+            reached_overlay,
+            "the rows belong to the modal overlay subtree"
+        );
         assert_eq!(
             legacy_text_command_count(&menu_packet),
             0,
@@ -2730,22 +2759,20 @@ mod tests {
         );
 
         let (_, initial_packet) = direct_headless_frame_packet(&mut app);
-        assert!(initial_packet
-            .render_plan()
-            .is_some_and(|plan| plan.is_complete()));
+        assert!(
+            initial_packet
+                .render_plan()
+                .is_some_and(|plan| plan.is_complete())
+        );
         let (_, indexed_packet) = direct_headless_frame_packet(&mut app);
         assert!(indexed_packet.metadata().damage().is_empty());
         assert!(!indexed_packet.render_plan().unwrap().is_complete());
-        let visible_rows = visible_horizontal_rows(
-            &app,
-            (100.0, 80.0),
-        );
+        let visible_rows = visible_horizontal_rows(&app, (100.0, 80.0));
         assert_eq!(visible_rows.len(), 5);
         let target_row = *visible_rows
             .iter()
             .find(|row| {
-                (app.app.render_tree().element_bounds(**row).unwrap().x - 40.0).abs()
-                    < f32::EPSILON
+                (app.app.render_tree().element_bounds(**row).unwrap().x - 40.0).abs() < f32::EPSILON
             })
             .expect("the third row is visible at x=40");
         assert_eq!(
@@ -2754,7 +2781,12 @@ mod tests {
         );
         let revisions = visible_rows
             .iter()
-            .map(|row| (*row, app.app.render_tree().draw_list_revision(*row).unwrap()))
+            .map(|row| {
+                (
+                    *row,
+                    app.app.render_tree().draw_list_revision(*row).unwrap(),
+                )
+            })
             .collect::<HashMap<_, _>>();
         let paints_before_update = paints.get();
 
@@ -2768,24 +2800,32 @@ mod tests {
         assert_eq!(paints.get(), paints_before_update + 1);
 
         let damage = updated_packet.metadata().damage();
-        assert!(!damage.is_full(), "one row state update stayed local: {:?}", damage.regions());
-        assert!(!damage.regions().is_empty());
-        assert!(damage.regions().iter().all(|region| {
-            region.x >= 40
-                && region.y == 0
-                && region.x + region.width <= 60
-                && region.y + region.height <= 80
-        }), "row damage escaped the updated item's bounds: {:?}", damage.regions());
-
-        let updated_rows = visible_horizontal_rows(
-            &app,
-            (100.0, 80.0),
+        assert!(
+            !damage.is_full(),
+            "one row state update stayed local: {:?}",
+            damage.regions()
         );
+        assert!(!damage.regions().is_empty());
+        assert!(
+            damage.regions().iter().all(|region| {
+                region.x >= 40
+                    && region.y == 0
+                    && region.x + region.width <= 60
+                    && region.y + region.height <= 80
+            }),
+            "row damage escaped the updated item's bounds: {:?}",
+            damage.regions()
+        );
+
+        let updated_rows = visible_horizontal_rows(&app, (100.0, 80.0));
         assert_eq!(updated_rows, visible_rows);
         let updated_plan = updated_packet.render_plan().unwrap();
         for row in updated_rows {
             let expected_revision = revisions[&row] + u64::from(row == target_row);
-            assert_eq!(app.app.render_tree().draw_list_revision(row).unwrap(), expected_revision);
+            assert_eq!(
+                app.app.render_tree().draw_list_revision(row).unwrap(),
+                expected_revision
+            );
             assert_eq!(
                 updated_plan.local_v2_revision(row),
                 (row == target_row).then_some(expected_revision),
@@ -2797,7 +2837,12 @@ mod tests {
         assert_eq!(old_bounds, Rect::new(40.0, 0.0, 20.0, 80.0));
         let height_revisions = visible_rows
             .iter()
-            .map(|row| (*row, app.app.render_tree().draw_list_revision(*row).unwrap()))
+            .map(|row| {
+                (
+                    *row,
+                    app.app.render_tree().draw_list_revision(*row).unwrap(),
+                )
+            })
             .collect::<HashMap<_, _>>();
         let paints_before_height_update = paints.get();
         row_updaters
@@ -2812,9 +2857,9 @@ mod tests {
         assert_eq!(paints.get(), paints_before_height_update + 1);
 
         let height_damage = height_packet.metadata().damage();
-        let concurrent_height_invalidation =
-            rebuild_before_height_frame != aimer_widget::rebuild_invalidation_generation()
-                || layout_before_height_frame != aimer_widget::layout_invalidation_generation();
+        let concurrent_height_invalidation = rebuild_before_height_frame
+            != aimer_widget::rebuild_invalidation_generation()
+            || layout_before_height_frame != aimer_widget::layout_invalidation_generation();
         if !concurrent_height_invalidation {
             assert!(
                 !height_damage.is_full(),
@@ -2824,26 +2869,29 @@ mod tests {
         }
         if !height_damage.is_full() {
             assert!(!height_damage.regions().is_empty());
-            assert!(height_damage.regions().iter().all(|region| {
-                region.x as f32 >= old_bounds.x
-                    && region.y as f32 >= old_bounds.y
-                    && (region.x + region.width) as f32
-                        <= old_bounds.x + old_bounds.width
-                    && (region.y + region.height) as f32
-                        <= old_bounds.y + old_bounds.height
-            }), "height-change damage escaped the old/new bounds union: {:?}", height_damage.regions());
-            assert!(height_damage.regions().iter().any(|region| {
-                region.x <= 50
-                    && region.x + region.width > 50
-                    && region.y <= 70
-                    && region.y + region.height > 70
-            }), "height-change damage missed the cleared old tail: {:?}", height_damage.regions());
+            assert!(
+                height_damage.regions().iter().all(|region| {
+                    region.x as f32 >= old_bounds.x
+                        && region.y as f32 >= old_bounds.y
+                        && (region.x + region.width) as f32 <= old_bounds.x + old_bounds.width
+                        && (region.y + region.height) as f32 <= old_bounds.y + old_bounds.height
+                }),
+                "height-change damage escaped the old/new bounds union: {:?}",
+                height_damage.regions()
+            );
+            assert!(
+                height_damage.regions().iter().any(|region| {
+                    region.x <= 50
+                        && region.x + region.width > 50
+                        && region.y <= 70
+                        && region.y + region.height > 70
+                }),
+                "height-change damage missed the cleared old tail: {:?}",
+                height_damage.regions()
+            );
         }
 
-        let height_rows = visible_horizontal_rows(
-            &app,
-            (100.0, 80.0),
-        );
+        let height_rows = visible_horizontal_rows(&app, (100.0, 80.0));
         assert_eq!(height_rows, visible_rows);
         assert_eq!(
             app.app.render_tree().element_bounds(target_row).unwrap(),
@@ -2852,7 +2900,10 @@ mod tests {
         let height_plan = height_packet.render_plan().unwrap();
         for row in height_rows {
             let expected_revision = height_revisions[&row] + u64::from(row == target_row);
-            assert_eq!(app.app.render_tree().draw_list_revision(row).unwrap(), expected_revision);
+            assert_eq!(
+                app.app.render_tree().draw_list_revision(row).unwrap(),
+                expected_revision
+            );
             assert_eq!(
                 height_plan.local_v2_revision(row),
                 (row == target_row).then_some(expected_revision),
@@ -2863,7 +2914,12 @@ mod tests {
         let shrunk_bounds = app.app.render_tree().element_bounds(target_row).unwrap();
         let grow_revisions = visible_rows
             .iter()
-            .map(|row| (*row, app.app.render_tree().draw_list_revision(*row).unwrap()))
+            .map(|row| {
+                (
+                    *row,
+                    app.app.render_tree().draw_list_revision(*row).unwrap(),
+                )
+            })
             .collect::<HashMap<_, _>>();
         let paints_before_grow = paints.get();
         row_updaters
@@ -2878,9 +2934,9 @@ mod tests {
         assert_eq!(paints.get(), paints_before_grow + 1);
 
         let grow_damage = grow_packet.metadata().damage();
-        let concurrent_grow_invalidation =
-            rebuild_before_grow_frame != aimer_widget::rebuild_invalidation_generation()
-                || layout_before_grow_frame != aimer_widget::layout_invalidation_generation();
+        let concurrent_grow_invalidation = rebuild_before_grow_frame
+            != aimer_widget::rebuild_invalidation_generation()
+            || layout_before_grow_frame != aimer_widget::layout_invalidation_generation();
         if !concurrent_grow_invalidation {
             assert!(
                 !grow_damage.is_full(),
@@ -2890,26 +2946,29 @@ mod tests {
         }
         if !grow_damage.is_full() {
             assert!(!grow_damage.regions().is_empty());
-            assert!(grow_damage.regions().iter().all(|region| {
-                region.x as f32 >= shrunk_bounds.x
-                    && region.y as f32 >= shrunk_bounds.y
-                    && (region.x + region.width) as f32
-                        <= shrunk_bounds.x + shrunk_bounds.width
-                    && (region.y + region.height) as f32
-                        <= 80.0
-            }), "height-growth damage escaped the old/new bounds union: {:?}", grow_damage.regions());
-            assert!(grow_damage.regions().iter().any(|region| {
-                region.x <= 50
-                    && region.x + region.width > 50
-                    && region.y <= 70
-                    && region.y + region.height > 70
-            }), "height-growth damage missed the newly exposed strip: {:?}", grow_damage.regions());
+            assert!(
+                grow_damage.regions().iter().all(|region| {
+                    region.x as f32 >= shrunk_bounds.x
+                        && region.y as f32 >= shrunk_bounds.y
+                        && (region.x + region.width) as f32 <= shrunk_bounds.x + shrunk_bounds.width
+                        && (region.y + region.height) as f32 <= 80.0
+                }),
+                "height-growth damage escaped the old/new bounds union: {:?}",
+                grow_damage.regions()
+            );
+            assert!(
+                grow_damage.regions().iter().any(|region| {
+                    region.x <= 50
+                        && region.x + region.width > 50
+                        && region.y <= 70
+                        && region.y + region.height > 70
+                }),
+                "height-growth damage missed the newly exposed strip: {:?}",
+                grow_damage.regions()
+            );
         }
 
-        let grow_rows = visible_horizontal_rows(
-            &app,
-            (100.0, 80.0),
-        );
+        let grow_rows = visible_horizontal_rows(&app, (100.0, 80.0));
         assert_eq!(grow_rows, visible_rows);
         assert_eq!(
             app.app.render_tree().element_bounds(target_row).unwrap(),
@@ -2918,7 +2977,10 @@ mod tests {
         let grow_plan = grow_packet.render_plan().unwrap();
         for row in grow_rows {
             let expected_revision = grow_revisions[&row] + u64::from(row == target_row);
-            assert_eq!(app.app.render_tree().draw_list_revision(row).unwrap(), expected_revision);
+            assert_eq!(
+                app.app.render_tree().draw_list_revision(row).unwrap(),
+                expected_revision
+            );
             assert_eq!(
                 grow_plan.local_v2_revision(row),
                 (row == target_row).then_some(expected_revision),
@@ -2974,8 +3036,7 @@ mod tests {
     struct LegacyPacketElement;
 
     impl Drawable for LegacyPacketElement {
-        fn update(&self, ctx: &BuildContext) {
-        }
+        fn update(&self, ctx: &BuildContext) {}
     }
 
     impl LayoutElement for LegacyPacketElement {
@@ -3007,8 +3068,7 @@ mod tests {
     struct LegacyModalElement;
 
     impl Drawable for LegacyModalElement {
-        fn update(&self, ctx: &BuildContext) {
-        }
+        fn update(&self, ctx: &BuildContext) {}
     }
 
     impl LayoutElement for LegacyModalElement {
@@ -3045,7 +3105,11 @@ mod tests {
         let root_id = app.app.widget_root.as_ref().unwrap().id();
         let render_node = app.app.render_node_for_element(root_id).unwrap();
         assert_eq!(
-            app.app.render_tree.tree().paint_source(render_node).unwrap(),
+            app.app
+                .render_tree
+                .tree()
+                .paint_source(render_node)
+                .unwrap(),
             aimer_cupid::draw_cmd_v2::RenderPaintSource::LocalV2
         );
 
@@ -3062,7 +3126,10 @@ mod tests {
         // Every paint travels in the render plan. The legacy-only elements (the
         // green packet child and the purple modal content) have no retained
         // paint and draw nothing, and the flat list holds no paint at all.
-        assert!(colors.is_empty(), "the flat list kept paint commands: {colors:?}");
+        assert!(
+            colors.is_empty(),
+            "the flat list kept paint commands: {colors:?}"
+        );
     }
 
     /// An animation whose damage covers more than half of the target is
@@ -3107,8 +3174,14 @@ mod tests {
             let (_, damage) = drawer.draw(&app.canvas, 200, 100);
             let plan = app.canvas.take_retained_render_plan();
 
-            assert!(plan.is_some(), "frame {frame}: the render plan could not be lowered");
-            assert!(!damage.is_empty(), "frame {frame}: the animation produced no damage");
+            assert!(
+                plan.is_some(),
+                "frame {frame}: the render plan could not be lowered"
+            );
+            assert!(
+                !damage.is_empty(),
+                "frame {frame}: the animation produced no damage"
+            );
         }
     }
 
@@ -3136,7 +3209,10 @@ mod tests {
                     memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
                     display: None,
                 });
-                let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().ok()?;
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .ok()?;
                 let adapter = runtime
                     .block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
                         power_preference: wgpu::PowerPreference::HighPerformance,
@@ -3151,27 +3227,45 @@ mod tests {
                 let backend = aimer_cupid::WgpuBackend::new(device.clone(), queue.clone());
                 let renderer =
                     aimer_cupid::renderer::Renderer::new(&backend, wgpu::TextureFormat::Rgba8Unorm);
-                Some(Self { device, queue, backend, renderer, target: None, resource_generation: 0 })
+                Some(Self {
+                    device,
+                    queue,
+                    backend,
+                    renderer,
+                    target: None,
+                    resource_generation: 0,
+                })
             }
 
             /// Renders one packet at `width` x `height` and returns the RGBA pixels.
-            pub(super) fn present(&mut self, packet: &FramePacket, width: u32, height: u32) -> Vec<u8> {
+            pub(super) fn present(
+                &mut self,
+                packet: &FramePacket,
+                width: u32,
+                height: u32,
+            ) -> Vec<u8> {
                 if self.target.as_ref().map(|(_, w, h)| (*w, *h)) != Some((width, height)) {
                     let texture = self.device.create_texture(&wgpu::TextureDescriptor {
                         label: Some("probe target"),
-                        size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+                        size: wgpu::Extent3d {
+                            width,
+                            height,
+                            depth_or_array_layers: 1,
+                        },
                         mip_level_count: 1,
                         sample_count: 1,
                         dimension: wgpu::TextureDimension::D2,
                         format: wgpu::TextureFormat::Rgba8Unorm,
-                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                            | wgpu::TextureUsages::COPY_SRC,
                         view_formats: &[],
                     });
                     self.target = Some((texture, width, height));
                 }
                 let texture = self.target.as_ref().unwrap().0.clone();
                 let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-                self.renderer.render_packet(&self.backend, &view, packet, false);
+                self.renderer
+                    .render_packet(&self.backend, &view, packet, false);
 
                 let unpadded = width * 4;
                 let padded = unpadded.div_ceil(256) * 256;
@@ -3199,14 +3293,20 @@ mod tests {
                             rows_per_image: Some(height),
                         },
                     },
-                    wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+                    wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
+                    },
                 );
                 self.queue.submit(Some(encoder.finish()));
                 let slice = readback.slice(..);
                 slice.map_async(wgpu::MapMode::Read, |result| {
                     result.expect("map probe readback");
                 });
-                self.device.poll(wgpu::PollType::wait_indefinitely()).expect("wait for probe readback");
+                self.device
+                    .poll(wgpu::PollType::wait_indefinitely())
+                    .expect("wait for probe readback");
                 let mapped = slice.get_mapped_range().expect("probe range");
                 let mut pixels = vec![0u8; (unpadded * height) as usize];
                 for row in 0..height as usize {
@@ -3241,7 +3341,10 @@ mod tests {
         impl StatefulWidget for SwitchPage {
             type State = SwitchState;
             fn create_state(self) -> Self::State {
-                SwitchState { morph: self.morph, second: false }
+                SwitchState {
+                    morph: self.morph,
+                    second: false,
+                }
             }
         }
 
@@ -3251,8 +3354,15 @@ mod tests {
             }
 
             fn build(&self, _ctx: &BuildContext) -> impl Widget {
-                let (key, width) = if self.second { ("b", 60.0) } else { ("a", 90.0) };
-                let picture = SizedBox::new().width(width).height(40.0).color(Color::Rgb(200, 30, 30));
+                let (key, width) = if self.second {
+                    ("b", 60.0)
+                } else {
+                    ("a", 90.0)
+                };
+                let picture = SizedBox::new()
+                    .width(width)
+                    .height(40.0)
+                    .color(Color::Rgb(200, 30, 30));
                 let duration = std::time::Duration::from_millis(120);
                 if self.morph {
                     MorphTransition::new(duration, Curve::Linear, picture)
@@ -3268,14 +3378,19 @@ mod tests {
 
         impl Widget for SwitchPage {
             fn to_element(self, ctx: &BuildContext) -> AnyElement {
-                StatefulElement::new_with_name(self, ctx, "SwitchPage", None).0.boxed()
+                StatefulElement::new_with_name(self, ctx, "SwitchPage", None)
+                    .0
+                    .boxed()
             }
         }
         impl aimer_widget::PortableWidget for SwitchPage {}
 
         let mut app = AimerApp::start_headless_with(
             SwitchPage { morph },
-            HeadlessOptions { size: PhysicalSize::new(200, 100), scale_factor: 1.0 },
+            HeadlessOptions {
+                size: PhysicalSize::new(200, 100),
+                scale_factor: 1.0,
+            },
         );
         app.pump_frames(4);
         let draws = |app: &HeadlessAimerApp<_>| {
@@ -3289,7 +3404,10 @@ mod tests {
         let single = draws(&app);
 
         SWITCH.with_borrow(|updater| {
-            updater.as_ref().unwrap().set_state(|state| state.second = true)
+            updater
+                .as_ref()
+                .unwrap()
+                .set_state(|state| state.second = true)
         });
         app.render_frame();
         assert!(
@@ -3355,7 +3473,10 @@ mod tests {
         crate::render_ctx::note_frame_not_presented();
         app.render_frame();
         let (_, retried) = app.last_frame_result.take().expect("a frame was drawn");
-        assert!(retried.is_full(), "the retry after a lost present must be a full repaint");
+        assert!(
+            retried.is_full(),
+            "the retry after a lost present must be a full repaint"
+        );
 
         app.render_frame();
         let (_, after) = app.last_frame_result.take().expect("a frame was drawn");
@@ -3413,11 +3534,17 @@ mod tests {
                 .take_retained_render_plan()
                 .expect("the resize frame includes its retained plan");
             let frame = Frame::new(app.canvas.take_draw_list(), width, height);
-            let metadata = FrameRenderMetadata::new(scale, 0, 0, 0, gpu.resource_generation, damage);
+            let metadata =
+                FrameRenderMetadata::new(scale, 0, 0, 0, gpu.resource_generation, damage);
             let packet = FramePacket::with_render_plan(frame, metadata, None, Some(plan));
             let pixels = gpu.present(&packet, width, height);
 
-            for (x, y) in [(0, 0), (width - 1, 0), (0, height - 1), (width - 1, height - 1)] {
+            for (x, y) in [
+                (0, 0),
+                (width - 1, 0),
+                (0, height - 1),
+                (width - 1, height - 1),
+            ] {
                 let index = ((y * width + x) * 4) as usize;
                 assert_eq!(
                     pixels[index..index + 4],
@@ -3461,13 +3588,22 @@ mod tests {
             .render_node_for_element(mixed_id)
             .expect("the mixed widget has a retained render node");
         assert!(plan.local_v2_revision(mixed_node).is_some());
-        let flat_colors = app.canvas.draw_list().commands().iter().filter_map(|command| match command {
-            aimer_cupid::draw_cmd::DrawCommand::FillRect { color, .. } => Some(*color),
-            _ => None,
-        }).collect::<Vec<_>>();
+        let flat_colors = app
+            .canvas
+            .draw_list()
+            .commands()
+            .iter()
+            .filter_map(|command| match command {
+                aimer_cupid::draw_cmd::DrawCommand::FillRect { color, .. } => Some(*color),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
         // The legacy-only packet child has no retained paint, so it draws
         // nothing, and the retained blue travels in the plan, not the flat list.
-        assert!(flat_colors.is_empty(), "the flat list kept paint commands: {flat_colors:?}");
+        assert!(
+            flat_colors.is_empty(),
+            "the flat list kept paint commands: {flat_colors:?}"
+        );
     }
 
     #[test]
@@ -3509,18 +3645,22 @@ mod tests {
         // These epochs are process-global. Another parallel unit test can
         // legitimately trigger FrameDrawer's conservative full fallback, so
         // check the viewport-only contract when this frame's epochs are stable.
-        let global_invalidation_during_frame =
-            rebuild_before_frame != aimer_widget::rebuild_invalidation_generation()
-                || layout_before_frame != aimer_widget::layout_invalidation_generation();
+        let global_invalidation_during_frame = rebuild_before_frame
+            != aimer_widget::rebuild_invalidation_generation()
+            || layout_before_frame != aimer_widget::layout_invalidation_generation();
         if !global_invalidation_during_frame {
             assert!(
                 !damage.is_full(),
                 "a scroll-window update stays partial: regions={:?}",
                 damage.regions()
             );
-            assert!(damage.regions().iter().all(|region| {
-                region.x + region.width <= 100 && region.y + region.height <= 80
-            }), "packet damage escaped the scroll viewport: {:?}", damage.regions());
+            assert!(
+                damage.regions().iter().all(|region| {
+                    region.x + region.width <= 100 && region.y + region.height <= 80
+                }),
+                "packet damage escaped the scroll viewport: {:?}",
+                damage.regions()
+            );
         }
 
         let root = app.app.widget_root.as_ref().unwrap();
@@ -3539,7 +3679,10 @@ mod tests {
             }
             element.visit_children(&mut |child| pending.push(child));
         }
-        assert!(!visible_row_nodes.is_empty(), "the scroll frame has visible rows");
+        assert!(
+            !visible_row_nodes.is_empty(),
+            "the scroll frame has visible rows"
+        );
         let plan = packet
             .render_plan()
             .expect("the submitted packet includes its retained plan");
@@ -3626,10 +3769,8 @@ mod tests {
         });
         let view = target.create_view(&wgpu::TextureViewDescriptor::default());
         let backend = aimer_cupid::WgpuBackend::new(device.clone(), queue.clone());
-        let mut renderer = aimer_cupid::renderer::Renderer::new(
-            &backend,
-            wgpu::TextureFormat::Rgba8Unorm,
-        );
+        let mut renderer =
+            aimer_cupid::renderer::Renderer::new(&backend, wgpu::TextureFormat::Rgba8Unorm);
 
         let controller = ScrollController::new();
         let paints = Rc::new(Cell::new(0));
@@ -3649,7 +3790,11 @@ mod tests {
             },
         );
         let (_, first_packet) = direct_headless_frame_packet(&mut app);
-        assert!(first_packet.render_plan().is_some_and(|plan| plan.is_complete()));
+        assert!(
+            first_packet
+                .render_plan()
+                .is_some_and(|plan| plan.is_complete())
+        );
         renderer.render_packet(&backend, &view, &first_packet, false);
 
         let read_target = |target: &wgpu::Texture, width: u32, height: u32| {
@@ -3751,25 +3896,24 @@ mod tests {
             },
         );
         let (_, row_initial_packet) = direct_headless_frame_packet(&mut row_app);
-        assert!(row_initial_packet
-            .render_plan()
-            .is_some_and(|plan| plan.is_complete()));
-        let mut row_renderer = aimer_cupid::renderer::Renderer::new(
-            &backend,
-            wgpu::TextureFormat::Rgba8Unorm,
+        assert!(
+            row_initial_packet
+                .render_plan()
+                .is_some_and(|plan| plan.is_complete())
         );
+        let mut row_renderer =
+            aimer_cupid::renderer::Renderer::new(&backend, wgpu::TextureFormat::Rgba8Unorm);
         row_renderer.render_packet(&backend, &row_view, &row_initial_packet, false);
 
         // The event index picks up newly materialized row state owners at the
         // next frame boundary, before the programmatic row update below.
         let (_, indexed_row_packet) = direct_headless_frame_packet(&mut row_app);
-        assert!(indexed_row_packet
-            .render_plan()
-            .is_some_and(|plan| plan.is_complete()));
-        let indexed_rows = visible_horizontal_rows(
-            &row_app,
-            (100.0, 80.0),
+        assert!(
+            indexed_row_packet
+                .render_plan()
+                .is_some_and(|plan| plan.is_complete())
         );
+        let indexed_rows = visible_horizontal_rows(&row_app, (100.0, 80.0));
         assert_eq!(indexed_rows.len(), 5);
         row_renderer.render_packet(&backend, &row_view, &indexed_row_packet, false);
         let row_before_pixels = read_target(&row_target, TARGET_WIDTH, TARGET_HEIGHT);
@@ -3809,14 +3953,16 @@ mod tests {
         let layout_before_row_frame = aimer_widget::layout_invalidation_generation();
         let (row_update_scale, row_update_packet) = direct_headless_frame_packet(&mut row_app);
         assert_eq!(row_update_scale, 1.0);
-        assert!(row_update_packet
-            .render_plan()
-            .is_some_and(|plan| plan.is_complete()));
+        assert!(
+            row_update_packet
+                .render_plan()
+                .is_some_and(|plan| plan.is_complete())
+        );
         assert_eq!(row_paints.get(), paints_before_row_update + 1);
         let row_update_damage = row_update_packet.metadata().damage();
-        let concurrent_row_invalidation =
-            rebuild_before_row_frame != aimer_widget::rebuild_invalidation_generation()
-                || layout_before_row_frame != aimer_widget::layout_invalidation_generation();
+        let concurrent_row_invalidation = rebuild_before_row_frame
+            != aimer_widget::rebuild_invalidation_generation()
+            || layout_before_row_frame != aimer_widget::layout_invalidation_generation();
         if !concurrent_row_invalidation {
             assert!(
                 !row_update_damage.is_full(),
@@ -3826,24 +3972,26 @@ mod tests {
         }
         if !row_update_damage.is_full() {
             assert!(!row_update_damage.regions().is_empty());
-            assert!(row_update_damage.regions().iter().all(|region| {
-                region.x as f32 >= row_2_bounds.x
-                    && region.y as f32 >= row_2_bounds.y
-                    && (region.x + region.width) as f32
-                        <= row_2_bounds.x + row_2_bounds.width
-                    && (region.y + region.height) as f32
-                        <= row_2_bounds.y + row_2_bounds.height
-            }), "single-row state damage escaped its element bounds: {:?}", row_update_damage.regions());
+            assert!(
+                row_update_damage.regions().iter().all(|region| {
+                    region.x as f32 >= row_2_bounds.x
+                        && region.y as f32 >= row_2_bounds.y
+                        && (region.x + region.width) as f32 <= row_2_bounds.x + row_2_bounds.width
+                        && (region.y + region.height) as f32 <= row_2_bounds.y + row_2_bounds.height
+                }),
+                "single-row state damage escaped its element bounds: {:?}",
+                row_update_damage.regions()
+            );
         }
-        let updated_rows = visible_horizontal_rows(
-            &row_app,
-            (100.0, 80.0),
-        );
+        let updated_rows = visible_horizontal_rows(&row_app, (100.0, 80.0));
         assert_eq!(updated_rows, indexed_rows);
         let updated_plan = row_update_packet.render_plan().unwrap();
         for row in &updated_rows {
             let expected_revision = row_revisions[row] + u64::from(*row == row_2);
-            assert_eq!(updated_plan.local_v2_revision(*row), Some(expected_revision));
+            assert_eq!(
+                updated_plan.local_v2_revision(*row),
+                Some(expected_revision)
+            );
         }
         row_renderer.render_packet(&backend, &row_view, &row_update_packet, false);
         let row_after_pixels = read_target(&row_target, TARGET_WIDTH, TARGET_HEIGHT);
@@ -3860,7 +4008,7 @@ mod tests {
                     assert_eq!(
                         read_pixel(&row_after_pixels, TARGET_WIDTH, x, y),
                         read_pixel(&row_before_pixels, TARGET_WIDTH, x, y),
-            "row state update changed a pixel outside row 2 at ({x}, {y})"
+                        "row state update changed a pixel outside row 2 at ({x}, {y})"
                     );
                 }
             }
@@ -3882,15 +4030,17 @@ mod tests {
         let layout_before_height_frame = aimer_widget::layout_invalidation_generation();
         let (height_scale, height_packet) = direct_headless_frame_packet(&mut row_app);
         assert_eq!(height_scale, 1.0);
-        assert!(height_packet
-            .render_plan()
-            .is_some_and(|plan| plan.is_complete()));
+        assert!(
+            height_packet
+                .render_plan()
+                .is_some_and(|plan| plan.is_complete())
+        );
         assert_eq!(row_paints.get(), paints_before_height_update + 1);
 
         let height_damage = height_packet.metadata().damage();
-        let concurrent_height_invalidation =
-            rebuild_before_height_frame != aimer_widget::rebuild_invalidation_generation()
-                || layout_before_height_frame != aimer_widget::layout_invalidation_generation();
+        let concurrent_height_invalidation = rebuild_before_height_frame
+            != aimer_widget::rebuild_invalidation_generation()
+            || layout_before_height_frame != aimer_widget::layout_invalidation_generation();
         if !concurrent_height_invalidation {
             assert!(
                 !height_damage.is_full(),
@@ -3900,26 +4050,31 @@ mod tests {
         }
         if !height_damage.is_full() {
             assert!(!height_damage.regions().is_empty());
-            assert!(height_damage.regions().iter().all(|region| {
-                region.x as f32 >= old_row_2_bounds.x
-                    && region.y as f32 >= old_row_2_bounds.y
-                    && (region.x + region.width) as f32
-                        <= old_row_2_bounds.x + old_row_2_bounds.width
-                    && (region.y + region.height) as f32
-                        <= old_row_2_bounds.y + old_row_2_bounds.height
-            }), "height-change damage escaped the old/new bounds union: {:?}", height_damage.regions());
-            assert!(height_damage.regions().iter().any(|region| {
-                region.x <= 50
-                    && region.x + region.width > 50
-                    && region.y <= 70
-                    && region.y + region.height > 70
-            }), "height-change damage missed the cleared old tail: {:?}", height_damage.regions());
+            assert!(
+                height_damage.regions().iter().all(|region| {
+                    region.x as f32 >= old_row_2_bounds.x
+                        && region.y as f32 >= old_row_2_bounds.y
+                        && (region.x + region.width) as f32
+                            <= old_row_2_bounds.x + old_row_2_bounds.width
+                        && (region.y + region.height) as f32
+                            <= old_row_2_bounds.y + old_row_2_bounds.height
+                }),
+                "height-change damage escaped the old/new bounds union: {:?}",
+                height_damage.regions()
+            );
+            assert!(
+                height_damage.regions().iter().any(|region| {
+                    region.x <= 50
+                        && region.x + region.width > 50
+                        && region.y <= 70
+                        && region.y + region.height > 70
+                }),
+                "height-change damage missed the cleared old tail: {:?}",
+                height_damage.regions()
+            );
         }
 
-        let height_rows = visible_horizontal_rows(
-            &row_app,
-            (100.0, 80.0),
-        );
+        let height_rows = visible_horizontal_rows(&row_app, (100.0, 80.0));
         assert_eq!(height_rows, indexed_rows);
         assert_eq!(
             row_app.app.render_tree().element_bounds(row_2).unwrap(),
@@ -3972,15 +4127,17 @@ mod tests {
         let layout_before_grow_frame = aimer_widget::layout_invalidation_generation();
         let (grow_scale, grow_packet) = direct_headless_frame_packet(&mut row_app);
         assert_eq!(grow_scale, 1.0);
-        assert!(grow_packet
-            .render_plan()
-            .is_some_and(|plan| plan.is_complete()));
+        assert!(
+            grow_packet
+                .render_plan()
+                .is_some_and(|plan| plan.is_complete())
+        );
         assert_eq!(row_paints.get(), paints_before_grow + 1);
 
         let grow_damage = grow_packet.metadata().damage();
-        let concurrent_grow_invalidation =
-            rebuild_before_grow_frame != aimer_widget::rebuild_invalidation_generation()
-                || layout_before_grow_frame != aimer_widget::layout_invalidation_generation();
+        let concurrent_grow_invalidation = rebuild_before_grow_frame
+            != aimer_widget::rebuild_invalidation_generation()
+            || layout_before_grow_frame != aimer_widget::layout_invalidation_generation();
         if !concurrent_grow_invalidation {
             assert!(
                 !grow_damage.is_full(),
@@ -3990,25 +4147,30 @@ mod tests {
         }
         if !grow_damage.is_full() {
             assert!(!grow_damage.regions().is_empty());
-            assert!(grow_damage.regions().iter().all(|region| {
-                region.x as f32 >= shrunk_row_2_bounds.x
-                    && region.y as f32 >= shrunk_row_2_bounds.y
-                    && (region.x + region.width) as f32
-                        <= shrunk_row_2_bounds.x + shrunk_row_2_bounds.width
-                    && (region.y + region.height) as f32 <= 80.0
-            }), "height-growth damage escaped the old/new bounds union: {:?}", grow_damage.regions());
-            assert!(grow_damage.regions().iter().any(|region| {
-                region.x <= 50
-                    && region.x + region.width > 50
-                    && region.y <= 70
-                    && region.y + region.height > 70
-            }), "height-growth damage missed the newly exposed strip: {:?}", grow_damage.regions());
+            assert!(
+                grow_damage.regions().iter().all(|region| {
+                    region.x as f32 >= shrunk_row_2_bounds.x
+                        && region.y as f32 >= shrunk_row_2_bounds.y
+                        && (region.x + region.width) as f32
+                            <= shrunk_row_2_bounds.x + shrunk_row_2_bounds.width
+                        && (region.y + region.height) as f32 <= 80.0
+                }),
+                "height-growth damage escaped the old/new bounds union: {:?}",
+                grow_damage.regions()
+            );
+            assert!(
+                grow_damage.regions().iter().any(|region| {
+                    region.x <= 50
+                        && region.x + region.width > 50
+                        && region.y <= 70
+                        && region.y + region.height > 70
+                }),
+                "height-growth damage missed the newly exposed strip: {:?}",
+                grow_damage.regions()
+            );
         }
 
-        let grow_rows = visible_horizontal_rows(
-            &row_app,
-            (100.0, 80.0),
-        );
+        let grow_rows = visible_horizontal_rows(&row_app, (100.0, 80.0));
         assert_eq!(grow_rows, indexed_rows);
         assert_eq!(
             row_app.app.render_tree().element_bounds(row_2).unwrap(),
@@ -4068,30 +4230,60 @@ mod tests {
             visible_rows
         };
         assert!(!initial_visible_rows.is_empty());
-        assert_eq!(read_pixel(&first_pixels, TARGET_WIDTH, 10, 10), color_bytes(Color::RED));
-        assert_eq!(read_pixel(&first_pixels, TARGET_WIDTH, 10, 30), color_bytes(Color::GREEN));
-        assert_eq!(read_pixel(&first_pixels, TARGET_WIDTH, 10, 50), color_bytes(Color::BLUE));
-        assert_eq!(read_pixel(&first_pixels, TARGET_WIDTH, 10, 70), color_bytes(Color::WHITE));
-        assert_eq!(read_pixel(&first_pixels, TARGET_WIDTH, 110, 10), [0, 0, 0, 0]);
-        assert_eq!(read_pixel(&first_pixels, TARGET_WIDTH, 10, 90), [0, 0, 0, 0]);
+        assert_eq!(
+            read_pixel(&first_pixels, TARGET_WIDTH, 10, 10),
+            color_bytes(Color::RED)
+        );
+        assert_eq!(
+            read_pixel(&first_pixels, TARGET_WIDTH, 10, 30),
+            color_bytes(Color::GREEN)
+        );
+        assert_eq!(
+            read_pixel(&first_pixels, TARGET_WIDTH, 10, 50),
+            color_bytes(Color::BLUE)
+        );
+        assert_eq!(
+            read_pixel(&first_pixels, TARGET_WIDTH, 10, 70),
+            color_bytes(Color::WHITE)
+        );
+        assert_eq!(
+            read_pixel(&first_pixels, TARGET_WIDTH, 110, 10),
+            [0, 0, 0, 0]
+        );
+        assert_eq!(
+            read_pixel(&first_pixels, TARGET_WIDTH, 10, 90),
+            [0, 0, 0, 0]
+        );
 
         controller.jump_to(Vec2d { x: 0.0, y: 400.0 });
         let rebuild_before_frame = aimer_widget::rebuild_invalidation_generation();
         let layout_before_frame = aimer_widget::layout_invalidation_generation();
         let (scale, second_packet) = direct_headless_frame_packet(&mut app);
         assert_eq!(scale, 1.0);
-        assert!(second_packet.render_plan().is_some_and(|plan| plan.is_complete()));
-        let concurrent_global_invalidation =
-            rebuild_before_frame != aimer_widget::rebuild_invalidation_generation()
-                || layout_before_frame != aimer_widget::layout_invalidation_generation();
+        assert!(
+            second_packet
+                .render_plan()
+                .is_some_and(|plan| plan.is_complete())
+        );
+        let concurrent_global_invalidation = rebuild_before_frame
+            != aimer_widget::rebuild_invalidation_generation()
+            || layout_before_frame != aimer_widget::layout_invalidation_generation();
         let damage = second_packet.metadata().damage();
         assert_eq!(damage.target_size(), (TARGET_WIDTH, TARGET_HEIGHT));
         assert!(!damage.regions().is_empty());
         if !concurrent_global_invalidation {
-            assert!(!damage.is_full(), "stable scroll frame damage: {:?}", damage.regions());
-            assert!(damage.regions().iter().all(|region| {
-                region.x + region.width <= 100 && region.y + region.height <= 80
-            }), "headless scroll damage escaped its viewport: {:?}", damage.regions());
+            assert!(
+                !damage.is_full(),
+                "stable scroll frame damage: {:?}",
+                damage.regions()
+            );
+            assert!(
+                damage.regions().iter().all(|region| {
+                    region.x + region.width <= 100 && region.y + region.height <= 80
+                }),
+                "headless scroll damage escaped its viewport: {:?}",
+                damage.regions()
+            );
         }
 
         let plan = second_packet.render_plan().unwrap();
@@ -4116,8 +4308,14 @@ mod tests {
             visible_rows
         };
         assert!(!visible_rows.is_empty());
-        assert_ne!(initial_visible_rows, visible_rows, "scrolling replaces the row window");
-        assert!(paints.get() > initial_paints, "new rows paint in this frame");
+        assert_ne!(
+            initial_visible_rows, visible_rows,
+            "scrolling replaces the row window"
+        );
+        assert!(
+            paints.get() > initial_paints,
+            "new rows paint in this frame"
+        );
 
         renderer.render_packet(&backend, &view, &second_packet, false);
         let second_pixels = read_target(&target, TARGET_WIDTH, TARGET_HEIGHT);
@@ -4127,10 +4325,22 @@ mod tests {
             assert_eq!(stats.damage_regions, 1);
             assert_eq!(stats.damaged_pixels, 100 * 80);
         }
-        assert_eq!(read_pixel(&second_pixels, TARGET_WIDTH, 10, 10), color_bytes(Color::YELLOW));
-        assert_eq!(read_pixel(&second_pixels, TARGET_WIDTH, 10, 30), color_bytes(Color::MAGENTA));
-        assert_eq!(read_pixel(&second_pixels, TARGET_WIDTH, 10, 50), color_bytes(Color::CYAN));
-        assert_eq!(read_pixel(&second_pixels, TARGET_WIDTH, 10, 70), color_bytes(Color::ORANGE));
+        assert_eq!(
+            read_pixel(&second_pixels, TARGET_WIDTH, 10, 10),
+            color_bytes(Color::YELLOW)
+        );
+        assert_eq!(
+            read_pixel(&second_pixels, TARGET_WIDTH, 10, 30),
+            color_bytes(Color::MAGENTA)
+        );
+        assert_eq!(
+            read_pixel(&second_pixels, TARGET_WIDTH, 10, 50),
+            color_bytes(Color::CYAN)
+        );
+        assert_eq!(
+            read_pixel(&second_pixels, TARGET_WIDTH, 10, 70),
+            color_bytes(Color::ORANGE)
+        );
         for y in 0..TARGET_HEIGHT {
             for x in 0..TARGET_WIDTH {
                 if x >= 100 || y >= 80 {
@@ -4167,7 +4377,10 @@ mod tests {
             false,
         );
         let resized_stats = renderer.compositor_stats();
-        assert!(resized_stats.full_repaint, "a resized target requires full damage");
+        assert!(
+            resized_stats.full_repaint,
+            "a resized target requires full damage"
+        );
         assert_eq!(resized_stats.damage_regions, 1);
         assert_eq!(
             resized_stats.damaged_pixels,
@@ -4175,10 +4388,22 @@ mod tests {
         );
 
         let resized_pixels = read_target(&resized_target, RESIZED_WIDTH, RESIZED_HEIGHT);
-        assert_eq!(read_pixel(&resized_pixels, RESIZED_WIDTH, 10, 10), color_bytes(Color::YELLOW));
-        assert_eq!(read_pixel(&resized_pixels, RESIZED_WIDTH, 10, 30), color_bytes(Color::MAGENTA));
-        assert_eq!(read_pixel(&resized_pixels, RESIZED_WIDTH, 10, 50), color_bytes(Color::CYAN));
-        assert_eq!(read_pixel(&resized_pixels, RESIZED_WIDTH, 10, 70), color_bytes(Color::ORANGE));
+        assert_eq!(
+            read_pixel(&resized_pixels, RESIZED_WIDTH, 10, 10),
+            color_bytes(Color::YELLOW)
+        );
+        assert_eq!(
+            read_pixel(&resized_pixels, RESIZED_WIDTH, 10, 30),
+            color_bytes(Color::MAGENTA)
+        );
+        assert_eq!(
+            read_pixel(&resized_pixels, RESIZED_WIDTH, 10, 50),
+            color_bytes(Color::CYAN)
+        );
+        assert_eq!(
+            read_pixel(&resized_pixels, RESIZED_WIDTH, 10, 70),
+            color_bytes(Color::ORANGE)
+        );
         for y in 0..RESIZED_HEIGHT {
             for x in 0..RESIZED_WIDTH {
                 let resized_pixel = read_pixel(&resized_pixels, RESIZED_WIDTH, x, y);
@@ -4215,16 +4440,23 @@ mod tests {
             resize_damage.target_size(),
             (APP_RESIZED_WIDTH, APP_RESIZED_HEIGHT)
         );
-        assert!(resize_damage.is_full(), "resizing the headless target is full damage");
-        let app_resized_packet =
-            headless_packet_from_canvas(&mut app, resize_scale, resize_damage);
+        assert!(
+            resize_damage.is_full(),
+            "resizing the headless target is full damage"
+        );
+        let app_resized_packet = headless_packet_from_canvas(&mut app, resize_scale, resize_damage);
         assert_eq!(
-            (app_resized_packet.frame().width, app_resized_packet.frame().height),
+            (
+                app_resized_packet.frame().width,
+                app_resized_packet.frame().height
+            ),
             (APP_RESIZED_WIDTH, APP_RESIZED_HEIGHT)
         );
-        assert!(app_resized_packet
-            .render_plan()
-            .is_some_and(|plan| plan.is_complete()));
+        assert!(
+            app_resized_packet
+                .render_plan()
+                .is_some_and(|plan| plan.is_complete())
+        );
 
         let app_resized_plan = app_resized_packet.render_plan().unwrap();
         let (resized_viewport, app_resized_rows) = {
@@ -4262,7 +4494,11 @@ mod tests {
             )
         };
         assert_eq!(resized_viewport, Rect::new(0.0, 0.0, 180.0, 120.0));
-        assert_eq!(app_resized_rows.len(), 6, "the taller viewport materializes six rows");
+        assert_eq!(
+            app_resized_rows.len(),
+            6,
+            "the taller viewport materializes six rows"
+        );
         assert!(
             app_resized_rows.len() > visible_rows.len(),
             "resizing exposes additional virtualized rows"
@@ -4283,7 +4519,8 @@ mod tests {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
-        let app_resized_view = app_resized_target.create_view(&wgpu::TextureViewDescriptor::default());
+        let app_resized_view =
+            app_resized_target.create_view(&wgpu::TextureViewDescriptor::default());
         renderer.render_packet(&backend, &app_resized_view, &app_resized_packet, false);
         let app_resized_stats = renderer.compositor_stats();
         assert!(app_resized_stats.full_repaint);
@@ -4295,14 +4532,38 @@ mod tests {
 
         let app_resized_pixels =
             read_target(&app_resized_target, APP_RESIZED_WIDTH, APP_RESIZED_HEIGHT);
-        assert_eq!(read_pixel(&app_resized_pixels, APP_RESIZED_WIDTH, 10, 10), color_bytes(Color::YELLOW));
-        assert_eq!(read_pixel(&app_resized_pixels, APP_RESIZED_WIDTH, 10, 30), color_bytes(Color::MAGENTA));
-        assert_eq!(read_pixel(&app_resized_pixels, APP_RESIZED_WIDTH, 10, 50), color_bytes(Color::CYAN));
-        assert_eq!(read_pixel(&app_resized_pixels, APP_RESIZED_WIDTH, 10, 70), color_bytes(Color::ORANGE));
-        assert_eq!(read_pixel(&app_resized_pixels, APP_RESIZED_WIDTH, 10, 90), color_bytes(Color::RED));
-        assert_eq!(read_pixel(&app_resized_pixels, APP_RESIZED_WIDTH, 10, 110), color_bytes(Color::GREEN));
-        assert_eq!(read_pixel(&app_resized_pixels, APP_RESIZED_WIDTH, 120, 10), [0, 0, 0, 0]);
-        assert_eq!(read_pixel(&app_resized_pixels, APP_RESIZED_WIDTH, 10, 130), [0, 0, 0, 0]);
+        assert_eq!(
+            read_pixel(&app_resized_pixels, APP_RESIZED_WIDTH, 10, 10),
+            color_bytes(Color::YELLOW)
+        );
+        assert_eq!(
+            read_pixel(&app_resized_pixels, APP_RESIZED_WIDTH, 10, 30),
+            color_bytes(Color::MAGENTA)
+        );
+        assert_eq!(
+            read_pixel(&app_resized_pixels, APP_RESIZED_WIDTH, 10, 50),
+            color_bytes(Color::CYAN)
+        );
+        assert_eq!(
+            read_pixel(&app_resized_pixels, APP_RESIZED_WIDTH, 10, 70),
+            color_bytes(Color::ORANGE)
+        );
+        assert_eq!(
+            read_pixel(&app_resized_pixels, APP_RESIZED_WIDTH, 10, 90),
+            color_bytes(Color::RED)
+        );
+        assert_eq!(
+            read_pixel(&app_resized_pixels, APP_RESIZED_WIDTH, 10, 110),
+            color_bytes(Color::GREEN)
+        );
+        assert_eq!(
+            read_pixel(&app_resized_pixels, APP_RESIZED_WIDTH, 120, 10),
+            [0, 0, 0, 0]
+        );
+        assert_eq!(
+            read_pixel(&app_resized_pixels, APP_RESIZED_WIDTH, 10, 130),
+            [0, 0, 0, 0]
+        );
         for y in 0..APP_RESIZED_HEIGHT {
             for x in 0..APP_RESIZED_WIDTH {
                 if x >= 180 || y >= 120 {
@@ -4322,21 +4583,33 @@ mod tests {
         let layout_before_end_frame = aimer_widget::layout_invalidation_generation();
         let (end_scale, end_packet) = direct_headless_frame_packet(&mut app);
         assert_eq!(end_scale, 1.0);
-        assert!(end_packet.render_plan().is_some_and(|plan| plan.is_complete()));
+        assert!(
+            end_packet
+                .render_plan()
+                .is_some_and(|plan| plan.is_complete())
+        );
         let end_damage = end_packet.metadata().damage();
         assert_eq!(
             end_damage.target_size(),
             (APP_RESIZED_WIDTH, APP_RESIZED_HEIGHT)
         );
         assert!(!end_damage.regions().is_empty());
-        let concurrent_global_invalidation =
-            rebuild_before_end_frame != aimer_widget::rebuild_invalidation_generation()
-                || layout_before_end_frame != aimer_widget::layout_invalidation_generation();
+        let concurrent_global_invalidation = rebuild_before_end_frame
+            != aimer_widget::rebuild_invalidation_generation()
+            || layout_before_end_frame != aimer_widget::layout_invalidation_generation();
         if !concurrent_global_invalidation {
-            assert!(!end_damage.is_full(), "end-scroll damage: {:?}", end_damage.regions());
-            assert!(end_damage.regions().iter().all(|region| {
-                region.x + region.width <= 180 && region.y + region.height <= 120
-            }), "end-scroll damage escaped the resized viewport: {:?}", end_damage.regions());
+            assert!(
+                !end_damage.is_full(),
+                "end-scroll damage: {:?}",
+                end_damage.regions()
+            );
+            assert!(
+                end_damage.regions().iter().all(|region| {
+                    region.x + region.width <= 180 && region.y + region.height <= 120
+                }),
+                "end-scroll damage escaped the resized viewport: {:?}",
+                end_damage.regions()
+            );
         }
 
         let end_plan = end_packet.render_plan().unwrap();
@@ -4360,30 +4633,51 @@ mod tests {
             }
             visible_rows
         };
-        assert_eq!(end_visible_rows.len(), 6, "six rows fill the resized viewport");
-        assert_ne!(app_resized_rows, end_visible_rows, "the row window moves to the list end");
+        assert_eq!(
+            end_visible_rows.len(),
+            6,
+            "six rows fill the resized viewport"
+        );
+        assert_ne!(
+            app_resized_rows, end_visible_rows,
+            "the row window moves to the list end"
+        );
         let actual_offset = controller.offset();
         assert!((actual_offset.y - max_extent.y).abs() < 0.01);
         assert!(paints.get() > initial_paints);
 
         renderer.render_packet(&backend, &app_resized_view, &end_packet, false);
-        let end_pixels = read_target(
-            &app_resized_target,
-            APP_RESIZED_WIDTH,
-            APP_RESIZED_HEIGHT,
-        );
+        let end_pixels = read_target(&app_resized_target, APP_RESIZED_WIDTH, APP_RESIZED_HEIGHT);
         let end_stats = renderer.compositor_stats();
         if !concurrent_global_invalidation {
             assert!(!end_stats.full_repaint);
             assert_eq!(end_stats.damage_regions, 1);
             assert_eq!(end_stats.damaged_pixels, 180 * 120);
         }
-        assert_eq!(read_pixel(&end_pixels, APP_RESIZED_WIDTH, 10, 10), color_bytes(Color::BLUE));
-        assert_eq!(read_pixel(&end_pixels, APP_RESIZED_WIDTH, 10, 30), color_bytes(Color::WHITE));
-        assert_eq!(read_pixel(&end_pixels, APP_RESIZED_WIDTH, 10, 50), color_bytes(Color::YELLOW));
-        assert_eq!(read_pixel(&end_pixels, APP_RESIZED_WIDTH, 10, 70), color_bytes(Color::MAGENTA));
-        assert_eq!(read_pixel(&end_pixels, APP_RESIZED_WIDTH, 10, 90), color_bytes(Color::CYAN));
-        assert_eq!(read_pixel(&end_pixels, APP_RESIZED_WIDTH, 10, 110), color_bytes(Color::ORANGE));
+        assert_eq!(
+            read_pixel(&end_pixels, APP_RESIZED_WIDTH, 10, 10),
+            color_bytes(Color::BLUE)
+        );
+        assert_eq!(
+            read_pixel(&end_pixels, APP_RESIZED_WIDTH, 10, 30),
+            color_bytes(Color::WHITE)
+        );
+        assert_eq!(
+            read_pixel(&end_pixels, APP_RESIZED_WIDTH, 10, 50),
+            color_bytes(Color::YELLOW)
+        );
+        assert_eq!(
+            read_pixel(&end_pixels, APP_RESIZED_WIDTH, 10, 70),
+            color_bytes(Color::MAGENTA)
+        );
+        assert_eq!(
+            read_pixel(&end_pixels, APP_RESIZED_WIDTH, 10, 90),
+            color_bytes(Color::CYAN)
+        );
+        assert_eq!(
+            read_pixel(&end_pixels, APP_RESIZED_WIDTH, 10, 110),
+            color_bytes(Color::ORANGE)
+        );
         for y in 0..APP_RESIZED_HEIGHT {
             for x in 0..APP_RESIZED_WIDTH {
                 if x >= 180 || y >= 120 {
@@ -4425,15 +4719,23 @@ mod tests {
         let layout_before_vertical_shrink = aimer_widget::layout_invalidation_generation();
         let (shrink_scale, vertical_shrink_packet) = direct_headless_frame_packet(&mut app);
         assert_eq!(shrink_scale, 1.0);
-        assert!(vertical_shrink_packet
-            .render_plan()
-            .is_some_and(|plan| plan.is_complete()));
+        assert!(
+            vertical_shrink_packet
+                .render_plan()
+                .is_some_and(|plan| plan.is_complete())
+        );
         let root_after_vertical_shrink = app.app.widget_root.as_ref().unwrap();
-        assert_eq!(root_after_vertical_shrink.id(), root_id_before_vertical_shrink);
+        assert_eq!(
+            root_after_vertical_shrink.id(),
+            root_id_before_vertical_shrink
+        );
         let scroll_id_after_vertical_shrink =
             find_vertical_scroll_id(root_after_vertical_shrink.as_ref())
                 .expect("the in-place update retains the vertical scrollable");
-        assert_eq!(scroll_id_after_vertical_shrink, scroll_id_before_vertical_shrink);
+        assert_eq!(
+            scroll_id_after_vertical_shrink,
+            scroll_id_before_vertical_shrink
+        );
         assert_eq!(
             app.app
                 .render_node_for_element(scroll_id_after_vertical_shrink),
@@ -4446,13 +4748,17 @@ mod tests {
             (APP_RESIZED_WIDTH, APP_RESIZED_HEIGHT)
         );
         assert!(!vertical_shrink_damage.regions().is_empty());
-        let concurrent_global_invalidation =
-            rebuild_before_vertical_shrink != aimer_widget::rebuild_invalidation_generation()
-                || layout_before_vertical_shrink != aimer_widget::layout_invalidation_generation();
+        let concurrent_global_invalidation = rebuild_before_vertical_shrink
+            != aimer_widget::rebuild_invalidation_generation()
+            || layout_before_vertical_shrink != aimer_widget::layout_invalidation_generation();
         if !vertical_shrink_damage.is_full() {
-            assert!(vertical_shrink_damage.regions().iter().all(|region| {
-                region.x + region.width <= 180 && region.y + region.height <= 120
-            }), "vertical list shrink damage escaped its viewport: {:?}", vertical_shrink_damage.regions());
+            assert!(
+                vertical_shrink_damage.regions().iter().all(|region| {
+                    region.x + region.width <= 180 && region.y + region.height <= 120
+                }),
+                "vertical list shrink damage escaped its viewport: {:?}",
+                vertical_shrink_damage.regions()
+            );
         }
         assert!(controller.is_attached());
         assert_eq!(controller.max_extent().y, 0.0);
@@ -4482,23 +4788,33 @@ mod tests {
         assert_eq!(vertical_shrink_rows.len(), 3);
         assert!(paints.get() > paints_before_vertical_shrink);
 
-        renderer.render_packet(
-            &backend,
-            &app_resized_view,
-            &vertical_shrink_packet,
-            false,
-        );
+        renderer.render_packet(&backend, &app_resized_view, &vertical_shrink_packet, false);
         let vertical_shrink_pixels =
             read_target(&app_resized_target, APP_RESIZED_WIDTH, APP_RESIZED_HEIGHT);
         let vertical_shrink_stats = renderer.compositor_stats();
         if !concurrent_global_invalidation && !vertical_shrink_damage.is_full() {
             assert!(!vertical_shrink_stats.full_repaint);
         }
-        assert_eq!(read_pixel(&vertical_shrink_pixels, APP_RESIZED_WIDTH, 10, 10), color_bytes(Color::RED));
-        assert_eq!(read_pixel(&vertical_shrink_pixels, APP_RESIZED_WIDTH, 10, 30), color_bytes(Color::GREEN));
-        assert_eq!(read_pixel(&vertical_shrink_pixels, APP_RESIZED_WIDTH, 10, 50), color_bytes(Color::BLUE));
-        assert_eq!(read_pixel(&vertical_shrink_pixels, APP_RESIZED_WIDTH, 10, 70), [0, 0, 0, 0]);
-        assert_eq!(read_pixel(&vertical_shrink_pixels, APP_RESIZED_WIDTH, 10, 110), [0, 0, 0, 0]);
+        assert_eq!(
+            read_pixel(&vertical_shrink_pixels, APP_RESIZED_WIDTH, 10, 10),
+            color_bytes(Color::RED)
+        );
+        assert_eq!(
+            read_pixel(&vertical_shrink_pixels, APP_RESIZED_WIDTH, 10, 30),
+            color_bytes(Color::GREEN)
+        );
+        assert_eq!(
+            read_pixel(&vertical_shrink_pixels, APP_RESIZED_WIDTH, 10, 50),
+            color_bytes(Color::BLUE)
+        );
+        assert_eq!(
+            read_pixel(&vertical_shrink_pixels, APP_RESIZED_WIDTH, 10, 70),
+            [0, 0, 0, 0]
+        );
+        assert_eq!(
+            read_pixel(&vertical_shrink_pixels, APP_RESIZED_WIDTH, 10, 110),
+            [0, 0, 0, 0]
+        );
         for y in 60..120 {
             for x in 0..180 {
                 assert_eq!(
@@ -4537,9 +4853,11 @@ mod tests {
             },
         );
         let (_, horizontal_first_packet) = direct_headless_frame_packet(&mut horizontal_app);
-        assert!(horizontal_first_packet
-            .render_plan()
-            .is_some_and(|plan| plan.is_complete()));
+        assert!(
+            horizontal_first_packet
+                .render_plan()
+                .is_some_and(|plan| plan.is_complete())
+        );
         let mut horizontal_renderer =
             aimer_cupid::renderer::Renderer::new(&backend, wgpu::TextureFormat::Rgba8Unorm);
         horizontal_renderer.render_packet(&backend, &view, &horizontal_first_packet, false);
@@ -4554,16 +4872,16 @@ mod tests {
                 if element.debug_name() == "HeadlessHorizontalVirtualizedItem"
                     && let Some(render_node) =
                         horizontal_app.app.render_node_for_element(element.id())
-                    && let Ok(bounds) = horizontal_app
-                        .app
-                        .render_tree()
-                        .element_bounds(render_node)
+                    && let Ok(bounds) = horizontal_app.app.render_tree().element_bounds(render_node)
                     && bounds.x < 100.0
                     && bounds.x + bounds.width > 0.0
                     && bounds.y < 80.0
                     && bounds.y + bounds.height > 0.0
                 {
-                    assert_eq!(horizontal_first_plan.local_v2_revision(render_node), Some(1));
+                    assert_eq!(
+                        horizontal_first_plan.local_v2_revision(render_node),
+                        Some(1)
+                    );
                     visible_items.push(render_node);
                 }
                 element.visit_children(&mut |child| pending.push(child));
@@ -4572,41 +4890,65 @@ mod tests {
         };
         assert_eq!(horizontal_first_items.len(), 5);
         assert_eq!(horizontal_controller.max_extent().y, 0.0);
-        assert_eq!(read_pixel(&horizontal_first_pixels, TARGET_WIDTH, 10, 10), color_bytes(Color::RED));
-        assert_eq!(read_pixel(&horizontal_first_pixels, TARGET_WIDTH, 30, 10), color_bytes(Color::GREEN));
-        assert_eq!(read_pixel(&horizontal_first_pixels, TARGET_WIDTH, 50, 10), color_bytes(Color::BLUE));
-        assert_eq!(read_pixel(&horizontal_first_pixels, TARGET_WIDTH, 70, 10), color_bytes(Color::WHITE));
-        assert_eq!(read_pixel(&horizontal_first_pixels, TARGET_WIDTH, 90, 10), color_bytes(Color::YELLOW));
+        assert_eq!(
+            read_pixel(&horizontal_first_pixels, TARGET_WIDTH, 10, 10),
+            color_bytes(Color::RED)
+        );
+        assert_eq!(
+            read_pixel(&horizontal_first_pixels, TARGET_WIDTH, 30, 10),
+            color_bytes(Color::GREEN)
+        );
+        assert_eq!(
+            read_pixel(&horizontal_first_pixels, TARGET_WIDTH, 50, 10),
+            color_bytes(Color::BLUE)
+        );
+        assert_eq!(
+            read_pixel(&horizontal_first_pixels, TARGET_WIDTH, 70, 10),
+            color_bytes(Color::WHITE)
+        );
+        assert_eq!(
+            read_pixel(&horizontal_first_pixels, TARGET_WIDTH, 90, 10),
+            color_bytes(Color::YELLOW)
+        );
 
         let horizontal_max = horizontal_controller.max_extent();
-        assert!(horizontal_max.x > 0.0, "the horizontal list has a reachable end");
+        assert!(
+            horizontal_max.x > 0.0,
+            "the horizontal list has a reachable end"
+        );
         horizontal_controller.jump_to(horizontal_max);
         let rebuild_before_horizontal_end = aimer_widget::rebuild_invalidation_generation();
         let layout_before_horizontal_end = aimer_widget::layout_invalidation_generation();
         let (horizontal_scale, horizontal_end_packet) =
             direct_headless_frame_packet(&mut horizontal_app);
         assert_eq!(horizontal_scale, 1.0);
-        assert!(horizontal_end_packet
-            .render_plan()
-            .is_some_and(|plan| plan.is_complete()));
+        assert!(
+            horizontal_end_packet
+                .render_plan()
+                .is_some_and(|plan| plan.is_complete())
+        );
         let horizontal_end_damage = horizontal_end_packet.metadata().damage();
         assert_eq!(
             horizontal_end_damage.target_size(),
             (TARGET_WIDTH, TARGET_HEIGHT)
         );
         assert!(!horizontal_end_damage.regions().is_empty());
-        let concurrent_global_invalidation =
-            rebuild_before_horizontal_end != aimer_widget::rebuild_invalidation_generation()
-                || layout_before_horizontal_end != aimer_widget::layout_invalidation_generation();
+        let concurrent_global_invalidation = rebuild_before_horizontal_end
+            != aimer_widget::rebuild_invalidation_generation()
+            || layout_before_horizontal_end != aimer_widget::layout_invalidation_generation();
         if !concurrent_global_invalidation {
             assert!(
                 !horizontal_end_damage.is_full(),
                 "horizontal end-scroll damage: {:?}",
                 horizontal_end_damage.regions()
             );
-            assert!(horizontal_end_damage.regions().iter().all(|region| {
-                region.x + region.width <= 100 && region.y + region.height <= 80
-            }), "horizontal damage escaped its viewport: {:?}", horizontal_end_damage.regions());
+            assert!(
+                horizontal_end_damage.regions().iter().all(|region| {
+                    region.x + region.width <= 100 && region.y + region.height <= 80
+                }),
+                "horizontal damage escaped its viewport: {:?}",
+                horizontal_end_damage.regions()
+            );
         }
 
         let horizontal_end_plan = horizontal_end_packet.render_plan().unwrap();
@@ -4618,10 +4960,7 @@ mod tests {
                 if element.debug_name() == "HeadlessHorizontalVirtualizedItem"
                     && let Some(render_node) =
                         horizontal_app.app.render_node_for_element(element.id())
-                    && let Ok(bounds) = horizontal_app
-                        .app
-                        .render_tree()
-                        .element_bounds(render_node)
+                    && let Ok(bounds) = horizontal_app.app.render_tree().element_bounds(render_node)
                     && bounds.x < 100.0
                     && bounds.x + bounds.width > 0.0
                     && bounds.y < 80.0
@@ -4640,12 +4979,7 @@ mod tests {
         assert!((horizontal_offset.x - horizontal_max.x).abs() < 0.01);
         assert!(horizontal_paints.get() > horizontal_initial_paints);
 
-        horizontal_renderer.render_packet(
-            &backend,
-            &view,
-            &horizontal_end_packet,
-            false,
-        );
+        horizontal_renderer.render_packet(&backend, &view, &horizontal_end_packet, false);
         let horizontal_end_pixels = read_target(&target, TARGET_WIDTH, TARGET_HEIGHT);
         let horizontal_stats = horizontal_renderer.compositor_stats();
         if !concurrent_global_invalidation {
@@ -4653,11 +4987,26 @@ mod tests {
             assert_eq!(horizontal_stats.damage_regions, 1);
             assert_eq!(horizontal_stats.damaged_pixels, 100 * 80);
         }
-        assert_eq!(read_pixel(&horizontal_end_pixels, TARGET_WIDTH, 10, 10), color_bytes(Color::WHITE));
-        assert_eq!(read_pixel(&horizontal_end_pixels, TARGET_WIDTH, 30, 10), color_bytes(Color::YELLOW));
-        assert_eq!(read_pixel(&horizontal_end_pixels, TARGET_WIDTH, 50, 10), color_bytes(Color::MAGENTA));
-        assert_eq!(read_pixel(&horizontal_end_pixels, TARGET_WIDTH, 70, 10), color_bytes(Color::CYAN));
-        assert_eq!(read_pixel(&horizontal_end_pixels, TARGET_WIDTH, 90, 10), color_bytes(Color::ORANGE));
+        assert_eq!(
+            read_pixel(&horizontal_end_pixels, TARGET_WIDTH, 10, 10),
+            color_bytes(Color::WHITE)
+        );
+        assert_eq!(
+            read_pixel(&horizontal_end_pixels, TARGET_WIDTH, 30, 10),
+            color_bytes(Color::YELLOW)
+        );
+        assert_eq!(
+            read_pixel(&horizontal_end_pixels, TARGET_WIDTH, 50, 10),
+            color_bytes(Color::MAGENTA)
+        );
+        assert_eq!(
+            read_pixel(&horizontal_end_pixels, TARGET_WIDTH, 70, 10),
+            color_bytes(Color::CYAN)
+        );
+        assert_eq!(
+            read_pixel(&horizontal_end_pixels, TARGET_WIDTH, 90, 10),
+            color_bytes(Color::ORANGE)
+        );
         for y in 0..TARGET_HEIGHT {
             for x in 0..TARGET_WIDTH {
                 if x >= 100 || y >= 80 {
@@ -4694,9 +5043,11 @@ mod tests {
             horizontal_resize_scale,
             horizontal_resize_damage,
         );
-        assert!(horizontal_resize_packet
-            .render_plan()
-            .is_some_and(|plan| plan.is_complete()));
+        assert!(
+            horizontal_resize_packet
+                .render_plan()
+                .is_some_and(|plan| plan.is_complete())
+        );
 
         let new_horizontal_max = horizontal_controller.max_extent();
         assert!((old_horizontal_max.x - new_horizontal_max.x - 80.0).abs() < 0.01);
@@ -4725,10 +5076,7 @@ mod tests {
                 if element.debug_name() == "HeadlessHorizontalVirtualizedItem"
                     && let Some(render_node) =
                         horizontal_app.app.render_node_for_element(element.id())
-                    && let Ok(bounds) = horizontal_app
-                        .app
-                        .render_tree()
-                        .element_bounds(render_node)
+                    && let Ok(bounds) = horizontal_app.app.render_tree().element_bounds(render_node)
                     && bounds.x < 180.0
                     && bounds.x + bounds.width > 0.0
                     && bounds.y < 120.0
@@ -4784,16 +5132,46 @@ mod tests {
             APP_RESIZED_WIDTH,
             APP_RESIZED_HEIGHT,
         );
-        assert_eq!(read_pixel(&horizontal_resized_pixels, APP_RESIZED_WIDTH, 10, 10), color_bytes(Color::ORANGE));
-        assert_eq!(read_pixel(&horizontal_resized_pixels, APP_RESIZED_WIDTH, 30, 10), color_bytes(Color::RED));
-        assert_eq!(read_pixel(&horizontal_resized_pixels, APP_RESIZED_WIDTH, 50, 10), color_bytes(Color::GREEN));
-        assert_eq!(read_pixel(&horizontal_resized_pixels, APP_RESIZED_WIDTH, 70, 10), color_bytes(Color::BLUE));
-        assert_eq!(read_pixel(&horizontal_resized_pixels, APP_RESIZED_WIDTH, 90, 10), color_bytes(Color::WHITE));
-        assert_eq!(read_pixel(&horizontal_resized_pixels, APP_RESIZED_WIDTH, 110, 10), color_bytes(Color::YELLOW));
-        assert_eq!(read_pixel(&horizontal_resized_pixels, APP_RESIZED_WIDTH, 130, 10), color_bytes(Color::MAGENTA));
-        assert_eq!(read_pixel(&horizontal_resized_pixels, APP_RESIZED_WIDTH, 150, 10), color_bytes(Color::CYAN));
-        assert_eq!(read_pixel(&horizontal_resized_pixels, APP_RESIZED_WIDTH, 170, 10), color_bytes(Color::ORANGE));
-        assert_eq!(read_pixel(&horizontal_resized_pixels, APP_RESIZED_WIDTH, 10, 90), [0, 0, 0, 0]);
+        assert_eq!(
+            read_pixel(&horizontal_resized_pixels, APP_RESIZED_WIDTH, 10, 10),
+            color_bytes(Color::ORANGE)
+        );
+        assert_eq!(
+            read_pixel(&horizontal_resized_pixels, APP_RESIZED_WIDTH, 30, 10),
+            color_bytes(Color::RED)
+        );
+        assert_eq!(
+            read_pixel(&horizontal_resized_pixels, APP_RESIZED_WIDTH, 50, 10),
+            color_bytes(Color::GREEN)
+        );
+        assert_eq!(
+            read_pixel(&horizontal_resized_pixels, APP_RESIZED_WIDTH, 70, 10),
+            color_bytes(Color::BLUE)
+        );
+        assert_eq!(
+            read_pixel(&horizontal_resized_pixels, APP_RESIZED_WIDTH, 90, 10),
+            color_bytes(Color::WHITE)
+        );
+        assert_eq!(
+            read_pixel(&horizontal_resized_pixels, APP_RESIZED_WIDTH, 110, 10),
+            color_bytes(Color::YELLOW)
+        );
+        assert_eq!(
+            read_pixel(&horizontal_resized_pixels, APP_RESIZED_WIDTH, 130, 10),
+            color_bytes(Color::MAGENTA)
+        );
+        assert_eq!(
+            read_pixel(&horizontal_resized_pixels, APP_RESIZED_WIDTH, 150, 10),
+            color_bytes(Color::CYAN)
+        );
+        assert_eq!(
+            read_pixel(&horizontal_resized_pixels, APP_RESIZED_WIDTH, 170, 10),
+            color_bytes(Color::ORANGE)
+        );
+        assert_eq!(
+            read_pixel(&horizontal_resized_pixels, APP_RESIZED_WIDTH, 10, 90),
+            [0, 0, 0, 0]
+        );
         for y in 0..APP_RESIZED_HEIGHT {
             for x in 0..APP_RESIZED_WIDTH {
                 if x >= 180 || y >= 120 {
@@ -4836,12 +5214,19 @@ mod tests {
         let layout_before_shrink = aimer_widget::layout_invalidation_generation();
         let (shrink_scale, shrink_packet) = direct_headless_frame_packet(&mut horizontal_app);
         assert_eq!(shrink_scale, 1.0);
-        assert!(shrink_packet.render_plan().is_some_and(|plan| plan.is_complete()));
+        assert!(
+            shrink_packet
+                .render_plan()
+                .is_some_and(|plan| plan.is_complete())
+        );
         let root_after_shrink = horizontal_app.app.widget_root.as_ref().unwrap();
         assert_eq!(root_after_shrink.id(), root_element_id_before_shrink);
         let scroll_element_id_after_shrink = find_scroll_element_id(root_after_shrink.as_ref())
             .expect("the in-place update retains the scrollable element");
-        assert_eq!(scroll_element_id_after_shrink, scroll_element_id_before_shrink);
+        assert_eq!(
+            scroll_element_id_after_shrink,
+            scroll_element_id_before_shrink
+        );
         assert_eq!(
             horizontal_app
                 .app
@@ -4855,13 +5240,17 @@ mod tests {
             (APP_RESIZED_WIDTH, APP_RESIZED_HEIGHT)
         );
         assert!(!shrink_damage.regions().is_empty());
-        let concurrent_global_invalidation =
-            rebuild_before_shrink != aimer_widget::rebuild_invalidation_generation()
-                || layout_before_shrink != aimer_widget::layout_invalidation_generation();
+        let concurrent_global_invalidation = rebuild_before_shrink
+            != aimer_widget::rebuild_invalidation_generation()
+            || layout_before_shrink != aimer_widget::layout_invalidation_generation();
         if !shrink_damage.is_full() {
-            assert!(shrink_damage.regions().iter().all(|region| {
-                region.x + region.width <= 180 && region.y + region.height <= 120
-            }), "list shrink damage escaped the horizontal viewport: {:?}", shrink_damage.regions());
+            assert!(
+                shrink_damage.regions().iter().all(|region| {
+                    region.x + region.width <= 180 && region.y + region.height <= 120
+                }),
+                "list shrink damage escaped the horizontal viewport: {:?}",
+                shrink_damage.regions()
+            );
         }
 
         assert!(horizontal_controller.is_attached());
@@ -4876,10 +5265,7 @@ mod tests {
                 if element.debug_name() == "HeadlessHorizontalVirtualizedItem"
                     && let Some(render_node) =
                         horizontal_app.app.render_node_for_element(element.id())
-                    && let Ok(bounds) = horizontal_app
-                        .app
-                        .render_tree()
-                        .element_bounds(render_node)
+                    && let Ok(bounds) = horizontal_app.app.render_tree().element_bounds(render_node)
                     && bounds.x < 180.0
                     && bounds.x + bounds.width > 0.0
                     && bounds.y < 120.0
@@ -4892,7 +5278,11 @@ mod tests {
             }
             items
         };
-        assert_eq!(shrink_items.len(), 3, "the reduced row source retains only three items");
+        assert_eq!(
+            shrink_items.len(),
+            3,
+            "the reduced row source retains only three items"
+        );
         assert!(horizontal_paints.get() > paints_before_shrink);
 
         horizontal_renderer.render_packet(
@@ -4910,11 +5300,26 @@ mod tests {
         if !concurrent_global_invalidation {
             assert!(!shrink_stats.full_repaint || shrink_damage.is_full());
         }
-        assert_eq!(read_pixel(&shrink_pixels, APP_RESIZED_WIDTH, 10, 10), color_bytes(Color::RED));
-        assert_eq!(read_pixel(&shrink_pixels, APP_RESIZED_WIDTH, 30, 10), color_bytes(Color::GREEN));
-        assert_eq!(read_pixel(&shrink_pixels, APP_RESIZED_WIDTH, 50, 10), color_bytes(Color::BLUE));
-        assert_eq!(read_pixel(&shrink_pixels, APP_RESIZED_WIDTH, 70, 10), [0, 0, 0, 0]);
-        assert_eq!(read_pixel(&shrink_pixels, APP_RESIZED_WIDTH, 170, 10), [0, 0, 0, 0]);
+        assert_eq!(
+            read_pixel(&shrink_pixels, APP_RESIZED_WIDTH, 10, 10),
+            color_bytes(Color::RED)
+        );
+        assert_eq!(
+            read_pixel(&shrink_pixels, APP_RESIZED_WIDTH, 30, 10),
+            color_bytes(Color::GREEN)
+        );
+        assert_eq!(
+            read_pixel(&shrink_pixels, APP_RESIZED_WIDTH, 50, 10),
+            color_bytes(Color::BLUE)
+        );
+        assert_eq!(
+            read_pixel(&shrink_pixels, APP_RESIZED_WIDTH, 70, 10),
+            [0, 0, 0, 0]
+        );
+        assert_eq!(
+            read_pixel(&shrink_pixels, APP_RESIZED_WIDTH, 170, 10),
+            [0, 0, 0, 0]
+        );
         for y in 0..APP_RESIZED_HEIGHT {
             for x in 0..APP_RESIZED_WIDTH {
                 if (60..180).contains(&x) && y < 80 {
@@ -4940,9 +5345,11 @@ mod tests {
             .expect("the horizontal row state updater remains live")
             .set_state(|state| state.item_count = 1_000);
         let (_, restored_packet) = direct_headless_frame_packet(&mut horizontal_app);
-        assert!(restored_packet
-            .render_plan()
-            .is_some_and(|plan| plan.is_complete()));
+        assert!(
+            restored_packet
+                .render_plan()
+                .is_some_and(|plan| plan.is_complete())
+        );
         assert!(horizontal_controller.max_extent().x > 400.0);
         assert_eq!(horizontal_controller.offset().x, 0.0);
         horizontal_renderer.render_packet(
@@ -4956,18 +5363,25 @@ mod tests {
             APP_RESIZED_WIDTH,
             APP_RESIZED_HEIGHT,
         );
-        assert_eq!(read_pixel(&restored_pixels, APP_RESIZED_WIDTH, 10, 10), color_bytes(Color::RED));
-        assert_eq!(read_pixel(&restored_pixels, APP_RESIZED_WIDTH, 170, 10), color_bytes(Color::RED));
+        assert_eq!(
+            read_pixel(&restored_pixels, APP_RESIZED_WIDTH, 10, 10),
+            color_bytes(Color::RED)
+        );
+        assert_eq!(
+            read_pixel(&restored_pixels, APP_RESIZED_WIDTH, 170, 10),
+            color_bytes(Color::RED)
+        );
 
         horizontal_controller.jump_to(Vec2d { x: 400.0, y: 0.0 });
         let (middle_scale, middle_packet) = direct_headless_frame_packet(&mut horizontal_app);
         assert_eq!(middle_scale, 1.0);
-        assert!(middle_packet.render_plan().is_some_and(|plan| plan.is_complete()));
-        assert_eq!(horizontal_controller.offset().x, 400.0);
-        let middle_rows = visible_horizontal_rows(
-            &horizontal_app,
-            (180.0, 120.0),
+        assert!(
+            middle_packet
+                .render_plan()
+                .is_some_and(|plan| plan.is_complete())
         );
+        assert_eq!(horizontal_controller.offset().x, 400.0);
+        let middle_rows = visible_horizontal_rows(&horizontal_app, (180.0, 120.0));
         assert_eq!(middle_rows.len(), 9);
         horizontal_renderer.render_packet(
             &backend,
@@ -4980,16 +5394,26 @@ mod tests {
             APP_RESIZED_WIDTH,
             APP_RESIZED_HEIGHT,
         );
-        assert_eq!(read_pixel(&middle_pixels, APP_RESIZED_WIDTH, 10, 10), color_bytes(Color::YELLOW));
-        assert_eq!(read_pixel(&middle_pixels, APP_RESIZED_WIDTH, 30, 10), color_bytes(Color::MAGENTA));
-        assert_eq!(read_pixel(&middle_pixels, APP_RESIZED_WIDTH, 50, 10), color_bytes(Color::CYAN));
+        assert_eq!(
+            read_pixel(&middle_pixels, APP_RESIZED_WIDTH, 10, 10),
+            color_bytes(Color::YELLOW)
+        );
+        assert_eq!(
+            read_pixel(&middle_pixels, APP_RESIZED_WIDTH, 30, 10),
+            color_bytes(Color::MAGENTA)
+        );
+        assert_eq!(
+            read_pixel(&middle_pixels, APP_RESIZED_WIDTH, 50, 10),
+            color_bytes(Color::CYAN)
+        );
 
         let max_extent_before_middle_shrink = horizontal_controller.max_extent();
         assert!((max_extent_before_middle_shrink.x - horizontal_controller.offset().x) > 0.0);
         let root_before_middle_shrink = horizontal_app.app.widget_root.as_ref().unwrap();
         let root_id_before_middle_shrink = root_before_middle_shrink.id();
-        let scroll_id_before_middle_shrink = find_scroll_element_id(root_before_middle_shrink.as_ref())
-            .expect("middle-position state belongs to the retained scrollable");
+        let scroll_id_before_middle_shrink =
+            find_scroll_element_id(root_before_middle_shrink.as_ref())
+                .expect("middle-position state belongs to the retained scrollable");
         let scroll_node_before_middle_shrink = horizontal_app
             .app
             .render_node_for_element(scroll_id_before_middle_shrink)
@@ -5004,17 +5428,19 @@ mod tests {
         let (middle_shrink_scale, middle_shrink_packet) =
             direct_headless_frame_packet(&mut horizontal_app);
         assert_eq!(middle_shrink_scale, 1.0);
-        assert!(middle_shrink_packet
-            .render_plan()
-            .is_some_and(|plan| plan.is_complete()));
+        assert!(
+            middle_shrink_packet
+                .render_plan()
+                .is_some_and(|plan| plan.is_complete())
+        );
         let middle_shrink_damage = middle_shrink_packet.metadata().damage();
         assert_eq!(
             middle_shrink_damage.target_size(),
             (APP_RESIZED_WIDTH, APP_RESIZED_HEIGHT)
         );
-        let concurrent_global_invalidation =
-            rebuild_before_middle_shrink != aimer_widget::rebuild_invalidation_generation()
-                || layout_before_middle_shrink != aimer_widget::layout_invalidation_generation();
+        let concurrent_global_invalidation = rebuild_before_middle_shrink
+            != aimer_widget::rebuild_invalidation_generation()
+            || layout_before_middle_shrink != aimer_widget::layout_invalidation_generation();
         if !concurrent_global_invalidation {
             assert!(
                 !middle_shrink_damage.is_full(),
@@ -5023,9 +5449,13 @@ mod tests {
             );
         }
         if !middle_shrink_damage.is_full() {
-            assert!(middle_shrink_damage.regions().iter().all(|region| {
-                region.x + region.width <= 180 && region.y + region.height <= 120
-            }), "middle list shrink damage escaped the viewport: {:?}", middle_shrink_damage.regions());
+            assert!(
+                middle_shrink_damage.regions().iter().all(|region| {
+                    region.x + region.width <= 180 && region.y + region.height <= 120
+                }),
+                "middle list shrink damage escaped the viewport: {:?}",
+                middle_shrink_damage.regions()
+            );
         }
         assert_eq!(horizontal_controller.offset().x, 400.0);
         assert!((horizontal_controller.max_extent().x - 9_820.0).abs() < 0.01);
@@ -5034,19 +5464,22 @@ mod tests {
         let scroll_id_after_middle_shrink =
             find_scroll_element_id(root_after_middle_shrink.as_ref())
                 .expect("the middle shrink keeps the scrollable element");
-        assert_eq!(scroll_id_after_middle_shrink, scroll_id_before_middle_shrink);
+        assert_eq!(
+            scroll_id_after_middle_shrink,
+            scroll_id_before_middle_shrink
+        );
         assert_eq!(
             horizontal_app
                 .app
                 .render_node_for_element(scroll_id_after_middle_shrink),
             Some(scroll_node_before_middle_shrink)
         );
-        let middle_shrink_rows = visible_horizontal_rows(
-            &horizontal_app,
-            (180.0, 120.0),
-        );
+        let middle_shrink_rows = visible_horizontal_rows(&horizontal_app, (180.0, 120.0));
         assert_eq!(middle_shrink_rows.len(), 9);
-        assert_eq!(middle_shrink_rows, middle_rows, "visible row identities are retained");
+        assert_eq!(
+            middle_shrink_rows, middle_rows,
+            "visible row identities are retained"
+        );
 
         horizontal_renderer.render_packet(
             &backend,
@@ -5072,17 +5505,13 @@ mod tests {
                 );
             }
         }
-
     }
 
     #[cfg(feature = "wasm-hot-reload")]
     #[test]
     fn reload_listener_readiness_is_canonical_and_secret_free() {
-        let line = reload_listener_readiness_line(
-            [0x11; 16],
-            "127.0.0.1:37654".parse().unwrap(),
-            4242,
-        );
+        let line =
+            reload_listener_readiness_line([0x11; 16], "127.0.0.1:37654".parse().unwrap(), 4242);
 
         assert_eq!(
             line,
@@ -5103,7 +5532,10 @@ mod tests {
             &pending,
             FrameRequestKind::ScrollOnly
         ));
-        assert!(!try_begin_frame_ready_request(&pending, FrameRequestKind::Full));
+        assert!(!try_begin_frame_ready_request(
+            &pending,
+            FrameRequestKind::Full
+        ));
 
         assert_eq!(
             complete_frame_ready_request(&pending),
@@ -5122,22 +5554,44 @@ mod tests {
         let pending = AtomicU8::new(0);
         let redraws = AtomicUsize::new(0);
 
-        assert!(request_direct_frame(&pending, FrameRequestKind::ScrollOnly, || {
-            redraws.fetch_add(1, Ordering::SeqCst);
-        }));
-        assert!(!request_direct_frame(&pending, FrameRequestKind::ScrollOnly, || {
-            redraws.fetch_add(1, Ordering::SeqCst);
-        }));
-        assert!(!request_direct_frame(&pending, FrameRequestKind::Full, || {
-            redraws.fetch_add(1, Ordering::SeqCst);
-        }));
+        assert!(request_direct_frame(
+            &pending,
+            FrameRequestKind::ScrollOnly,
+            || {
+                redraws.fetch_add(1, Ordering::SeqCst);
+            }
+        ));
+        assert!(!request_direct_frame(
+            &pending,
+            FrameRequestKind::ScrollOnly,
+            || {
+                redraws.fetch_add(1, Ordering::SeqCst);
+            }
+        ));
+        assert!(!request_direct_frame(
+            &pending,
+            FrameRequestKind::Full,
+            || {
+                redraws.fetch_add(1, Ordering::SeqCst);
+            }
+        ));
 
         assert_eq!(redraws.load(Ordering::SeqCst), 1);
-        assert_eq!(complete_frame_ready_request(&pending), FrameRequestKind::Full);
-        assert!(request_direct_frame(&pending, FrameRequestKind::ScrollOnly, || {
-            redraws.fetch_add(1, Ordering::SeqCst);
-        }));
-        assert_eq!(complete_frame_ready_request(&pending), FrameRequestKind::ScrollOnly);
+        assert_eq!(
+            complete_frame_ready_request(&pending),
+            FrameRequestKind::Full
+        );
+        assert!(request_direct_frame(
+            &pending,
+            FrameRequestKind::ScrollOnly,
+            || {
+                redraws.fetch_add(1, Ordering::SeqCst);
+            }
+        ));
+        assert_eq!(
+            complete_frame_ready_request(&pending),
+            FrameRequestKind::ScrollOnly
+        );
     }
 
     #[test]
@@ -5145,7 +5599,10 @@ mod tests {
         let frame_pending = AtomicU8::new(0);
         let callback_pending = AtomicBool::new(false);
 
-        assert!(try_begin_frame_ready_request(&frame_pending, FrameRequestKind::Full));
+        assert!(try_begin_frame_ready_request(
+            &frame_pending,
+            FrameRequestKind::Full
+        ));
         assert!(try_begin_callback_ready_request(&callback_pending));
         assert!(!try_begin_callback_ready_request(&callback_pending));
 
@@ -5419,7 +5876,11 @@ mod tests {
         app.take_redraw_request();
         app.render_frame();
 
-        assert_eq!(app.venus().task_count(), 1, "the request is still in flight");
+        assert_eq!(
+            app.venus().task_count(),
+            1,
+            "the request is still in flight"
+        );
         assert!(
             !app.take_redraw_request(),
             "a frame spent waiting asked for another one"
@@ -5502,10 +5963,7 @@ mod tests {
         }
         fn on_event(&self, event: &ElementEvent) -> aimer_widget::EventResult {
             if let ElementEvent::ImePreedit { text, cursor } = event {
-                self.preedits
-                    .lock()
-                    .unwrap()
-                    .push((text.clone(), *cursor));
+                self.preedits.lock().unwrap().push((text.clone(), *cursor));
                 return aimer_widget::EventResult::consumed();
             }
             aimer_widget::EventResult::ignored()
@@ -6032,7 +6490,11 @@ mod tests {
             position: PhysicalPosition::new(20.0, 30.0),
         });
 
-        assert_eq!(events.load(Ordering::SeqCst), 1, "the widget heard the move");
+        assert_eq!(
+            events.load(Ordering::SeqCst),
+            1,
+            "the widget heard the move"
+        );
         assert!(
             !app.take_redraw_request(),
             "a consumed hover move must not cost a frame"
@@ -6489,7 +6951,11 @@ mod tests {
     #[test]
     fn app_window_configuration_is_retained_when_child_is_attached() {
         let app = AimerApp::new()
-            .window(WindowAttr::new().title("Configured Window").inner_size(900, 600))
+            .window(
+                WindowAttr::new()
+                    .title("Configured Window")
+                    .inner_size(900, 600),
+            )
             .child(RecordingWidget {
                 builds: Arc::new(AtomicUsize::new(0)),
                 cancels: Arc::new(AtomicUsize::new(0)),

@@ -2,28 +2,30 @@ use std::cell::Cell;
 use std::rc::Rc;
 use std::time::Duration;
 
-use aimer_canvas::Canvas;
 use aimer_attribute::dimension::Dimension;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
+use aimer_canvas::Canvas;
 use aimer_cupid::draw_cmd_v2::Rect;
 use aimer_cupid::utilities::Color as V2Color;
 use aimer_widget::base::{BuildContext, Color, Colors};
 use aimer_widget::portable::__anteros::{WidgetDocumentView, WidgetNodeView};
 use aimer_widget::portable::PortableMaterializeError;
-use aimer_widget::{AnyElement, Drawable, Element, EventElement, LayoutElement, Rebuildable,
-    AnyWidget, StatefulElement, StatefulWidget, State, StateUpdater, VisitorElement, Widget};
+use aimer_widget::{
+    AnyElement, AnyWidget, Drawable, Element, EventElement, LayoutElement, Rebuildable, State,
+    StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
+};
 
+use crate::ScrollAxis;
 use crate::scrollable::constants::{SCROLLBAR_HIDE_DURATION_MS, SCROLLBAR_SHOW_DURATION_MS};
 use crate::scrollable::controller::{DragMode, ScrollState};
-use crate::ScrollAxis;
 
 /// Controls whether a scroll bar overlays the content or occupies layout
 /// space beside it.
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, aimer_macro::PortableValue)]
 #[portable_value(
     id = "aimer.value:aimer_scroll::scrollable::ScrollBarPlacement",
-    max_encoded_bytes = 16,
+    max_encoded_bytes = 16
 )]
 pub enum ScrollBarPlacement {
     /// Draws the scroll bar over the content at the viewport edge.
@@ -218,12 +220,9 @@ impl ScrollBarRuntime {
                 alpha = self.advance_transition(now);
             }
         } else if self.showing.get()
-            && self
-                .last_activity
-                .get()
-                .is_some_and(|last| {
-                    now.duration_since(last) > Duration::from_millis(SCROLLBAR_SHOW_DURATION_MS)
-                })
+            && self.last_activity.get().is_some_and(|last| {
+                now.duration_since(last) > Duration::from_millis(SCROLLBAR_SHOW_DURATION_MS)
+            })
         {
             self.begin_transition(now, false, alpha);
             alpha = self.advance_transition(now);
@@ -249,8 +248,8 @@ impl ScrollBarRuntime {
         } else {
             Duration::from_millis(SCROLLBAR_HIDE_DURATION_MS)
         };
-        let progress = (now.duration_since(start).as_secs_f32() / duration.as_secs_f32())
-            .clamp(0.0, 1.0);
+        let progress =
+            (now.duration_since(start).as_secs_f32() / duration.as_secs_f32()).clamp(0.0, 1.0);
         let from = self.transition_from.get();
         let target = if self.showing.get() { 1.0 } else { 0.0 };
         let alpha = from + (target - from) * progress;
@@ -349,20 +348,15 @@ impl Drawable for RawScrollBar {
     }
 
     fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
-        self.ctrl.as_ref().is_none_or(|ctrl| {
-            scrollbar_geometry(ctx, ctrl, &self.config).is_ok()
-        })
+        self.ctrl
+            .as_ref()
+            .is_none_or(|ctrl| scrollbar_geometry(ctx, ctrl, &self.config).is_ok())
     }
 
     fn paint_local_v2(&self, ctx: &BuildContext) {
         let canvas = Canvas::of(ctx);
         let paint = self.ctrl.as_ref().and_then(|ctrl| {
-            prepare_scrollbar_paint(
-                ctx,
-                ctrl,
-                &self.config,
-                self.runtime.as_ref(),
-            )
+            prepare_scrollbar_paint(ctx, ctrl, &self.config, self.runtime.as_ref())
         });
         if let Some(paint) = paint {
             paint_scrollbar_local_v2(&canvas, ctx.scale, paint);
@@ -373,12 +367,7 @@ impl Drawable for RawScrollBar {
 
     fn local_v2_paint_needs_recording(&self, ctx: &BuildContext) -> bool {
         let paint = self.ctrl.as_ref().and_then(|ctrl| {
-            prepare_scrollbar_paint(
-                ctx,
-                ctrl,
-                &self.config,
-                self.runtime.as_ref(),
-            )
+            prepare_scrollbar_paint(ctx, ctrl, &self.config, self.runtime.as_ref())
         });
         self.runtime.v2_paint_snapshot.get() != paint
     }
@@ -450,9 +439,16 @@ fn scrollbar_geometry(
     } else {
         (viewport_w, content_size.width, -offset.x)
     };
-    if [viewport_w, viewport_h, track_width, track_length, content_extent, scroll_pos]
-        .iter()
-        .any(|value| !value.is_finite())
+    if [
+        viewport_w,
+        viewport_h,
+        track_width,
+        track_length,
+        content_extent,
+        scroll_pos,
+    ]
+    .iter()
+    .any(|value| !value.is_finite())
         || viewport_w < 0.0
         || viewport_h < 0.0
         || track_width < 0.0
@@ -474,12 +470,16 @@ fn scrollbar_geometry(
         scroll_bar
             .up_button
             .as_ref()
-            .map(|button| resolve_button_extent(button, is_vertical, track_width, track_length, scale))
+            .map(|button| {
+                resolve_button_extent(button, is_vertical, track_width, track_length, scale)
+            })
             .unwrap_or(0.0),
         scroll_bar
             .down_button
             .as_ref()
-            .map(|button| resolve_button_extent(button, is_vertical, track_width, track_length, scale))
+            .map(|button| {
+                resolve_button_extent(button, is_vertical, track_width, track_length, scale)
+            })
             .unwrap_or(0.0),
     );
     let thumb_radius = match scroll_bar.thumb.radius {
@@ -576,7 +576,11 @@ fn scrollbar_geometry(
     };
     let button_paint = |button: Option<&ScrollButton>, start: bool| {
         button.map(|button| {
-            let extent = if start { button_extent.0 } else { button_extent.1 };
+            let extent = if start {
+                button_extent.0
+            } else {
+                button_extent.1
+            };
             let (pos, size) = if is_vertical {
                 (
                     if start {
@@ -725,7 +729,6 @@ fn local_rect(pos: Vec2d, size: ResolvedSize, scale: f32) -> Rect {
     )
 }
 
-
 fn paint_scrollbar_local_v2(canvas: &Canvas, scale: f32, paint: ScrollBarPaint) {
     let track_size = if paint.is_vertical {
         ResolvedSize {
@@ -808,8 +811,7 @@ mod tests {
         assert_eq!(runtime.update(Vec2d::ZERO, true, start), 0.0);
         assert_eq!(runtime.update(Vec2d::ZERO, true, fully_visible), 1.0);
 
-        let fade_start = fully_visible
-            + Duration::from_millis(SCROLLBAR_SHOW_DURATION_MS + 1);
+        let fade_start = fully_visible + Duration::from_millis(SCROLLBAR_SHOW_DURATION_MS + 1);
         assert_eq!(runtime.update(Vec2d::ZERO, false, fade_start), 1.0);
         assert_eq!(
             runtime.update(

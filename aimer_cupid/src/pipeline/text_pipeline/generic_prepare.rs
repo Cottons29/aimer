@@ -1,5 +1,5 @@
-use crate::backend::GpuBackend;
 use super::*;
+use crate::backend::GpuBackend;
 
 impl<B: GpuBackend> TextPipelineV2<B> {
     /// Prepares glyphs and uploads atlases and instances through `backend`.
@@ -13,9 +13,7 @@ impl<B: GpuBackend> TextPipelineV2<B> {
         requests: &[TextDrawRequest],
         decorations: &[TextDecorationDraw],
     ) {
-        self.prepare_inner_generic(
-            backend, width, height, is_srgb, requests, decorations, None,
-        );
+        self.prepare_inner_generic(backend, width, height, is_srgb, requests, decorations, None);
     }
 
     /// Runs [`prepare`](Self::prepare) and returns a CPU-stage timing snapshot.
@@ -468,9 +466,7 @@ impl<B: GpuBackend> TextPipelineV2<B> {
             }
         };
         let shadow = sanitize_shadow(request.shadow);
-        let sample_count: usize = shadow.map_or(0, |shadow| {
-            if shadow.blur == 0.0 { 1 } else { 8 }
-        });
+        let sample_count: usize = shadow.map_or(0, |shadow| if shadow.blur == 0.0 { 1 } else { 8 });
         let shadow_coverage_exponent = shadow
             .map(|shadow| coverage_exponent(shadow.color.to_unorm_array()))
             .unwrap_or(1.0);
@@ -489,8 +485,7 @@ impl<B: GpuBackend> TextPipelineV2<B> {
             } else {
                 let atlas_population_started = profile.is_some().then(Instant::now);
                 let rg = self.rasterizer.rasterize_bitmap_key(key, pg.font_size);
-                let (is_color, glyph_width, glyph_height) =
-                    (rg.is_color, rg.width, rg.height);
+                let (is_color, glyph_width, glyph_height) = (rg.is_color, rg.width, rg.height);
                 let region = if is_color {
                     self.color_atlas.get_or_insert(
                         backend,
@@ -500,13 +495,8 @@ impl<B: GpuBackend> TextPipelineV2<B> {
                         &rg.bitmap,
                     )
                 } else {
-                    self.atlas.get_or_insert(
-                        backend,
-                        key,
-                        glyph_width,
-                        glyph_height,
-                        &rg.bitmap,
-                    )
+                    self.atlas
+                        .get_or_insert(backend, key, glyph_width, glyph_height, &rg.bitmap)
                 };
                 self.rasterizer.release_bitmap(key);
                 if let (Some(profile), Some(started)) =
@@ -529,16 +519,12 @@ impl<B: GpuBackend> TextPipelineV2<B> {
                     let (blur_x, blur_y) = if sample_count == 1 {
                         (0.0, 0.0)
                     } else {
-                        let angle =
-                            sample as f32 * std::f32::consts::TAU / sample_count as f32;
+                        let angle = sample as f32 * std::f32::consts::TAU / sample_count as f32;
                         (angle.cos() * shadow.blur, angle.sin() * shadow.blur)
                     };
                     glyphs.push(CachedPaintGlyph {
                         local_position,
-                        offset: [
-                            shadow.offset_x + blur_x,
-                            shadow.offset_y + blur_y,
-                        ],
+                        offset: [shadow.offset_x + blur_x, shadow.offset_y + blur_y],
                         size,
                         region,
                         color_atlas: target_color_list,
@@ -590,9 +576,9 @@ impl<B: GpuBackend> TextPipelineV2<B> {
                     .max(0.0),
             )
         } else {
-            positioned.last().map_or((0.0, 0.0), |last| {
-                (last.x + last.width as f32, last.y)
-            })
+            positioned
+                .last()
+                .map_or((0.0, 0.0), |last| (last.x + last.width as f32, last.y))
         };
 
         Some(Arc::new(CachedTextPaint {
@@ -803,18 +789,19 @@ impl<B: GpuBackend> TextPipelineV2<B> {
                 } else {
                     0.0
                 };
-                self.visible_span_keys.push(span_layout_keys_with_writing_mode(
-                    &self.shaping_cache,
-                    &span.text,
-                    font_size,
-                    req.font_family,
-                    req.font_style,
-                    font_weight,
-                    req.language,
-                    layout_width,
-                    layout_height,
-                    req.writing_mode,
-                ));
+                self.visible_span_keys
+                    .push(span_layout_keys_with_writing_mode(
+                        &self.shaping_cache,
+                        &span.text,
+                        font_size,
+                        req.font_family,
+                        req.font_style,
+                        font_weight,
+                        req.language,
+                        layout_width,
+                        layout_height,
+                        req.writing_mode,
+                    ));
             }
             self.visible_span_ranges[index] = start..self.visible_span_keys.len();
         }
@@ -865,8 +852,7 @@ impl<B: GpuBackend> TextPipelineV2<B> {
         let atlas_planning_started = profile.is_some().then(Instant::now);
         let alpha_needs_plan = self.planned_alpha_atlas_generation != self.atlas.generation()
             || self.planned_alpha_descriptors != self.alpha_glyph_descriptors;
-        let color_needs_plan = self.planned_color_atlas_generation
-            != self.color_atlas.generation()
+        let color_needs_plan = self.planned_color_atlas_generation != self.color_atlas.generation()
             || self.planned_color_descriptors != self.color_glyph_descriptors;
         if alpha_needs_plan {
             let alpha_plan = self.atlas.plan_batch_generic(&self.alpha_glyph_descriptors);
@@ -1020,11 +1006,8 @@ impl<B: GpuBackend> TextPipelineV2<B> {
                     ]);
                     let next_cull_key = (position, paint_glyph.size);
                     if cull_key != Some(next_cull_key) {
-                        foreground_visible = glyph_intersects_clip(
-                            position,
-                            paint_glyph.size,
-                            req.clip_rect,
-                        );
+                        foreground_visible =
+                            glyph_intersects_clip(position, paint_glyph.size, req.clip_rect);
                         shadow_visible = shadow.is_some_and(|shadow| {
                             shadow_intersects_clip(
                                 position,
@@ -1157,7 +1140,10 @@ impl<B: GpuBackend> TextPipelineV2<B> {
             self.instance_buffer = backend.create_buffer(&crate::backend::BufferDescriptor {
                 label: Some("text instance buffer".to_string()),
                 size: (self.instance_policy.capacity() * size_of::<GlyphInstance>()) as u64,
-                usage: vec![crate::backend::BufferUsage::Vertex, crate::backend::BufferUsage::CopyDst],
+                usage: vec![
+                    crate::backend::BufferUsage::Vertex,
+                    crate::backend::BufferUsage::CopyDst,
+                ],
             });
             self.instance_upload.invalidate();
         }
@@ -1169,7 +1155,10 @@ impl<B: GpuBackend> TextPipelineV2<B> {
             self.color_instance_buffer = backend.create_buffer(&crate::backend::BufferDescriptor {
                 label: Some("text color instance buffer".to_string()),
                 size: (self.color_instance_policy.capacity() * size_of::<GlyphInstance>()) as u64,
-                usage: vec![crate::backend::BufferUsage::Vertex, crate::backend::BufferUsage::CopyDst],
+                usage: vec![
+                    crate::backend::BufferUsage::Vertex,
+                    crate::backend::BufferUsage::CopyDst,
+                ],
             });
             self.color_instance_upload.invalidate();
         }
@@ -1178,12 +1167,16 @@ impl<B: GpuBackend> TextPipelineV2<B> {
         self.decoration_instance_policy
             .record_usage(self.decoration_instances.len());
         if self.decoration_instance_policy.capacity() != previous_decoration_capacity {
-            self.decoration_instance_buffer = backend.create_buffer(&crate::backend::BufferDescriptor {
-                label: Some("text decoration instance buffer".to_string()),
-                size: (self.decoration_instance_policy.capacity() * size_of::<DecorationInstance>())
-                    as u64,
-                usage: vec![crate::backend::BufferUsage::Vertex, crate::backend::BufferUsage::CopyDst],
-            });
+            self.decoration_instance_buffer =
+                backend.create_buffer(&crate::backend::BufferDescriptor {
+                    label: Some("text decoration instance buffer".to_string()),
+                    size: (self.decoration_instance_policy.capacity()
+                        * size_of::<DecorationInstance>()) as u64,
+                    usage: vec![
+                        crate::backend::BufferUsage::Vertex,
+                        crate::backend::BufferUsage::CopyDst,
+                    ],
+                });
             self.decoration_instance_upload.invalidate();
         }
 
@@ -1192,8 +1185,11 @@ impl<B: GpuBackend> TextPipelineV2<B> {
         // the common case, and it now costs no upload at all.
         self.instance_upload
             .upload(backend, &self.instance_buffer, &self.instances);
-        self.color_instance_upload
-            .upload(backend, &self.color_instance_buffer, &self.color_instances);
+        self.color_instance_upload.upload(
+            backend,
+            &self.color_instance_buffer,
+            &self.color_instances,
+        );
         self.decoration_instance_upload.upload(
             backend,
             &self.decoration_instance_buffer,
@@ -1224,5 +1220,4 @@ impl<B: GpuBackend> TextPipelineV2<B> {
             profile.total = started.elapsed();
         }
     }
-
 }

@@ -89,13 +89,7 @@ pub use aimer_rubick::shared as read_only;
 #[macro_export]
 macro_rules! case {
     // Explicit false expression.
-    ($condition:expr, $when_true:expr, $when_false:expr $(,)?) => {{
-        if $condition {
-            $when_true
-        } else {
-            $when_false
-        }
-    }};
+    ($condition:expr, $when_true:expr, $when_false:expr $(,)?) => {{ if $condition { $when_true } else { $when_false } }};
 
     // Use the inferred result type's default value when false.
     ($condition:expr, $when_true:expr $(,)?) => {{
@@ -337,7 +331,6 @@ mod tests {
 
         assert_eq!(drops.get(), 2);
     }
-
 
     #[test]
     fn separate_fields_can_be_projected_from_one_owner() {

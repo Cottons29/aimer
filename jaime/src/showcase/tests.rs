@@ -2,12 +2,15 @@ use std::collections::HashSet;
 
 use super::*;
 
-mod scrolling;
-mod focus;
 mod animation_walks;
 mod backdrop_filter;
-mod magnification;
+mod focus;
 mod light_edge;
+mod light_edge_color;
+mod magnification;
+mod multi_decoration_box;
+mod navigation_transitions;
+mod scrolling;
 
 #[test]
 fn showcase_has_unique_registered_examples() {
@@ -108,7 +111,10 @@ fn every_page_renders_without_legacy_paint() {
             .expect("a mounted page has a root");
 
         let names = |roots: &[aimer::quiver::handler::census::CensusElement]| -> Vec<&'static str> {
-            roots.iter().map(|root| root.debug_name).collect()
+            roots
+                .iter()
+                .map(|root| root.debug_name)
+                .collect()
         };
         let declined = names(&census.declined_paint);
         let unmapped = names(&census.drawn_unmapped);
@@ -116,7 +122,9 @@ fn every_page_renders_without_legacy_paint() {
         let offends = !declined.is_empty()
             || !unmapped.is_empty()
             || !invalid.is_empty()
-            || census.sync_error.is_some();
+            || census
+                .sync_error
+                .is_some();
         let label = example.label();
         let known = LEGACY_PAGE_BACKLOG.contains(&label);
         if known {
@@ -151,7 +159,10 @@ fn every_page_renders_without_legacy_paint() {
         .iter()
         .filter(|label| !seen_backlog.contains(label))
         .collect();
-    assert!(unknown.is_empty(), "backlog names no registered page: {unknown:?}");
+    assert!(
+        unknown.is_empty(),
+        "backlog names no registered page: {unknown:?}"
+    );
 }
 
 /// Whether a disagreement concerns something on screen. Rows scrolled out of
@@ -222,7 +233,9 @@ fn render_tree_hit_areas_agree_with_the_canvas_on_every_page() {
         // would compare a stale canvas measurement. A disagreement that
         // survives repeated frames is a real one.
         app.pump_frames(60);
-        let mut audit = app.bounds_audit().expect("a mounted page has a root");
+        let mut audit = app
+            .bounds_audit()
+            .expect("a mounted page has a root");
         for _ in 0..40 {
             if !audit
                 .interaction_disagreements
@@ -235,10 +248,17 @@ fn render_tree_hit_areas_agree_with_the_canvas_on_every_page() {
             for _ in 0..3 {
                 app.render_frame();
             }
-            audit = app.bounds_audit().expect("a mounted page has a root");
+            audit = app
+                .bounds_audit()
+                .expect("a mounted page has a root");
         }
         adopted += audit.interaction_adopted;
-        adopted_types.extend(audit.interaction_adopted_by_type.keys().copied());
+        adopted_types.extend(
+            audit
+                .interaction_adopted_by_type
+                .keys()
+                .copied(),
+        );
         for disagreement in audit.interaction_disagreements {
             if is_on_screen(&disagreement, 640.0, 400.0) {
                 disagreements.push(format!("{:?}: {disagreement:?}", example.label()));
@@ -246,7 +266,10 @@ fn render_tree_hit_areas_agree_with_the_canvas_on_every_page() {
         }
     }
 
-    assert!(adopted > 0, "no page has an element on render-tree hit areas");
+    assert!(
+        adopted > 0,
+        "no page has an element on render-tree hit areas"
+    );
     let unexercised: Vec<_> = RENDER_TREE_HIT_AREAS
         .iter()
         .filter(|name| !adopted_types.contains(**name))
@@ -279,7 +302,9 @@ fn slider_visuals_are_placed_by_the_first_frame() {
         },
     );
     app.render_frame();
-    let audit = app.bounds_audit().expect("a mounted page has a root");
+    let audit = app
+        .bounds_audit()
+        .expect("a mounted page has a root");
     let misplaced: Vec<_> = audit
         .interaction_disagreements
         .iter()
@@ -325,7 +350,9 @@ fn render_tree_hit_areas_follow_a_scrolled_sidebar() {
             app.pump_frames(1);
         }
         app.pump_frames(30);
-        let audit = app.bounds_audit().expect("a mounted page has a root");
+        let audit = app
+            .bounds_audit()
+            .expect("a mounted page has a root");
         adopted = adopted.max(audit.interaction_adopted);
         let visible: Vec<_> = audit
             .interaction_disagreements
@@ -334,7 +361,10 @@ fn render_tree_hit_areas_follow_a_scrolled_sidebar() {
             .collect();
         assert!(visible.is_empty(), "after scroll step {step}: {visible:?}");
     }
-    assert!(adopted > 0, "the sidebar rows must be on render-tree hit areas");
+    assert!(
+        adopted > 0,
+        "the sidebar rows must be on render-tree hit areas"
+    );
 }
 
 /// Prints, for every page, how many cached interaction rectangles agree with
@@ -346,8 +376,7 @@ fn report_cached_bounds_against_the_render_tree() {
     use aimer::HeadlessOptions;
     use aimer::quiver::winit::dpi::PhysicalSize;
 
-    let mut by_type: std::collections::BTreeMap<&'static str, (usize, usize)> =
-        Default::default();
+    let mut by_type: std::collections::BTreeMap<&'static str, (usize, usize)> = Default::default();
     for example in EXAMPLES {
         let mut app = AimerApp::start_headless_with(
             theme::provide(build_example(*example, theme::app_theme())),
@@ -357,21 +386,35 @@ fn report_cached_bounds_against_the_render_tree() {
             },
         );
         app.pump_frames(6);
-        let audit = app.bounds_audit().expect("a mounted page has a root");
+        let audit = app
+            .bounds_audit()
+            .expect("a mounted page has a root");
         eprintln!(
             "bounds {:?}: compared {}, unmapped {}, mismatched {}",
             example.label(),
             audit.compared,
             audit.unmapped,
-            audit.mismatches.len()
+            audit
+                .mismatches
+                .len()
         );
         for mismatch in &audit.mismatches {
-            by_type.entry(mismatch.debug_name).or_default().1 += 1;
+            by_type
+                .entry(mismatch.debug_name)
+                .or_default()
+                .1 += 1;
         }
-        if !audit.interaction_disagreements.is_empty() {
+        if !audit
+            .interaction_disagreements
+            .is_empty()
+        {
             eprintln!(
                 "  RENDER-TREE HIT AREA DISAGREES: {:?}",
-                audit.interaction_disagreements.iter().take(6).collect::<Vec<_>>()
+                audit
+                    .interaction_disagreements
+                    .iter()
+                    .take(6)
+                    .collect::<Vec<_>>()
             );
         }
         for (name, entry) in by_type.iter_mut() {
@@ -445,7 +488,12 @@ fn profile_sidebar_hover_frames() {
         });
         let start = Instant::now();
         app.render_frame();
-        times.push(start.elapsed().as_secs_f64() * 1e6);
+        times.push(
+            start
+                .elapsed()
+                .as_secs_f64()
+                * 1e6,
+        );
     }
     times.sort_by(f64::total_cmp);
     eprintln!(
@@ -489,7 +537,10 @@ fn profile_resize_frames() {
         .unwrap_or(400);
     let mut resize_us = Vec::with_capacity(frames);
     let mut follow_up_us = Vec::with_capacity(frames);
-    let requests = |app: &aimer::HeadlessAimerApp<_>| app.frame_request_stats().accepted;
+    let requests = |app: &aimer::HeadlessAimerApp<_>| {
+        app.frame_request_stats()
+            .accepted
+    };
     let requests_before = requests(&app);
     for step in 0..frames {
         // A triangle wave between 1630 and 2250 physical px wide, ~60 px a step.
@@ -498,10 +549,20 @@ fn profile_resize_frames() {
         let height = 1200 + (width - 1630) / 2;
         let start = Instant::now();
         app.send_window_event(WindowEvent::Resized(PhysicalSize::new(width, height)));
-        resize_us.push(start.elapsed().as_secs_f64() * 1e6);
+        resize_us.push(
+            start
+                .elapsed()
+                .as_secs_f64()
+                * 1e6,
+        );
         let start = Instant::now();
         app.render_frame();
-        follow_up_us.push(start.elapsed().as_secs_f64() * 1e6);
+        follow_up_us.push(
+            start
+                .elapsed()
+                .as_secs_f64()
+                * 1e6,
+        );
     }
     eprintln!(
         "=== redraw requests per resize step: {:.2}",
@@ -555,7 +616,11 @@ fn profile_sidebar_scroll_frames() {
     for _ in 0..30 {
         app.render_frame();
     }
-    let idle_us = idle_start.elapsed().as_secs_f64() * 1e6 / 30.0;
+    let idle_us = idle_start
+        .elapsed()
+        .as_secs_f64()
+        * 1e6
+        / 30.0;
     let idle_content = frame_content_stats();
 
     // Trackpad-style scroll frames with the cursor hovering the sidebar.
@@ -581,7 +646,12 @@ fn profile_sidebar_scroll_frames() {
         }
         let start = Instant::now();
         app.render_frame();
-        times.push(start.elapsed().as_secs_f64() * 1e6);
+        times.push(
+            start
+                .elapsed()
+                .as_secs_f64()
+                * 1e6,
+        );
         if times.len() >= 60 && std::env::var("PROFILE_ONCE").is_ok() {
             break;
         }
@@ -617,7 +687,12 @@ fn profile_sidebar_scroll_frames() {
         });
         let start = Instant::now();
         app.render_frame();
-        miss_times.push(start.elapsed().as_secs_f64() * 1e6);
+        miss_times.push(
+            start
+                .elapsed()
+                .as_secs_f64()
+                * 1e6,
+        );
     }
     miss_times.sort_by(f64::total_cmp);
     let miss_content = frame_content_stats();
@@ -630,12 +705,30 @@ fn profile_sidebar_scroll_frames() {
         idle_content.average_retained_layers(),
         idle_content.average_text_commands(),
         idle_content.average_text_cache_misses(),
-        idle_content.layout_calls as f64 / idle_content.frames.max(1) as f64,
-        idle_content.hit_test_visits as f64 / idle_content.frames.max(1) as f64,
-        idle_content.paint_calls as f64 / idle_content.frames.max(1) as f64,
-        idle_content.rebuild_visits as f64 / idle_content.frames.max(1) as f64,
-        idle_content.stateful_builds as f64 / idle_content.frames.max(1) as f64,
-        idle_content.stateless_builds as f64 / idle_content.frames.max(1) as f64,
+        idle_content.layout_calls as f64
+            / idle_content
+                .frames
+                .max(1) as f64,
+        idle_content.hit_test_visits as f64
+            / idle_content
+                .frames
+                .max(1) as f64,
+        idle_content.paint_calls as f64
+            / idle_content
+                .frames
+                .max(1) as f64,
+        idle_content.rebuild_visits as f64
+            / idle_content
+                .frames
+                .max(1) as f64,
+        idle_content.stateful_builds as f64
+            / idle_content
+                .frames
+                .max(1) as f64,
+        idle_content.stateless_builds as f64
+            / idle_content
+                .frames
+                .max(1) as f64,
     );
     eprintln!(
         "=== scroll frame: p50={:.0} us  p95={:.0} us  max={:.0} us",
@@ -645,9 +738,21 @@ fn profile_sidebar_scroll_frames() {
     );
     eprintln!(
         "=== scroll build phase avg: {:.0} us (encode {:.0} us, present {:.0} us)",
-        scroll_breakdown.build.average().as_secs_f64() * 1e6,
-        scroll_breakdown.encode.average().as_secs_f64() * 1e6,
-        scroll_breakdown.present.average().as_secs_f64() * 1e6,
+        scroll_breakdown
+            .build
+            .average()
+            .as_secs_f64()
+            * 1e6,
+        scroll_breakdown
+            .encode
+            .average()
+            .as_secs_f64()
+            * 1e6,
+        scroll_breakdown
+            .present
+            .average()
+            .as_secs_f64()
+            * 1e6,
     );
     eprintln!(
         "=== scroll per frame: nodes={:.0} cmds={:.0} retained={:.0} text_cmds={:.0} text_miss={:.1} layout_calls={:.0} hit_test_visits={:.0} paint_calls={:.0} rebuild_visits={:.0} rebuilds(S={:.1},L={:.1})",
@@ -656,12 +761,30 @@ fn profile_sidebar_scroll_frames() {
         scroll_content.average_retained_layers(),
         scroll_content.average_text_commands(),
         scroll_content.average_text_cache_misses(),
-        scroll_content.layout_calls as f64 / scroll_content.frames.max(1) as f64,
-        scroll_content.hit_test_visits as f64 / scroll_content.frames.max(1) as f64,
-        scroll_content.paint_calls as f64 / scroll_content.frames.max(1) as f64,
-        scroll_content.rebuild_visits as f64 / scroll_content.frames.max(1) as f64,
-        scroll_content.stateful_builds as f64 / scroll_content.frames.max(1) as f64,
-        scroll_content.stateless_builds as f64 / scroll_content.frames.max(1) as f64,
+        scroll_content.layout_calls as f64
+            / scroll_content
+                .frames
+                .max(1) as f64,
+        scroll_content.hit_test_visits as f64
+            / scroll_content
+                .frames
+                .max(1) as f64,
+        scroll_content.paint_calls as f64
+            / scroll_content
+                .frames
+                .max(1) as f64,
+        scroll_content.rebuild_visits as f64
+            / scroll_content
+                .frames
+                .max(1) as f64,
+        scroll_content.stateful_builds as f64
+            / scroll_content
+                .frames
+                .max(1) as f64,
+        scroll_content.stateless_builds as f64
+            / scroll_content
+                .frames
+                .max(1) as f64,
     );
     eprintln!(
         "=== wheel miss after cursor crossings: p50={:.0} us  p95={:.0} us",
@@ -675,10 +798,25 @@ fn profile_sidebar_scroll_frames() {
         miss_content.average_retained_layers(),
         miss_content.average_text_commands(),
         miss_content.average_text_cache_misses(),
-        miss_content.hit_test_visits as f64 / miss_content.frames.max(1) as f64,
-        miss_content.paint_calls as f64 / miss_content.frames.max(1) as f64,
-        miss_content.rebuild_visits as f64 / miss_content.frames.max(1) as f64,
-        miss_content.stateful_builds as f64 / miss_content.frames.max(1) as f64,
-        miss_content.stateless_builds as f64 / miss_content.frames.max(1) as f64,
+        miss_content.hit_test_visits as f64
+            / miss_content
+                .frames
+                .max(1) as f64,
+        miss_content.paint_calls as f64
+            / miss_content
+                .frames
+                .max(1) as f64,
+        miss_content.rebuild_visits as f64
+            / miss_content
+                .frames
+                .max(1) as f64,
+        miss_content.stateful_builds as f64
+            / miss_content
+                .frames
+                .max(1) as f64,
+        miss_content.stateless_builds as f64
+            / miss_content
+                .frames
+                .max(1) as f64,
     );
 }

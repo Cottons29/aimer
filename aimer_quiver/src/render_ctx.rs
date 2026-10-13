@@ -48,9 +48,17 @@ mod wgpu_ctx;
 #[cfg(all(not(target_arch = "wasm32"), feature = "wgpu"))]
 pub use wgpu_ctx::render_ctx::WgpuApi;
 
-#[cfg(all(feature = "native", not(feature = "wgpu"), any(target_os = "macos", target_os = "ios")))]
+#[cfg(all(
+    feature = "native",
+    not(feature = "wgpu"),
+    any(target_os = "macos", target_os = "ios")
+))]
 mod metal_ctx;
-#[cfg(all(feature = "native", not(feature = "wgpu"), any(target_os = "macos", target_os = "ios")))]
+#[cfg(all(
+    feature = "native",
+    not(feature = "wgpu"),
+    any(target_os = "macos", target_os = "ios")
+))]
 pub use metal_ctx::render_ctx::MetalApi;
 
 #[cfg(all(feature = "native", not(feature = "wgpu"), target_os = "windows"))]
@@ -58,29 +66,66 @@ mod dx12_ctx;
 #[cfg(all(feature = "native", not(feature = "wgpu"), target_os = "windows"))]
 pub use dx12_ctx::render_ctx::Dx12Api;
 
-#[cfg(all(feature = "native", not(feature = "wgpu"), any(target_os = "linux", target_os = "android")))]
+#[cfg(all(
+    feature = "native",
+    not(feature = "wgpu"),
+    any(target_os = "linux", target_os = "android")
+))]
 mod opengl_ctx;
-#[cfg(all(feature = "native", not(feature = "wgpu"), any(target_os = "linux", target_os = "android")))]
+#[cfg(all(
+    feature = "native",
+    not(feature = "wgpu"),
+    any(target_os = "linux", target_os = "android")
+))]
 pub use opengl_ctx::render_ctx::OpenGlApi;
 
-#[cfg(all(feature = "native", not(feature = "wgpu"), any(target_os = "linux", target_os = "android")))]
+#[cfg(all(
+    feature = "native",
+    not(feature = "wgpu"),
+    any(target_os = "linux", target_os = "android")
+))]
 mod native_auto_ctx;
-#[cfg(all(feature = "native", not(feature = "wgpu"), any(target_os = "linux", target_os = "android")))]
+#[cfg(all(
+    feature = "native",
+    not(feature = "wgpu"),
+    any(target_os = "linux", target_os = "android")
+))]
 pub use native_auto_ctx::NativeAutoApi;
 
-#[cfg(all(feature = "native", not(feature = "wgpu"), any(target_os = "linux", target_os = "android")))]
+#[cfg(all(
+    feature = "native",
+    not(feature = "wgpu"),
+    any(target_os = "linux", target_os = "android")
+))]
 mod vulkan_ctx;
-#[cfg(all(feature = "native", not(feature = "wgpu"), any(target_os = "linux", target_os = "android")))]
+#[cfg(all(
+    feature = "native",
+    not(feature = "wgpu"),
+    any(target_os = "linux", target_os = "android")
+))]
 pub use vulkan_ctx::render_ctx::VulkanApi;
 
 #[cfg(all(target_arch = "wasm32", not(feature = "wgpu"), not(feature = "web")))]
 compile_error!("enable the `web` or `wgpu` feature for wasm rendering");
-#[cfg(all(not(target_arch = "wasm32"), not(feature = "wgpu"), not(feature = "native")))]
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    not(feature = "wgpu"),
+    not(feature = "native")
+))]
 compile_error!("enable the `native` or `wgpu` feature for native rendering");
 #[cfg(all(
     not(feature = "wgpu"),
     not(any(
-        all(feature = "native", any(target_os = "macos", target_os = "ios", target_os = "windows", target_os = "linux", target_os = "android")),
+        all(
+            feature = "native",
+            any(
+                target_os = "macos",
+                target_os = "ios",
+                target_os = "windows",
+                target_os = "linux",
+                target_os = "android"
+            )
+        ),
         all(feature = "web", target_arch = "wasm32")
     ))
 ))]
@@ -90,11 +135,19 @@ compile_error!("no default renderer is available for this target");
 pub(super) type InlineRenderContext = WgpuApi;
 #[cfg(all(feature = "wgpu", target_arch = "wasm32"))]
 pub type AimerRenderContext = H5CanvasApi;
-#[cfg(all(not(feature = "wgpu"), feature = "native", any(target_os = "macos", target_os = "ios")))]
+#[cfg(all(
+    not(feature = "wgpu"),
+    feature = "native",
+    any(target_os = "macos", target_os = "ios")
+))]
 pub(super) type InlineRenderContext = MetalApi;
 #[cfg(all(not(feature = "wgpu"), feature = "native", target_os = "windows"))]
 pub(super) type InlineRenderContext = Dx12Api;
-#[cfg(all(not(feature = "wgpu"), feature = "native", any(target_os = "linux", target_os = "android")))]
+#[cfg(all(
+    not(feature = "wgpu"),
+    feature = "native",
+    any(target_os = "linux", target_os = "android")
+))]
 pub(super) type InlineRenderContext = NativeAutoApi;
 #[cfg(all(not(feature = "wgpu"), feature = "web", target_arch = "wasm32"))]
 pub type AimerRenderContext = H5CanvasApi;
@@ -177,10 +230,7 @@ mod backend_selection_tests {
 
     #[test]
     fn native_selection_reports_failure_when_both_backends_fail() {
-        assert_eq!(
-            choose_native_backend(|| false, || false),
-            None,
-        );
+        assert_eq!(choose_native_backend(|| false, || false), None,);
     }
 }
 
@@ -250,19 +300,30 @@ mod tests {
     }
 }
 
-
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod native_ctx;
 #[cfg(not(target_arch = "wasm32"))]
-pub use native_ctx::{NativeRenderContext as AimerRenderContext, CompletionStatus};
-#[cfg(all(not(feature = "wgpu"), feature = "native", any(target_os = "macos", target_os = "ios")))]
+pub use native_ctx::{CompletionStatus, NativeRenderContext as AimerRenderContext};
+#[cfg(all(
+    not(feature = "wgpu"),
+    feature = "native",
+    any(target_os = "macos", target_os = "ios")
+))]
 mod metal_worker;
 
-pub(crate) fn configured_context(antialiasing: aimer_cupid::AntiAlias, mode: crate::RenderMode) -> AimerRenderContext {
+pub(crate) fn configured_context(
+    antialiasing: aimer_cupid::AntiAlias,
+    mode: crate::RenderMode,
+) -> AimerRenderContext {
     #[cfg(not(target_arch = "wasm32"))]
-    { AimerRenderContext::new(antialiasing).with_render_mode(mode) }
+    {
+        AimerRenderContext::new(antialiasing).with_render_mode(mode)
+    }
     #[cfg(target_arch = "wasm32")]
-    { let _ = mode; AimerRenderContext::new(antialiasing) }
+    {
+        let _ = mode;
+        AimerRenderContext::new(antialiasing)
+    }
 }
 
 #[cfg(target_os = "windows")]

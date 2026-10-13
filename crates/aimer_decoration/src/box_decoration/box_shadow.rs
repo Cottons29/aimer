@@ -73,6 +73,10 @@ impl ShadowSide {
 /// by adding shadow effects to UI elements such as buttons, cards, and
 /// containers.
 ///
+/// Used directly as a [`crate::Decoration`], this paints a rectangular shadow
+/// without changing child geometry. Use [`crate::BoxDecoration`] to combine
+/// the shadow with rounded corners.
+///
 /// # Fields
 ///
 /// * `offset_x` - Horizontal offset of the shadow. Defaults to `0.0`.
@@ -187,5 +191,46 @@ impl BoxShadow {
     pub fn side(mut self, side: ShadowSide) -> Self {
         self.side = side;
         self
+    }
+
+    pub(crate) fn local_v2_paint_outsets(&self, scale: f32) -> [f32; 4] {
+        if self.inset || !scale.is_finite() || scale <= 0.0 {
+            return [0.0; 4];
+        }
+        let blur = self.blur.max(0.0) * 3.0 / scale;
+        let spread = self.spread.max(0.0) / scale;
+        let offset_x = self.offset_x / scale;
+        let offset_y = self.offset_y / scale;
+        [
+            (blur + spread - offset_x).max(0.0),
+            (blur + spread - offset_y).max(0.0),
+            (blur + spread + offset_x).max(0.0),
+            (blur + spread + offset_y).max(0.0),
+        ]
+    }
+
+    pub(crate) fn record_local_v2(
+        &self,
+        canvas: &aimer_canvas::Canvas,
+        rect: aimer_cupid::utilities::Rect,
+        radii: &[f32; 4],
+        scale: f32,
+    ) {
+        if self.color == Color::Transparent {
+            return;
+        }
+        let blur = self.blur.max(0.0);
+        if blur == 0.0 && self.spread == 0.0 && self.offset_x == 0.0 && self.offset_y == 0.0 {
+            return;
+        }
+        let side = self.side.to_shader_params();
+        canvas.draw_shadow_rect(
+            rect,
+            self.color.into(),
+            [self.offset_x / scale, self.offset_y / scale, blur / scale, self.spread / scale],
+            *radii,
+            self.inset,
+            [side.0, side.1, side.2],
+        );
     }
 }

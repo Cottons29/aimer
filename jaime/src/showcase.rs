@@ -1,7 +1,3 @@
-use aimer::macros::widget;
-use aimer::style::*;
-use aimer::*;
-use aimer::input::button::Button;
 use crate::accessibility_example::accessibility_example;
 use crate::animatable_example::animatable_example;
 use crate::animated::MyAnimatedList;
@@ -9,6 +5,7 @@ use crate::animated_layout_example::animated_layout_example;
 use crate::animated_theme::AnimatedThemeExample;
 use crate::assets_media_example::assets_media_example;
 use crate::async_builder::async_builder_example;
+use crate::backdrop_filter_example::backdrop_filter_example;
 use crate::collapsible_list_example::collapsible_list_example;
 use crate::color_sync::ColorSync;
 use crate::custom_animated_theme::custom_animated_theme_example;
@@ -24,16 +21,17 @@ use crate::floating::FloatingShowcase;
 use crate::focus_node_example::FocusNodeExample;
 use crate::form_example::form_example;
 use crate::glass_liquid_example::glass_liquid_example;
-use crate::backdrop_filter_example::backdrop_filter_example;
-use crate::magnification_example::magnification_example;
-use crate::light_edge_example::light_edge_example;
 use crate::http_request_button::http_request_button_example;
 use crate::i18n_example::i18n_example;
 use crate::justify_content_example::justify_content_example;
+use crate::light_edge_example::light_edge_example;
 use crate::loading_animation::loading_animation_example;
+use crate::magnification_example::magnification_example;
 use crate::markdown_example::{custom_markdown_viewer, jaime_markdown_viewer};
 use crate::modal::modal_example;
+use crate::multi_decoration_box_example::multi_decoration_box_example;
 use crate::navigation_example::navigation_example;
+use crate::navigation_transitions_example::navigation_transitions_example;
 use crate::overflow_behavior_example::overflow_behavior_example;
 use crate::panic_recovery::panic_recovery_example;
 use crate::picker_example::picker_example;
@@ -56,11 +54,15 @@ use crate::text_field_example::TextFieldExample;
 use crate::text_properties_example::text_properties_example;
 use crate::theme;
 use crate::window_example::WindowShowcase;
+use aimer::input::button::Button;
+use aimer::macros::widget;
+use aimer::style::*;
+use aimer::*;
 
 const SIDEBAR_WIDTH: f32 = 292.0;
 
 mod catalog;
-use catalog::{ExampleCategory, ExampleId, EXAMPLES, EXAMPLE_CATEGORIES};
+use catalog::{EXAMPLE_CATEGORIES, EXAMPLES, ExampleCategory, ExampleId};
 
 /// The two-pane interactive example browser used by Jaime.
 ///
@@ -377,6 +379,7 @@ fn build_example(example: ExampleId, app_theme: ThemeData) -> AnyWidget {
         ExampleId::Pickers => picker_example().boxed(),
         ExampleId::Feedback => feedback_example().boxed(),
         ExampleId::Navigation => navigation_example().boxed(),
+        ExampleId::NavigationTransitions => navigation_transitions_example().boxed(),
         ExampleId::RoutingContext => routing_context_example().boxed(),
         ExampleId::Animatable => animatable_example().boxed(),
         ExampleId::DataView => data_view_example().boxed(),
@@ -389,6 +392,7 @@ fn build_example(example: ExampleId, app_theme: ThemeData) -> AnyWidget {
         ExampleId::BackdropFilter => backdrop_filter_example().boxed(),
         ExampleId::Magnification => magnification_example().boxed(),
         ExampleId::LightEdge => light_edge_example().boxed(),
+        ExampleId::MultiDecorationBox => multi_decoration_box_example().boxed(),
         ExampleId::Storage => storage_example().boxed(),
         ExampleId::CustomShape => custom_shape_example().boxed(),
         ExampleId::AnimatedLayout => animated_layout_example().boxed(),

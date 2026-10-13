@@ -1,6 +1,5 @@
 use std::cell::Cell;
 
-use aimer_widget::InteractionBounds;
 use aimer_attribute::dimension::Dimension;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
@@ -10,6 +9,7 @@ use aimer_utils::callback::Callback;
 #[cfg(feature = "portable-guest")]
 use aimer_utils::callback::CallbackExecutor;
 use aimer_utils::cursor::{reset_cursor, set_cursor};
+use aimer_widget::InteractionBounds;
 use aimer_widget::base::*;
 #[cfg(feature = "portable-guest")]
 use aimer_widget::portable::{PortableBuildContext, PortableBuildError, SourceFingerprint};
@@ -478,8 +478,15 @@ impl<E: Element> RawResizable<E> {
     #[inline]
     fn handle_at(&self, point: Vec2d) -> Option<ResizeHandle> {
         let bounds = self.bounds.get_bounds();
-        let handle = bounds.and_then(|bounds| ResizeHandle::hit_band(bounds, point, self.band, self.direction));
-        aimer_utils::pointer_trace!("resizable handle_at ({:.1}, {:.1}) bounds {:?} -> {:?}", point.x, point.y, bounds, handle);
+        let handle = bounds
+            .and_then(|bounds| ResizeHandle::hit_band(bounds, point, self.band, self.direction));
+        aimer_utils::pointer_trace!(
+            "resizable handle_at ({:.1}, {:.1}) bounds {:?} -> {:?}",
+            point.x,
+            point.y,
+            bounds,
+            handle
+        );
         handle
     }
 
@@ -663,8 +670,7 @@ impl<E: Element> EventElement for RawResizable<E> {
                     let _ = self.show_cursor(Some(handle));
                 }
 
-                EventResult::consumed()
-                    .with_pointer_capture(PointerKey::new(info.source, info.id))
+                EventResult::consumed().with_pointer_capture(PointerKey::new(info.source, info.id))
             }
             ElementEvent::PointerMove(info) => match self.active.get() {
                 Some(handle) => {
@@ -709,11 +715,13 @@ impl<E: Element> EventElement for RawResizable<E> {
                     let _ = self.show_cursor(self.handle_at(info.pos));
                 }
 
-                EventResult::consumed()
-                    .with_pointer_release(PointerKey::new(info.source, info.id))
+                EventResult::consumed().with_pointer_release(PointerKey::new(info.source, info.id))
             }
             ElementEvent::PointerExited(PointerSource::Mouse, _) => {
-                aimer_utils::pointer_trace!("resizable received an exit, zone {:?}", self.hovered.get());
+                aimer_utils::pointer_trace!(
+                    "resizable received an exit, zone {:?}",
+                    self.hovered.get()
+                );
                 let _ = self.show_cursor(None);
                 EventResult::ignored()
             }
@@ -781,8 +789,14 @@ impl<E: Element> LayoutElement for RawResizable<E> {
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
         if self.hovered.get().is_some() {
             return Some((
-                Vec2d { x: -WHOLE_SURFACE, y: -WHOLE_SURFACE },
-                Vec2d { x: WHOLE_SURFACE, y: WHOLE_SURFACE },
+                Vec2d {
+                    x: -WHOLE_SURFACE,
+                    y: -WHOLE_SURFACE,
+                },
+                Vec2d {
+                    x: WHOLE_SURFACE,
+                    y: WHOLE_SURFACE,
+                },
             ));
         }
         let bounds = self.band.grow(self.bounds.get_bounds()?);
@@ -856,7 +870,9 @@ impl<E: Element> Drawable for RawResizable<E> {
     }
 
     #[inline]
-    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+    fn retained_v2_interaction_disagreement(
+        &self,
+    ) -> Option<aimer_widget::InteractionDisagreement> {
         self.bounds.disagreement("Resizable")
     }
 
@@ -1142,7 +1158,11 @@ mod tests {
         let after = element.size.get();
         let _ = element.on_event(&ElementEvent::PointerMove(mouse_at(400.0, 50.0)));
 
-        assert_eq!(element.size.get(), after, "a released pointer resizes nothing");
+        assert_eq!(
+            element.size.get(),
+            after,
+            "a released pointer resizes nothing"
+        );
     }
 
     #[test]
@@ -1171,7 +1191,11 @@ mod tests {
         let _ = element.on_event(&ElementEvent::PointerMove(mouse_at(700.0, 50.0)));
 
         assert_eq!(
-            sizes.borrow().iter().map(|size| size.width).collect::<Vec<_>>(),
+            sizes
+                .borrow()
+                .iter()
+                .map(|size| size.width)
+                .collect::<Vec<_>>(),
             vec![212.0, 222.0, 300.0]
         );
     }
@@ -1233,11 +1257,7 @@ mod tests {
 
         assert_eq!(
             *zones.borrow(),
-            vec![
-                Direction::RIGHT,
-                Direction::BOTTOM_RIGHT,
-                Direction::NONE,
-            ]
+            vec![Direction::RIGHT, Direction::BOTTOM_RIGHT, Direction::NONE,]
         );
     }
 
@@ -1307,7 +1327,8 @@ mod tests {
         let recorded = zones.clone();
         let element = resizable_zoned(Callback::from(move |zone: Direction| {
             recorded.borrow_mut().push(zone)
-        })).boxed();
+        }))
+        .boxed();
 
         let cursors = Rc::new(RefCell::new(Vec::new()));
         let seen = cursors.clone();
@@ -1336,7 +1357,9 @@ mod tests {
         assert!(element.pos_start_end().is_some());
 
         let _ = dispatch_move(element.as_ref(), 198.0, 50.0);
-        let (start, end) = element.pos_start_end().expect("a hovered handle reports a region");
+        let (start, end) = element
+            .pos_start_end()
+            .expect("a hovered handle reports a region");
         assert!(
             start.x < -1.0e6 && start.y < -1.0e6 && end.x > 1.0e6 && end.y > 1.0e6,
             "a hovered handle must hear the move that takes the pointer away"
@@ -1632,13 +1655,7 @@ mod portable_tests {
     }
 
     fn context(limits: PortableWidgetLimits) -> PortableBuildContext {
-        PortableBuildContext::new(
-            5,
-            2,
-            limits,
-            PortableLimits::new(8, 32, 64, 256, 2_048),
-        )
-        .unwrap()
+        PortableBuildContext::new(5, 2, limits, PortableLimits::new(8, 32, 64, 256, 2_048)).unwrap()
     }
 
     #[test]
@@ -1685,9 +1702,8 @@ mod portable_tests {
             ("handle_thickness", 9.0),
             ("handle_outset", 3.0),
         ] {
-            let canonical_name = format!(
-                "aimer.property:aimer_container::single_child::Resizable:{field}"
-            );
+            let canonical_name =
+                format!("aimer.property:aimer_container::single_child::Resizable:{field}");
             let property = schema
                 .properties()
                 .iter()

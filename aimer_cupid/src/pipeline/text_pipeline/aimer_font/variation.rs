@@ -312,25 +312,11 @@ fn parse_variation_info(face: &SfntFace<'_>) -> Result<Option<VariationInfo>, Sf
         .transpose()?;
     let hvar = face
         .table(*b"HVAR")
-        .map(|table| {
-            parse_metric_variation_table(
-                table,
-                usize::from(axis_count),
-                HVAR_TAG,
-                false,
-            )
-        })
+        .map(|table| parse_metric_variation_table(table, usize::from(axis_count), HVAR_TAG, false))
         .transpose()?;
     let vvar = face
         .table(*b"VVAR")
-        .map(|table| {
-            parse_metric_variation_table(
-                table,
-                usize::from(axis_count),
-                VVAR_TAG,
-                true,
-            )
-        })
+        .map(|table| parse_metric_variation_table(table, usize::from(axis_count), VVAR_TAG, true))
         .transpose()?;
 
     Ok(Some(VariationInfo {
@@ -343,19 +329,17 @@ fn parse_variation_info(face: &SfntFace<'_>) -> Result<Option<VariationInfo>, Sf
 }
 
 impl MetricVariationTable {
-    fn deltas(
-        &self,
-        glyph_id: u16,
-        coordinates: &[f32],
-    ) -> Result<[i32; 3], SfntError> {
+    fn deltas(&self, glyph_id: u16, coordinates: &[f32]) -> Result<[i32; 3], SfntError> {
         let index = |map: Option<&DeltaSetIndexMap>| {
             map.map_or(DeltaSetIndex::direct(glyph_id), |map| map.get(glyph_id))
         };
         Ok([
-            self.store.compute_delta(index(self.advance_map.as_ref()), coordinates)?,
+            self.store
+                .compute_delta(index(self.advance_map.as_ref()), coordinates)?,
             self.store
                 .compute_delta(index(self.side_bearing_map.as_ref()), coordinates)?,
-            self.store.compute_delta(index(self.third_map.as_ref()), coordinates)?,
+            self.store
+                .compute_delta(index(self.third_map.as_ref()), coordinates)?,
         ])
     }
 }
@@ -379,11 +363,7 @@ impl DeltaSetIndexMap {
 }
 
 impl ItemVariationStore {
-    fn compute_delta(
-        &self,
-        index: DeltaSetIndex,
-        coordinates: &[f32],
-    ) -> Result<i32, SfntError> {
+    fn compute_delta(&self, index: DeltaSetIndex, coordinates: &[f32]) -> Result<i32, SfntError> {
         let encoded_index = (u32::from(index.outer) << 16) | u32::from(index.inner);
         if coordinates.is_empty() || encoded_index == NO_VARIATION_INDEX {
             return Ok(0);
@@ -412,7 +392,9 @@ impl ItemVariationStore {
         if !delta.is_finite() {
             return Err(malformed(self.tag));
         }
-        Ok(delta.round().clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32)
+        Ok(delta
+            .round()
+            .clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32)
     }
 }
 
@@ -534,12 +516,20 @@ fn parse_delta_set_index_map(
     }
     let (map_count, map_data_offset) = match format {
         0 => (
-            usize::from(reader.u16(checked_add(offset, 2)?).map_err(|_| malformed(tag))?),
+            usize::from(
+                reader
+                    .u16(checked_add(offset, 2)?)
+                    .map_err(|_| malformed(tag))?,
+            ),
             checked_add(offset, 4)?,
         ),
         1 => (
-            usize::try_from(reader.u32(checked_add(offset, 2)?).map_err(|_| malformed(tag))?)
-                .map_err(|_| SfntError::ArithmeticOverflow)?,
+            usize::try_from(
+                reader
+                    .u32(checked_add(offset, 2)?)
+                    .map_err(|_| malformed(tag))?,
+            )
+            .map_err(|_| SfntError::ArithmeticOverflow)?,
             checked_add(offset, 6)?,
         ),
         _ => return Err(malformed(tag)),
@@ -564,9 +554,11 @@ fn parse_delta_set_index_map(
                     .try_into()
                     .expect("validated two-byte map entry"),
             )),
-            3 => (u32::from(data[entry_offset]) << 16)
-                | (u32::from(data[entry_offset + 1]) << 8)
-                | u32::from(data[entry_offset + 2]),
+            3 => {
+                (u32::from(data[entry_offset]) << 16)
+                    | (u32::from(data[entry_offset + 1]) << 8)
+                    | u32::from(data[entry_offset + 2])
+            }
             4 => u32::from_be_bytes(
                 data[entry_offset..entry_offset + 4]
                     .try_into()
@@ -592,7 +584,13 @@ fn parse_item_variation_store(
     tag: Tag,
 ) -> Result<ItemVariationStore, SfntError> {
     let store = Reader::new(table)
-        .range(offset, table.len().checked_sub(offset).ok_or(SfntError::ArithmeticOverflow)?)
+        .range(
+            offset,
+            table
+                .len()
+                .checked_sub(offset)
+                .ok_or(SfntError::ArithmeticOverflow)?,
+        )
         .map_err(|_| malformed(tag))?;
     let reader = Reader::new(store);
     if reader.u16(0).map_err(|_| malformed(tag))? != 1 {
@@ -605,9 +603,7 @@ fn parse_item_variation_store(
         return Err(malformed(tag));
     }
     let offsets_size = checked_mul(data_count, 4)?;
-    reader
-        .range(8, offsets_size)
-        .map_err(|_| malformed(tag))?;
+    reader.range(8, offsets_size).map_err(|_| malformed(tag))?;
 
     let regions = parse_variation_regions(store, region_offset, axis_count, tag)?;
     let mut data = Vec::with_capacity(data_count);
@@ -628,11 +624,7 @@ fn parse_item_variation_store(
         }
         data.push(parse_variation_data(store, data_offset, &regions, tag)?);
     }
-    Ok(ItemVariationStore {
-        tag,
-        regions,
-        data,
-    })
+    Ok(ItemVariationStore { tag, regions, data })
 }
 
 fn parse_variation_regions(
@@ -653,11 +645,16 @@ fn parse_variation_regions(
     }
     let region_size = checked_mul(region_axis_count, 6)?;
     let total_size = checked_add(4, checked_mul(region_count, region_size)?)?;
-    reader.range(offset, total_size).map_err(|_| malformed(tag))?;
+    reader
+        .range(offset, total_size)
+        .map_err(|_| malformed(tag))?;
 
     let mut regions = Vec::with_capacity(region_count);
     for region_index in 0..region_count {
-        let region_offset = checked_add(offset, checked_add(4, checked_mul(region_index, region_size)?)?)?;
+        let region_offset = checked_add(
+            offset,
+            checked_add(4, checked_mul(region_index, region_size)?)?,
+        )?;
         let mut region = Vec::with_capacity(region_axis_count);
         for axis_index in 0..region_axis_count {
             let axis_offset = checked_add(region_offset, checked_mul(axis_index, 6)?)?;
@@ -710,7 +707,10 @@ fn parse_variation_data(
         .range(region_indices_offset, region_indices_size)
         .map_err(|_| malformed(tag))?;
     let row_size = if long_words {
-        checked_add(checked_mul(word_count, 4)?, checked_mul(region_count - word_count, 2)?)?
+        checked_add(
+            checked_mul(word_count, 4)?,
+            checked_mul(region_count - word_count, 2)?,
+        )?
     } else {
         checked_add(checked_mul(word_count, 2)?, region_count - word_count)?
     };
@@ -807,17 +807,22 @@ fn parse_gvar(table: &[u8], expected_axis_count: usize) -> Result<GvarInfo, Sfnt
         return Err(malformed(GVAR_TAG));
     }
     let shared_tuple_count = usize::from(reader.u16(6)?);
-    let shared_tuples_offset = usize::try_from(reader.u32(8)?)
-        .map_err(|_| SfntError::ArithmeticOverflow)?;
+    let shared_tuples_offset =
+        usize::try_from(reader.u32(8)?).map_err(|_| SfntError::ArithmeticOverflow)?;
     let glyph_count = usize::from(reader.u16(12)?);
     if glyph_count > GVAR_MAX_GLYPHS {
         return Err(malformed(GVAR_TAG));
     }
     let flags = reader.u16(14)?;
-    let data_offset = usize::try_from(reader.u32(16)?)
-        .map_err(|_| SfntError::ArithmeticOverflow)?;
+    let data_offset =
+        usize::try_from(reader.u32(16)?).map_err(|_| SfntError::ArithmeticOverflow)?;
     let offset_size = if flags & 1 != 0 { 4 } else { 2 };
-    let offsets_size = checked_mul(glyph_count.checked_add(1).ok_or(SfntError::ArithmeticOverflow)?, offset_size)?;
+    let offsets_size = checked_mul(
+        glyph_count
+            .checked_add(1)
+            .ok_or(SfntError::ArithmeticOverflow)?,
+        offset_size,
+    )?;
     let offsets = reader.range(20, offsets_size)?;
     if data_offset > table.len() {
         return Err(malformed(GVAR_TAG));
@@ -834,9 +839,7 @@ fn parse_gvar(table: &[u8], expected_axis_count: usize) -> Result<GvarInfo, Sfnt
         };
         glyph_offsets.push(value);
     }
-    if glyph_offsets
-        .windows(2)
-        .any(|window| window[0] > window[1])
+    if glyph_offsets.windows(2).any(|window| window[0] > window[1])
         || glyph_offsets.last().copied().unwrap_or(0) > table.len() - data_offset
     {
         return Err(malformed(GVAR_TAG));
@@ -874,13 +877,7 @@ pub(crate) fn apply_gvar(
     outline: &mut GlyphOutline,
 ) -> Result<(), SfntError> {
     let (coordinates, coordinate_count) = face.coordinates_for_weight_instance(weight);
-    apply_gvar_at_coordinates(
-        face,
-        glyph_id,
-        &coordinates[..coordinate_count],
-        outline,
-    )
-    .map(|_| ())
+    apply_gvar_at_coordinates(face, glyph_id, &coordinates[..coordinate_count], outline).map(|_| ())
 }
 
 /// Applies a complete normalized variation instance to a TrueType outline,
@@ -900,7 +897,10 @@ pub(crate) fn apply_gvar_at_coordinates(
     let Some(gvar) = info.gvar.as_ref() else {
         return Ok(false);
     };
-    if coordinates.iter().all(|coordinate| coordinate.abs() < f32::EPSILON) {
+    if coordinates
+        .iter()
+        .all(|coordinate| coordinate.abs() < f32::EPSILON)
+    {
         return Ok(false);
     }
 
@@ -992,15 +992,14 @@ fn decode_glyph_variations(
         } else {
             None
         };
-        let (intermediate_start, intermediate_end) =
-            if tuple_index & INTERMEDIATE_REGION != 0 {
-                (
-                    Some(read_tuple(&reader, &mut cursor, gvar.axis_count)?),
-                    Some(read_tuple(&reader, &mut cursor, gvar.axis_count)?),
-                )
-            } else {
-                (None, None)
-            };
+        let (intermediate_start, intermediate_end) = if tuple_index & INTERMEDIATE_REGION != 0 {
+            (
+                Some(read_tuple(&reader, &mut cursor, gvar.axis_count)?),
+                Some(read_tuple(&reader, &mut cursor, gvar.axis_count)?),
+            )
+        } else {
+            (None, None)
+        };
         headers.push(TupleHeader {
             data_size,
             tuple_index,
@@ -1201,7 +1200,9 @@ fn decode_packed_points(data: &[u8]) -> Result<(Option<Vec<usize>>, usize), Sfnt
                 cursor = checked_add(cursor, 1)?;
                 value
             };
-            point = point.checked_add(delta).ok_or(SfntError::ArithmeticOverflow)?;
+            point = point
+                .checked_add(delta)
+                .ok_or(SfntError::ArithmeticOverflow)?;
             if points.last().is_some_and(|previous| point <= *previous) {
                 return Err(malformed(GVAR_TAG));
             }
@@ -1329,7 +1330,13 @@ fn interpolate_iup(outline: &GlyphOutline, deltas: &mut [PointDelta], present: &
     }
 }
 
-fn interpolate_axis(value: f32, first: f32, second: f32, first_delta: f32, second_delta: f32) -> f32 {
+fn interpolate_axis(
+    value: f32,
+    first: f32,
+    second: f32,
+    first_delta: f32,
+    second_delta: f32,
+) -> f32 {
     if first == second {
         return first_delta;
     }
@@ -1403,7 +1410,12 @@ fn fixed_2_14(value: i16) -> f32 {
 }
 
 fn reader_i32(reader: &Reader<'_>, offset: usize) -> Result<i32, SfntError> {
-    Ok(i32::from_be_bytes(reader.range(offset, 4)?.try_into().expect("range is four bytes")))
+    Ok(i32::from_be_bytes(
+        reader
+            .range(offset, 4)?
+            .try_into()
+            .expect("range is four bytes"),
+    ))
 }
 
 fn clamp_i16(value: f32) -> i16 {
@@ -1456,12 +1468,9 @@ mod tests {
             vvar: None,
         };
 
-        let coordinates = coordinates_for_axes(
-            &info,
-            700,
-            &[(u32::from_be_bytes(*b"wdth"), 112.5)],
-        )
-        .expect("known finite axes should normalize");
+        let coordinates =
+            coordinates_for_axes(&info, 700, &[(u32::from_be_bytes(*b"wdth"), 112.5)])
+                .expect("known finite axes should normalize");
 
         assert_eq!(coordinates.len(), 2);
         assert!((coordinates[0] - 0.6).abs() < 0.0001);
@@ -1483,27 +1492,23 @@ mod tests {
             vvar: None,
         };
 
-        assert!(coordinates_for_axes(
-            &info,
-            400,
-            &[(u32::from_be_bytes(*b"opsz"), 12.0)]
-        )
-        .is_none());
-        assert!(coordinates_for_axes(
-            &info,
-            400,
-            &[
-                (u32::from_be_bytes(*b"wdth"), 90.0),
-                (u32::from_be_bytes(*b"wdth"), 110.0),
-            ]
-        )
-        .is_none());
-        assert!(coordinates_for_axes(
-            &info,
-            400,
-            &[(u32::from_be_bytes(*b"wdth"), f32::NAN)]
-        )
-        .is_none());
+        assert!(
+            coordinates_for_axes(&info, 400, &[(u32::from_be_bytes(*b"opsz"), 12.0)]).is_none()
+        );
+        assert!(
+            coordinates_for_axes(
+                &info,
+                400,
+                &[
+                    (u32::from_be_bytes(*b"wdth"), 90.0),
+                    (u32::from_be_bytes(*b"wdth"), 110.0),
+                ]
+            )
+            .is_none()
+        );
+        assert!(
+            coordinates_for_axes(&info, 400, &[(u32::from_be_bytes(*b"wdth"), f32::NAN)]).is_none()
+        );
     }
 
     #[test]

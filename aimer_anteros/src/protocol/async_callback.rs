@@ -324,13 +324,8 @@ mod tests {
 
     #[test]
     fn async_completion_round_trips_its_stable_task_identity_and_payload() {
-        let event = AsyncCallbackEvent::complete(
-            7,
-            3,
-            CALLBACK_ID,
-            AsyncTaskId::new(11),
-            &[1, 2, 3],
-        );
+        let event =
+            AsyncCallbackEvent::complete(7, 3, CALLBACK_ID, AsyncTaskId::new(11), &[1, 2, 3]);
         let bytes = event.encode(LIMITS).unwrap();
         let view = AsyncCallbackEventView::decode(&bytes, LIMITS).unwrap();
 
@@ -344,13 +339,8 @@ mod tests {
 
     #[test]
     fn malformed_async_events_are_rejected_without_relaxing_the_payload_limit() {
-        let event = AsyncCallbackEvent::complete(
-            7,
-            3,
-            CALLBACK_ID,
-            AsyncTaskId::new(11),
-            &[1, 2, 3],
-        );
+        let event =
+            AsyncCallbackEvent::complete(7, 3, CALLBACK_ID, AsyncTaskId::new(11), &[1, 2, 3]);
         let mut bytes = event.encode(LIMITS).unwrap();
 
         bytes[52] = 1;
@@ -359,13 +349,8 @@ mod tests {
             Err(ModelError::NonCanonicalReserved)
         ));
 
-        let oversized = AsyncCallbackEvent::complete(
-            7,
-            4,
-            CALLBACK_ID,
-            AsyncTaskId::new(12),
-            &[0; 129],
-        );
+        let oversized =
+            AsyncCallbackEvent::complete(7, 4, CALLBACK_ID, AsyncTaskId::new(12), &[0; 129]);
         assert_eq!(
             oversized.encode(LIMITS),
             Err(ModelError::BlobTooLarge {
@@ -377,12 +362,7 @@ mod tests {
 
     #[test]
     fn cancelled_async_events_carry_no_completion_payload() {
-        let event = AsyncCallbackEvent::cancelled(
-            7,
-            5,
-            CALLBACK_ID,
-            AsyncTaskId::new(13),
-        );
+        let event = AsyncCallbackEvent::cancelled(7, 5, CALLBACK_ID, AsyncTaskId::new(13));
         let bytes = event.encode(LIMITS).unwrap();
         let view = AsyncCallbackEventView::decode(&bytes, LIMITS).unwrap();
 
@@ -392,12 +372,7 @@ mod tests {
 
     #[test]
     fn malformed_cancelled_event_with_payload_is_rejected() {
-        let event = AsyncCallbackEvent::cancelled(
-            7,
-            6,
-            CALLBACK_ID,
-            AsyncTaskId::new(14),
-        );
+        let event = AsyncCallbackEvent::cancelled(7, 6, CALLBACK_ID, AsyncTaskId::new(14));
         let mut bytes = event.encode(LIMITS).unwrap();
         bytes[56..60].copy_from_slice(&1_u32.to_le_bytes());
         bytes[60..64].copy_from_slice(&73_u32.to_le_bytes());

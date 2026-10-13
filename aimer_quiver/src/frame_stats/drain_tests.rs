@@ -20,7 +20,9 @@ fn concurrent_timing_drains_do_not_erase_worker_samples() {
     let mut total = Duration::ZERO;
     std::thread::scope(|scope| {
         scope.spawn(|| {
-            for _ in 0..10_000 { phase.record(Duration::from_nanos(10)); }
+            for _ in 0..10_000 {
+                phase.record(Duration::from_nanos(10));
+            }
             done.store(true, Ordering::Release);
         });
         while !done.load(Ordering::Acquire) {

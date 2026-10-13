@@ -3,8 +3,8 @@ use std::rc::Rc;
 use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
 use aimer_widget::base::{BuildContext, ResolvedSize, Size, Vec2d};
 use aimer_widget::{
-    AnyElement, Drawable, Element, EventElement, EventResult, LayoutElement, PortableWidget,
-    EventTreeRole, Rebuildable, RequiredChild, VisitorElement, Widget,
+    AnyElement, Drawable, Element, EventElement, EventResult, EventTreeRole, LayoutElement,
+    PortableWidget, Rebuildable, RequiredChild, VisitorElement, Widget,
 };
 
 /// A small focused-key seam used by [`crate::CollapsibleList`].
@@ -95,7 +95,6 @@ impl Drawable for RawKeyRelay {
     fn sync_paint_geometry(&self, ctx: &BuildContext) {
         self.child.sync_paint_geometry(ctx);
     }
-
 }
 
 impl LayoutElement for RawKeyRelay {
@@ -181,7 +180,9 @@ mod tests {
 
     use super::RawKeyRelay;
     use aimer_widget::base::BuildContext;
-    use aimer_widget::{Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement};
+    use aimer_widget::{
+        Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement,
+    };
 
     struct Child;
 
@@ -197,7 +198,6 @@ mod tests {
 
     impl Drawable for Child {
         fn update(&self, _ctx: &BuildContext) {}
-
     }
 
     impl Rebuildable for Child {}

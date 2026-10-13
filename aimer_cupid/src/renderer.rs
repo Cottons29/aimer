@@ -3,15 +3,20 @@ use std::sync::Arc;
 mod generic_renderer;
 pub use generic_renderer::{Renderer, RendererImpl, RendererMemoryStats};
 
-#[cfg(all(test, feature = "native", not(feature = "wgpu"), any(target_os = "macos", target_os = "ios")))]
+#[cfg(all(
+    test,
+    feature = "native",
+    not(feature = "wgpu"),
+    any(target_os = "macos", target_os = "ios")
+))]
 mod unpresented_tests;
 
 use crate::pipeline::material::{MaterialClip, MaterialRequest};
 use crate::rect_pipeline::RectInstance;
 use crate::svg::{SvgNodeStyleOverride, SvgScene};
 use crate::text_pipeline::TextShadowRequest;
-use crate::utilities::{Color, Mat3, Rect};
 use crate::utilities::Rgba8;
+use crate::utilities::{Color, Mat3, Rect};
 
 struct ClipState {
     rect: Rect,
@@ -86,12 +91,7 @@ fn resolve_material_request(
     let (x2, y2) = transform.transform_point(x + width, y + height);
     let scale = (scales.0 + scales.1) * 0.5;
 
-    request.bounds = [
-        x1.min(x2),
-        y1.min(y2),
-        (x2 - x1).abs(),
-        (y2 - y1).abs(),
-    ];
+    request.bounds = [x1.min(x2), y1.min(y2), (x2 - x1).abs(), (y2 - y1).abs()];
     // LightEdge keeps dimensions logical until uniform preparation, so bridge
     // normalization cannot cap Retina-scaled widths or radii back to logical limits.
     if request.kind != crate::pipeline::material::MaterialKind::LightEdge {
@@ -134,10 +134,8 @@ fn transform_text_shadow(
     transform: &Mat3,
     alpha: f32,
 ) -> TextShadowRequest {
-    let offset_x = transform.cols[0][0] * shadow.offset_x
-        + transform.cols[1][0] * shadow.offset_y;
-    let offset_y = transform.cols[0][1] * shadow.offset_x
-        + transform.cols[1][1] * shadow.offset_y;
+    let offset_x = transform.cols[0][0] * shadow.offset_x + transform.cols[1][0] * shadow.offset_y;
+    let offset_y = transform.cols[0][1] * shadow.offset_x + transform.cols[1][1] * shadow.offset_y;
     TextShadowRequest {
         offset_x,
         offset_y,
@@ -181,8 +179,7 @@ fn build_fill_rect_instances(
     // Transform the top-left and bottom-right corners of the box itself. This
     // correctly handles translation and scaling.
     let (p1x, p1y) = current_transform.transform_point(rect.x, rect.y);
-    let (p2x, p2y) =
-        current_transform.transform_point(rect.x + rect.width, rect.y + rect.height);
+    let (p2x, p2y) = current_transform.transform_point(rect.x + rect.width, rect.y + rect.height);
 
     let mut scaled_br = border_radius;
     for r in &mut scaled_br {
@@ -202,8 +199,8 @@ fn build_fill_rect_instances(
         // Transform the top-left and bottom-right corners of the quad expanded
         // by the outline width, so the ring is visible.
         let (ep1x, ep1y) = current_transform.transform_point(rect.x - ol, rect.y - ot);
-        let (ep2x, ep2y) = current_transform
-            .transform_point(rect.x + rect.width + or, rect.y + rect.height + ob);
+        let (ep2x, ep2y) =
+            current_transform.transform_point(rect.x + rect.width + or, rect.y + rect.height + ob);
 
         let mut scaled_ow = outline_width;
         scaled_ow[0] *= scale_y; // top

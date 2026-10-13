@@ -21,7 +21,9 @@ fn click(app: &mut HeadlessAimerApp<impl Widget + 'static>, x: f64, y: f64) {
 }
 
 fn focus_at_scale(scale: f64) {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     let node = FocusNode::new();
     let root = Column::new().children([
         Focusable::new()
@@ -29,15 +31,23 @@ fn focus_at_scale(scale: f64) {
             .box_child(SizedBox::new().width(100.0).height(40.0)),
         SizedBox::new().width(100.0).height(40.0).boxed(),
     ]);
-    let mut app = AimerApp::start_headless_with(root, HeadlessOptions {
-        size: PhysicalSize::new((300.0 * scale) as u32, (400.0 * scale) as u32), scale_factor: scale,
-    });
+    let mut app = AimerApp::start_headless_with(
+        root,
+        HeadlessOptions {
+            size: PhysicalSize::new((300.0 * scale) as u32, (400.0 * scale) as u32),
+            scale_factor: scale,
+        },
+    );
     app.pump_frames(3);
     assert!(!node.has_focus());
 
     click(&mut app, 20.0 * scale, 20.0 * scale);
     app.pump_frames(3);
-    assert!(node.has_focus(), "a click inside the region must focus it at scale {}", scale);
+    assert!(
+        node.has_focus(),
+        "a click inside the region must focus it at scale {}",
+        scale
+    );
 }
 
 #[test]
@@ -52,21 +62,32 @@ fn clicking_a_focusable_region_focuses_its_node_on_a_retina_display() {
 
 #[test]
 fn clicking_a_focusable_region_under_an_animated_theme_focuses_its_node() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     let node = FocusNode::new();
     let root = aimer_style::AnimatedTheme::new()
         .data(aimer_style::ThemeData::default())
-        .child(Column::new().children([
-            Focusable::new()
-                .node(node.clone())
-                .box_child(SizedBox::new().width(100.0).height(40.0)),
-            SizedBox::new().width(100.0).height(40.0).boxed(),
-        ]));
-    let mut app = AimerApp::start_headless_with(root, HeadlessOptions {
-        size: PhysicalSize::new(300, 400), scale_factor: 1.0,
-    });
+        .child(
+            Column::new().children([
+                Focusable::new()
+                    .node(node.clone())
+                    .box_child(SizedBox::new().width(100.0).height(40.0)),
+                SizedBox::new().width(100.0).height(40.0).boxed(),
+            ]),
+        );
+    let mut app = AimerApp::start_headless_with(
+        root,
+        HeadlessOptions {
+            size: PhysicalSize::new(300, 400),
+            scale_factor: 1.0,
+        },
+    );
     app.pump_frames(3);
     click(&mut app, 20.0, 20.0);
     app.pump_frames(3);
-    assert!(node.has_focus(), "a click under an AnimatedTheme must focus the region");
+    assert!(
+        node.has_focus(),
+        "a click under an AnimatedTheme must focus the region"
+    );
 }

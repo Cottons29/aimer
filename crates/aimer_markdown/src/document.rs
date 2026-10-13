@@ -120,9 +120,7 @@ struct PreparedSource<'a> {
 }
 
 pub(crate) fn share_ref_range(source: &ShareRef<str>, start: usize, end: usize) -> ShareRef<str> {
-    source
-        .clone()
-        .project(move |source| &source[start..end])
+    source.clone().project(move |source| &source[start..end])
 }
 
 fn validate_rules(
@@ -131,7 +129,8 @@ fn validate_rules(
 ) -> Result<(), MarkdownError> {
     for (index, rule) in block_rules.iter().enumerate() {
         let (opening, closing) = rule.delimiters();
-        if rule.name().is_empty() || opening.is_empty() || closing.is_empty() || opening == closing {
+        if rule.name().is_empty() || opening.is_empty() || closing.is_empty() || opening == closing
+        {
             return Err(MarkdownError::new(format!(
                 "Custom block rule '{}' has invalid delimiters",
                 rule.name()
@@ -149,7 +148,8 @@ fn validate_rules(
     }
     for (index, rule) in inline_rules.iter().enumerate() {
         let (opening, closing) = rule.delimiters();
-        if rule.name().is_empty() || opening.is_empty() || closing.is_empty() || opening == closing {
+        if rule.name().is_empty() || opening.is_empty() || closing.is_empty() || opening == closing
+        {
             return Err(MarkdownError::new(format!(
                 "Custom inline rule '{}' has invalid delimiters",
                 rule.name()
@@ -262,10 +262,7 @@ fn prepare_source<'a>(
     })
 }
 
-fn replace_custom_blocks(
-    blocks: &mut [Block],
-    captures: &mut HashMap<String, CustomBlockData>,
-) {
+fn replace_custom_blocks(blocks: &mut [Block], captures: &mut HashMap<String, CustomBlockData>) {
     for block in blocks {
         match block {
             Block::Paragraph(inlines) if inlines.len() == 1 => {
@@ -311,7 +308,8 @@ fn split_custom_inlines(
         }
         let (opening, closing) = rule.delimiters();
         let value_start = start + opening.len();
-        let Some(relative_end) = find_unescaped(remaining[value_start..].as_bytes(), closing) else {
+        let Some(relative_end) = find_unescaped(remaining[value_start..].as_bytes(), closing)
+        else {
             return Err(MarkdownError::new(format!(
                 "Unclosed custom inline '{}'",
                 rule.name()
@@ -319,19 +317,16 @@ fn split_custom_inlines(
         };
         let value_end = value_start + relative_end;
         let custom_value = &remaining[value_start..value_end];
-        if rules.iter().any(|nested| {
-            find_unescaped(custom_value.as_bytes(), nested.delimiters().0).is_some()
-        }) {
+        if rules
+            .iter()
+            .any(|nested| find_unescaped(custom_value.as_bytes(), nested.delimiters().0).is_some())
+        {
             return Err(MarkdownError::new(format!(
                 "Nested custom inline '{}' is not supported",
                 rule.name()
             )));
         }
-        let custom_value = share_ref_range(
-            &value,
-            offset + value_start,
-            offset + value_end,
-        );
+        let custom_value = share_ref_range(&value, offset + value_start, offset + value_end);
         result.push(Inline::Custom(CustomInlineData {
             name: rule.shared_name(),
             text: custom_value.clone(),
@@ -351,7 +346,10 @@ fn split_custom_inlines(
     Ok(())
 }
 
-fn find_custom_opening<'a>(value: &str, rules: &'a [InlineRule]) -> Option<(usize, &'a InlineRule)> {
+fn find_custom_opening<'a>(
+    value: &str,
+    rules: &'a [InlineRule],
+) -> Option<(usize, &'a InlineRule)> {
     rules
         .iter()
         .filter_map(|rule| {
@@ -364,7 +362,9 @@ fn find_unescaped(value: &[u8], needle: &str) -> Option<usize> {
     let needle = needle.as_bytes();
     let mut offset = 0;
     while offset + needle.len() <= value.len() {
-        let Some(relative) = value[offset..].windows(needle.len()).position(|window| window == needle)
+        let Some(relative) = value[offset..]
+            .windows(needle.len())
+            .position(|window| window == needle)
         else {
             return None;
         };
@@ -537,15 +537,18 @@ fn convert_inlines(
         match node {
             Node::Text(text) => push_text_with_soft_breaks(&mut result, text.value, inline_rules)?,
             Node::Break(_) => result.push(Inline::HardBreak),
-            Node::Emphasis(emphasis) => {
-                result.push(Inline::Emphasis(convert_inlines(emphasis.children, inline_rules)?))
-            }
-            Node::Strong(strong) => {
-                result.push(Inline::Strong(convert_inlines(strong.children, inline_rules)?))
-            }
-            Node::Delete(delete) => {
-                result.push(Inline::Delete(convert_inlines(delete.children, inline_rules)?))
-            }
+            Node::Emphasis(emphasis) => result.push(Inline::Emphasis(convert_inlines(
+                emphasis.children,
+                inline_rules,
+            )?)),
+            Node::Strong(strong) => result.push(Inline::Strong(convert_inlines(
+                strong.children,
+                inline_rules,
+            )?)),
+            Node::Delete(delete) => result.push(Inline::Delete(convert_inlines(
+                delete.children,
+                inline_rules,
+            )?)),
             Node::InlineCode(code) => result.push(Inline::Code(code.value.into())),
             Node::Link(link) => result.push(Inline::Link {
                 url: link.url.into(),
@@ -637,9 +640,7 @@ fn push_extended_image_text(
         let raw_destination_start = destination_start;
         let raw_destination_end = destination_end;
         let raw_destination = &remaining[raw_destination_start..raw_destination_end];
-        let destination_start_offset = offset
-            + raw_destination_start
-            + raw_destination.len()
+        let destination_start_offset = offset + raw_destination_start + raw_destination.len()
             - raw_destination.trim_start().len();
         let destination_end_offset =
             offset + raw_destination_start + raw_destination.trim_end().len();
@@ -730,8 +731,8 @@ impl From<AlignKind> for Alignment {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aimer_rubick::ShareRef;
     use crate::{BlockRule, BlockSyntax, InlineRule, InlineSyntax};
+    use aimer_rubick::ShareRef;
 
     fn parse(source: &str) -> Document {
         Document::parse(source).expect("fixture should parse")
@@ -936,20 +937,13 @@ mod tests {
                 closing: ":::",
             },
         );
-        let duplicate = Document::parse_with_rules(
-            ":::alert\nbody\n:::",
-            &[rule.clone(), rule.clone()],
-            &[],
-        )
-        .expect_err("duplicate rules must be rejected");
+        let duplicate =
+            Document::parse_with_rules(":::alert\nbody\n:::", &[rule.clone(), rule.clone()], &[])
+                .expect_err("duplicate rules must be rejected");
         assert!(duplicate.message().contains("Duplicate custom block rule"));
 
-        let unclosed = Document::parse_with_rules(
-            ":::alert\nbody",
-            &[rule],
-            &[],
-        )
-        .expect_err("unclosed blocks must be rejected");
+        let unclosed = Document::parse_with_rules(":::alert\nbody", &[rule], &[])
+            .expect_err("unclosed blocks must be rejected");
         assert!(unclosed.message().contains("Unclosed custom block"));
 
         let unclosed_inline = Document::parse_with_rules(
@@ -1113,7 +1107,9 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert!(matches!(rows[1].cells[0].as_slice(), [Inline::Emphasis(_)]));
         assert!(matches!(rows[1].cells[1].as_slice(), [Inline::Strong(_)]));
-        assert!(matches!(rows[1].cells[2].as_slice(), [Inline::Code(value)] if value.as_ref() == "c"));
+        assert!(
+            matches!(rows[1].cells[2].as_slice(), [Inline::Code(value)] if value.as_ref() == "c")
+        );
     }
 
     #[test]
@@ -1126,8 +1122,8 @@ mod tests {
     #[test]
     fn preparing_source_without_custom_blocks_borrows_the_shared_source() {
         let source = ShareRef::from_static("plain Markdown");
-        let prepared = prepare_source(&source, Some(&source), &[], &[])
-            .expect("plain source should prepare");
+        let prepared =
+            prepare_source(&source, Some(&source), &[], &[]).expect("plain source should prepare");
 
         assert!(matches!(
             prepared.source,

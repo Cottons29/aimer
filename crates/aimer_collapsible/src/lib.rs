@@ -26,8 +26,8 @@ mod tests {
     use aimer_text::Text;
     use aimer_widget::base::{BuildContext, ResolvedSize, Vec2d, WindowHandle};
     use aimer_widget::{
-        broadcast_event, AnyElement, Drawable, Element, EventElement, LayoutElement, PortableWidget,
-        Rebuildable, State, StatefulWidget, VisitorElement, Widget,
+        AnyElement, Drawable, Element, EventElement, LayoutElement, PortableWidget, Rebuildable,
+        State, StatefulWidget, VisitorElement, Widget, broadcast_event,
     };
 
     fn context() -> BuildContext<'static> {
@@ -224,7 +224,7 @@ mod tests {
     #[tokio::test]
     async fn mounted_state_updates_from_a_focused_activation_key() {
         use aimer_events::element::{ElementEvent, KeyAction, Modifiers, NamedKey};
-        use aimer_widget::{dispatch_focused_event, StatefulElement};
+        use aimer_widget::{StatefulElement, dispatch_focused_event};
 
         let widget = CollapsibleList::new()
             .expanded(false)
@@ -250,7 +250,7 @@ mod tests {
     #[tokio::test]
     async fn mounted_state_updates_from_a_primary_pointer_tap() {
         use aimer_events::pointer::{PointerButton, PointerInfo};
-        use aimer_widget::{broadcast_event, Drawable, LayoutElement, StatefulElement};
+        use aimer_widget::{Drawable, LayoutElement, StatefulElement, broadcast_event};
 
         let widget = CollapsibleList::new()
             .expanded(false)
@@ -282,5 +282,4 @@ mod tests {
 
         assert_eq!(updater.try_read(|state| state.is_expanded()), Some(true));
     }
-
 }

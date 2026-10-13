@@ -111,7 +111,8 @@ impl<E: Element + 'static> ElementNode<E> {
                 || take_local_paint_invalidated(self.id.get())
                 || self.element.local_v2_paint_needs_recording(ctx))
         {
-            let _ = scope.tree.invalidate_paint(render_node);
+            // Recorded again, and damaged only if the picture turns out to differ.
+            let _ = scope.tree.refresh_paint(render_node);
         }
         let needs_recording = source == RenderPaintSource::Unresolved
             || scope.tree.needs_recording(render_node).unwrap_or(true);

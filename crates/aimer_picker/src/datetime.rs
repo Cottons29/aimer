@@ -64,13 +64,23 @@ impl TimeOfDay {
         if nanosecond >= 1_000_000_000 {
             return Err(TimeError::InvalidNanosecond(nanosecond));
         }
-        Ok(Self { hour, minute, second, nanosecond })
+        Ok(Self {
+            hour,
+            minute,
+            second,
+            nanosecond,
+        })
     }
 
     /// Returns midnight.
     #[inline]
     pub const fn midnight() -> Self {
-        Self { hour: 0, minute: 0, second: 0, nanosecond: 0 }
+        Self {
+            hour: 0,
+            minute: 0,
+            second: 0,
+            nanosecond: 0,
+        }
     }
 
     /// Returns the hour.
@@ -120,7 +130,9 @@ impl TimeZonePolicy {
         if minutes < -1_439 || minutes > 1_439 {
             return Err(DateTimeError::InvalidOffset(minutes));
         }
-        Ok(Self::FixedOffset { minutes: minutes as i16 })
+        Ok(Self::FixedOffset {
+            minutes: minutes as i16,
+        })
     }
 
     /// Returns this policy's offset from UTC in minutes.
@@ -156,9 +168,15 @@ impl DateTime {
         timezone: TimeZonePolicy,
     ) -> Result<Self, DateTimeError> {
         if !timezone.is_valid() {
-            return Err(DateTimeError::InvalidOffset(timezone.offset_minutes() as i32));
+            return Err(DateTimeError::InvalidOffset(
+                timezone.offset_minutes() as i32
+            ));
         }
-        Ok(Self { date, time, timezone })
+        Ok(Self {
+            date,
+            time,
+            timezone,
+        })
     }
 
     /// Returns the calendar date.
@@ -206,14 +224,25 @@ pub enum DateTimeError {
 impl fmt::Display for DateTimeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidOffset(minutes) => write!(formatter, "timezone offset {minutes} is outside -1439..=1439"),
+            Self::InvalidOffset(minutes) => write!(
+                formatter,
+                "timezone offset {minutes} is outside -1439..=1439"
+            ),
             Self::TimeZoneMismatch { expected, actual } => {
-                write!(formatter, "timezone mismatch: expected {expected:?}, got {actual:?}")
+                write!(
+                    formatter,
+                    "timezone mismatch: expected {expected:?}, got {actual:?}"
+                )
             }
             Self::ReversedBounds { min, max } => {
-                write!(formatter, "date-time bounds are reversed: min={min:?}, max={max:?}")
+                write!(
+                    formatter,
+                    "date-time bounds are reversed: min={min:?}, max={max:?}"
+                )
             }
-            Self::OutOfBounds(value) => write!(formatter, "date-time {value:?} is outside picker bounds"),
+            Self::OutOfBounds(value) => {
+                write!(formatter, "date-time {value:?} is outside picker bounds")
+            }
         }
     }
 }
@@ -239,7 +268,10 @@ impl DateTimeBounds {
                 });
             }
             if min > max {
-                return Err(DateTimeError::ReversedBounds { min: Some(min), max: Some(max) });
+                return Err(DateTimeError::ReversedBounds {
+                    min: Some(min),
+                    max: Some(max),
+                });
             }
         }
         Ok(Self { min, max })
@@ -248,7 +280,10 @@ impl DateTimeBounds {
     /// Creates unbounded date-time constraints.
     #[inline]
     pub const fn unbounded() -> Self {
-        Self { min: None, max: None }
+        Self {
+            min: None,
+            max: None,
+        }
     }
 
     /// Returns the inclusive lower bound, if present.
@@ -300,7 +335,9 @@ impl DateTimePickerPolicy {
         max: Option<DateTime>,
     ) -> Result<Self, DateTimeError> {
         if !timezone.is_valid() {
-            return Err(DateTimeError::InvalidOffset(timezone.offset_minutes() as i32));
+            return Err(DateTimeError::InvalidOffset(
+                timezone.offset_minutes() as i32
+            ));
         }
         for value in [min, max].into_iter().flatten() {
             if value.timezone() != timezone {
@@ -310,13 +347,19 @@ impl DateTimePickerPolicy {
                 });
             }
         }
-        Ok(Self { timezone, bounds: DateTimeBounds::try_new(min, max)? })
+        Ok(Self {
+            timezone,
+            bounds: DateTimeBounds::try_new(min, max)?,
+        })
     }
 
     /// Creates an unbounded policy in `timezone`.
     #[inline]
     pub const fn unbounded(timezone: TimeZonePolicy) -> Self {
-        Self { timezone, bounds: DateTimeBounds::unbounded() }
+        Self {
+            timezone,
+            bounds: DateTimeBounds::unbounded(),
+        }
     }
 
     /// Returns the explicit timezone policy.
@@ -358,7 +401,10 @@ impl fmt::Display for DateTimePickerError {
             Self::MissingHost => formatter.write_str("picker overlay host is missing"),
             Self::UnsupportedHost => formatter.write_str("picker overlay host is unsupported"),
             Self::DismissalNotAllowed(reason) => {
-                write!(formatter, "picker overlay dismissal is disabled for {reason:?}")
+                write!(
+                    formatter,
+                    "picker overlay dismissal is disabled for {reason:?}"
+                )
             }
         }
     }
@@ -513,7 +559,9 @@ impl DateTimePicker {
         let value = DateTime::try_new(date, current.time(), self.policy.timezone())
             .map_err(DateTimePickerError::Invalid)?;
         validate_value(value, self.policy)?;
-        self.session.set_draft(Some(value)).map_err(|_| DateTimePickerError::Closed)
+        self.session
+            .set_draft(Some(value))
+            .map_err(|_| DateTimePickerError::Closed)
     }
 
     /// Replaces the time portion of the open draft.
@@ -523,7 +571,9 @@ impl DateTimePicker {
         let value = DateTime::try_new(current.date(), time, self.policy.timezone())
             .map_err(DateTimePickerError::Invalid)?;
         validate_value(value, self.policy)?;
-        self.session.set_draft(Some(value)).map_err(|_| DateTimePickerError::Closed)
+        self.session
+            .set_draft(Some(value))
+            .map_err(|_| DateTimePickerError::Closed)
     }
 
     /// Moves the date portion of the open draft and reports whether it stayed
@@ -567,12 +617,9 @@ impl DateTimePicker {
             | CalendarNavigation::PreviousWeek
             | CalendarNavigation::NextWeek => None,
         };
-        let Some(next) = self.find_enabled_navigation_date(
-            next,
-            direction,
-            target_month,
-            current.time(),
-        )? else {
+        let Some(next) =
+            self.find_enabled_navigation_date(next, direction, target_month, current.time())?
+        else {
             return Ok(false);
         };
         self.set_date(next)?;
@@ -625,7 +672,10 @@ impl DateTimePicker {
     /// Confirms the draft and closes the picker.
     pub fn confirm(&mut self) -> Result<PickerOutcome<Option<DateTime>>, DateTimePickerError> {
         self.ensure_open()?;
-        Ok(self.session.confirm().map_err(|_| DateTimePickerError::Closed)?)
+        Ok(self
+            .session
+            .confirm()
+            .map_err(|_| DateTimePickerError::Closed)?)
     }
 
     /// Confirms the draft, dismisses its overlay, and restores focus.
@@ -650,7 +700,10 @@ impl DateTimePicker {
         reason: CancelReason,
     ) -> Result<PickerOutcome<Option<DateTime>>, DateTimePickerError> {
         self.ensure_open()?;
-        Ok(self.session.cancel(reason).map_err(|_| DateTimePickerError::Closed)?)
+        Ok(self
+            .session
+            .cancel(reason)
+            .map_err(|_| DateTimePickerError::Closed)?)
     }
 
     /// Cancels the draft according to the overlay policy, dismisses the
@@ -717,7 +770,10 @@ impl fmt::Display for TimePickerError {
             Self::MissingHost => formatter.write_str("picker overlay host is missing"),
             Self::UnsupportedHost => formatter.write_str("picker overlay host is unsupported"),
             Self::DismissalNotAllowed(reason) => {
-                write!(formatter, "picker overlay dismissal is disabled for {reason:?}")
+                write!(
+                    formatter,
+                    "picker overlay dismissal is disabled for {reason:?}"
+                )
             }
         }
     }
@@ -735,7 +791,9 @@ impl TimePicker {
     /// Creates a picker with `initial` as its confirmed time, or midnight when
     /// no initial time is supplied.
     pub fn new(initial: Option<TimeOfDay>) -> Self {
-        Self { session: PickerSession::new(initial.unwrap_or_else(TimeOfDay::midnight)) }
+        Self {
+            session: PickerSession::new(initial.unwrap_or_else(TimeOfDay::midnight)),
+        }
     }
 
     /// Opens the picker and resets its draft to the last confirmed time.
@@ -790,9 +848,7 @@ impl TimePicker {
 
     /// Confirms the draft and closes the picker.
     pub fn confirm(&mut self) -> Result<PickerOutcome<TimeOfDay>, TimePickerError> {
-        self.session
-            .confirm()
-            .map_err(|_| TimePickerError::Closed)
+        self.session.confirm().map_err(|_| TimePickerError::Closed)
     }
 
     /// Confirms the draft, dismisses its overlay, and restores focus.
@@ -857,15 +913,22 @@ impl From<PickerSessionError> for TimePickerError {
     }
 }
 
-fn validate_value(value: DateTime, policy: DateTimePickerPolicy) -> Result<(), DateTimePickerError> {
+fn validate_value(
+    value: DateTime,
+    policy: DateTimePickerPolicy,
+) -> Result<(), DateTimePickerError> {
     if value.timezone() != policy.timezone() {
-        return Err(DateTimePickerError::Invalid(DateTimeError::TimeZoneMismatch {
-            expected: policy.timezone(),
-            actual: value.timezone(),
-        }));
+        return Err(DateTimePickerError::Invalid(
+            DateTimeError::TimeZoneMismatch {
+                expected: policy.timezone(),
+                actual: value.timezone(),
+            },
+        ));
     }
     if !policy.bounds().contains(value) {
-        return Err(DateTimePickerError::Invalid(DateTimeError::OutOfBounds(value)));
+        return Err(DateTimePickerError::Invalid(DateTimeError::OutOfBounds(
+            value,
+        )));
     }
     Ok(())
 }

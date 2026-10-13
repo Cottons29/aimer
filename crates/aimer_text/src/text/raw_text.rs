@@ -1,19 +1,19 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use aimer_cupid::text_pipeline::text_layout::TextHorizontalAlign;
-use aimer_attribute::size::ResolvedSize;
 use aimer_attribute::Vec2d;
+use aimer_attribute::size::ResolvedSize;
+use aimer_cupid::text_pipeline::text_layout::TextHorizontalAlign;
 use aimer_macro::{EventElement, Rebuildable};
 use aimer_style::*;
 use aimer_utils::debug;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{TextOverflowMode, *};
 
-use crate::paragraph::geometry::{DecorationPaint, prepare_decoration_paint};
 use crate::paragraph::Paragraph;
-use crate::text_span::ResolvedTextSpan;
+use crate::paragraph::geometry::{DecorationPaint, prepare_decoration_paint};
 use crate::text_source::TextSource;
+use crate::text_span::ResolvedTextSpan;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct PlainDecorationCacheKey {
@@ -44,7 +44,6 @@ struct RawTextAuxCache {
     paragraph: Option<Paragraph>,
     plain_decorations: Option<PlainDecorationCache>,
 }
-
 
 /// Low-level element that lays out and paints one run of text.
 ///
@@ -149,12 +148,8 @@ impl RawTextWidget {
             self.text_style.font_weight.numeric(),
         );
         let baseline_offset = metrics.ascent + metrics.line_gap * 0.5;
-        let baseline = vertical_alignment_baseline(
-            self.text_align,
-            height,
-            metrics.height,
-            baseline_offset,
-        );
+        let baseline =
+            vertical_alignment_baseline(self.text_align, height, metrics.height, baseline_offset);
         if !baseline.is_finite() || !metrics.height.is_finite() {
             return None;
         }
@@ -190,17 +185,13 @@ impl RawTextWidget {
         })
     }
 
-    fn local_v2_paragraph_paint_data(
-        &self,
-        ctx: &BuildContext,
-    ) -> Option<LocalV2ParagraphPaint> {
+    fn local_v2_paragraph_paint_data(&self, ctx: &BuildContext) -> Option<LocalV2ParagraphPaint> {
         if !self.uses_paragraph_layout() {
             return None;
         }
         let scale = ctx.scale;
-        let (width, height) = self.with_paragraph(|paragraph| {
-            (paragraph.available_width(ctx), ctx.parent_size.height)
-        });
+        let (width, height) = self
+            .with_paragraph(|paragraph| (paragraph.available_width(ctx), ctx.parent_size.height));
         if !scale.is_finite()
             || scale <= 0.0
             || !width.is_finite()
@@ -234,9 +225,8 @@ impl RawTextWidget {
         {
             return None;
         }
-        let paint_outsets = self.with_paragraph(|paragraph| {
-            paragraph.retained_v2_paint_outsets(&layout, scale)
-        });
+        let paint_outsets =
+            self.with_paragraph(|paragraph| paragraph.retained_v2_paint_outsets(&layout, scale));
         let vertical_offset = match self.text_align {
             TextAlign::TopLeft | TextAlign::TopCenter | TextAlign::TopRight => 0.0,
             TextAlign::MidLeft | TextAlign::MidCenter | TextAlign::MidRight => {
@@ -416,7 +406,10 @@ impl RawTextWidget {
             let auxiliary = slot.get_or_insert_with(RawTextAuxCache::default);
             let paragraph = auxiliary.paragraph.get_or_insert_with(|| {
                 Paragraph::with_layout(
-                    vec![ResolvedTextSpan::plain_source(self.text.clone(), self.text_style)],
+                    vec![ResolvedTextSpan::plain_source(
+                        self.text.clone(),
+                        self.text_style,
+                    )],
                     self.text_align,
                     self.text_style.text_overflow,
                     self.line_height,
@@ -426,31 +419,26 @@ impl RawTextWidget {
             callback(paragraph)
         })
     }
-
-
 }
 
 impl Drawable for RawTextWidget {
     fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
-        self.local_v2_paint_data(ctx).is_some()
-            || self.local_v2_paragraph_paint_data(ctx).is_some()
+        self.local_v2_paint_data(ctx).is_some() || self.local_v2_paragraph_paint_data(ctx).is_some()
     }
 
     fn paint_local_v2(&self, ctx: &BuildContext) {
         let canvas = aimer_canvas::Canvas::of(ctx);
-        assert!(self.record_local_v2_into(
-            &canvas,
-            ctx,
-            Vec2d { x: 0.0, y: 0.0 },
-            true,
-            |_| {},
-        ));
+        assert!(self.record_local_v2_into(&canvas, ctx, Vec2d { x: 0.0, y: 0.0 }, true, |_| {},));
         canvas.finish();
     }
 
     fn retained_v2_paint_outsets(&self, ctx: &BuildContext) -> Option<[f32; 4]> {
         if let Some(data) = self.local_v2_paragraph_paint_data(ctx) {
-            return data.outsets.iter().any(|outset| *outset > 0.0).then_some(data.outsets);
+            return data
+                .outsets
+                .iter()
+                .any(|outset| *outset > 0.0)
+                .then_some(data.outsets);
         }
         let data = self.local_v2_paint_data(ctx)?;
         (data.origin_offset.x > 0.0).then_some([
@@ -554,15 +542,14 @@ impl LayoutElement for RawTextWidget {
     }
     fn invalidate_layout(&self) {
         self.cache.invalidate();
-        self.cache
-            .with_extra(|slot: &mut Option<RawTextAuxCache>| {
-                if let Some(auxiliary) = slot.as_mut() {
-                    if let Some(paragraph) = auxiliary.paragraph.as_ref() {
-                        paragraph.invalidate();
-                    }
-                    auxiliary.plain_decorations = None;
+        self.cache.with_extra(|slot: &mut Option<RawTextAuxCache>| {
+            if let Some(auxiliary) = slot.as_mut() {
+                if let Some(paragraph) = auxiliary.paragraph.as_ref() {
+                    paragraph.invalidate();
                 }
-            });
+                auxiliary.plain_decorations = None;
+            }
+        });
     }
 }
 
@@ -575,9 +562,7 @@ mod tests {
 
     use crate::text_source::TextSource;
 
-    use super::{
-        RawTextWidget, horizontal_alignment_offset, vertical_alignment_baseline,
-    };
+    use super::{RawTextWidget, horizontal_alignment_offset, vertical_alignment_baseline};
 
     #[test]
     fn advanced_text_reuses_its_paragraph_storage() {
@@ -632,9 +617,8 @@ mod tests {
         );
         let widget = RawTextWidget {
             text: TextSource::Static("Consistence Looking"),
-            text_style: TextStyle::default().text_decoration(
-                TextDecoration::new().line(TextDecorationLine::UNDERLINE),
-            ),
+            text_style: TextStyle::default()
+                .text_decoration(TextDecoration::new().line(TextDecorationLine::UNDERLINE)),
             text_align: TextAlign::TopLeft,
             line_height: LineHeight::Normal,
             text_indent: 0.0,
@@ -643,7 +627,10 @@ mod tests {
         };
 
         let _ = widget.computed_size(&context);
-        assert!(widget.can_paint_local_v2(&context), "laid out, so it can paint");
+        assert!(
+            widget.can_paint_local_v2(&context),
+            "laid out, so it can paint"
+        );
 
         aimer_widget::notify_element_tree_changed();
         assert!(
@@ -679,9 +666,8 @@ mod tests {
         );
         let widget = RawTextWidget {
             text: TextSource::Static("first\nsecond"),
-            text_style: TextStyle::default().text_decoration(
-                TextDecoration::new().line(TextDecorationLine::UNDERLINE),
-            ),
+            text_style: TextStyle::default()
+                .text_decoration(TextDecoration::new().line(TextDecorationLine::UNDERLINE)),
             text_align: TextAlign::TopLeft,
             line_height: LineHeight::Normal,
             text_indent: 0.0,
@@ -689,11 +675,17 @@ mod tests {
             _typeface: Cell::new(None),
         };
 
-        let first = widget.local_v2_paragraph_paint_data(&context).unwrap().layout;
+        let first = widget
+            .local_v2_paragraph_paint_data(&context)
+            .unwrap()
+            .layout;
         #[cfg(debug_assertions)]
         let first_stats = inner.text_cache_stats();
 
-        let second = widget.local_v2_paragraph_paint_data(&context).unwrap().layout;
+        let second = widget
+            .local_v2_paragraph_paint_data(&context)
+            .unwrap()
+            .layout;
         #[cfg(debug_assertions)]
         let second_stats = inner.text_cache_stats();
 
@@ -702,7 +694,10 @@ mod tests {
         assert!(std::rc::Rc::ptr_eq(&first, &second));
         #[cfg(debug_assertions)]
         {
-            assert_eq!(second_stats, first_stats, "reusing prepared geometry measures nothing");
+            assert_eq!(
+                second_stats, first_stats,
+                "reusing prepared geometry measures nothing"
+            );
         }
     }
 

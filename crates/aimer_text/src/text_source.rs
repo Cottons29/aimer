@@ -3,13 +3,13 @@ use std::ops::Deref;
 use std::rc::Rc;
 
 use aimer_rubick::ShareRef;
+use aimer_widget::portable::__anteros::{PropertyId, PropertyValue};
+#[cfg(feature = "portable-guest")]
+use aimer_widget::portable::{PortableBuildContext, PortableBuildError, PortableEncodeProperty};
 use aimer_widget::portable::{
     PortableMaterializeError, PortableMaterializeProperty, PortableProperty,
     PortablePropertyReflection,
 };
-use aimer_widget::portable::__anteros::{PropertyId, PropertyValue};
-#[cfg(feature = "portable-guest")]
-use aimer_widget::portable::{PortableBuildContext, PortableBuildError, PortableEncodeProperty};
 
 /// A text payload that is either a `'static` literal or shared string data.
 ///
@@ -198,8 +198,8 @@ impl PortableEncodeProperty for TextSource {
 
 #[cfg(test)]
 mod tests {
-    use aimer_rubick::{ShareRef, Shared};
     use super::*;
+    use aimer_rubick::{ShareRef, Shared};
 
     #[test]
     fn static_text_borrows_without_allocating_an_rc() {
@@ -268,6 +268,9 @@ mod tests {
 
     #[test]
     fn equality_compares_by_content_across_variants() {
-        assert_eq!(TextSource::from("same"), TextSource::from(String::from("same")));
+        assert_eq!(
+            TextSource::from("same"),
+            TextSource::from(String::from("same"))
+        );
     }
 }

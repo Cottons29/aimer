@@ -1,14 +1,13 @@
 use std::sync::{Arc, Mutex};
 
 use windows::Win32::Graphics::Direct3D12::{
-    D3D12_CPU_DESCRIPTOR_HANDLE, D3D12_DESCRIPTOR_HEAP_DESC,
-    D3D12_DESCRIPTOR_HEAP_TYPE, D3D12_GPU_DESCRIPTOR_HANDLE, ID3D12DescriptorHeap,
-    ID3D12Device, ID3D12Resource, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE,
-    D3D12_DESCRIPTOR_HEAP_FLAG_NONE,
+    D3D12_CPU_DESCRIPTOR_HANDLE, D3D12_DESCRIPTOR_HEAP_DESC, D3D12_DESCRIPTOR_HEAP_FLAG_NONE,
+    D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, D3D12_DESCRIPTOR_HEAP_TYPE,
+    D3D12_GPU_DESCRIPTOR_HANDLE, ID3D12DescriptorHeap, ID3D12Device, ID3D12Resource,
 };
 use windows::Win32::Graphics::Dxgi::Common::{
-    DXGI_FORMAT, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_B8G8R8A8_UNORM_SRGB,
-    DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, DXGI_FORMAT_R8_UNORM,
+    DXGI_FORMAT, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_B8G8R8A8_UNORM_SRGB, DXGI_FORMAT_R8_UNORM,
+    DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,
 };
 
 use crate::backend::{BufferUsage, TextureUsage};
@@ -199,8 +198,7 @@ impl Dx12Buffer {
             D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_DIMENSION_BUFFER, D3D12_RESOURCE_FLAG_NONE,
             D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST,
             D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER,
-            D3D12_RESOURCE_STATES,
-            D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
+            D3D12_RESOURCE_STATES, D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
         };
         use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_UNKNOWN, DXGI_SAMPLE_DESC};
 
@@ -226,7 +224,10 @@ impl Dx12Buffer {
             DepthOrArraySize: 1,
             MipLevels: 1,
             Format: DXGI_FORMAT_UNKNOWN,
-            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            SampleDesc: DXGI_SAMPLE_DESC {
+                Count: 1,
+                Quality: 0,
+            },
             Layout: D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
             Flags: D3D12_RESOURCE_FLAG_NONE,
         };
@@ -271,14 +272,20 @@ pub(super) fn create_texture_resource(
 ) -> Dx12Texture {
     use windows::Win32::Graphics::Direct3D12::{
         D3D12_HEAP_PROPERTIES, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_DIMENSION_TEXTURE2D,
-    D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
-    D3D12_RESOURCE_FLAG_NONE,
-        D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATES, D3D12_TEXTURE_LAYOUT_UNKNOWN,
+        D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
+        D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATES,
+        D3D12_TEXTURE_LAYOUT_UNKNOWN,
     };
     use windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC;
 
-    assert!(size.2 <= u16::MAX as u32, "D3D12 array size exceeds the native limit");
-    assert!(mip_levels <= u16::MAX as u32, "D3D12 mip count exceeds the native limit");
+    assert!(
+        size.2 <= u16::MAX as u32,
+        "D3D12 array size exceeds the native limit"
+    );
+    assert!(
+        mip_levels <= u16::MAX as u32,
+        "D3D12 mip count exceeds the native limit"
+    );
     let render_target = usage.contains(&TextureUsage::RenderAttachment);
     let props = D3D12_HEAP_PROPERTIES {
         Type: D3D12_HEAP_TYPE_DEFAULT,
@@ -309,13 +316,9 @@ pub(super) fn create_texture_resource(
         Layout: D3D12_TEXTURE_LAYOUT_UNKNOWN,
         Flags: flags,
     };
-    let resource = create_committed_resource(
-        &shared.device,
-        &props,
-        &desc,
-        D3D12_RESOURCE_STATE_COMMON,
-    )
-    .expect("create D3D12 texture resource");
+    let resource =
+        create_committed_resource(&shared.device, &props, &desc, D3D12_RESOURCE_STATE_COMMON)
+            .expect("create D3D12 texture resource");
     let state: D3D12_RESOURCE_STATES = D3D12_RESOURCE_STATE_COMMON;
     Dx12Texture {
         resource,
@@ -328,13 +331,7 @@ pub(super) fn create_texture_resource(
 
 pub(super) fn create_upload_buffer(shared: &BackendShared, data: &[u8]) -> ID3D12Resource {
     use windows::Win32::Graphics::Direct3D12::D3D12_RESOURCE_STATE_GENERIC_READ;
-    let buffer = Dx12Buffer::new(
-        shared,
-        data.len() as u64,
-        Vec::new(),
-        true,
-        false,
-    );
+    let buffer = Dx12Buffer::new(shared, data.len() as u64, Vec::new(), true, false);
     unsafe {
         let mut mapped = std::ptr::null_mut();
         buffer

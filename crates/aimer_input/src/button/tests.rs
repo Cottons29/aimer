@@ -7,12 +7,14 @@ use aimer_events::pointer::{PointerButton, PointerInfo};
 use aimer_style::BoxDecoration;
 use aimer_widget::base::{Color, WindowHandle};
 use aimer_widget::{
-    dispatch_event, AnyElement, Drawable, Element, ErrorWidget, EventElement, Key,
-    LayoutElement, PortableWidget, Rebuildable, State, StatefulWidget, VisitorElement, Widget,
+    AnyElement, Drawable, Element, ErrorWidget, EventElement, Key, LayoutElement, PortableWidget,
+    Rebuildable, State, StatefulWidget, VisitorElement, Widget, dispatch_event,
 };
 
-use super::{Button, BuildContext};
+use super::{BuildContext, Button};
 
+#[cfg(feature = "portable-guest")]
+use aimer_anteros::PropertyValue;
 #[cfg(feature = "portable-guest")]
 use aimer_anteros::{
     EVENT_BUTTON_DOUBLE_PRESS, EVENT_BUTTON_LONG_PRESS, EVENT_BUTTON_PRESS,
@@ -21,11 +23,9 @@ use aimer_anteros::{
 };
 #[cfg(feature = "portable-guest")]
 use aimer_widget::portable::{
-    PortableBuildContext, PortableBuildError, PortableLimits, PortableNodeId,
-    PortableWidgetLimits, SourceFingerprint, StableId128,
+    PortableBuildContext, PortableBuildError, PortableLimits, PortableNodeId, PortableWidgetLimits,
+    SourceFingerprint, StableId128,
 };
-#[cfg(feature = "portable-guest")]
-use aimer_anteros::PropertyValue;
 
 /// A child that reports how often it was asked for an element.
 struct Probe {
@@ -134,10 +134,22 @@ fn portable_button_emits_exact_schema_child_and_four_distinct_routes() {
     let mut context = portable_context();
     let source = portable_source(1);
     let button = Button::new()
-        .on_press({ let calls = calls.clone(); move || calls.set(calls.get() | 1) })
-        .on_long_press({ let calls = calls.clone(); move || calls.set(calls.get() | 2) })
-        .on_double_press({ let calls = calls.clone(); move || calls.set(calls.get() | 4) })
-        .on_right_press({ let calls = calls.clone(); move || calls.set(calls.get() | 8) })
+        .on_press({
+            let calls = calls.clone();
+            move || calls.set(calls.get() | 1)
+        })
+        .on_long_press({
+            let calls = calls.clone();
+            move || calls.set(calls.get() | 2)
+        })
+        .on_double_press({
+            let calls = calls.clone();
+            move || calls.set(calls.get() | 4)
+        })
+        .on_right_press({
+            let calls = calls.clone();
+            move || calls.set(calls.get() | 8)
+        })
         .child(PortableChild);
     let root = button.to_portable_node(&mut context, source).unwrap();
     let document = context.finish_document(root).unwrap();
@@ -151,7 +163,10 @@ fn portable_button_emits_exact_schema_child_and_four_distinct_routes() {
     assert!(node.properties().next().is_none());
     assert_eq!(node.children().collect::<Vec<_>>(), vec![0]);
     assert_eq!(
-        bindings.iter().map(|binding| binding.event_kind()).collect::<Vec<_>>(),
+        bindings
+            .iter()
+            .map(|binding| binding.event_kind())
+            .collect::<Vec<_>>(),
         vec![
             EVENT_BUTTON_PRESS,
             EVENT_BUTTON_LONG_PRESS,
@@ -159,7 +174,10 @@ fn portable_button_emits_exact_schema_child_and_four_distinct_routes() {
             EVENT_BUTTON_RIGHT_PRESS,
         ]
     );
-    let mut ids = bindings.iter().map(|binding| binding.callback_id()).collect::<Vec<_>>();
+    let mut ids = bindings
+        .iter()
+        .map(|binding| binding.callback_id())
+        .collect::<Vec<_>>();
     ids.sort();
     ids.dedup();
     assert_eq!(ids.len(), 4);
@@ -201,7 +219,8 @@ fn portable_button_identity_uses_key_or_source_and_rejects_lossy_properties() {
         .unwrap();
     let same_key = second.finish_document(root).unwrap();
     let same_key_bytes = same_key.encode().unwrap();
-    let same_key_view = WidgetDocumentView::decode(&same_key_bytes, same_key.model_limits()).unwrap();
+    let same_key_view =
+        WidgetDocumentView::decode(&same_key_bytes, same_key.model_limits()).unwrap();
     assert_eq!(same_key_view.node(root.index()).unwrap().key(), keyed_id);
 
     let mut disabled = portable_context();
@@ -210,7 +229,10 @@ fn portable_button_identity_uses_key_or_source_and_rejects_lossy_properties() {
         .child(PortableChild)
         .to_portable_node(&mut disabled, source)
         .unwrap_err();
-    assert_eq!(error.to_string(), "button property `disabled` has no portable lowering");
+    assert_eq!(
+        error.to_string(),
+        "button property `disabled` has no portable lowering"
+    );
 
     let mut decorated = portable_context();
     let root = Button::new()
@@ -236,8 +258,7 @@ fn portable_button_identity_uses_key_or_source_and_rejects_lossy_properties() {
         .to_portable_node(&mut asynchronous, source)
         .unwrap();
     asynchronous.finish_document(node).unwrap();
-    let callback_id = asynchronous
-        .callback_id_for(None, source, EVENT_BUTTON_PRESS);
+    let callback_id = asynchronous.callback_id_for(None, source, EVENT_BUTTON_PRESS);
     let start = asynchronous
         .callback_registry()
         .dispatch_start(callback_id, &mut asynchronous)
@@ -409,9 +430,9 @@ fn state_specific_decorations_follow_disabled_pressed_hover_precedence() {
 #[cfg(feature = "portable-guest")]
 mod portable {
     use aimer_anteros::{
-        CallbackBinding, EVENT_BUTTON_DOUBLE_PRESS, EVENT_BUTTON_LONG_PRESS,
-        EVENT_BUTTON_PRESS, EVENT_BUTTON_RIGHT_PRESS, Version, WidgetDocument, WidgetNode,
-        WIDGET_BUTTON, WidgetSchemaId,
+        CallbackBinding, EVENT_BUTTON_DOUBLE_PRESS, EVENT_BUTTON_LONG_PRESS, EVENT_BUTTON_PRESS,
+        EVENT_BUTTON_RIGHT_PRESS, Version, WIDGET_BUTTON, WidgetDocument, WidgetNode,
+        WidgetSchemaId,
     };
     use aimer_widget::portable::{
         PortableBuildContext, PortableBuildError, PortableLimits, PortableNodeId,
@@ -476,12 +497,9 @@ mod portable {
         let child_key = aimer_anteros::StableId128::from_bytes(
             context.slot_for(None, source.child(0)).to_bytes(),
         );
-        let button_key = aimer_anteros::StableId128::from_bytes(
-            context.slot_for(None, source).to_bytes(),
-        );
-        let root = button
-            .to_portable_node(&mut context, source)
-            .unwrap();
+        let button_key =
+            aimer_anteros::StableId128::from_bytes(context.slot_for(None, source).to_bytes());
+        let root = button.to_portable_node(&mut context, source).unwrap();
         let document = context.finish_document(root).unwrap();
 
         let callbacks = [
@@ -542,7 +560,11 @@ mod portable {
         let widget_source = source(1);
         let mut ctx = context();
         let expected_ids = [
-            ctx.callback_id_for(Widget::key(&button).as_ref(), widget_source, EVENT_BUTTON_PRESS),
+            ctx.callback_id_for(
+                Widget::key(&button).as_ref(),
+                widget_source,
+                EVENT_BUTTON_PRESS,
+            ),
             ctx.callback_id_for(
                 Widget::key(&button).as_ref(),
                 widget_source,
@@ -563,11 +585,8 @@ mod portable {
         let root = button.to_portable_node(&mut ctx, widget_source).unwrap();
         let document = ctx.finish_document(root).unwrap();
         let bytes = document.encode().unwrap();
-        let view = aimer_anteros::WidgetDocumentView::decode(
-            &bytes,
-            document.model_limits(),
-        )
-        .unwrap();
+        let view =
+            aimer_anteros::WidgetDocumentView::decode(&bytes, document.model_limits()).unwrap();
         {
             assert_eq!(view.root_node(), 1);
             let node = view.node(1).unwrap();
@@ -578,16 +597,21 @@ mod portable {
             let callbacks: Vec<_> = node.callbacks().collect();
             assert_eq!(callbacks.len(), 4);
             assert_eq!(
-                callbacks.iter().map(|binding| binding.callback_id()).collect::<Vec<_>>(),
-                expected_ids
-                    .map(|id| aimer_anteros::StableId128::from_bytes(id.to_bytes())),
+                callbacks
+                    .iter()
+                    .map(|binding| binding.callback_id())
+                    .collect::<Vec<_>>(),
+                expected_ids.map(|id| aimer_anteros::StableId128::from_bytes(id.to_bytes())),
             );
         }
         let registry = ctx.take_callback_registry();
         for id in expected_ids {
             registry.dispatch(id, &mut ctx).unwrap();
         }
-        assert_eq!(counts.iter().map(Cell::get).collect::<Vec<_>>(), vec![1, 1, 1, 1]);
+        assert_eq!(
+            counts.iter().map(Cell::get).collect::<Vec<_>>(),
+            vec![1, 1, 1, 1]
+        );
     }
 
     #[test]
@@ -651,3 +675,5 @@ mod portable {
 }
 
 mod retained;
+mod custom;
+mod no_decor;

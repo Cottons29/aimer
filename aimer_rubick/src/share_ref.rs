@@ -1,3 +1,4 @@
+use crate::{ErasedFrom, Rubick, Shared, UiAllocator};
 use std::borrow::Borrow;
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -5,7 +6,6 @@ use std::marker::PhantomData;
 use std::ops::Deref;
 use std::rc::Rc;
 use std::str::FromStr;
-use crate::{ErasedFrom, Rubick, Shared, UiAllocator};
 
 /// An owning, read-only projection into a [`Shared`] value.
 ///
@@ -28,7 +28,6 @@ where
     pub fn get(&self) -> &Field {
         (self.select)(&self.owner)
     }
-
 }
 
 trait SharedValue<T: ?Sized> {
@@ -50,7 +49,7 @@ where
 // SAFETY: The template carries the vtable for the concrete `SharedRef`, whose
 // `SharedValue<Field>` implementation returns a borrow tied to that owner.
 unsafe impl<Owner: ?Sized, Field, Select> ErasedFrom<SharedRef<Owner, Field, Select>>
-for dyn SharedValue<Field>
+    for dyn SharedValue<Field>
 where
     Owner: 'static,
     Field: ?Sized + 'static,
@@ -77,7 +76,6 @@ where
         (self.select)(self.source.get())
     }
 }
-
 
 // SAFETY: The template carries the vtable for `ProjectedShareRef`, whose
 // `SharedValue<U>` implementation returns a borrow tied to the source handle.
@@ -174,13 +172,12 @@ impl<T: ?Sized + 'static> RcProjectExt<T> for Rc<T> {
     }
 }
 
-
-
-
-
 impl<T: ?Sized + 'static> ShareRef<T> {
     #[inline]
-    pub(crate) fn from_projection<Owner: ?Sized, Select>(owner: Shared<Owner>, select: Select) -> Self
+    pub(crate) fn from_projection<Owner: ?Sized, Select>(
+        owner: Shared<Owner>,
+        select: Select,
+    ) -> Self
     where
         Owner: 'static,
         Select: for<'a> Fn(&'a Owner) -> &'a T + 'static,
@@ -219,7 +216,6 @@ impl<T: ?Sized + 'static> ShareRef<T> {
             value: ShareRefStorage::Static(value),
         }
     }
-
 
     /// Creates a shared handle from an existing [`Rc`].
     ///
@@ -350,7 +346,6 @@ impl<T> From<Shared<T>> for ShareRef<T> {
     }
 }
 
-
 impl FromStr for ShareRef<str> {
     type Err = std::convert::Infallible;
 
@@ -427,7 +422,6 @@ where
         self.get() == other.get()
     }
 }
-
 
 impl<T: ?Sized + 'static> From<&'static T> for ShareRef<T> {
     fn from(value: &'static T) -> Self {

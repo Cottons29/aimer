@@ -4,8 +4,8 @@ mod layout;
 mod platform;
 mod value;
 
-pub use controller::TextEditingController;
 pub(crate) use controller::ControllerAttachment;
+pub use controller::TextEditingController;
 pub(crate) use layout::{
     DisplayText, EditableGeometry, EditableGeometryCache, EditableGeometryKey, vertical_target,
     wrap_visual_lines,
@@ -17,9 +17,9 @@ pub use value::{TextEditingValue, TextRange};
 
 #[cfg(test)]
 mod tests {
+    use aimer_text::TextSelection;
     use std::cell::Cell;
     use std::rc::Rc;
-    use aimer_text::TextSelection;
 
     use super::{TextEditingController, TextEditingValue, TextRange};
 
@@ -57,8 +57,7 @@ mod tests {
         let first_listener = first_count.clone();
         let first = controller.attach(move |_, _| first_listener.set(first_listener.get() + 1));
         let second_listener = second_count.clone();
-        let _second =
-            controller.attach(move |_, _| second_listener.set(second_listener.get() + 1));
+        let _second = controller.attach(move |_, _| second_listener.set(second_listener.get() + 1));
 
         controller.set_text("b");
         controller.set_text("b");
@@ -143,7 +142,10 @@ mod tests {
 
         assert!(controller.undo());
         assert_eq!(controller.value(), original);
-        assert!(!controller.undo(), "preedit updates did not add history entries");
+        assert!(
+            !controller.undo(),
+            "preedit updates did not add history entries"
+        );
     }
 
     #[test]

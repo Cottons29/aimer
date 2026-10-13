@@ -71,8 +71,7 @@ pub fn custom_shape_example() -> impl Widget {
                     .width(360.0)
                     .height(250.0)
                     .padding(LayoutSpacing::all(Spacing::Px(22)))
-                    .child(
-                        Column::new().children(vec![
+                    .child(Column::new().children(vec![
                             Text::new("CustomShape")
                                 .text_style(
                                     TextStyle::new()
@@ -104,8 +103,7 @@ pub fn custom_shape_example() -> impl Widget {
                             .text_style(TextStyle::new().color(Colors::Black))
                             .wrapped()
                             .boxed(),
-                        ]),
-                    ),
+                        ])),
             )
     })
 }

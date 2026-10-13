@@ -9,21 +9,20 @@ mod resources;
 mod tessellation;
 
 pub use parser::{
-    SvgParsedDocument, SvgParsedPaints, SvgParseError, parse_svg, parse_svg_document,
+    SvgParseError, SvgParsedDocument, SvgParsedPaints, parse_svg, parse_svg_document,
 };
 
-pub use tessellation::{
-    tessellate_dashed_stroke, SvgGeometryCache, SvgMesh, SvgMeshStyle, SvgTessellationError,
-    SvgToleranceBucket,
-};
 pub use fit::{
     SvgAspectAlign, SvgAspectMode, SvgFitError, SvgFitPolicy, SvgPreserveAspectRatio, SvgViewBox,
 };
 pub use paint::{SvgGradient, SvgGradientStop, SvgGradientUnits, SvgPaint, SvgSpreadMethod};
 pub use resources::{
-    SvgBlendMode, SvgClipPath, SvgColorMatrix, SvgCompositeOperator, SvgFilter,
-    SvgFilterInput, SvgFilterPrimitive, SvgMask, SvgMaskType, SvgPattern,
-    SvgResourceGraph, SvgResourceUnits,
+    SvgBlendMode, SvgClipPath, SvgColorMatrix, SvgCompositeOperator, SvgFilter, SvgFilterInput,
+    SvgFilterPrimitive, SvgMask, SvgMaskType, SvgPattern, SvgResourceGraph, SvgResourceUnits,
+};
+pub use tessellation::{
+    SvgGeometryCache, SvgMesh, SvgMeshStyle, SvgTessellationError, SvgToleranceBucket,
+    tessellate_dashed_stroke,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

@@ -31,7 +31,13 @@ pub(crate) struct DebugOverlay {
 }
 
 impl DebugOverlay {
-    pub(crate) fn handle_key(&mut self, key: &Key, state: ElementState, repeat: bool, modified: bool) -> bool {
+    pub(crate) fn handle_key(
+        &mut self,
+        key: &Key,
+        state: ElementState,
+        repeat: bool,
+        modified: bool,
+    ) -> bool {
         if modified || *key != Key::Named(NamedKey::F3) {
             return false;
         }
@@ -74,7 +80,8 @@ impl DebugOverlay {
         cursor: aimer_attribute::Vec2d,
     ) -> Result<(), RenderTreeError> {
         if !self.visible {
-            if self.painted && let Some(node) = self.node
+            if self.painted
+                && let Some(node) = self.node
                 && let Ok(context) = tree.context(node)
             {
                 // Empty the old list and damage its footprint, restoring the
@@ -85,7 +92,15 @@ impl DebugOverlay {
             self.painted = false;
             return Ok(());
         }
-        self.prepare_at(tree, width, height, scale, allocator, cursor, AnimInstant::now())
+        self.prepare_at(
+            tree,
+            width,
+            height,
+            scale,
+            allocator,
+            cursor,
+            AnimInstant::now(),
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -108,9 +123,14 @@ impl DebugOverlay {
             return Ok(());
         }
         let metrics = (width, height, scale.to_bits());
-        let node_exists = self.node.is_some_and(|node| tree.element_bounds(node).is_ok());
-        if node_exists && self.metrics == Some(metrics)
-            && self.refreshed.is_some_and(|last| now.duration_since(last) < REFRESH_INTERVAL)
+        let node_exists = self
+            .node
+            .is_some_and(|node| tree.element_bounds(node).is_ok());
+        if node_exists
+            && self.metrics == Some(metrics)
+            && self
+                .refreshed
+                .is_some_and(|last| now.duration_since(last) < REFRESH_INTERVAL)
         {
             return Ok(());
         }
@@ -119,7 +139,9 @@ impl DebugOverlay {
             let elapsed = now.duration_since(started);
             if elapsed >= REFRESH_INTERVAL {
                 self.fps = Some(self.frames as f64 / elapsed.as_secs_f64());
-                self.average_ui_ms = if self.frames == 0 { 0.0 } else {
+                self.average_ui_ms = if self.frames == 0 {
+                    0.0
+                } else {
                     self.ui_time.as_secs_f64() * 1000.0 / self.frames as f64
                 };
                 self.frames = 0;
@@ -129,7 +151,12 @@ impl DebugOverlay {
         }
 
         let wide = logical_width >= 760.0;
-        let bounds = Rect::new(0.0, 0.0, logical_width, logical_height.min(if wide { 216.0 } else { 328.0 }));
+        let bounds = Rect::new(
+            0.0,
+            0.0,
+            logical_width,
+            logical_height.min(if wide { 216.0 } else { 328.0 }),
+        );
         // A widget-tree synchronization can remove this extra root. Recreate
         // it after synchronization so it always paints after app and modals,
         // using identities from the same tree as the renderer's node caches.
@@ -142,9 +169,14 @@ impl DebugOverlay {
             node
         };
         tree.set_bounds(node, bounds)?;
-        tree.set_clip(node, Some(Rect::new(0.0, 0.0, logical_width, logical_height)))?;
+        tree.set_clip(
+            node,
+            Some(Rect::new(0.0, 0.0, logical_width, logical_height)),
+        )?;
 
-        let fps = self.fps.map_or_else(|| "sampling".to_string(), |fps| format!("{fps:.1}"));
+        let fps = self
+            .fps
+            .map_or_else(|| "sampling".to_string(), |fps| format!("{fps:.1}"));
         let ui_time = if self.fps.is_some() {
             format!("{:.2} ms", self.average_ui_ms)
         } else {
@@ -155,7 +187,9 @@ impl DebugOverlay {
         } else {
             format!("{:.2} MiB", allocator.limit_bytes() as f64 / 1_048_576.0)
         };
-        let cursor = if Rect::new(0.0, 0.0, logical_width, logical_height).contains_point(cursor.x, cursor.y) {
+        let cursor = if Rect::new(0.0, 0.0, logical_width, logical_height)
+            .contains_point(cursor.x, cursor.y)
+        {
             format!("{:.1}, {:.1}", cursor.x, cursor.y)
         } else {
             "outside window".to_string()
@@ -165,22 +199,40 @@ impl DebugOverlay {
             allocator.committed_bytes() as f64 / 1_048_576.0,
         );
         let backend = std::any::type_name::<crate::render_ctx::AimerRenderContext>()
-            .rsplit("::").next().unwrap_or("unknown");
+            .rsplit("::")
+            .next()
+            .unwrap_or("unknown");
         let system = format!(
             "System\n{} / {}\nRenderer: {backend}\nWindow: {width} x {height} px\nScale: {scale:.2}x",
-            std::env::consts::OS, std::env::consts::ARCH,
+            std::env::consts::OS,
+            std::env::consts::ARCH,
         );
         let panel_width = (logical_width - 16.0).clamp(0.0, 360.0);
         let mut commands = Vec::with_capacity(8);
-        panel(&mut commands, Rect::new(8.0, 8.0, panel_width, 104.0), performance);
-        panel(&mut commands, Rect::new(
-            if wide { logical_width - panel_width - 8.0 } else { 8.0 },
-            if wide { 8.0 } else { 120.0 }, panel_width, 104.0,
-        ), system);
+        panel(
+            &mut commands,
+            Rect::new(8.0, 8.0, panel_width, 104.0),
+            performance,
+        );
+        panel(
+            &mut commands,
+            Rect::new(
+                if wide {
+                    logical_width - panel_width - 8.0
+                } else {
+                    8.0
+                },
+                if wide { 8.0 } else { 120.0 },
+                panel_width,
+                104.0,
+            ),
+            system,
+        );
         #[cfg(feature = "frame-stats")]
         let timing = {
             let stats = crate::frame_stats::frame_breakdown();
-            format!("Build / encode / present (ms)\n{:.2} / {:.2} / {:.2}",
+            format!(
+                "Build / encode / present (ms)\n{:.2} / {:.2} / {:.2}",
                 stats.build.average().as_secs_f64() * 1000.0,
                 stats.encode.average().as_secs_f64() * 1000.0,
                 stats.present.average().as_secs_f64() * 1000.0,
@@ -188,8 +240,11 @@ impl DebugOverlay {
         };
         #[cfg(not(feature = "frame-stats"))]
         let timing = "Phase timings: enable frame-stats".to_string();
-        panel(&mut commands, Rect::new(8.0, if wide { 120.0 } else { 232.0 }, panel_width, 88.0),
-            format!("F3: hide diagnostics\n{timing}\nUpdates when the app draws"));
+        panel(
+            &mut commands,
+            Rect::new(8.0, if wide { 120.0 } else { 232.0 }, panel_width, 88.0),
+            format!("F3: hide diagnostics\n{timing}\nUpdates when the app draws"),
+        );
         tree.context(node)?.begin_recording()?.commit(commands)?;
         self.metrics = Some(metrics);
         self.refreshed = Some(now);
@@ -247,8 +302,18 @@ mod tests {
     #[test]
     fn other_keys_and_modified_f3_are_left_to_the_application() {
         let mut overlay = DebugOverlay::default();
-        assert!(!overlay.handle_key(&Key::Named(NamedKey::F2), ElementState::Pressed, false, false));
-        assert!(!overlay.handle_key(&Key::Named(NamedKey::F3), ElementState::Pressed, false, true));
+        assert!(!overlay.handle_key(
+            &Key::Named(NamedKey::F2),
+            ElementState::Pressed,
+            false,
+            false
+        ));
+        assert!(!overlay.handle_key(
+            &Key::Named(NamedKey::F3),
+            ElementState::Pressed,
+            false,
+            true
+        ));
         assert!(!overlay.visible);
     }
 
@@ -257,20 +322,53 @@ mod tests {
         let tree = RenderTree::new();
         let memory = aimer_rubick::UiMemory::new(8 * 1_048_576);
         let mut overlay = DebugOverlay::default();
-        overlay.handle_key(&Key::Named(NamedKey::F3), ElementState::Pressed, false, false);
+        overlay.handle_key(
+            &Key::Named(NamedKey::F3),
+            ElementState::Pressed,
+            false,
+            false,
+        );
         let now = AnimInstant::now();
-        overlay.prepare_at(&tree, 1024, 640, 1.0, &memory.allocator(), Default::default(), now).unwrap();
+        overlay
+            .prepare_at(
+                &tree,
+                1024,
+                640,
+                1.0,
+                &memory.allocator(),
+                Default::default(),
+                now,
+            )
+            .unwrap();
         let node = overlay.node.unwrap();
         let revision = tree.draw_list_revision(node).unwrap();
         tree.take_damage();
         overlay.record_draw_at(now, Duration::from_millis(3));
         overlay.record_draw_at(now + Duration::from_millis(100), Duration::from_millis(5));
-        overlay.prepare_at(&tree, 1024, 640, 1.0, &memory.allocator(), Default::default(),
-            now + Duration::from_millis(200)).unwrap();
+        overlay
+            .prepare_at(
+                &tree,
+                1024,
+                640,
+                1.0,
+                &memory.allocator(),
+                Default::default(),
+                now + Duration::from_millis(200),
+            )
+            .unwrap();
         assert_eq!(tree.draw_list_revision(node).unwrap(), revision);
         assert!(tree.take_damage().is_empty());
-        overlay.prepare_at(&tree, 1024, 640, 1.0, &memory.allocator(), Default::default(),
-            now + REFRESH_INTERVAL).unwrap();
+        overlay
+            .prepare_at(
+                &tree,
+                1024,
+                640,
+                1.0,
+                &memory.allocator(),
+                Default::default(),
+                now + REFRESH_INTERVAL,
+            )
+            .unwrap();
         assert_eq!(overlay.fps, Some(8.0));
         assert!((overlay.average_ui_ms - 4.0).abs() < 1e-9);
         assert!(tree.draw_list_revision(node).unwrap() > revision);
@@ -284,18 +382,58 @@ mod tests {
         let mut overlay = DebugOverlay::default();
         let key = Key::Named(NamedKey::F3);
         overlay.handle_key(&key, ElementState::Pressed, false, false);
-        overlay.prepare(&tree, 1024, 640, 1.0, &memory.allocator(), Default::default()).unwrap();
+        overlay
+            .prepare(
+                &tree,
+                1024,
+                640,
+                1.0,
+                &memory.allocator(),
+                Default::default(),
+            )
+            .unwrap();
         let node = overlay.node.unwrap();
         tree.take_damage();
         overlay.handle_key(&key, ElementState::Pressed, false, false);
-        overlay.prepare(&tree, 1024, 640, 1.0, &memory.allocator(), Default::default()).unwrap();
+        overlay
+            .prepare(
+                &tree,
+                1024,
+                640,
+                1.0,
+                &memory.allocator(),
+                Default::default(),
+            )
+            .unwrap();
         assert!(tree.draw_list_snapshot(node).unwrap().commands.is_empty());
         assert!(!tree.take_damage().is_empty());
-        overlay.prepare(&tree, 1024, 640, 1.0, &memory.allocator(), Default::default()).unwrap();
+        overlay
+            .prepare(
+                &tree,
+                1024,
+                640,
+                1.0,
+                &memory.allocator(),
+                Default::default(),
+            )
+            .unwrap();
         assert!(tree.take_damage().is_empty());
         overlay.handle_key(&key, ElementState::Pressed, false, false);
-        overlay.prepare(&tree, 1024, 640, 1.0, &memory.allocator(), Default::default()).unwrap();
-        assert_eq!(overlay.node, Some(node), "repeated toggles must not accumulate empty roots");
+        overlay
+            .prepare(
+                &tree,
+                1024,
+                640,
+                1.0,
+                &memory.allocator(),
+                Default::default(),
+            )
+            .unwrap();
+        assert_eq!(
+            overlay.node,
+            Some(node),
+            "repeated toggles must not accumulate empty roots"
+        );
     }
 
     #[test]
@@ -303,12 +441,31 @@ mod tests {
         let tree = RenderTree::new();
         let memory = aimer_rubick::UiMemory::new(8 * 1_048_576);
         let mut overlay = DebugOverlay::default();
-        overlay.handle_key(&Key::Named(NamedKey::F3), ElementState::Pressed, false, false);
-        for (width, height, scale) in [(0, 640, 1.0), (1024, 0, 1.0), (1024, 640, 0.0),
-            (1024, 640, f32::NAN), (1024, 640, f32::INFINITY), (1024, 640, -1.0),
-            (1024, 640, f32::MIN_POSITIVE)]
-        {
-            overlay.prepare(&tree, width, height, scale, &memory.allocator(), Default::default()).unwrap();
+        overlay.handle_key(
+            &Key::Named(NamedKey::F3),
+            ElementState::Pressed,
+            false,
+            false,
+        );
+        for (width, height, scale) in [
+            (0, 640, 1.0),
+            (1024, 0, 1.0),
+            (1024, 640, 0.0),
+            (1024, 640, f32::NAN),
+            (1024, 640, f32::INFINITY),
+            (1024, 640, -1.0),
+            (1024, 640, f32::MIN_POSITIVE),
+        ] {
+            overlay
+                .prepare(
+                    &tree,
+                    width,
+                    height,
+                    scale,
+                    &memory.allocator(),
+                    Default::default(),
+                )
+                .unwrap();
             assert!(overlay.node.is_none());
         }
     }
@@ -318,13 +475,31 @@ mod tests {
         let tree = RenderTree::new();
         let memory = aimer_rubick::UiMemory::new(usize::MAX);
         let mut overlay = DebugOverlay::default();
-        overlay.handle_key(&Key::Named(NamedKey::F3), ElementState::Pressed, false, false);
-        overlay.prepare(&tree, 1024, 640, 1.0, &memory.allocator(), Default::default()).unwrap();
+        overlay.handle_key(
+            &Key::Named(NamedKey::F3),
+            ElementState::Pressed,
+            false,
+            false,
+        );
+        overlay
+            .prepare(
+                &tree,
+                1024,
+                640,
+                1.0,
+                &memory.allocator(),
+                Default::default(),
+            )
+            .unwrap();
         let snapshot = tree.draw_list_snapshot(overlay.node.unwrap()).unwrap();
-        let text = snapshot.commands.iter().find_map(|command| match command {
-            DrawCommand::DrawText { text, .. } => Some(text.as_ref()),
-            _ => None,
-        }).unwrap();
+        let text = snapshot
+            .commands
+            .iter()
+            .find_map(|command| match command {
+                DrawCommand::DrawText { text, .. } => Some(text.as_ref()),
+                _ => None,
+            })
+            .unwrap();
         assert!(text.contains("UI draw: sampling"));
         assert!(text.contains("unlimited"));
     }

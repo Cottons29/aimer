@@ -126,9 +126,9 @@ impl ReloadResult {
                     .len()
                     .try_into()
                     .map_err(|_| ProtocolError::InvalidFrame("reload diagnostic is too long"))?;
-                let capacity = 20_usize.checked_add(diagnostic.len()).ok_or(
-                    ProtocolError::InvalidFrame("reload result length overflow"),
-                )?;
+                let capacity = 20_usize
+                    .checked_add(diagnostic.len())
+                    .ok_or(ProtocolError::InvalidFrame("reload result length overflow"))?;
                 let mut bytes = Vec::with_capacity(capacity);
                 bytes.extend_from_slice(&REJECTED.to_le_bytes());
                 bytes.extend_from_slice(&(*stage as u16).to_le_bytes());

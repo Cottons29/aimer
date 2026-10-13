@@ -4,16 +4,16 @@ mod erase;
 mod operations;
 mod page_backend;
 mod pool;
-mod storage;
-mod ui_memory;
-pub mod shared;
-pub mod test;
 pub mod share_ref;
+pub mod shared;
+mod storage;
+pub mod test;
+mod ui_memory;
 
-pub use allocator_api2;
+pub use crate::share_ref::{RcProjectExt, ShareRef};
+pub use crate::shared::{Shared, Weak};
 pub use crate::ui_memory::{UiAllocator, UiMemory};
-pub use crate::shared::{ Shared, Weak};
-pub use crate::share_ref::{ShareRef, RcProjectExt};
+pub use allocator_api2;
 
 use std::alloc::{Layout, handle_alloc_error};
 use std::marker::PhantomData;
@@ -483,7 +483,9 @@ impl<T: ?Sized + 'static, const WORDS: usize> Rubick<T, WORDS> {
             // Both layouts share a pooled class (whose payload offset is 16)
             // or are identical unpooled layouts, so the block can be reused.
             pool::heap_data_pointer(
-                previous_base.expect("heap reuse requires the previous block").as_ptr(),
+                previous_base
+                    .expect("heap reuse requires the previous block")
+                    .as_ptr(),
                 operations.heap_data_offset,
             )
         } else {

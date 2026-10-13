@@ -92,23 +92,22 @@ pub fn set_cursor(cursor: impl Into<Cursor>) -> bool {
 
     #[cfg(not(aimer_portable_guest))]
     {
-    // An application without a platform window answers for itself, and says so
-    // per thread, so its request never reaches a window belonging to somebody
-    // else.
-    if let Some(handler) = thread_cursor_handler() {
-        handler(cursor.into());
-        return true;
-    }
-
-    match aimer_events::window::get_window() {
-        Some(window) => {
-            window.set_cursor(cursor.into());
-            true
+        // An application without a platform window answers for itself, and says so
+        // per thread, so its request never reaches a window belonging to somebody
+        // else.
+        if let Some(handler) = thread_cursor_handler() {
+            handler(cursor.into());
+            return true;
         }
-        None => false,
-    }
-    }
 
+        match aimer_events::window::get_window() {
+            Some(window) => {
+                window.set_cursor(cursor.into());
+                true
+            }
+            None => false,
+        }
+    }
 }
 
 /// Ask the window to show the platform's default cursor again.

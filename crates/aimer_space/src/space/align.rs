@@ -165,7 +165,13 @@ impl RawAlign {
                 .map(|(x, y, width, height)| (x - offset_x, y - offset_y, width, height)),
             ..ctx.clone()
         };
-        Some((Vec2d { x: offset_x, y: offset_y }, child_ctx))
+        Some((
+            Vec2d {
+                x: offset_x,
+                y: offset_y,
+            },
+            child_ctx,
+        ))
     }
 }
 
@@ -279,7 +285,6 @@ impl Drawable for RawAlign {
         self.child.sync_paint_geometry(&child_ctx);
         ctx.canvas.restore();
     }
-
 }
 
 impl LayoutElement for RawAlign {

@@ -11,8 +11,8 @@ use aimer::macros::widget;
 use aimer::router::{Navigator, Outlet, Router, Shell};
 use aimer::style::{AnimatedTheme, Theme, ThemeData};
 use aimer::{
-    router, AimerApp, AnyWidget, BuildContext, Container, Provider, ProviderContext,
-    StatelessWidget, Text, Widget,
+    AimerApp, AnyWidget, BuildContext, Container, Provider, ProviderContext, StatelessWidget, Text,
+    Widget, router,
 };
 
 #[derive(Clone, Copy)]

@@ -8,17 +8,15 @@ use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R16_UINT;
 use windows::core::{IUnknown, Interface};
 
 use crate::backend::{
-    GpuRenderPass, IndexFormat, LoadOp, RenderPassDescriptor,
-    TextureAspect, TexelCopyBufferInfo, TexelCopyTextureInfo,
+    GpuRenderPass, IndexFormat, LoadOp, RenderPassDescriptor, TexelCopyBufferInfo,
+    TexelCopyTextureInfo, TextureAspect,
 };
 
-use super::pipeline::{
-    BoundResource, Dx12BindGroup, Dx12RenderPipeline, RootBindingKind,
-};
+use super::pipeline::{BoundResource, Dx12BindGroup, Dx12RenderPipeline, RootBindingKind};
 use super::resource::{DescriptorLease, Dx12Buffer, Dx12Texture};
 use super::{
-    BackendShared, Dx12Backend, PendingBufferUpload, PendingTextureUpload, PendingUpload,
-    RetiredBatch, COPY_ROW_ALIGNMENT,
+    BackendShared, COPY_ROW_ALIGNMENT, Dx12Backend, PendingBufferUpload, PendingTextureUpload,
+    PendingUpload, RetiredBatch,
 };
 
 #[doc(hidden)]
@@ -65,16 +63,14 @@ impl Dx12Backend {
         }
         .expect("create D3D12 command allocator");
         let list = unsafe {
-            self.shared.device.CreateCommandList::<
-                _,
-                _,
-                ID3D12GraphicsCommandList,
-            >(
-                0,
-                D3D12_COMMAND_LIST_TYPE_DIRECT,
-                &allocator,
-                None::<&ID3D12PipelineState>,
-            )
+            self.shared
+                .device
+                .CreateCommandList::<_, _, ID3D12GraphicsCommandList>(
+                    0,
+                    D3D12_COMMAND_LIST_TYPE_DIRECT,
+                    &allocator,
+                    None::<&ID3D12PipelineState>,
+                )
         }
         .expect("create D3D12 graphics command list");
         let _ = label;
@@ -178,8 +174,10 @@ impl Dx12Backend {
         let image_pitch = row_pitch
             .checked_mul(src.layout.rows_per_image.unwrap_or(extent.height))
             .expect("D3D12 texture copy image pitch overflowed");
-        let buffer_state = transition_buffer(&encoder.list, src.buffer, D3D12_RESOURCE_STATE_COPY_SOURCE);
-        let texture_state = transition_texture(&encoder.list, dst.texture, D3D12_RESOURCE_STATE_COPY_DEST);
+        let buffer_state =
+            transition_buffer(&encoder.list, src.buffer, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        let texture_state =
+            transition_texture(&encoder.list, dst.texture, D3D12_RESOURCE_STATE_COPY_DEST);
         for layer in 0..extent.depth_or_array_layers {
             let source = placed_buffer_location(
                 &src.buffer.resource,
@@ -221,8 +219,10 @@ impl Dx12Backend {
     ) {
         assert_eq!(src.aspect, TextureAspect::All);
         assert_eq!(dst.aspect, TextureAspect::All);
-        let before_src = transition_texture(&encoder.list, src.texture, D3D12_RESOURCE_STATE_COPY_SOURCE);
-        let before_dst = transition_texture(&encoder.list, dst.texture, D3D12_RESOURCE_STATE_COPY_DEST);
+        let before_src =
+            transition_texture(&encoder.list, src.texture, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        let before_dst =
+            transition_texture(&encoder.list, dst.texture, D3D12_RESOURCE_STATE_COPY_DEST);
         for layer in 0..extent.depth_or_array_layers {
             let source = subresource_location(
                 &src.texture.resource,
@@ -274,8 +274,10 @@ impl Dx12Backend {
         let image_pitch = row_pitch
             .checked_mul(dst.layout.rows_per_image.unwrap_or(extent.height))
             .expect("D3D12 texture readback image pitch overflowed");
-        let texture_state = transition_texture(&encoder.list, src.texture, D3D12_RESOURCE_STATE_COPY_SOURCE);
-        let buffer_state = transition_buffer(&encoder.list, dst.buffer, D3D12_RESOURCE_STATE_COPY_DEST);
+        let texture_state =
+            transition_texture(&encoder.list, src.texture, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        let buffer_state =
+            transition_buffer(&encoder.list, dst.buffer, D3D12_RESOURCE_STATE_COPY_DEST);
         for layer in 0..extent.depth_or_array_layers {
             let source = subresource_location(
                 &src.texture.resource,
@@ -336,10 +338,7 @@ impl Dx12CommandEncoder {
             let backend = Dx12Backend {
                 shared: self.shared.clone(),
             };
-            Some(backend.make_command_encoder_with_uploads(
-                "D3D12 queued buffer uploads",
-                uploads,
-            ))
+            Some(backend.make_command_encoder_with_uploads("D3D12 queued buffer uploads", uploads))
         };
 
         let mut command_lists = Vec::with_capacity(if upload_encoder.is_some() { 2 } else { 1 });
@@ -366,12 +365,18 @@ impl Dx12CommandEncoder {
             .lock()
             .expect("D3D12 submission mutex is not poisoned");
         unsafe { shared.queue.ExecuteCommandLists(&command_lists) };
-        let fence_value = shared.next_fence.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let fence_value = shared
+            .next_fence
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         unsafe {
-            shared.queue.Signal(&shared.fence, fence_value)
+            shared
+                .queue
+                .Signal(&shared.fence, fence_value)
                 .expect("signal D3D12 submission fence");
         }
-        shared.last_fence.store(fence_value, std::sync::atomic::Ordering::Release);
+        shared
+            .last_fence
+            .store(fence_value, std::sync::atomic::Ordering::Release);
         shared
             .retired
             .lock()
@@ -406,7 +411,9 @@ impl GpuRenderPass<Dx12Backend> for Dx12RenderPass<'_> {
     fn set_pipeline(&mut self, pipeline: &Dx12RenderPipeline) {
         self.pipeline = Some(pipeline.clone());
         unsafe {
-            self.encoder.list.SetGraphicsRootSignature(&pipeline.layout.root_signature);
+            self.encoder
+                .list
+                .SetGraphicsRootSignature(&pipeline.layout.root_signature);
             self.encoder.list.SetPipelineState(&pipeline.state);
             self.encoder.list.IASetPrimitiveTopology(pipeline.topology);
             let heaps = [
@@ -442,7 +449,14 @@ impl GpuRenderPass<Dx12Backend> for Dx12RenderPass<'_> {
                 .map(|(_, resource)| resource)
                 .unwrap_or_else(|| panic!("D3D12 bind group is missing binding {}", plan.binding));
             match (plan.kind, resource) {
-                (RootBindingKind::Buffer(ty), BoundResource::Buffer { buffer, offset, size }) => {
+                (
+                    RootBindingKind::Buffer(ty),
+                    BoundResource::Buffer {
+                        buffer,
+                        offset,
+                        size,
+                    },
+                ) => {
                     let dynamic_offset = plan
                         .dynamic_offset_index
                         .and_then(|slot| dynamic_offsets.get(slot))
@@ -453,23 +467,42 @@ impl GpuRenderPass<Dx12Backend> for Dx12RenderPass<'_> {
                         + dynamic_offset;
                     unsafe {
                         match ty {
-                            crate::backend::BufferBindingType::Uniform => self.encoder.list.SetGraphicsRootConstantBufferView(plan.root_index, address),
-                            crate::backend::BufferBindingType::ReadOnlyStorage => self.encoder.list.SetGraphicsRootShaderResourceView(plan.root_index, address),
-                            crate::backend::BufferBindingType::Storage => self.encoder.list.SetGraphicsRootUnorderedAccessView(plan.root_index, address),
+                            crate::backend::BufferBindingType::Uniform => self
+                                .encoder
+                                .list
+                                .SetGraphicsRootConstantBufferView(plan.root_index, address),
+                            crate::backend::BufferBindingType::ReadOnlyStorage => self
+                                .encoder
+                                .list
+                                .SetGraphicsRootShaderResourceView(plan.root_index, address),
+                            crate::backend::BufferBindingType::Storage => self
+                                .encoder
+                                .list
+                                .SetGraphicsRootUnorderedAccessView(plan.root_index, address),
                         }
                     }
                     assert!(*size <= buffer.size.saturating_sub(*offset + dynamic_offset));
                     let required_state = match ty {
-                        crate::backend::BufferBindingType::Uniform => D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER,
-                        crate::backend::BufferBindingType::ReadOnlyStorage => D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
-                        crate::backend::BufferBindingType::Storage => D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                        crate::backend::BufferBindingType::Uniform => {
+                            D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER
+                        }
+                        crate::backend::BufferBindingType::ReadOnlyStorage => {
+                            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE
+                        }
+                        crate::backend::BufferBindingType::Storage => {
+                            D3D12_RESOURCE_STATE_UNORDERED_ACCESS
+                        }
                     };
                     transition_buffer(&self.encoder.list, buffer, required_state);
                     self.encoder.resources.push(buffer.resource.clone());
                 }
                 (RootBindingKind::Texture, BoundResource::Texture { view })
                 | (RootBindingKind::StorageTexture(true), BoundResource::Texture { view }) => {
-                    transition_texture(&self.encoder.list, &view.texture, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                    transition_texture(
+                        &self.encoder.list,
+                        &view.texture,
+                        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+                    );
                     let descriptor = view.srv.as_ref().expect("texture has no D3D12 SRV");
                     unsafe {
                         self.encoder.list.SetGraphicsRootDescriptorTable(
@@ -481,7 +514,11 @@ impl GpuRenderPass<Dx12Backend> for Dx12RenderPass<'_> {
                     self.encoder.descriptors.push(descriptor.clone());
                 }
                 (RootBindingKind::StorageTexture(false), BoundResource::Texture { view }) => {
-                    transition_texture(&self.encoder.list, &view.texture, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                    transition_texture(
+                        &self.encoder.list,
+                        &view.texture,
+                        D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                    );
                     let descriptor = view.uav.as_ref().expect("texture has no D3D12 UAV");
                     unsafe {
                         self.encoder.list.SetGraphicsRootDescriptorTable(
@@ -501,7 +538,10 @@ impl GpuRenderPass<Dx12Backend> for Dx12RenderPass<'_> {
                     }
                     self.encoder.descriptors.push(sampler.descriptor.clone());
                 }
-                _ => panic!("D3D12 bind group binding {} does not match the pipeline", plan.binding),
+                _ => panic!(
+                    "D3D12 bind group binding {} does not match the pipeline",
+                    plan.binding
+                ),
             }
         }
     }
@@ -512,20 +552,30 @@ impl GpuRenderPass<Dx12Backend> for Dx12RenderPass<'_> {
             .vertex_strides
             .get(slot as usize)
             .unwrap_or_else(|| panic!("D3D12 vertex buffer slot {slot} is not in the pipeline"));
-        assert!(offset < buffer.size, "D3D12 vertex buffer offset exceeds its allocation");
+        assert!(
+            offset < buffer.size,
+            "D3D12 vertex buffer offset exceeds its allocation"
+        );
         let view = D3D12_VERTEX_BUFFER_VIEW {
             BufferLocation: unsafe { buffer.resource.GetGPUVirtualAddress() } + offset,
             SizeInBytes: u32::try_from(buffer.size - offset)
                 .expect("D3D12 vertex buffers must fit within 4 GiB"),
             StrideInBytes: stride,
         };
-        transition_buffer(&self.encoder.list, buffer, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+        transition_buffer(
+            &self.encoder.list,
+            buffer,
+            D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER,
+        );
         unsafe { self.encoder.list.IASetVertexBuffers(slot, Some(&[view])) };
         self.encoder.resources.push(buffer.resource.clone());
     }
 
     fn set_index_buffer(&mut self, buffer: &Dx12Buffer, format: IndexFormat, offset: u64) {
-        assert!(offset < buffer.size, "D3D12 index buffer offset exceeds its allocation");
+        assert!(
+            offset < buffer.size,
+            "D3D12 index buffer offset exceeds its allocation"
+        );
         let view = D3D12_INDEX_BUFFER_VIEW {
             BufferLocation: unsafe { buffer.resource.GetGPUVirtualAddress() } + offset,
             SizeInBytes: u32::try_from(buffer.size - offset)
@@ -535,7 +585,11 @@ impl GpuRenderPass<Dx12Backend> for Dx12RenderPass<'_> {
                 IndexFormat::Uint32 => windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R32_UINT,
             },
         };
-        transition_buffer(&self.encoder.list, buffer, D3D12_RESOURCE_STATE_INDEX_BUFFER);
+        transition_buffer(
+            &self.encoder.list,
+            buffer,
+            D3D12_RESOURCE_STATE_INDEX_BUFFER,
+        );
         unsafe { self.encoder.list.IASetIndexBuffer(Some(&view)) };
         self.index_buffer = Some((buffer.clone(), format, offset));
         self.encoder.resources.push(buffer.resource.clone());
@@ -565,7 +619,10 @@ impl GpuRenderPass<Dx12Backend> for Dx12RenderPass<'_> {
     }
 
     fn draw_indexed(&mut self, indices: Range<u32>, base_vertex: i32, instances: Range<u32>) {
-        assert!(self.index_buffer.is_some(), "set_index_buffer before draw_indexed");
+        assert!(
+            self.index_buffer.is_some(),
+            "set_index_buffer before draw_indexed"
+        );
         unsafe {
             self.encoder.list.DrawIndexedInstanced(
                 indices.end - indices.start,
@@ -608,7 +665,11 @@ fn encode_upload(encoder: &mut Dx12CommandEncoder, upload: PendingUpload) {
                     size,
                 );
             }
-            transition_buffer(&encoder.list, &destination, preferred_buffer_state(&destination.usage));
+            transition_buffer(
+                &encoder.list,
+                &destination,
+                preferred_buffer_state(&destination.usage),
+            );
             encoder.resources.push(source);
             encoder.resources.push(destination.resource.clone());
         }
@@ -636,14 +697,9 @@ fn encode_upload(encoder: &mut Dx12CommandEncoder, upload: PendingUpload) {
                     texture_subresource(&destination, mip_level, origin.z + layer),
                 );
                 unsafe {
-                    encoder.list.CopyTextureRegion(
-                        &dst,
-                        origin.x,
-                        origin.y,
-                        0,
-                        &src,
-                        None,
-                    );
+                    encoder
+                        .list
+                        .CopyTextureRegion(&dst, origin.x, origin.y, 0, &src, None);
                 }
                 drop_copy_location(src);
                 drop_copy_location(dst);
@@ -712,7 +768,9 @@ fn transition_resource(
     state: &std::sync::Mutex<D3D12_RESOURCE_STATES>,
     target: D3D12_RESOURCE_STATES,
 ) -> D3D12_RESOURCE_STATES {
-    let mut state = state.lock().expect("D3D12 resource state mutex is not poisoned");
+    let mut state = state
+        .lock()
+        .expect("D3D12 resource state mutex is not poisoned");
     let before = *state;
     if before != target {
         let transition = D3D12_RESOURCE_TRANSITION_BARRIER {

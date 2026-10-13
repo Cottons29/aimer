@@ -18,12 +18,14 @@ use std::hint::black_box;
 use std::rc::Rc;
 use std::time::Instant;
 
-use aimer::{AnyElement, BuildContext, Column, ResolvedSize, State, StateUpdater,
-    StatefulElement, StatefulWidget, SizedBox, Vec2d, Widget};
 use aimer::input::button::Button;
+use aimer::quiver::winit::dpi::PhysicalSize;
+use aimer::{
+    AnyElement, BuildContext, Column, ResolvedSize, SizedBox, State, StateUpdater, StatefulElement,
+    StatefulWidget, Vec2d, Widget,
+};
 use aimer_canvas::{FrameCanvas, InnerCanvas};
 use aimer_events::window::{restore_thread_redraw_requester, set_thread_redraw_requester};
-use aimer::quiver::winit::dpi::PhysicalSize;
 use aimer_widget::base::WindowHandle;
 
 const ROUNDS: usize = 7;
@@ -166,7 +168,11 @@ impl State<ProfileWidget> for ProfileState {
 fn make_element(
     callback_count: usize,
     runtime: &tokio::runtime::Runtime,
-) -> (BuildContext<'static>, StatefulElement, StateUpdater<ProfileState>) {
+) -> (
+    BuildContext<'static>,
+    StatefulElement,
+    StateUpdater<ProfileState>,
+) {
     let context = context(runtime);
     let (element, updater) = StatefulElement::new_with_name(
         ProfileWidget { callback_count },
@@ -230,9 +236,9 @@ fn measure_handle_copy(runtime: &tokio::runtime::Runtime) {
             current = black_box(current);
         }
         black_box(current);
-        samples.microseconds_per_operation.push(
-            start.elapsed().as_secs_f64() * 1e6 / COPY_ITERATIONS as f64,
-        );
+        samples
+            .microseconds_per_operation
+            .push(start.elapsed().as_secs_f64() * 1e6 / COPY_ITERATIONS as f64);
         samples.allocations_per_operation.push(0.0);
     }
     black_box(element);
@@ -241,10 +247,7 @@ fn measure_handle_copy(runtime: &tokio::runtime::Runtime) {
     let p95 = percentile(&samples.microseconds_per_operation, 0.95) * 1_000.0;
     println!(
         "{:<43} p50 {:>9.2} ns/op  p95 {:>9.2} ns/op  allocs/op {:>7.2}",
-        "StateUpdater copy (one million moves)",
-        p50,
-        p95,
-        0.0
+        "StateUpdater copy (one million moves)", p50, p95, 0.0
     );
 }
 
@@ -275,9 +278,9 @@ fn measure_construction(runtime: &tokio::runtime::Runtime) {
         samples
             .microseconds_per_operation
             .push(elapsed / CONSTRUCTIONS_PER_ROUND as f64);
-        samples.allocations_per_operation.push(
-            allocations() as f64 / CONSTRUCTIONS_PER_ROUND as f64,
-        );
+        samples
+            .allocations_per_operation
+            .push(allocations() as f64 / CONSTRUCTIONS_PER_ROUND as f64);
     }
     samples.print("StatefulElement construction (32 callbacks)", false);
 }
@@ -318,9 +321,9 @@ fn measure_queue_and_rebuild(callback_count: usize, runtime: &tokio::runtime::Ru
         samples
             .allocations_per_operation
             .push(allocations() as f64 / operations);
-        samples.frame_requests_per_batch.push(
-            requests.get() as f64 / MEASURED_BATCHES as f64,
-        );
+        samples
+            .frame_requests_per_batch
+            .push(requests.get() as f64 / MEASURED_BATCHES as f64);
         black_box(element);
     }
     let label = if callback_count == 0 {

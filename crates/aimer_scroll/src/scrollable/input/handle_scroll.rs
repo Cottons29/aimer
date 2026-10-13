@@ -47,9 +47,7 @@ fn pending_content_drag_wins(
     let dx = current.x - start.x;
     let dy = current.y - start.y;
     match axis {
-        ScrollAxis::Vertical => {
-            dy.abs() > threshold && dy.abs() > dx.abs() * AXIS_DOMINANCE_RATIO
-        }
+        ScrollAxis::Vertical => dy.abs() > threshold && dy.abs() > dx.abs() * AXIS_DOMINANCE_RATIO,
         ScrollAxis::Horizontal => {
             dx.abs() > threshold && dx.abs() > dy.abs() * AXIS_DOMINANCE_RATIO
         }
@@ -201,8 +199,12 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 let pointer = PointerKey::new(info.source, info.id);
                 if self.event_dispatcher.borrow().is_hovering(pointer) {
                     let exit = ElementEvent::PointerExited(info.source, info.id);
-                    return dispatch_child_event(self, child_dispatch_position(&exit, cursor), &exit)
-                        .without_capture_request();
+                    return dispatch_child_event(
+                        self,
+                        child_dispatch_position(&exit, cursor),
+                        &exit,
+                    )
+                    .without_capture_request();
                 }
             }
             return EventResult::ignored();
@@ -239,12 +241,11 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
             ) {
                 match event {
                     ElementEvent::PointerUp(pointer) => {
-                        child_result = child_result.merge(
-                            self.event_dispatcher.borrow_mut().cancel_pointer(
+                        child_result =
+                            child_result.merge(self.event_dispatcher.borrow_mut().cancel_pointer(
                                 &self.child,
                                 PointerKey::new(pointer.source, pointer.id),
-                            ),
-                        );
+                            ));
                     }
                     ElementEvent::Cancel => {
                         child_result = child_result.merge(dispatch_child_event(self, pos, event));
@@ -351,10 +352,9 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 if pending_content_drag_won {
                     let pointer_key = PointerKey::new(pointer.source, pointer.id);
                     child_result = child_result.merge(
-                        self.event_dispatcher.borrow_mut().cancel_pointer(
-                            &self.child,
-                            pointer_key,
-                        ),
+                        self.event_dispatcher
+                            .borrow_mut()
+                            .cancel_pointer(&self.child, pointer_key),
                     );
                 }
             }
@@ -380,13 +380,8 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 if !scroll_axis_matches_intent(self.ctrl.axis, *delta) {
                     return child_result;
                 }
-                let moved = apply_scroll_frame(
-                    &self.ctrl,
-                    *delta,
-                    *kind,
-                    *phase,
-                    *is_direct_manipulation,
-                );
+                let moved =
+                    apply_scroll_frame(&self.ctrl, *delta, *kind, *phase, *is_direct_manipulation);
                 if moved {
                     self.ctrl.begin_scroll();
                     self.ctrl.record_input_event();
@@ -402,18 +397,12 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                     let horizontal_track_height = self.ctrl.cached_h_track_width.get();
                     let hits_scrollbar = self.ctrl.hit_test_v_thumb(*p)
                         || self.ctrl.hit_test_h_thumb(*p)
-                        || self.ctrl.hit_test_v_track(
-                            *p,
-                            vp_w,
-                            vp_h,
-                            vertical_track_width,
-                        )
-                        || self.ctrl.hit_test_h_track(
-                            *p,
-                            vp_w,
-                            vp_h,
-                            horizontal_track_height,
-                        );
+                        || self
+                            .ctrl
+                            .hit_test_v_track(*p, vp_w, vp_h, vertical_track_width)
+                        || self
+                            .ctrl
+                            .hit_test_h_track(*p, vp_w, vp_h, horizontal_track_height);
                     if !hits_scrollbar {
                         return child_result;
                     }
@@ -530,7 +519,6 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 true
             }
             ElementEvent::PointerMove(pointer) => {
-
                 let p = &pointer.pos;
                 // Ignore moves from non-primary fingers.
                 if self.ctrl.active_touch_id.get().is_some()
@@ -576,10 +564,11 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                             DragMode::Content => axis_velocity(self.ctrl.axis, delta),
                             _ => Vec2d::ZERO,
                         };
-                        if let Some((raw_velocity, sample_dt)) = self
-                            .ctrl
-                            .accumulate_drag_velocity(velocity_delta.x, velocity_delta.y, now)
-                        {
+                        if let Some((raw_velocity, sample_dt)) = self.ctrl.accumulate_drag_velocity(
+                            velocity_delta.x,
+                            velocity_delta.y,
+                            now,
+                        ) {
                             let mut new_velocity = match mode {
                                 DragMode::Content => axis_velocity(self.ctrl.axis, raw_velocity),
                                 _ => Vec2d { x: 0.0, y: 0.0 },
@@ -622,11 +611,11 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                                 // uses: resistance grows with the stretch, so a
                                 // finger held past the edge stops pulling the
                                 // content further out.
-                                let step = self.ctrl.resisted_overscroll_delta(match self.ctrl.axis
-                                {
-                                    ScrollAxis::Vertical => Vec2d { x: 0.0, y: dy },
-                                    ScrollAxis::Horizontal => Vec2d { x: dx, y: 0.0 },
-                                });
+                                let step =
+                                    self.ctrl.resisted_overscroll_delta(match self.ctrl.axis {
+                                        ScrollAxis::Vertical => Vec2d { x: 0.0, y: dy },
+                                        ScrollAxis::Horizontal => Vec2d { x: dx, y: 0.0 },
+                                    });
                                 offset.x += step.x;
                                 offset.y += step.y;
                             }
@@ -784,9 +773,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
         };
 
         let own_result = match event {
-            ElementEvent::Scroll { .. } if we_consumed => {
-                EventResult::consumed().with_redraw()
-            }
+            ElementEvent::Scroll { .. } if we_consumed => EventResult::consumed().with_redraw(),
             _ => EventResult::from(we_consumed),
         };
         let result = child_result.merge(own_result);
@@ -993,6 +980,9 @@ mod tests {
 
     #[test]
     fn a_mouse_pointer_cannot_start_a_content_scroll_drag() {
-        assert!(!content_drag_allowed(PointerKey::new(PointerSource::Mouse, 0)));
+        assert!(!content_drag_allowed(PointerKey::new(
+            PointerSource::Mouse,
+            0
+        )));
     }
 }

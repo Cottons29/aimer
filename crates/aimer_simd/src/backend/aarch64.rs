@@ -1,11 +1,9 @@
-use core::arch::asm;
 use core::arch::aarch64::{
     float32x4_t, uint32x4_t, vbslq_f32, vcgtq_f32, vdivq_f32, vdupq_n_f32, vmulq_f32, vsubq_f32,
 };
+use core::arch::asm;
 
-use crate::simd_traits::{
-    Simd, SimdAdd, SimdCompare, SimdDiv, SimdMul, SimdSelect, SimdSub,
-};
+use crate::simd_traits::{Simd, SimdAdd, SimdCompare, SimdDiv, SimdMul, SimdSelect, SimdSub};
 
 /// AArch64 NEON backend for four f32, sixteen u8, or eight u16 lanes.
 ///
@@ -25,11 +23,7 @@ impl Neon {
     /// output pointer must reference sixteen writable f32 values and must not
     /// alias either input range.
     #[inline(always)]
-    pub(crate) unsafe fn add_block_16_f32(
-        left: *const f32,
-        right: *const f32,
-        output: *mut f32,
-    ) {
+    pub(crate) unsafe fn add_block_16_f32(left: *const f32, right: *const f32, output: *mut f32) {
         let _left0: float32x4_t;
         let _left1: float32x4_t;
         let _left2: float32x4_t;

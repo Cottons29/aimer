@@ -1,7 +1,7 @@
 use aimer_picker::{
-    Calendar, CalendarCellId, ColorPicker, Date, DateBounds, DatePicker, DateTime,
-    DateTimePicker, DateTimePickerPolicy, DateSelectionMode, Hsva, Swatch, SwatchId,
-    TimeOfDay, TimeZonePolicy,
+    Calendar, CalendarCellId, ColorPicker, Date, DateBounds, DatePicker, DateSelectionMode,
+    DateTime, DateTimePicker, DateTimePickerPolicy, Hsva, Swatch, SwatchId, TimeOfDay,
+    TimeZonePolicy,
 };
 
 #[test]
@@ -9,13 +9,10 @@ fn calendar_publishes_date_keyed_accessible_cells() {
     let focused = Date::try_new(2024, 5, 15).unwrap();
     let disabled = Date::try_new(2024, 5, 16).unwrap();
     let selected = Date::try_new(2024, 5, 17).unwrap();
-    let mut calendar = Calendar::try_new(
-        focused,
-        DateBounds::unbounded(),
-        DateSelectionMode::Single,
-    )
-    .unwrap()
-    .with_disabled_dates([disabled]);
+    let mut calendar =
+        Calendar::try_new(focused, DateBounds::unbounded(), DateSelectionMode::Single)
+            .unwrap()
+            .with_disabled_dates([disabled]);
     calendar.select(selected).unwrap();
 
     let semantics = calendar.semantics();
@@ -47,8 +44,14 @@ fn date_picker_semantics_keep_committed_and_draft_values_distinct() {
 
     let semantics = picker.semantics();
     assert!(semantics.is_open());
-    assert_eq!(semantics.selection(), aimer_picker::DateSelection::Single(Some(initial)));
-    assert_eq!(semantics.draft(), aimer_picker::DateSelection::Single(Some(next)));
+    assert_eq!(
+        semantics.selection(),
+        aimer_picker::DateSelection::Single(Some(initial))
+    );
+    assert_eq!(
+        semantics.draft(),
+        aimer_picker::DateSelection::Single(Some(next))
+    );
     assert_eq!(semantics.calendar().focused_date(), next);
 }
 

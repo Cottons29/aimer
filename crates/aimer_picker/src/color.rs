@@ -20,7 +20,12 @@ impl Rgba {
     /// Creates an RGBA value from byte channels.
     #[inline]
     pub const fn new(red: u8, green: u8, blue: u8, alpha: u8) -> Self {
-        Self { red, green, blue, alpha }
+        Self {
+            red,
+            green,
+            blue,
+            alpha,
+        }
     }
 
     /// Returns the red channel.
@@ -64,16 +69,12 @@ pub struct Hsva {
 
 impl Hsva {
     /// Creates a validated HSVA value.
-    pub fn try_new(
-        hue: u16,
-        saturation: u16,
-        value: u16,
-        alpha: u16,
-    ) -> Result<Self, ColorError> {
+    pub fn try_new(hue: u16, saturation: u16, value: u16, alpha: u16) -> Result<Self, ColorError> {
         if hue > 360 {
             return Err(ColorError::InvalidHue(hue));
         }
-        let saturation = u8::try_from(saturation).map_err(|_| ColorError::InvalidSaturation(saturation))?;
+        let saturation =
+            u8::try_from(saturation).map_err(|_| ColorError::InvalidSaturation(saturation))?;
         let value = u8::try_from(value).map_err(|_| ColorError::InvalidValue(value))?;
         let alpha = u8::try_from(alpha).map_err(|_| ColorError::InvalidAlpha(alpha))?;
         if saturation > 100 {
@@ -85,7 +86,12 @@ impl Hsva {
         if alpha > 100 {
             return Err(ColorError::InvalidAlpha(u16::from(alpha)));
         }
-        Ok(Self { hue, saturation, value, alpha })
+        Ok(Self {
+            hue,
+            saturation,
+            value,
+            alpha,
+        })
     }
 
     /// Returns the hue in degrees.
@@ -203,7 +209,11 @@ pub struct Swatch {
 impl Swatch {
     /// Creates a swatch with an explicit disabled state.
     pub const fn new(id: SwatchId, color: Hsva, disabled: bool) -> Self {
-        Self { id, color, disabled }
+        Self {
+            id,
+            color,
+            disabled,
+        }
     }
 
     /// Returns the stable swatch identifier.
@@ -260,19 +270,26 @@ impl fmt::Display for ColorError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidHue(value) => write!(formatter, "hue {value} is outside 0..=360"),
-            Self::InvalidSaturation(value) => write!(formatter, "saturation {value} is outside 0..=100"),
+            Self::InvalidSaturation(value) => {
+                write!(formatter, "saturation {value} is outside 0..=100")
+            }
             Self::InvalidValue(value) => write!(formatter, "value {value} is outside 0..=100"),
             Self::InvalidAlpha(value) => write!(formatter, "alpha {value} is outside 0..=100"),
             Self::InvalidStep => formatter.write_str("color keyboard steps must be non-zero"),
             Self::AlphaDisabled => formatter.write_str("alpha interaction is disabled"),
             Self::UnknownSwatch(id) => write!(formatter, "swatch {} is not registered", id.id()),
             Self::DisabledSwatch(id) => write!(formatter, "swatch {} is disabled", id.id()),
-            Self::DuplicateSwatch(id) => write!(formatter, "swatch {} is already registered", id.id()),
+            Self::DuplicateSwatch(id) => {
+                write!(formatter, "swatch {} is already registered", id.id())
+            }
             Self::Closed => formatter.write_str("color picker is closed"),
             Self::MissingHost => formatter.write_str("picker overlay host is missing"),
             Self::UnsupportedHost => formatter.write_str("picker overlay host is unsupported"),
             Self::DismissalNotAllowed(reason) => {
-                write!(formatter, "picker overlay dismissal is disabled for {reason:?}")
+                write!(
+                    formatter,
+                    "picker overlay dismissal is disabled for {reason:?}"
+                )
             }
         }
     }
@@ -368,7 +385,11 @@ impl ColorPicker {
 
     /// Registers a caller-owned swatch, rejecting duplicate identifiers.
     pub fn add_swatch(&mut self, swatch: Swatch) -> Result<(), ColorError> {
-        if self.swatches.iter().any(|existing| existing.id() == swatch.id()) {
+        if self
+            .swatches
+            .iter()
+            .any(|existing| existing.id() == swatch.id())
+        {
             return Err(ColorError::DuplicateSwatch(swatch.id()));
         }
         self.swatches.push(swatch);
@@ -392,7 +413,9 @@ impl ColorPicker {
         if swatch.is_disabled() {
             return Err(ColorError::DisabledSwatch(id));
         }
-        self.session.set_draft(swatch.color()).map_err(|_| ColorError::Closed)
+        self.session
+            .set_draft(swatch.color())
+            .map_err(|_| ColorError::Closed)
     }
 
     /// Sets one channel on the open draft from a pointer or other continuous
@@ -487,10 +510,7 @@ impl ColorPicker {
     }
 
     /// Cancels the current draft and keeps the last confirmed color.
-    pub fn cancel(
-        &mut self,
-        reason: CancelReason,
-    ) -> Result<PickerOutcome<Hsva>, ColorError> {
+    pub fn cancel(&mut self, reason: CancelReason) -> Result<PickerOutcome<Hsva>, ColorError> {
         self.session.cancel(reason).map_err(|_| ColorError::Closed)
     }
 
@@ -530,7 +550,6 @@ impl ColorPicker {
         self.cancel_with_overlay(overlay, CancelReason::Programmatic, consumer, focus)
     }
 }
-
 
 impl From<PickerSessionError> for ColorError {
     fn from(error: PickerSessionError) -> Self {

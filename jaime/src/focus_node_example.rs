@@ -26,10 +26,10 @@
 //! survive those rebuilds. Cloning a node yields another handle to the same
 //! target, not a second target, which is exactly what a rebuild needs.
 
+use aimer::input::button::Button;
 use aimer::macros::widget;
 use aimer::style::*;
 use aimer::*;
-use aimer::input::button::Button;
 
 /// Starts the focus showcase.
 pub fn start_focus_node_example() {
@@ -153,7 +153,10 @@ impl FocusNodeExampleState {
         let focused = self.focused == Some(which);
         let updater = self.updater;
         Focusable::new()
-            .node(self.node(which).clone())
+            .node(
+                self.node(which)
+                    .clone(),
+            )
             .on_focus_change(move |gained| {
                 // The box that lost focus reports first, so recording `None`
                 // here can never erase the box that gained it.
@@ -333,7 +336,11 @@ mod tests {
                     .width(Dimension::Px(BOX_WIDTH))
                     .height(Dimension::Px(BOX_HEIGHT))
                     .box_decoration(box_decoration(false))
-                    .box_child(SizedBox::new().width(1).height(1)),
+                    .box_child(
+                        SizedBox::new()
+                            .width(1)
+                            .height(1),
+                    ),
             )
     }
 
@@ -343,18 +350,23 @@ mod tests {
     /// would put the boxes wherever text happens to wrap, and these tests need
     /// to know where to press.
     fn page(first: AnyWidget, second: AnyWidget) -> impl Widget + 'static {
-        Container::new().color(Colors::White.into()).box_child(
-            Column::new()
-                .horizontal_alignment(BoxAlignment::Start)
-                .vertical_alignment(BoxAlignment::Start)
-                .children([
-                    Row::new()
-                        .gaps(LayoutSpacing::new().right(24))
-                        .children([first, second])
-                        .boxed(),
-                    SizedBox::new().width(400).height(400).boxed(),
-                ]),
-        )
+        Container::new()
+            .color(Colors::White.into())
+            .box_child(
+                Column::new()
+                    .horizontal_alignment(BoxAlignment::Start)
+                    .vertical_alignment(BoxAlignment::Start)
+                    .children([
+                        Row::new()
+                            .gaps(LayoutSpacing::new().right(24))
+                            .children([first, second])
+                            .boxed(),
+                        SizedBox::new()
+                            .width(400)
+                            .height(400)
+                            .boxed(),
+                    ]),
+            )
     }
 
     /// That page, with nothing listening for focus changes.
@@ -402,7 +414,8 @@ mod tests {
         }
 
         fn build(&self, _: &BuildContext) -> impl Widget {
-            self.builds.set(self.builds.get() + 1);
+            self.builds
+                .set(self.builds.get() + 1);
             let reporter = |which: FocusBox, updater: StateUpdater<Self>| {
                 move |gained: bool| {
                     updater.set_state(move |state| state.focused = gained.then_some(which));
@@ -459,7 +472,11 @@ mod tests {
                         let box_node = box_node.clone();
                         move || box_node.request_focus()
                     })
-                    .child(SizedBox::new().width(BOX_WIDTH).height(BOX_HEIGHT)),
+                    .child(
+                        SizedBox::new()
+                            .width(BOX_WIDTH)
+                            .height(BOX_HEIGHT),
+                    ),
             );
         let mut app = AimerApp::start_headless(page(test_box(&box_node, |_| {}), button.boxed()));
         app.render_frame();
@@ -499,7 +516,13 @@ mod tests {
             "nothing but the border may change"
         );
         assert_eq!(
-            focused.border.top.stroke, idle.border.top.stroke,
+            focused
+                .border
+                .top
+                .stroke,
+            idle.border
+                .top
+                .stroke,
             "an equally thick border in both states keeps the child still"
         );
     }
@@ -515,7 +538,10 @@ mod tests {
         app.render_frame();
 
         press(&mut app, FIRST_BOX);
-        assert!(first.has_focus(), "the box under the press owns the keyboard");
+        assert!(
+            first.has_focus(),
+            "the box under the press owns the keyboard"
+        );
         assert!(!second.has_focus());
 
         press(&mut app, SECOND_BOX);

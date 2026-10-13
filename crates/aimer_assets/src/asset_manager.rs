@@ -323,11 +323,7 @@ impl AssetManifest {
     }
 
     /// Registers a source under an explicit identity after verifying identity agreement.
-    pub fn register_with_id(
-        &mut self,
-        id: AssetId,
-        asset: AssetRef,
-    ) -> Result<(), AssetError> {
+    pub fn register_with_id(&mut self, id: AssetId, asset: AssetRef) -> Result<(), AssetError> {
         if &id != asset.id() {
             return Err(AssetError::new(
                 AssetOperation::Manifest,
@@ -546,9 +542,10 @@ fn validate_file_path(path: &Path, allow_absolute: bool) -> Result<(), AssetErro
 }
 
 fn validate_relative_components(path: &Path) -> Result<(), AssetError> {
-    if path.components().any(|component| {
-        matches!(component, Component::ParentDir | Component::Prefix(_))
-    }) {
+    if path
+        .components()
+        .any(|component| matches!(component, Component::ParentDir | Component::Prefix(_)))
+    {
         return Err(AssetError::new(
             AssetOperation::Validate,
             AssetErrorKind::UnsafePath,
@@ -585,9 +582,7 @@ fn validate_network_source(
         ));
     }
     if headers.iter().any(|(name, value)| {
-        name.is_empty()
-            || name.chars().any(char::is_control)
-            || value.chars().any(char::is_control)
+        name.is_empty() || name.chars().any(char::is_control) || value.chars().any(char::is_control)
     }) {
         return Err(AssetError::new(
             AssetOperation::Validate,
@@ -1182,7 +1177,11 @@ pub struct AssetManager<R> {
 impl<R: AssetResolver> AssetManager<R> {
     /// Creates a manager with default policy and cache limits.
     pub fn new(resolver: R) -> Self {
-        Self::with_options(resolver, AssetPolicy::default(), AssetCacheConfig::default())
+        Self::with_options(
+            resolver,
+            AssetPolicy::default(),
+            AssetCacheConfig::default(),
+        )
     }
 
     /// Creates a manager with an explicit security policy.
@@ -1311,7 +1310,11 @@ impl<R: AssetResolver> AssetManager<R> {
         let next_state = match poll {
             AssetLoadPoll::Pending(progress) => LoadState::Loading {
                 progress,
-                attempt: self.entries.get(&handle).map(|entry| entry.attempt).unwrap_or(1),
+                attempt: self
+                    .entries
+                    .get(&handle)
+                    .map(|entry| entry.attempt)
+                    .unwrap_or(1),
             },
             AssetLoadPoll::Ready(data) => match self.policy.validate_data(request.asset(), &data) {
                 Ok(()) => {
@@ -1324,7 +1327,11 @@ impl<R: AssetResolver> AssetManager<R> {
                 }
                 Err(error) => LoadState::Error {
                     error,
-                    attempt: self.entries.get(&handle).map(|entry| entry.attempt).unwrap_or(1),
+                    attempt: self
+                        .entries
+                        .get(&handle)
+                        .map(|entry| entry.attempt)
+                        .unwrap_or(1),
                 },
             },
             AssetLoadPoll::Failed(error) => {
@@ -1344,16 +1351,27 @@ impl<R: AssetResolver> AssetManager<R> {
                 } else {
                     LoadState::Error {
                         error,
-                        attempt: self.entries.get(&handle).map(|entry| entry.attempt).unwrap_or(1),
+                        attempt: self
+                            .entries
+                            .get(&handle)
+                            .map(|entry| entry.attempt)
+                            .unwrap_or(1),
                     }
                 }
             }
             AssetLoadPoll::Cancelled => LoadState::Cancelled {
-                attempt: self.entries.get(&handle).map(|entry| entry.attempt).unwrap_or(1),
+                attempt: self
+                    .entries
+                    .get(&handle)
+                    .map(|entry| entry.attempt)
+                    .unwrap_or(1),
             },
         };
         let terminal = !matches!(&next_state, LoadState::Loading { .. });
-        let entry = self.entries.get_mut(&handle).expect("handle was checked above");
+        let entry = self
+            .entries
+            .get_mut(&handle)
+            .expect("handle was checked above");
         entry.state = next_state.clone();
         if terminal {
             entry.operation = None;
@@ -1389,7 +1407,10 @@ impl<R: AssetResolver> AssetManager<R> {
                 .entries
                 .get(&handle)
                 .ok_or_else(|| Self::missing_handle(handle))?;
-            if !matches!(&entry.state, LoadState::Error { .. } | LoadState::Cancelled { .. }) {
+            if !matches!(
+                &entry.state,
+                LoadState::Error { .. } | LoadState::Cancelled { .. }
+            ) {
                 return Err(AssetError::new(
                     AssetOperation::Retry,
                     AssetErrorKind::InvalidState,
@@ -1432,7 +1453,10 @@ impl<R: AssetResolver> AssetManager<R> {
         if operation.is_some() {
             self.inflight.insert(key, handle);
         }
-        let entry = self.entries.get_mut(&handle).expect("handle was checked above");
+        let entry = self
+            .entries
+            .get_mut(&handle)
+            .expect("handle was checked above");
         entry.request = request;
         entry.operation = operation;
         entry.attempt = attempt;

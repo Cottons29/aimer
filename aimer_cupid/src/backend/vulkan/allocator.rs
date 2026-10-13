@@ -65,19 +65,31 @@ impl MemoryAllocator {
                     required, requirements.size
                 )
             });
-        let memory_flags = self.core.memory_properties.memory_types[memory_type as usize].property_flags;
+        let memory_flags =
+            self.core.memory_properties.memory_types[memory_type as usize].property_flags;
         let non_coherent_host_memory = memory_flags.contains(vk::MemoryPropertyFlags::HOST_VISIBLE)
             && !memory_flags.contains(vk::MemoryPropertyFlags::HOST_COHERENT);
-        let atom_alignment = if non_coherent_host_memory { self.non_coherent_atom_size } else { 1 };
+        let atom_alignment = if non_coherent_host_memory {
+            self.non_coherent_atom_size
+        } else {
+            1
+        };
         let allocation_alignment = requirements.alignment.max(atom_alignment).max(1);
         let reserved_size = align_up(requirements.size, atom_alignment);
-        let mut blocks = self.blocks.lock().expect("Vulkan memory allocator mutex is not poisoned");
+        let mut blocks = self
+            .blocks
+            .lock()
+            .expect("Vulkan memory allocator mutex is not poisoned");
 
-        for block in blocks.iter().filter(|block| {
-            block.memory_type_index == memory_type && block.class == class
-        }) {
+        for block in blocks
+            .iter()
+            .filter(|block| block.memory_type_index == memory_type && block.class == class)
+        {
             if let Some(offset) = allocate_range(
-                &mut block.free_ranges.lock().expect("Vulkan memory block mutex is not poisoned"),
+                &mut block
+                    .free_ranges
+                    .lock()
+                    .expect("Vulkan memory block mutex is not poisoned"),
                 reserved_size,
                 allocation_alignment,
             ) {
@@ -127,7 +139,10 @@ impl MemoryAllocator {
             free_ranges: Mutex::new(vec![0..block_size]),
         });
         let offset = allocate_range(
-            &mut block.free_ranges.lock().expect("Vulkan memory block mutex is not poisoned"),
+            &mut block
+                .free_ranges
+                .lock()
+                .expect("Vulkan memory block mutex is not poisoned"),
             reserved_size,
             allocation_alignment,
         )
@@ -148,10 +163,17 @@ impl MemoryAllocator {
         preferred: vk::MemoryPropertyFlags,
     ) -> Option<u32> {
         let properties = &self.core.memory_properties;
-        (0..properties.memory_type_count).filter(|index| type_bits & (1 << index) != 0)
-            .filter(|index| properties.memory_types[*index as usize].property_flags.contains(required))
+        (0..properties.memory_type_count)
+            .filter(|index| type_bits & (1 << index) != 0)
+            .filter(|index| {
+                properties.memory_types[*index as usize]
+                    .property_flags
+                    .contains(required)
+            })
             .max_by_key(|index| {
-                (properties.memory_types[*index as usize].property_flags & preferred).as_raw().count_ones()
+                (properties.memory_types[*index as usize].property_flags & preferred)
+                    .as_raw()
+                    .count_ones()
             })
     }
 }
@@ -170,7 +192,10 @@ impl Allocation {
     }
 
     pub(super) fn write(&self, offset: u64, bytes: &[u8]) {
-        assert!(self.is_host_visible(), "Vulkan allocation is not host-visible");
+        assert!(
+            self.is_host_visible(),
+            "Vulkan allocation is not host-visible"
+        );
         assert!(offset.saturating_add(bytes.len() as u64) <= self.0.size);
         let destination = (self.0.block.mapped_address as *mut u8)
             .wrapping_add((self.0.offset + offset) as usize);
@@ -181,11 +206,14 @@ impl Allocation {
     }
 
     pub(super) fn read(&self, size: u64) -> Vec<u8> {
-        assert!(self.is_host_visible(), "Vulkan allocation is not host-visible");
+        assert!(
+            self.is_host_visible(),
+            "Vulkan allocation is not host-visible"
+        );
         assert!(size <= self.0.size);
         self.invalidate(0, size);
-        let source = (self.0.block.mapped_address as *const u8)
-            .wrapping_add(self.0.offset as usize);
+        let source =
+            (self.0.block.mapped_address as *const u8).wrapping_add(self.0.offset as usize);
         let mut bytes = vec![0; size as usize];
         // SAFETY: the block is persistently mapped and `size` was checked
         // against this allocation before constructing the source pointer.
@@ -202,10 +230,23 @@ impl Allocation {
     }
 
     fn flush_or_invalidate(&self, offset: u64, size: u64, flush: bool) {
-        if size == 0 || self.0.block.memory_flags.contains(vk::MemoryPropertyFlags::HOST_COHERENT) {
+        if size == 0
+            || self
+                .0
+                .block
+                .memory_flags
+                .contains(vk::MemoryPropertyFlags::HOST_COHERENT)
+        {
             return;
         }
-        let atom = self.0.block.core.properties.limits.non_coherent_atom_size.max(1);
+        let atom = self
+            .0
+            .block
+            .core
+            .properties
+            .limits
+            .non_coherent_atom_size
+            .max(1);
         let start = (self.0.offset + offset) / atom * atom;
         let end = align_up(self.0.offset + offset + size, atom).min(self.0.block.size);
         let range = vk::MappedMemoryRange::default()
@@ -214,9 +255,17 @@ impl Allocation {
             .size(end.saturating_sub(start));
         unsafe {
             if flush {
-                self.0.block.core.device.flush_mapped_memory_ranges(&[range])
+                self.0
+                    .block
+                    .core
+                    .device
+                    .flush_mapped_memory_ranges(&[range])
             } else {
-                self.0.block.core.device.invalidate_mapped_memory_ranges(&[range])
+                self.0
+                    .block
+                    .core
+                    .device
+                    .invalidate_mapped_memory_ranges(&[range])
             }
             .expect("synchronize non-coherent Vulkan memory");
         }
@@ -225,7 +274,11 @@ impl Allocation {
 
 impl Drop for AllocationInner {
     fn drop(&mut self) {
-        let mut free = self.block.free_ranges.lock().expect("Vulkan memory block mutex is not poisoned");
+        let mut free = self
+            .block
+            .free_ranges
+            .lock()
+            .expect("Vulkan memory block mutex is not poisoned");
         free_range(&mut free, self.offset..self.offset + self.reserved_size);
     }
 }

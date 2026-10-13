@@ -253,11 +253,7 @@ impl<T: RangeValue> RangeSlider<T> {
 
     /// Replaces both thumbs with independently retained composable children.
     #[inline]
-    pub fn thumbs<L: Widget + 'static, U: Widget + 'static>(
-        mut self,
-        lower: L,
-        upper: U,
-    ) -> Self {
+    pub fn thumbs<L: Widget + 'static, U: Widget + 'static>(mut self, lower: L, upper: U) -> Self {
         self.lower_thumb = Some(ChildBuilder::from_widget(lower));
         self.upper_thumb = Some(ChildBuilder::from_widget(upper));
         self
@@ -302,14 +298,22 @@ impl<T: RangeValue> RangeSlider<T> {
     /// Replaces the lower controlled value, clamping it to the upper thumb.
     pub fn set_lower(&mut self, lower: T) -> Result<bool, RangeError> {
         let lower = self.canonical_value(super::RangeField::LowerValue, lower)?;
-        let lower = if lower <= self.upper { lower } else { self.upper };
+        let lower = if lower <= self.upper {
+            lower
+        } else {
+            self.upper
+        };
         Ok(replace_if_changed(&mut self.lower, lower))
     }
 
     /// Replaces the upper controlled value, clamping it to the lower thumb.
     pub fn set_upper(&mut self, upper: T) -> Result<bool, RangeError> {
         let upper = self.canonical_value(super::RangeField::UpperValue, upper)?;
-        let upper = if upper >= self.lower { upper } else { self.lower };
+        let upper = if upper >= self.lower {
+            upper
+        } else {
+            self.lower
+        };
         Ok(replace_if_changed(&mut self.upper, upper))
     }
 
@@ -340,21 +344,13 @@ impl<T: RangeValue> RangeSlider<T> {
     }
 
     /// Handles standard keyboard actions for one thumb.
-    pub fn handle_key(
-        &mut self,
-        thumb: RangeThumb,
-        key: SliderKey,
-    ) -> Result<bool, RangeError> {
+    pub fn handle_key(&mut self, thumb: RangeThumb, key: SliderKey) -> Result<bool, RangeError> {
         if self.disabled {
             return Ok(false);
         }
         match key {
-            SliderKey::ArrowLeft | SliderKey::ArrowDown => {
-                self.adjust_thumb_by_steps(thumb, -1)
-            }
-            SliderKey::ArrowRight | SliderKey::ArrowUp => {
-                self.adjust_thumb_by_steps(thumb, 1)
-            }
+            SliderKey::ArrowLeft | SliderKey::ArrowDown => self.adjust_thumb_by_steps(thumb, -1),
+            SliderKey::ArrowRight | SliderKey::ArrowUp => self.adjust_thumb_by_steps(thumb, 1),
             SliderKey::PageDown => self.adjust_thumb_by_steps(thumb, -10),
             SliderKey::PageUp => self.adjust_thumb_by_steps(thumb, 10),
             SliderKey::Home => match thumb {
@@ -371,22 +367,14 @@ impl<T: RangeValue> RangeSlider<T> {
     /// Converts a pointer coordinate to a stepped value in this slider's
     /// shared numeric domain.
     #[inline]
-    pub fn value_at_position(
-        &self,
-        position: f64,
-        track_length: f64,
-    ) -> Result<T, RangeError> {
+    pub fn value_at_position(&self, position: f64, track_length: f64) -> Result<T, RangeError> {
         let spec = self.spec.as_ref().map_err(|error| *error)?;
         Ok(T::from_f64(spec.value_at_position(position, track_length)?))
     }
 
     /// Converts a value to its coordinate on the shared track.
     #[inline]
-    pub fn position_for_value(
-        &self,
-        value: T,
-        track_length: f64,
-    ) -> Result<f64, RangeError> {
+    pub fn position_for_value(&self, value: T, track_length: f64) -> Result<f64, RangeError> {
         let spec = self.spec.as_ref().map_err(|error| *error)?;
         spec.position_for_value(value.to_f64(), track_length)
     }

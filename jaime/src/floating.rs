@@ -127,51 +127,72 @@ impl State<FloatingShowcase> for FloatingShowcaseState {
 impl FloatingShowcaseState {
     /// Opens a dropdown menu below its trigger, aligned on the leading edge.
     fn menu_trigger(&self, app_theme: ThemeData) -> AnyWidget {
-        let anchor = self.menu_anchor.clone();
+        let anchor = self
+            .menu_anchor
+            .clone();
         let updater = self.updater;
-        trigger("Open menu", anchor.clone(), move || {
-            Floating::new()
-                .anchor(anchor.clone())
-                .side(FloatingSide::Bottom)
-                .align(FloatingAlign::Start)
-                .gap(6.0)
-                .animation(enter_animation())
-                .child(menu_panel(updater, app_theme))
-                .show();
-        }, app_theme)
+        trigger(
+            "Open menu",
+            anchor.clone(),
+            move || {
+                Floating::new()
+                    .anchor(anchor.clone())
+                    .side(FloatingSide::Bottom)
+                    .align(FloatingAlign::Start)
+                    .gap(6.0)
+                    .animation(enter_animation())
+                    .child(menu_panel(updater, app_theme))
+                    .show();
+            },
+            app_theme,
+        )
     }
 
     /// Opens a tooltip-like panel above its trigger, centered on it.
     fn tooltip_trigger(&self, app_theme: ThemeData) -> AnyWidget {
-        let anchor = self.tooltip_anchor.clone();
-        trigger("Show hint", anchor.clone(), move || {
-            Floating::new()
-                .anchor(anchor.clone())
-                .side(FloatingSide::Top)
-                .align(FloatingAlign::Center)
-                .gap(8.0)
-                .animation(enter_animation())
-                .child(hint_panel(app_theme))
-                .show();
-        }, app_theme)
+        let anchor = self
+            .tooltip_anchor
+            .clone();
+        trigger(
+            "Show hint",
+            anchor.clone(),
+            move || {
+                Floating::new()
+                    .anchor(anchor.clone())
+                    .side(FloatingSide::Top)
+                    .align(FloatingAlign::Center)
+                    .gap(8.0)
+                    .animation(enter_animation())
+                    .child(hint_panel(app_theme))
+                    .show();
+            },
+            app_theme,
+        )
     }
 
     /// Opens a menu from the bottom-right corner, where the requested side
     /// does not fit and the overflow policy flips the panel above the trigger.
     fn corner_trigger(&self, app_theme: ThemeData) -> AnyWidget {
-        let anchor = self.corner_anchor.clone();
+        let anchor = self
+            .corner_anchor
+            .clone();
         let updater = self.updater;
-        trigger("Flip near the edge", anchor.clone(), move || {
-            Floating::new()
-                .anchor(anchor.clone())
-                .side(FloatingSide::Bottom)
-                .align(FloatingAlign::End)
-                .gap(6.0)
-                .overflow(OverflowPolicy::Flip)
-                .animation(enter_animation())
-                .child(menu_panel(updater, app_theme))
-                .show();
-        }, app_theme)
+        trigger(
+            "Flip near the edge",
+            anchor.clone(),
+            move || {
+                Floating::new()
+                    .anchor(anchor.clone())
+                    .side(FloatingSide::Bottom)
+                    .align(FloatingAlign::End)
+                    .gap(6.0)
+                    .overflow(OverflowPolicy::Flip)
+                    .animation(enter_animation())
+                    .child(menu_panel(updater, app_theme))
+                    .show();
+            },
+            app_theme,
+        )
     }
 }
 
@@ -211,10 +232,7 @@ fn trigger(
 }
 
 /// Builds the dropdown content: one row per [`MENU_ITEMS`] entry.
-fn menu_panel(
-    updater: StateUpdater<FloatingShowcaseState>,
-    app_theme: ThemeData,
-) -> AnyWidget {
+fn menu_panel(updater: StateUpdater<FloatingShowcaseState>, app_theme: ThemeData) -> AnyWidget {
     Container::new()
         .width(Dimension::Px(200.0))
         .height(Dimension::Px(
@@ -292,7 +310,11 @@ fn hint_panel(app_theme: ThemeData) -> AnyWidget {
         .child(
             Text::new("Press outside or hit Escape to dismiss.")
                 .text_align(TextAlign::MidCenter)
-                .text_style(TextStyle::new().font_size(15).color(app_theme.on_surface_color)),
+                .text_style(
+                    TextStyle::new()
+                        .font_size(15)
+                        .color(app_theme.on_surface_color),
+                ),
         )
         .boxed()
 }

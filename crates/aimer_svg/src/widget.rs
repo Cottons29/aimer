@@ -2,7 +2,6 @@ use std::cell::{Cell, RefCell, UnsafeCell};
 use std::sync::Arc;
 
 use aimer_attribute::{Bounds, Dimension, ResolvedSize};
-use aimer_widget::InteractionBounds;
 use aimer_cupid::svg::{
     SvgAspectMode, SvgFillRule, SvgFitPolicy, SvgGeometry, SvgNode, SvgNodeId,
     SvgNodeStyleOverride, SvgPathCommand, SvgScene, SvgTransform, SvgViewport,
@@ -11,6 +10,7 @@ use aimer_events::element::ElementEvent;
 use aimer_events::pointer::{PointerInfo, PointerSource};
 use aimer_events::window::request_animation_frame;
 use aimer_utils::callback::{Callback, CallbackExecutor};
+use aimer_widget::InteractionBounds;
 use aimer_widget::base::BuildContext;
 use aimer_widget::portable::__anteros::{PropertyId, WidgetDocumentView, WidgetNodeView};
 use aimer_widget::portable::{
@@ -21,10 +21,10 @@ use aimer_widget::{
     Rebuildable, VisitorElement, Widget,
 };
 
-use crate::{SvgDocument, SvgError, SvgLoadState, SvgLoader, SvgSelector, SvgSource, SvgStyle};
 use crate::source::load_source;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::source::report_load_result;
+use crate::{SvgDocument, SvgError, SvgLoadState, SvgLoader, SvgSelector, SvgSource, SvgStyle};
 
 pub type SvgCallback = Callback<SvgHit, ()>;
 
@@ -731,7 +731,6 @@ impl Drawable for RawSvgAsset {
         let canvas = aimer_canvas::Canvas::of(ctx);
         canvas.finish();
     }
-
 }
 
 impl EventElement for RawSvgAsset {
@@ -806,11 +805,9 @@ fn document_paint_is_bounded(document: &SvgDocument) -> bool {
     let viewport = scene.viewport;
     let epsilon = f32::EPSILON * viewport.width.max(viewport.height).max(1.0) * 16.0;
 
-    for node in scene
-        .nodes
-        .iter()
-        .filter(|node| node.visible && !node.is_definition && node.opacity > 0.0 && node.geometry.is_some())
-    {
+    for node in scene.nodes.iter().filter(|node| {
+        node.visible && !node.is_definition && node.opacity > 0.0 && node.geometry.is_some()
+    }) {
         let Some(geometry) = scene.geometry(node) else {
             return false;
         };
@@ -829,10 +826,7 @@ fn document_paint_is_bounded(document: &SvgDocument) -> bool {
             .stroke
             .as_ref()
             .map(|stroke| {
-                stroke.width.abs()
-                    * stroke.miter_limit.abs().max(1.0)
-                    * 0.5
-                    * transform_scale
+                stroke.width.abs() * stroke.miter_limit.abs().max(1.0) * 0.5 * transform_scale
             })
             .unwrap_or(0.0);
         if !stroke_padding.is_finite() {
@@ -859,9 +853,7 @@ fn document_paint_is_bounded(document: &SvgDocument) -> bool {
 
         for command in geometry.commands.iter() {
             let valid = match *command {
-                SvgPathCommand::MoveTo { x, y } | SvgPathCommand::LineTo { x, y } => {
-                    include(x, y)
-                }
+                SvgPathCommand::MoveTo { x, y } | SvgPathCommand::LineTo { x, y } => include(x, y),
                 SvgPathCommand::QuadraticTo {
                     control_x,
                     control_y,
@@ -1015,7 +1007,6 @@ impl RawSvg {
         let (x, y) = ctx.canvas.get_transform_translation();
         self.bounds.save(ctx.scale, x, y, size.width, size.height);
     }
-
 }
 
 impl VisitorElement for RawSvg {
@@ -1060,7 +1051,9 @@ impl Drawable for RawSvg {
     }
 
     #[inline]
-    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+    fn retained_v2_interaction_disagreement(
+        &self,
+    ) -> Option<aimer_widget::InteractionDisagreement> {
         self.bounds.disagreement("Svg")
     }
 
@@ -1087,12 +1080,8 @@ impl Drawable for RawSvg {
     fn paint_local_v2(&self, ctx: &BuildContext) {
         let size = self.resolved_size(ctx);
         let scale = ctx.scale;
-        let destination = aimer_cupid::draw_cmd_v2::Rect::new(
-            0.0,
-            0.0,
-            size.width / scale,
-            size.height / scale,
-        );
+        let destination =
+            aimer_cupid::draw_cmd_v2::Rect::new(0.0, 0.0, size.width / scale, size.height / scale);
         let canvas = aimer_canvas::Canvas::of(ctx);
         if !self.paint_bounded {
             canvas.push_clip(destination, [0.0; 4]);
@@ -1107,7 +1096,6 @@ impl Drawable for RawSvg {
         }
         canvas.finish();
     }
-
 }
 
 impl EventElement for RawSvg {
@@ -1127,7 +1115,10 @@ impl EventElement for RawSvg {
                 }
             }
             ElementEvent::PointerExited(PointerSource::Mouse, _) => {
-                let hovered = self.hovered.get().is_some_and(|_| !self.hover_styles.is_empty());
+                let hovered = self
+                    .hovered
+                    .get()
+                    .is_some_and(|_| !self.hover_styles.is_empty());
                 self.set_hovered(None);
                 let pressed = self.clear_pressed() && !self.pressed_styles.is_empty();
                 let result = if hovered || pressed {
@@ -1148,7 +1139,8 @@ impl EventElement for RawSvg {
             }
             ElementEvent::PointerDown(pointer) => {
                 let hit = self.hit_at(pointer.x(), pointer.y());
-                let changed = self.interaction
+                let changed = self
+                    .interaction
                     .borrow_mut()
                     .pointer_down(hit.as_ref().map(|hit| hit.node_id));
                 let captured = hit.is_some();
@@ -1288,7 +1280,9 @@ pub(crate) fn overrides_for_rules(
                 };
                 let is_group_ancestor = ancestor.node_id != node.node_id
                     && ancestor.element == aimer_cupid::svg::SvgElementKind::Group;
-                for (_, style) in rules.iter().filter(|(selector, _)| selector.matches(ancestor))
+                for (_, style) in rules
+                    .iter()
+                    .filter(|(selector, _)| selector.matches(ancestor))
                 {
                     matched = true;
                     if is_group_ancestor {
@@ -1324,10 +1318,8 @@ pub(crate) fn overrides_for_rules(
                 result.opacity = Some(result.opacity.unwrap_or(node.opacity) * group_opacity);
             }
             if group_transform != SvgTransform::default() {
-                result.transform = Some(
-                    group_transform
-                        .mul(result.transform.unwrap_or(node.transform)),
-                );
+                result.transform =
+                    Some(group_transform.mul(result.transform.unwrap_or(node.transform)));
             }
             matched.then_some(result)
         })
@@ -1558,7 +1550,7 @@ mod tests {
     use aimer_widget::{Element, Rebuildable, Widget};
 
     use super::{RawSvgAsset, Svg, SvgAssetPhase};
-    use crate::{SvgDocument, SvgLoader, SvgLoadState, SvgSource};
+    use crate::{SvgDocument, SvgLoadState, SvgLoader, SvgSource};
 
     #[cfg(not(target_arch = "wasm32"))]
     fn context() -> BuildContext<'static> {
@@ -1624,10 +1616,7 @@ mod tests {
 
         let fresh = SvgLoader::new(SvgSource::Memory(Arc::from(source.as_slice())));
         let new = asset(fresh);
-        assert!(matches!(
-            new.loader.borrow().state(),
-            SvgLoadState::Loading
-        ));
+        assert!(matches!(new.loader.borrow().state(), SvgLoadState::Loading));
 
         new.adopt_runtime_state_from(&old as &dyn Element);
 
@@ -1691,7 +1680,9 @@ mod tests {
         let element = Svg::new(document).to_element(&context);
 
         let snapshot = recorded_commands(element.as_ref(), &context);
-        assert!(matches!(snapshot.commands.as_ref(), [DrawCommand::Svg { .. }]));
+        assert!(matches!(
+            snapshot.commands.as_ref(),
+            [DrawCommand::Svg { .. }]
+        ));
     }
-
 }

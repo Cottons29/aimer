@@ -214,15 +214,12 @@ fn upload_pending(
     // its single queue write is likely to amortize the padding.
     let packed_bytes = pending
         .iter()
-        .map(|glyph| {
-            glyph.width as usize * glyph.height as usize * bytes_per_pixel
-        })
+        .map(|glyph| glyph.width as usize * glyph.height as usize * bytes_per_pixel)
         .sum::<usize>();
     let aligned_bytes = pending
         .iter()
         .map(|glyph| {
-            aligned_upload_row_bytes(glyph.width as usize * bytes_per_pixel)
-                * glyph.height as usize
+            aligned_upload_row_bytes(glyph.width as usize * bytes_per_pixel) * glyph.height as usize
         })
         .sum::<usize>();
     if aligned_bytes > packed_bytes.saturating_mul(4) {
@@ -268,8 +265,9 @@ fn upload_pending(
                 for row in 0..glyph.height as usize {
                     let source_start = row * source_row_bytes;
                     let target_start = row * row_bytes + x_offset;
-                    staging_data[target_start..target_start + source_row_bytes]
-                        .copy_from_slice(&glyph.data[source_start..source_start + source_row_bytes]);
+                    staging_data[target_start..target_start + source_row_bytes].copy_from_slice(
+                        &glyph.data[source_start..source_start + source_row_bytes],
+                    );
                 }
             }
             queue.write_texture(
@@ -354,9 +352,8 @@ fn upload_pending(
         .expect("staging buffer is allocated for non-empty atlas data");
     queue.write_buffer(buffer, 0, staging_data);
 
-    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some(label),
-    });
+    let mut encoder =
+        device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
     for copy in staging_copies.iter().copied() {
         encoder.copy_buffer_to_texture(
             wgpu::TexelCopyBufferInfo {
@@ -406,8 +403,6 @@ pub struct GlyphAtlas<B: crate::backend::GpuBackend = crate::backend::DefaultGpu
     generation: u64,
 }
 
-
-
 // ---------------------------------------------------------------------------
 // Color glyph atlas (RGBA8, for sbix PNG strikes)
 // ---------------------------------------------------------------------------
@@ -430,8 +425,6 @@ pub struct ColorGlyphAtlas<B: crate::backend::GpuBackend = crate::backend::Defau
     staging_copies: Vec<StagedGlyph>,
     generation: u64,
 }
-
-
 
 // ── Backend-generic atlas resources and uploads ────────────────────────────
 
@@ -464,8 +457,7 @@ fn upload_pending_generic<B: crate::backend::GpuBackend>(
     let aligned_bytes = pending
         .iter()
         .map(|glyph| {
-            aligned_upload_row_bytes(glyph.width as usize * bytes_per_pixel)
-                * glyph.height as usize
+            aligned_upload_row_bytes(glyph.width as usize * bytes_per_pixel) * glyph.height as usize
         })
         .sum::<usize>();
     if aligned_bytes > packed_bytes.saturating_mul(4) {
@@ -507,8 +499,9 @@ fn upload_pending_generic<B: crate::backend::GpuBackend>(
                 for row in 0..glyph.height as usize {
                     let source_start = row * source_row_bytes;
                     let target_start = row * row_bytes + x_offset;
-                    staging_data[target_start..target_start + source_row_bytes]
-                        .copy_from_slice(&glyph.data[source_start..source_start + source_row_bytes]);
+                    staging_data[target_start..target_start + source_row_bytes].copy_from_slice(
+                        &glyph.data[source_start..source_start + source_row_bytes],
+                    );
                 }
             }
             backend.write_texture(&WriteTextureDescriptor {

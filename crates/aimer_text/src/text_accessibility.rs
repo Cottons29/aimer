@@ -104,18 +104,15 @@ impl TextAccessibilitySnapshot {
     /// `transform` is the physical-space canvas transform and `scale` is the
     /// device scale used by the frame. Singular or non-finite transforms return
     /// `None`, because they cannot provide a reliable inverse hit-test mapping.
-    pub fn from_layout(
-        layout: TextInteractionLayout,
-        transform: Mat3,
-        scale: f32,
-    ) -> Option<Self> {
+    pub fn from_layout(layout: TextInteractionLayout, transform: Mat3, scale: f32) -> Option<Self> {
         transform.inverse_transform_point(0.0, 0.0)?;
         let scale = valid_device_scale(scale);
         if !metrics_are_finite(&layout.metrics)
             || layout.metrics.line_count != layout.lines.len()
-            || layout.lines.iter().any(|line| {
-                !source_range_is_valid(&layout.text, &line.text_range)
-            })
+            || layout
+                .lines
+                .iter()
+                .any(|line| !source_range_is_valid(&layout.text, &line.text_range))
             || layout.clusters.iter().any(|cluster| {
                 cluster.line_index >= layout.lines.len()
                     || !source_range_is_valid(&layout.text, &cluster.text_range)
@@ -160,11 +157,7 @@ impl TextAccessibilitySnapshot {
                 line_index: cluster.line_index,
                 level: cluster.level,
                 bounds: map_rect(&transform, scale, cluster_bounds(&layout, cluster)),
-                start: map_point(
-                    &transform,
-                    scale,
-                    (cluster.start_x, cluster.start_y),
-                ),
+                start: map_point(&transform, scale, (cluster.start_x, cluster.start_y)),
                 end: map_point(&transform, scale, (cluster.end_x, cluster.end_y)),
             })
             .collect();
@@ -242,13 +235,9 @@ impl TextAccessibilitySnapshot {
         id: aimer_accessibility::NodeId,
     ) -> aimer_accessibility::SemanticNode {
         let bounds = self.bounds;
-        let bounds = aimer_accessibility::Bounds::new(
-            bounds.x,
-            bounds.y,
-            bounds.width,
-            bounds.height,
-        )
-        .expect("validated text accessibility bounds must be finite");
+        let bounds =
+            aimer_accessibility::Bounds::new(bounds.x, bounds.y, bounds.width, bounds.height)
+                .expect("validated text accessibility bounds must be finite");
         aimer_accessibility::SemanticNode::new(id, aimer_accessibility::Role::Text)
             .with_name(self.text())
             .with_bounds(bounds)
@@ -259,7 +248,10 @@ impl TextAccessibilitySnapshot {
     /// Use [`Self::to_semantic_node`] when the text node must be composed with
     /// a larger host-owned tree.
     #[inline]
-    pub fn to_semantic_tree(&self, id: aimer_accessibility::NodeId) -> aimer_accessibility::SemanticTree {
+    pub fn to_semantic_tree(
+        &self,
+        id: aimer_accessibility::NodeId,
+    ) -> aimer_accessibility::SemanticTree {
         aimer_accessibility::SemanticTree::new(self.to_semantic_node(id))
     }
 
@@ -309,7 +301,9 @@ impl TextAccessibilitySnapshot {
     /// valid range in the source string.
     #[inline]
     pub fn selected_text(&self) -> Option<&str> {
-        self.selection.as_ref().and_then(|range| self.text().get(range.clone()))
+        self.selection
+            .as_ref()
+            .and_then(|range| self.text().get(range.clone()))
     }
 
     fn local_point(&self, x: f32, y: f32) -> Option<(f32, f32)> {
@@ -354,10 +348,7 @@ impl TextAccessibilitySnapshot {
     }
 
     /// Returns transformed selection rectangles for a logical UTF-8 byte range.
-    pub fn selection_rects(
-        &self,
-        selection: Range<usize>,
-    ) -> Vec<TextAccessibilitySelectionRect> {
+    pub fn selection_rects(&self, selection: Range<usize>) -> Vec<TextAccessibilitySelectionRect> {
         let Some(selection) = normalize_range(self.text(), selection) else {
             return Vec::new();
         };
@@ -570,9 +561,7 @@ fn clamp_to_char_boundary(text: &str, offset: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aimer_cupid::text_layout::{
-        ParagraphMetrics, TextCluster, TextLine, TextWritingMode,
-    };
+    use aimer_cupid::text_layout::{ParagraphMetrics, TextCluster, TextLine, TextWritingMode};
     use unicode_segmentation::UnicodeSegmentation;
 
     fn layout() -> TextInteractionLayout {
@@ -748,7 +737,10 @@ mod tests {
         assert_eq!(snapshot.clusters()[1].source_range, 1..5);
         assert!(snapshot.clusters()[1].level.is_rtl());
         assert_eq!(snapshot.bounds(), Bounds::new(25.0, 41.0, 30.0, 30.0));
-        assert_eq!(snapshot.caret_rect(1), Some(Bounds::new(55.0, 41.0, 0.0, 30.0)));
+        assert_eq!(
+            snapshot.caret_rect(1),
+            Some(Bounds::new(55.0, 41.0, 0.0, 30.0))
+        );
         assert_eq!(snapshot.hit_test(27.5, 40.0), Some(0));
     }
 
@@ -784,7 +776,10 @@ mod tests {
 
         assert_eq!(snapshot.writing_mode(), TextWritingMode::VerticalRl);
         assert_eq!(snapshot.bounds(), Bounds::new(25.0, 7.0, 10.0, 20.0));
-        assert_eq!(snapshot.caret_rect(1), Some(Bounds::new(25.0, 17.0, 10.0, 0.0)));
+        assert_eq!(
+            snapshot.caret_rect(1),
+            Some(Bounds::new(25.0, 17.0, 10.0, 0.0))
+        );
         assert_eq!(snapshot.hit_test(25.0, 8.0), Some(0));
         assert_eq!(
             snapshot.selected_rects(),
@@ -797,19 +792,12 @@ mod tests {
 
     #[test]
     fn snapshot_rejects_singular_transforms_and_accepts_invalid_scale_as_one() {
-        assert!(TextAccessibilitySnapshot::from_layout(
-            layout(),
-            Mat3::scale(0.0, 1.0),
-            1.0,
-        )
-        .is_none());
+        assert!(
+            TextAccessibilitySnapshot::from_layout(layout(), Mat3::scale(0.0, 1.0), 1.0,).is_none()
+        );
 
-        let snapshot = TextAccessibilitySnapshot::from_layout(
-            layout(),
-            Mat3::identity(),
-            f32::NAN,
-        )
-        .expect("invalid device scales use the compatibility scale");
+        let snapshot = TextAccessibilitySnapshot::from_layout(layout(), Mat3::identity(), f32::NAN)
+            .expect("invalid device scales use the compatibility scale");
         assert_eq!(snapshot.bounds(), Bounds::new(0.0, 4.0, 30.0, 20.0));
     }
 
@@ -817,21 +805,17 @@ mod tests {
     fn snapshot_rejects_malformed_source_ranges_and_line_indices() {
         let mut malformed_range = layout();
         malformed_range.lines[0].text_range = 0..6;
-        assert!(TextAccessibilitySnapshot::from_layout(
-            malformed_range,
-            Mat3::identity(),
-            1.0,
-        )
-        .is_none());
+        assert!(
+            TextAccessibilitySnapshot::from_layout(malformed_range, Mat3::identity(), 1.0,)
+                .is_none()
+        );
 
         let mut malformed_line = layout();
         malformed_line.clusters[0].line_index = 1;
-        assert!(TextAccessibilitySnapshot::from_layout(
-            malformed_line,
-            Mat3::identity(),
-            1.0,
-        )
-        .is_none());
+        assert!(
+            TextAccessibilitySnapshot::from_layout(malformed_line, Mat3::identity(), 1.0,)
+                .is_none()
+        );
     }
 
     #[test]
@@ -867,7 +851,12 @@ mod tests {
             snapshot.clusters().len(),
             snapshot.text().graphemes(true).count()
         );
-        assert!(snapshot.clusters().iter().any(|cluster| cluster.level.is_rtl()));
+        assert!(
+            snapshot
+                .clusters()
+                .iter()
+                .any(|cluster| cluster.level.is_rtl())
+        );
         for cluster in snapshot.clusters() {
             assert!(snapshot.text().is_char_boundary(cluster.source_range.start));
             assert!(snapshot.text().is_char_boundary(cluster.source_range.end));

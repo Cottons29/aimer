@@ -1,10 +1,10 @@
 use std::time::Duration;
 
 use aimer::animation::{AnimInstant, Animated, AnimationController};
+use aimer::input::button::Button;
 use aimer::macros::widget;
 use aimer::style::*;
 use aimer::*;
-use aimer::input::button::Button;
 use uuid::Uuid;
 
 use crate::theme;

@@ -3,18 +3,17 @@
 //! The parser intentionally converts source documents to Cupid's own path and
 //! scene types. GPU rendering and path tessellation operate on those types.
 
-use std::sync::Arc;
 use std::collections::HashMap;
+use std::sync::Arc;
 
-use super::{
-    SvgColor, SvgElementKind, SvgFill, SvgFillRule, SvgGeometry, SvgLineCap, SvgLineJoin,
-    SvgNode, SvgNodeId, SvgPaintOrder, SvgPathCommand, SvgScene, SvgStroke, SvgTransform,
-    SvgViewport, SvgGradient, SvgGradientStop, SvgGradientUnits, SvgPaint, SvgSpreadMethod,
-};
 use super::resources::{
-    SvgBlendMode, SvgClipPath, SvgColorMatrix, SvgCompositeOperator, SvgFilter,
-    SvgFilterInput, SvgFilterPrimitive, SvgMask, SvgMaskType, SvgPattern,
-    SvgResourceGraph, SvgResourceUnits,
+    SvgBlendMode, SvgClipPath, SvgColorMatrix, SvgCompositeOperator, SvgFilter, SvgFilterInput,
+    SvgFilterPrimitive, SvgMask, SvgMaskType, SvgPattern, SvgResourceGraph, SvgResourceUnits,
+};
+use super::{
+    SvgColor, SvgElementKind, SvgFill, SvgFillRule, SvgGeometry, SvgGradient, SvgGradientStop,
+    SvgGradientUnits, SvgLineCap, SvgLineJoin, SvgNode, SvgNodeId, SvgPaint, SvgPaintOrder,
+    SvgPathCommand, SvgScene, SvgSpreadMethod, SvgStroke, SvgTransform, SvgViewport,
 };
 use super::{SvgFitPolicy, SvgPreserveAspectRatio, SvgViewBox};
 
@@ -50,8 +49,13 @@ impl std::fmt::Display for SvgParseError {
             Self::InvalidPath => formatter.write_str("SVG contains invalid path data"),
             Self::Unsupported(feature) => write!(formatter, "unsupported SVG feature: {feature}"),
             Self::InvalidViewBox => formatter.write_str("invalid SVG viewBox"),
-            Self::InvalidPreserveAspectRatio => formatter.write_str("invalid SVG preserveAspectRatio"),
-            Self::ExternalResource(resource) => write!(formatter, "external SVG resource is not allowed: {resource}"),
+            Self::InvalidPreserveAspectRatio => {
+                formatter.write_str("invalid SVG preserveAspectRatio")
+            }
+            Self::ExternalResource(resource) => write!(
+                formatter,
+                "external SVG resource is not allowed: {resource}"
+            ),
             Self::LimitExceeded(resource) => write!(formatter, "SVG {resource} limit exceeded"),
         }
     }
@@ -156,9 +160,21 @@ struct CssSpecificity {
 impl CssSelector {
     fn specificity(&self) -> CssSpecificity {
         match self {
-            Self::Id(_) => CssSpecificity { ids: 1, classes: 0, elements: 0 },
-            Self::Class(_) => CssSpecificity { ids: 0, classes: 1, elements: 0 },
-            Self::Element(_) => CssSpecificity { ids: 0, classes: 0, elements: 1 },
+            Self::Id(_) => CssSpecificity {
+                ids: 1,
+                classes: 0,
+                elements: 0,
+            },
+            Self::Class(_) => CssSpecificity {
+                ids: 0,
+                classes: 1,
+                elements: 0,
+            },
+            Self::Element(_) => CssSpecificity {
+                ids: 0,
+                classes: 0,
+                elements: 1,
+            },
         }
     }
 }
@@ -250,7 +266,9 @@ pub fn parse_svg_document(bytes: impl AsRef<[u8]>) -> Result<SvgParsedDocument, 
         }
         if let Some(close) = body.strip_prefix('/') {
             let name = close.trim();
-            let open = stack.pop().ok_or(SvgParseError::InvalidXml("unexpected close tag"))?;
+            let open = stack
+                .pop()
+                .ok_or(SvgParseError::InvalidXml("unexpected close tag"))?;
             if open.tag != name {
                 return Err(SvgParseError::InvalidXml("mismatched close tag"));
             }
@@ -278,17 +296,45 @@ pub fn parse_svg_document(bytes: impl AsRef<[u8]>) -> Result<SvgParsedDocument, 
             if viewport.is_some() {
                 return Err(SvgParseError::Unsupported("nested SVG viewport"));
             }
-            let view_box = attrs.get("viewBox").map(|v| parse_viewbox(v).ok_or(SvgParseError::InvalidViewBox)).transpose()?;
-            preserve_aspect_ratio = attrs.get("preserveAspectRatio").map(|v| v.parse::<SvgPreserveAspectRatio>().map_err(|_| SvgParseError::InvalidPreserveAspectRatio)).transpose()?.unwrap_or_default();
-            let w = attrs.get("width").and_then(|v| parse_length(v)).or_else(|| view_box.map(|b| b[2])).unwrap_or(300.0);
-            let h = attrs.get("height").and_then(|v| parse_length(v)).or_else(|| view_box.map(|b| b[3])).unwrap_or(150.0);
+            let view_box = attrs
+                .get("viewBox")
+                .map(|v| parse_viewbox(v).ok_or(SvgParseError::InvalidViewBox))
+                .transpose()?;
+            preserve_aspect_ratio = attrs
+                .get("preserveAspectRatio")
+                .map(|v| {
+                    v.parse::<SvgPreserveAspectRatio>()
+                        .map_err(|_| SvgParseError::InvalidPreserveAspectRatio)
+                })
+                .transpose()?
+                .unwrap_or_default();
+            let w = attrs
+                .get("width")
+                .and_then(|v| parse_length(v))
+                .or_else(|| view_box.map(|b| b[2]))
+                .unwrap_or(300.0);
+            let h = attrs
+                .get("height")
+                .and_then(|v| parse_length(v))
+                .or_else(|| view_box.map(|b| b[3]))
+                .unwrap_or(150.0);
             if !w.is_finite() || !h.is_finite() || w <= 0.0 || h <= 0.0 {
                 return Err(SvgParseError::InvalidRoot);
             }
-            viewport = Some(SvgViewport { width: w, height: h });
-            if let Some([x,y,width,height]) = view_box {
-                let box_ = SvgViewBox::try_new(x,y,width,height).map_err(|_| SvgParseError::InvalidRoot)?;
-                root_transform = box_.fit_transform(w,h,SvgFitPolicy::PreserveAspectRatio(preserve_aspect_ratio)).map_err(|_| SvgParseError::InvalidViewBox)?;
+            viewport = Some(SvgViewport {
+                width: w,
+                height: h,
+            });
+            if let Some([x, y, width, height]) = view_box {
+                let box_ = SvgViewBox::try_new(x, y, width, height)
+                    .map_err(|_| SvgParseError::InvalidRoot)?;
+                root_transform = box_
+                    .fit_transform(
+                        w,
+                        h,
+                        SvgFitPolicy::PreserveAspectRatio(preserve_aspect_ratio),
+                    )
+                    .map_err(|_| SvgParseError::InvalidViewBox)?;
                 declared_view_box = Some(box_);
             }
             root_style = parse_style(Style::default(), &attrs, tag, &stylesheet)?;
@@ -298,13 +344,25 @@ pub fn parse_svg_document(bytes: impl AsRef<[u8]>) -> Result<SvgParsedDocument, 
                 .transpose()?
                 .map_or(root_transform, |transform| root_transform.mul(transform));
             if !self_closing {
-                stack.push(OpenNode { id: SvgNodeId(u32::MAX), style: root_style.clone(), transform: content_transform, tag: tag.to_owned(), resource_owner: None });
+                stack.push(OpenNode {
+                    id: SvgNodeId(u32::MAX),
+                    style: root_style.clone(),
+                    transform: content_transform,
+                    tag: tag.to_owned(),
+                    resource_owner: None,
+                });
             }
             continue;
         }
         if tag == "defs" {
             if !self_closing {
-                stack.push(OpenNode { id: SvgNodeId(u32::MAX), style: Style::default(), transform: root_transform, tag: tag.to_owned(), resource_owner: None });
+                stack.push(OpenNode {
+                    id: SvgNodeId(u32::MAX),
+                    style: Style::default(),
+                    transform: root_transform,
+                    tag: tag.to_owned(),
+                    resource_owner: None,
+                });
             }
             continue;
         }
@@ -317,7 +375,13 @@ pub fn parse_svg_document(bytes: impl AsRef<[u8]>) -> Result<SvgParsedDocument, 
         }
         if matches!(tag, "title" | "desc" | "metadata") {
             if !self_closing {
-                stack.push(OpenNode { id: SvgNodeId(u32::MAX), style: root_style.clone(), transform: root_transform, tag: tag.to_owned(), resource_owner: None });
+                stack.push(OpenNode {
+                    id: SvgNodeId(u32::MAX),
+                    style: root_style.clone(),
+                    transform: root_transform,
+                    tag: tag.to_owned(),
+                    resource_owner: None,
+                });
             }
             continue;
         }
@@ -339,7 +403,10 @@ pub fn parse_svg_document(bytes: impl AsRef<[u8]>) -> Result<SvgParsedDocument, 
             if nodes.len() >= MAX_NODES {
                 return Err(SvgParseError::LimitExceeded("node"));
             }
-            let inherited = stack.last().map(|node| node.style.clone()).unwrap_or_default();
+            let inherited = stack
+                .last()
+                .map(|node| node.style.clone())
+                .unwrap_or_default();
             let style = parse_style(inherited, &attrs, tag, &stylesheet)?;
             let own_transform = attrs
                 .get("transform")
@@ -392,7 +459,13 @@ pub fn parse_svg_document(bytes: impl AsRef<[u8]>) -> Result<SvgParsedDocument, 
             let is_definition = stack.iter().any(|node| {
                 matches!(
                     node.tag.as_str(),
-                    "defs" | "clipPath" | "mask" | "filter" | "pattern" | "linearGradient" | "radialGradient"
+                    "defs"
+                        | "clipPath"
+                        | "mask"
+                        | "filter"
+                        | "pattern"
+                        | "linearGradient"
+                        | "radialGradient"
                 )
             }) || definition_owner.is_some();
             nodes.push(SvgNode {
@@ -465,20 +538,25 @@ pub fn parse_svg_document(bytes: impl AsRef<[u8]>) -> Result<SvgParsedDocument, 
         if stack.iter().any(|node| {
             matches!(
                 node.tag.as_str(),
-                "defs" | "clipPath" | "mask" | "filter" | "pattern" | "linearGradient" | "radialGradient"
-            )
-        })
-            && (matches!(
-                tag,
-                "symbol"
-                    | "linearGradient"
-                    | "radialGradient"
+                "defs"
                     | "clipPath"
                     | "mask"
                     | "filter"
                     | "pattern"
-                    | "stop"
-            ) || tag.starts_with("fe"))
+                    | "linearGradient"
+                    | "radialGradient"
+            )
+        }) && (matches!(
+            tag,
+            "symbol"
+                | "linearGradient"
+                | "radialGradient"
+                | "clipPath"
+                | "mask"
+                | "filter"
+                | "pattern"
+                | "stop"
+        ) || tag.starts_with("fe"))
         {
             if tag == "symbol" {
                 unsupported_elements.push(Arc::from(tag));
@@ -491,14 +569,20 @@ pub fn parse_svg_document(bytes: impl AsRef<[u8]>) -> Result<SvgParsedDocument, 
                         .as_str(),
                 ))
             } else {
-                stack.iter().rev().find_map(|node| node.resource_owner.clone())
+                stack
+                    .iter()
+                    .rev()
+                    .find_map(|node| node.resource_owner.clone())
             };
             let own_transform = attrs
                 .get("transform")
                 .map(|value| parse_transform(value))
                 .transpose()?
                 .unwrap_or_default();
-            let parent_transform = stack.last().map(|node| node.transform).unwrap_or(root_transform);
+            let parent_transform = stack
+                .last()
+                .map(|node| node.transform)
+                .unwrap_or(root_transform);
             if !self_closing {
                 stack.push(OpenNode {
                     id: SvgNodeId(u32::MAX),
@@ -544,10 +628,18 @@ pub fn parse_svg_document(bytes: impl AsRef<[u8]>) -> Result<SvgParsedDocument, 
             }
             continue;
         }
-        if matches!(tag, "defs" | "symbol" | "clipPath" | "mask" | "filter" | "pattern") {
-            return Err(SvgParseError::Unsupported("definitions, clip paths, masks, filters, and patterns"));
+        if matches!(
+            tag,
+            "defs" | "symbol" | "clipPath" | "mask" | "filter" | "pattern"
+        ) {
+            return Err(SvgParseError::Unsupported(
+                "definitions, clip paths, masks, filters, and patterns",
+            ));
         }
-        if !matches!(tag, "g" | "path" | "rect" | "circle" | "ellipse" | "line" | "polyline" | "polygon") {
+        if !matches!(
+            tag,
+            "g" | "path" | "rect" | "circle" | "ellipse" | "line" | "polyline" | "polygon"
+        ) {
             unsupported_elements.push(Arc::from(tag));
             skip_element_subtree(source, &mut cursor, tag, self_closing)?;
             continue;
@@ -557,35 +649,82 @@ pub fn parse_svg_document(bytes: impl AsRef<[u8]>) -> Result<SvgParsedDocument, 
         }
         let inherited = stack.last().map(|n| n.style.clone()).unwrap_or_default();
         let style = parse_style(inherited, &attrs, tag, &stylesheet)?;
-        let own_transform = attrs.get("transform").map(|v| parse_transform(v)).transpose()?.unwrap_or_default();
+        let own_transform = attrs
+            .get("transform")
+            .map(|v| parse_transform(v))
+            .transpose()?
+            .unwrap_or_default();
         let parent_transform = stack.last().map(|n| n.transform).unwrap_or_default();
         let transform = parent_transform.mul(own_transform);
         let id = SvgNodeId(nodes.len() as u32);
         let parent = stack.last().map(|n| n.id).filter(|id| id.0 != u32::MAX);
-        let classes: Arc<[Arc<str>]> = attrs.get("class").map(|v| v.split_ascii_whitespace().map(Arc::<str>::from).collect::<Vec<_>>().into()).unwrap_or_else(|| Arc::from([]));
-        let svg_id = attrs.get("id").filter(|v| !v.is_empty()).map(|v| Arc::<str>::from(v.as_str()));
-        let geometry = if tag == "g" { None } else {
+        let classes: Arc<[Arc<str>]> = attrs
+            .get("class")
+            .map(|v| {
+                v.split_ascii_whitespace()
+                    .map(Arc::<str>::from)
+                    .collect::<Vec<_>>()
+                    .into()
+            })
+            .unwrap_or_else(|| Arc::from([]));
+        let svg_id = attrs
+            .get("id")
+            .filter(|v| !v.is_empty())
+            .map(|v| Arc::<str>::from(v.as_str()));
+        let geometry = if tag == "g" {
+            None
+        } else {
             let commands = element_path(tag, &attrs)?;
-            command_count = command_count.checked_add(commands.len()).ok_or(SvgParseError::LimitExceeded("path command"))?;
-            if command_count > MAX_COMMANDS { return Err(SvgParseError::LimitExceeded("path command")); }
+            command_count = command_count
+                .checked_add(commands.len())
+                .ok_or(SvgParseError::LimitExceeded("path command"))?;
+            if command_count > MAX_COMMANDS {
+                return Err(SvgParseError::LimitExceeded("path command"));
+            }
             let index = geometries.len();
-            geometries.push(SvgGeometry { commands: commands.into() });
+            geometries.push(SvgGeometry {
+                commands: commands.into(),
+            });
             Some(index)
         };
-        let fill = style.fill.map(|color| SvgFill { color, rule: style.fill_rule });
-        let stroke = style.stroke.map(|color| SvgStroke { color, width: style.stroke_width, line_cap: style.cap, line_join: style.join, miter_limit: 4.0, dash_array: Arc::from([]), dash_offset: 0.0 });
-        let definition_owner = stack.iter().rev().find_map(|node| node.resource_owner.clone());
+        let fill = style.fill.map(|color| SvgFill {
+            color,
+            rule: style.fill_rule,
+        });
+        let stroke = style.stroke.map(|color| SvgStroke {
+            color,
+            width: style.stroke_width,
+            line_cap: style.cap,
+            line_join: style.join,
+            miter_limit: 4.0,
+            dash_array: Arc::from([]),
+            dash_offset: 0.0,
+        });
+        let definition_owner = stack
+            .iter()
+            .rev()
+            .find_map(|node| node.resource_owner.clone());
         let is_definition = stack.iter().any(|node| {
             matches!(
                 node.tag.as_str(),
-                "defs" | "clipPath" | "mask" | "filter" | "pattern" | "linearGradient" | "radialGradient"
+                "defs"
+                    | "clipPath"
+                    | "mask"
+                    | "filter"
+                    | "pattern"
+                    | "linearGradient"
+                    | "radialGradient"
             )
         }) || definition_owner.is_some();
         nodes.push(SvgNode {
             node_id: id,
             svg_id,
             classes,
-            element: if tag == "g" { SvgElementKind::Group } else { SvgElementKind::Path },
+            element: if tag == "g" {
+                SvgElementKind::Group
+            } else {
+                SvgElementKind::Path
+            },
             is_definition,
             definition_owner,
             clip_path: style.clip_path.clone(),
@@ -616,12 +755,23 @@ pub fn parse_svg_document(bytes: impl AsRef<[u8]>) -> Result<SvgParsedDocument, 
                 .or_insert_with(|| (tag.to_owned(), attrs.clone()));
         }
         if !self_closing {
-            stack.push(OpenNode { id, style, transform, tag: tag.to_owned(), resource_owner: nodes[id.0 as usize].definition_owner.clone() });
+            stack.push(OpenNode {
+                id,
+                style,
+                transform,
+                tag: tag.to_owned(),
+                resource_owner: nodes[id.0 as usize].definition_owner.clone(),
+            });
         }
     }
-    if !stack.is_empty() { return Err(SvgParseError::InvalidXml("unclosed tag")); }
+    if !stack.is_empty() {
+        return Err(SvgParseError::InvalidXml("unclosed tag"));
+    }
     let viewport = viewport.ok_or(SvgParseError::InvalidRoot)?;
-    let view_box = declared_view_box.unwrap_or(SvgViewBox::try_new(0.0, 0.0, viewport.width, viewport.height).map_err(|_| SvgParseError::InvalidViewBox)?);
+    let view_box = declared_view_box.unwrap_or(
+        SvgViewBox::try_new(0.0, 0.0, viewport.width, viewport.height)
+            .map_err(|_| SvgParseError::InvalidViewBox)?,
+    );
     let use_targets = resolve_use_references(
         &use_references,
         &node_ids,
@@ -632,7 +782,8 @@ pub fn parse_svg_document(bytes: impl AsRef<[u8]>) -> Result<SvgParsedDocument, 
         &mut unsupported_elements,
     );
     let gradients = collect_gradients(source)?;
-    let mut node_paints = collect_node_paints(source, &nodes, &gradients, &stylesheet, &use_targets)?;
+    let mut node_paints =
+        collect_node_paints(source, &nodes, &gradients, &stylesheet, &use_targets)?;
     for reference in &use_references {
         let Some(target_node) = use_targets.get(&reference.node) else {
             continue;
@@ -660,7 +811,17 @@ pub fn parse_svg_document(bytes: impl AsRef<[u8]>) -> Result<SvgParsedDocument, 
         geometries: geometries.into(),
         resources: Arc::new(resources.clone()),
     };
-    Ok(SvgParsedDocument { scene, view_box, preserve_aspect_ratio, has_view_box: declared_view_box.is_some(), root_transform, gradients: gradients.into(), resources: Arc::new(resources), node_paints, unsupported_elements: unsupported_elements.into() })
+    Ok(SvgParsedDocument {
+        scene,
+        view_box,
+        preserve_aspect_ratio,
+        has_view_box: declared_view_box.is_some(),
+        root_transform,
+        gradients: gradients.into(),
+        resources: Arc::new(resources),
+        node_paints,
+        unsupported_elements: unsupported_elements.into(),
+    })
 }
 
 fn skip_element_subtree(
@@ -691,7 +852,9 @@ fn skip_element_subtree(
         if let Some(close) = body.strip_prefix('/') {
             let name = close.trim();
             if open_tags.pop() != Some(name) {
-                return Err(SvgParseError::InvalidXml("mismatched tag in unsupported element"));
+                return Err(SvgParseError::InvalidXml(
+                    "mismatched tag in unsupported element",
+                ));
             }
             continue;
         }
@@ -719,39 +882,78 @@ fn find_tag_end(source: &str, mut cursor: usize) -> Result<usize, SvgParseError>
     let mut quote = 0;
     while cursor < bytes.len() {
         let byte = bytes[cursor];
-        if quote != 0 { if byte == quote { quote = 0; } }
-        else if byte == b'\'' || byte == b'"' { quote = byte; }
-        else if byte == b'>' { return Ok(cursor); }
+        if quote != 0 {
+            if byte == quote {
+                quote = 0;
+            }
+        } else if byte == b'\'' || byte == b'"' {
+            quote = byte;
+        } else if byte == b'>' {
+            return Ok(cursor);
+        }
         cursor += 1;
     }
     Err(SvgParseError::InvalidXml("unterminated tag"))
 }
 
-fn parse_tag(body: &str) -> Result<(&str, std::collections::HashMap<String, String>), SvgParseError> {
+fn parse_tag(
+    body: &str,
+) -> Result<(&str, std::collections::HashMap<String, String>), SvgParseError> {
     let name_end = body.find(char::is_whitespace).unwrap_or(body.len());
     let name = &body[..name_end];
-    if name.is_empty() { return Err(SvgParseError::InvalidXml("empty tag name")); }
+    if name.is_empty() {
+        return Err(SvgParseError::InvalidXml("empty tag name"));
+    }
     let mut attrs = std::collections::HashMap::new();
     let bytes = body.as_bytes();
     let mut i = name_end;
     while i < bytes.len() {
-        while i < bytes.len() && bytes[i].is_ascii_whitespace() { i += 1; }
-        if i == bytes.len() { break; }
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i == bytes.len() {
+            break;
+        }
         let start = i;
-        while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || matches!(bytes[i], b':' | b'_' | b'-')) { i += 1; }
-        if start == i { return Err(SvgParseError::InvalidXml("invalid attribute name")); }
+        while i < bytes.len()
+            && (bytes[i].is_ascii_alphanumeric() || matches!(bytes[i], b':' | b'_' | b'-'))
+        {
+            i += 1;
+        }
+        if start == i {
+            return Err(SvgParseError::InvalidXml("invalid attribute name"));
+        }
         let key = &body[start..i];
-        while i < bytes.len() && bytes[i].is_ascii_whitespace() { i += 1; }
-        if bytes.get(i) != Some(&b'=') { return Err(SvgParseError::InvalidXml("attribute missing value")); }
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if bytes.get(i) != Some(&b'=') {
+            return Err(SvgParseError::InvalidXml("attribute missing value"));
+        }
         i += 1;
-        while i < bytes.len() && bytes[i].is_ascii_whitespace() { i += 1; }
-        let quote = *bytes.get(i).ok_or(SvgParseError::InvalidXml("attribute missing quote"))?;
-        if quote != b'\'' && quote != b'"' { return Err(SvgParseError::InvalidXml("attribute must be quoted")); }
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        let quote = *bytes
+            .get(i)
+            .ok_or(SvgParseError::InvalidXml("attribute missing quote"))?;
+        if quote != b'\'' && quote != b'"' {
+            return Err(SvgParseError::InvalidXml("attribute must be quoted"));
+        }
         i += 1;
         let value_start = i;
-        while i < bytes.len() && bytes[i] != quote { i += 1; }
-        if i == bytes.len() { return Err(SvgParseError::InvalidXml("unterminated attribute")); }
-        let value = body[value_start..i].replace("&quot;", "\"").replace("&apos;", "'").replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&");
+        while i < bytes.len() && bytes[i] != quote {
+            i += 1;
+        }
+        if i == bytes.len() {
+            return Err(SvgParseError::InvalidXml("unterminated attribute"));
+        }
+        let value = body[value_start..i]
+            .replace("&quot;", "\"")
+            .replace("&apos;", "'")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&amp;", "&");
         i += 1;
         attrs.insert(key.to_owned(), value);
     }
@@ -848,11 +1050,7 @@ fn parse_style(
                 &mut declarations,
                 &declaration.property,
                 &declaration.value,
-                CascadePriority::stylesheet(
-                    declaration.important,
-                    specificity,
-                    declaration.order,
-                ),
+                CascadePriority::stylesheet(declaration.important, specificity, declaration.order),
             );
         }
     }
@@ -937,7 +1135,10 @@ fn parse_local_reference(value: &str) -> Result<Option<Arc<str>>, SvgParseError>
     if value.eq_ignore_ascii_case("none") {
         return Ok(None);
     }
-    let Some(reference) = value.strip_prefix("url(").and_then(|value| value.strip_suffix(')')) else {
+    let Some(reference) = value
+        .strip_prefix("url(")
+        .and_then(|value| value.strip_suffix(')'))
+    else {
         return Err(SvgParseError::Unsupported("resource reference syntax"));
     };
     let reference = reference.trim().trim_matches(['\'', '"']);
@@ -1049,7 +1250,8 @@ fn parse_stylesheet(source: &str, stylesheet: &mut Stylesheet) {
     let bytes = source.as_bytes();
     let mut cursor = 0;
     while cursor < bytes.len() {
-        while cursor < bytes.len() && (bytes[cursor].is_ascii_whitespace() || bytes[cursor] == b'}') {
+        while cursor < bytes.len() && (bytes[cursor].is_ascii_whitespace() || bytes[cursor] == b'}')
+        {
             cursor += 1;
         }
         if cursor == bytes.len() {
@@ -1069,10 +1271,8 @@ fn parse_stylesheet(source: &str, stylesheet: &mut Stylesheet) {
         if !selector_text.starts_with('@')
             && let Some(selectors) = parse_selector_list(selector_text)
         {
-            let mut declarations = parse_css_declarations(
-                &source[cursor + 1..block_end],
-                &mut stylesheet.next_order,
-            );
+            let mut declarations =
+                parse_css_declarations(&source[cursor + 1..block_end], &mut stylesheet.next_order);
             if !declarations.is_empty() {
                 let rule_index = stylesheet.rules.len();
                 for selector in selectors {
@@ -1143,12 +1343,15 @@ fn is_css_identifier(value: &str) -> bool {
     };
     let first_is_valid = first.is_ascii_alphabetic()
         || first == '_'
-        || (first == '-' && chars.clone().next().is_some_and(|next| {
-            next.is_ascii_alphabetic() || next == '_' || next == '-'
-        }));
-    first_is_valid && chars.all(|character| {
-        character.is_ascii_alphanumeric() || character == '_' || character == '-'
-    })
+        || (first == '-'
+            && chars
+                .clone()
+                .next()
+                .is_some_and(|next| next.is_ascii_alphabetic() || next == '_' || next == '-'));
+    first_is_valid
+        && chars.all(|character| {
+            character.is_ascii_alphanumeric() || character == '_' || character == '-'
+        })
 }
 
 fn parse_css_declarations(source: &str, next_order: &mut usize) -> Vec<CssDeclaration> {
@@ -1207,56 +1410,312 @@ fn strip_css_comments(source: &str) -> String {
 
 fn parse_color(value: &str) -> Result<Option<SvgColor>, SvgParseError> {
     let value = value.trim();
-    if value == "none" { return Ok(None); }
-    if value.starts_with("url(") { return Ok(None); }
+    if value == "none" {
+        return Ok(None);
+    }
+    if value.starts_with("url(") {
+        return Ok(None);
+    }
     let color = if let Some(hex) = value.strip_prefix('#') {
         match hex.len() {
-            3 => SvgColor::rgba8(expand(hex.as_bytes()[0])?, expand(hex.as_bytes()[1])?, expand(hex.as_bytes()[2])?, 255),
-            4 => SvgColor::rgba8(expand(hex.as_bytes()[0])?, expand(hex.as_bytes()[1])?, expand(hex.as_bytes()[2])?, expand(hex.as_bytes()[3])?),
+            3 => SvgColor::rgba8(
+                expand(hex.as_bytes()[0])?,
+                expand(hex.as_bytes()[1])?,
+                expand(hex.as_bytes()[2])?,
+                255,
+            ),
+            4 => SvgColor::rgba8(
+                expand(hex.as_bytes()[0])?,
+                expand(hex.as_bytes()[1])?,
+                expand(hex.as_bytes()[2])?,
+                expand(hex.as_bytes()[3])?,
+            ),
             6 => SvgColor::rgba8(byte(&hex[0..2])?, byte(&hex[2..4])?, byte(&hex[4..6])?, 255),
-            8 => SvgColor::rgba8(byte(&hex[0..2])?, byte(&hex[2..4])?, byte(&hex[4..6])?, byte(&hex[6..8])?),
+            8 => SvgColor::rgba8(
+                byte(&hex[0..2])?,
+                byte(&hex[2..4])?,
+                byte(&hex[4..6])?,
+                byte(&hex[6..8])?,
+            ),
             _ => return Err(SvgParseError::Unsupported("color syntax")),
         }
-    } else if let Some(args) = value.strip_prefix("rgb(").and_then(|v|v.strip_suffix(')')) {
-        let values=parse_numbers(args);if values.len()!=3{return Err(SvgParseError::InvalidNumber)}
-        let channel=|v:f32|->Result<u8,SvgParseError>{if !v.is_finite(){return Err(SvgParseError::InvalidNumber)}Ok(v.round().clamp(0.0,255.0) as u8)};
-        SvgColor::rgba8(channel(values[0])?,channel(values[1])?,channel(values[2])?,255)
-    } else { match value { "black" => SvgColor::rgba8(0,0,0,255), "white" => SvgColor::rgba8(255,255,255,255), "red" => SvgColor::rgba8(255,0,0,255), "green" => SvgColor::rgba8(0,128,0,255), "blue" => SvgColor::rgba8(0,0,255,255), "yellow" => SvgColor::rgba8(255,255,0,255), "transparent" => SvgColor::rgba8(0,0,0,0), _ => return Err(SvgParseError::Unsupported("named color")) } };
+    } else if let Some(args) = value.strip_prefix("rgb(").and_then(|v| v.strip_suffix(')')) {
+        let values = parse_numbers(args);
+        if values.len() != 3 {
+            return Err(SvgParseError::InvalidNumber);
+        }
+        let channel = |v: f32| -> Result<u8, SvgParseError> {
+            if !v.is_finite() {
+                return Err(SvgParseError::InvalidNumber);
+            }
+            Ok(v.round().clamp(0.0, 255.0) as u8)
+        };
+        SvgColor::rgba8(
+            channel(values[0])?,
+            channel(values[1])?,
+            channel(values[2])?,
+            255,
+        )
+    } else {
+        match value {
+            "black" => SvgColor::rgba8(0, 0, 0, 255),
+            "white" => SvgColor::rgba8(255, 255, 255, 255),
+            "red" => SvgColor::rgba8(255, 0, 0, 255),
+            "green" => SvgColor::rgba8(0, 128, 0, 255),
+            "blue" => SvgColor::rgba8(0, 0, 255, 255),
+            "yellow" => SvgColor::rgba8(255, 255, 0, 255),
+            "transparent" => SvgColor::rgba8(0, 0, 0, 0),
+            _ => return Err(SvgParseError::Unsupported("named color")),
+        }
+    };
     Ok(Some(color))
 }
 
-fn byte(value: &str) -> Result<u8, SvgParseError> { u8::from_str_radix(value, 16).map_err(|_| SvgParseError::InvalidNumber) }
-fn expand(value: u8) -> Result<u8, SvgParseError> { let digit = (value as char).to_digit(16).ok_or(SvgParseError::InvalidNumber)? as u8; Ok(digit * 17) }
-fn parse_unit(value: &str) -> Result<f32, SvgParseError> { let v = value.trim().strip_suffix('%').map(|v| v.parse::<f32>().map(|n| n / 100.0)).unwrap_or_else(|| value.trim().parse::<f32>()).map_err(|_| SvgParseError::InvalidNumber)?; if v.is_finite() { Ok(v.clamp(0.0, 1.0)) } else { Err(SvgParseError::InvalidNumber) } }
-fn parse_length(value: &str) -> Option<f32> { let trimmed = value.trim(); let end = trimmed.find(|c: char| !(c.is_ascii_digit() || matches!(c, '+' | '-' | '.' | 'e' | 'E'))).unwrap_or(trimmed.len()); let unit = trimmed[end..].trim(); if !unit.is_empty() && !matches!(unit, "px" | "pt" | "pc" | "mm" | "cm" | "in") { return None; } let n = trimmed[..end].parse::<f32>().ok()?; n.is_finite().then_some(n) }
-fn parse_viewbox(value: &str) -> Option<[f32; 4]> { let values = parse_numbers(value); (values.len() == 4 && values.iter().all(|v| v.is_finite()) && values[2] > 0.0 && values[3] > 0.0).then(|| [values[0], values[1], values[2], values[3]]) }
-
-enum GradientBuilder {
-    Linear { id: Arc<str>, x1:f32, y1:f32, x2:f32, y2:f32, units:SvgGradientUnits, transform:SvgTransform, spread:SvgSpreadMethod, stops:Vec<SvgGradientStop> },
-    Radial { id: Arc<str>, cx:f32, cy:f32, radius:f32, fx:f32, fy:f32, focal_radius:f32, units:SvgGradientUnits, transform:SvgTransform, spread:SvgSpreadMethod, stops:Vec<SvgGradientStop> },
+fn byte(value: &str) -> Result<u8, SvgParseError> {
+    u8::from_str_radix(value, 16).map_err(|_| SvgParseError::InvalidNumber)
+}
+fn expand(value: u8) -> Result<u8, SvgParseError> {
+    let digit = (value as char)
+        .to_digit(16)
+        .ok_or(SvgParseError::InvalidNumber)? as u8;
+    Ok(digit * 17)
+}
+fn parse_unit(value: &str) -> Result<f32, SvgParseError> {
+    let v = value
+        .trim()
+        .strip_suffix('%')
+        .map(|v| v.parse::<f32>().map(|n| n / 100.0))
+        .unwrap_or_else(|| value.trim().parse::<f32>())
+        .map_err(|_| SvgParseError::InvalidNumber)?;
+    if v.is_finite() {
+        Ok(v.clamp(0.0, 1.0))
+    } else {
+        Err(SvgParseError::InvalidNumber)
+    }
+}
+fn parse_length(value: &str) -> Option<f32> {
+    let trimmed = value.trim();
+    let end = trimmed
+        .find(|c: char| !(c.is_ascii_digit() || matches!(c, '+' | '-' | '.' | 'e' | 'E')))
+        .unwrap_or(trimmed.len());
+    let unit = trimmed[end..].trim();
+    if !unit.is_empty() && !matches!(unit, "px" | "pt" | "pc" | "mm" | "cm" | "in") {
+        return None;
+    }
+    let n = trimmed[..end].parse::<f32>().ok()?;
+    n.is_finite().then_some(n)
+}
+fn parse_viewbox(value: &str) -> Option<[f32; 4]> {
+    let values = parse_numbers(value);
+    (values.len() == 4
+        && values.iter().all(|v| v.is_finite())
+        && values[2] > 0.0
+        && values[3] > 0.0)
+        .then(|| [values[0], values[1], values[2], values[3]])
 }
 
-fn collect_gradients(source:&str)->Result<Vec<SvgGradient>,SvgParseError>{
-    let mut gradients=Vec::new();let mut current:Option<GradientBuilder>=None;let mut cursor=0;
-    while let Some(offset)=source[cursor..].find('<'){cursor+=offset;if source[cursor..].starts_with("<!--"){let end=source[cursor+4..].find("-->").ok_or(SvgParseError::InvalidXml("unterminated comment"))?;cursor+=4+end+3;continue;}let end=find_tag_end(source,cursor+1)?;let body=source[cursor+1..end].trim();cursor=end+1;if body.starts_with('/')||body.starts_with('?')||body.starts_with('!'){if body.starts_with('/')&&matches!(body.trim_start_matches('/').trim(),"linearGradient"|"radialGradient"){if let Some(builder)=current.take(){gradients.push(finish_gradient(builder)?);}}continue;}let self_closing=body.ends_with('/');let body=body.strip_suffix('/').unwrap_or(body).trim_end();let(tag,attrs)=parse_tag(body)?;
-        if tag=="linearGradient"||tag=="radialGradient"{let id=attrs.get("id").cloned().ok_or(SvgParseError::InvalidXml("gradient id is required"))?;let units=if attrs.get("gradientUnits").is_some_and(|v|v=="userSpaceOnUse"){SvgGradientUnits::UserSpaceOnUse}else{SvgGradientUnits::ObjectBoundingBox};let transform=attrs.get("gradientTransform").map(|v|parse_transform(v)).transpose()?.unwrap_or_default();let spread=match attrs.get("spreadMethod").map(String::as_str).unwrap_or("pad"){"pad"=>SvgSpreadMethod::Pad,"reflect"=>SvgSpreadMethod::Reflect,"repeat"=>SvgSpreadMethod::Repeat,_=>return Err(SvgParseError::Unsupported("gradient spread method"))};current=Some(if tag=="linearGradient"{GradientBuilder::Linear{id:Arc::from(id),x1:gradient_number(&attrs,"x1",0.0)?,y1:gradient_number(&attrs,"y1",0.0)?,x2:gradient_number(&attrs,"x2",1.0)?,y2:gradient_number(&attrs,"y2",0.0)?,units,transform,spread,stops:Vec::new()}}else{let cx=gradient_number(&attrs,"cx",0.5)?;let cy=gradient_number(&attrs,"cy",0.5)?;GradientBuilder::Radial{id:Arc::from(id),cx,cy,radius:gradient_number(&attrs,"r",0.5)?,fx:gradient_number(&attrs,"fx",cx)?,fy:gradient_number(&attrs,"fy",cy)?,focal_radius:gradient_number(&attrs,"fr",0.0)?,units,transform,spread,stops:Vec::new()}});if self_closing{if let Some(builder)=current.take(){gradients.push(finish_gradient(builder)?);}}continue;}
-        if tag=="stop"{if let Some(builder)=current.as_mut(){let offset=attrs.get("offset").map(|v|gradient_offset(v)).transpose()?.unwrap_or(0.0);let mut color=attrs.get("stop-color").map(|v|parse_color(v)).transpose()?.flatten().unwrap_or(SvgColor::rgba8(0,0,0,255));if let Some(opacity)=attrs.get("stop-opacity"){color.a*=parse_unit(opacity)?;}let stops=match builder{GradientBuilder::Linear{stops,..}|GradientBuilder::Radial{stops,..}=>stops};stops.push(SvgGradientStop{offset:offset.clamp(0.0,1.0),color});} }
+enum GradientBuilder {
+    Linear {
+        id: Arc<str>,
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
+        units: SvgGradientUnits,
+        transform: SvgTransform,
+        spread: SvgSpreadMethod,
+        stops: Vec<SvgGradientStop>,
+    },
+    Radial {
+        id: Arc<str>,
+        cx: f32,
+        cy: f32,
+        radius: f32,
+        fx: f32,
+        fy: f32,
+        focal_radius: f32,
+        units: SvgGradientUnits,
+        transform: SvgTransform,
+        spread: SvgSpreadMethod,
+        stops: Vec<SvgGradientStop>,
+    },
+}
+
+fn collect_gradients(source: &str) -> Result<Vec<SvgGradient>, SvgParseError> {
+    let mut gradients = Vec::new();
+    let mut current: Option<GradientBuilder> = None;
+    let mut cursor = 0;
+    while let Some(offset) = source[cursor..].find('<') {
+        cursor += offset;
+        if source[cursor..].starts_with("<!--") {
+            let end = source[cursor + 4..]
+                .find("-->")
+                .ok_or(SvgParseError::InvalidXml("unterminated comment"))?;
+            cursor += 4 + end + 3;
+            continue;
+        }
+        let end = find_tag_end(source, cursor + 1)?;
+        let body = source[cursor + 1..end].trim();
+        cursor = end + 1;
+        if body.starts_with('/') || body.starts_with('?') || body.starts_with('!') {
+            if body.starts_with('/')
+                && matches!(
+                    body.trim_start_matches('/').trim(),
+                    "linearGradient" | "radialGradient"
+                )
+            {
+                if let Some(builder) = current.take() {
+                    gradients.push(finish_gradient(builder)?);
+                }
+            }
+            continue;
+        }
+        let self_closing = body.ends_with('/');
+        let body = body.strip_suffix('/').unwrap_or(body).trim_end();
+        let (tag, attrs) = parse_tag(body)?;
+        if tag == "linearGradient" || tag == "radialGradient" {
+            let id = attrs
+                .get("id")
+                .cloned()
+                .ok_or(SvgParseError::InvalidXml("gradient id is required"))?;
+            let units = if attrs
+                .get("gradientUnits")
+                .is_some_and(|v| v == "userSpaceOnUse")
+            {
+                SvgGradientUnits::UserSpaceOnUse
+            } else {
+                SvgGradientUnits::ObjectBoundingBox
+            };
+            let transform = attrs
+                .get("gradientTransform")
+                .map(|v| parse_transform(v))
+                .transpose()?
+                .unwrap_or_default();
+            let spread = match attrs
+                .get("spreadMethod")
+                .map(String::as_str)
+                .unwrap_or("pad")
+            {
+                "pad" => SvgSpreadMethod::Pad,
+                "reflect" => SvgSpreadMethod::Reflect,
+                "repeat" => SvgSpreadMethod::Repeat,
+                _ => return Err(SvgParseError::Unsupported("gradient spread method")),
+            };
+            current = Some(if tag == "linearGradient" {
+                GradientBuilder::Linear {
+                    id: Arc::from(id),
+                    x1: gradient_number(&attrs, "x1", 0.0)?,
+                    y1: gradient_number(&attrs, "y1", 0.0)?,
+                    x2: gradient_number(&attrs, "x2", 1.0)?,
+                    y2: gradient_number(&attrs, "y2", 0.0)?,
+                    units,
+                    transform,
+                    spread,
+                    stops: Vec::new(),
+                }
+            } else {
+                let cx = gradient_number(&attrs, "cx", 0.5)?;
+                let cy = gradient_number(&attrs, "cy", 0.5)?;
+                GradientBuilder::Radial {
+                    id: Arc::from(id),
+                    cx,
+                    cy,
+                    radius: gradient_number(&attrs, "r", 0.5)?,
+                    fx: gradient_number(&attrs, "fx", cx)?,
+                    fy: gradient_number(&attrs, "fy", cy)?,
+                    focal_radius: gradient_number(&attrs, "fr", 0.0)?,
+                    units,
+                    transform,
+                    spread,
+                    stops: Vec::new(),
+                }
+            });
+            if self_closing {
+                if let Some(builder) = current.take() {
+                    gradients.push(finish_gradient(builder)?);
+                }
+            }
+            continue;
+        }
+        if tag == "stop" {
+            if let Some(builder) = current.as_mut() {
+                let offset = attrs
+                    .get("offset")
+                    .map(|v| gradient_offset(v))
+                    .transpose()?
+                    .unwrap_or(0.0);
+                let mut color = attrs
+                    .get("stop-color")
+                    .map(|v| parse_color(v))
+                    .transpose()?
+                    .flatten()
+                    .unwrap_or(SvgColor::rgba8(0, 0, 0, 255));
+                if let Some(opacity) = attrs.get("stop-opacity") {
+                    color.a *= parse_unit(opacity)?;
+                }
+                let stops = match builder {
+                    GradientBuilder::Linear { stops, .. }
+                    | GradientBuilder::Radial { stops, .. } => stops,
+                };
+                stops.push(SvgGradientStop {
+                    offset: offset.clamp(0.0, 1.0),
+                    color,
+                });
+            }
+        }
     }
-    if let Some(builder)=current{gradients.push(finish_gradient(builder)?);}Ok(gradients)
+    if let Some(builder) = current {
+        gradients.push(finish_gradient(builder)?);
+    }
+    Ok(gradients)
 }
 
 fn finish_gradient(builder: GradientBuilder) -> Result<SvgGradient, SvgParseError> {
     let gradient = match builder {
         GradientBuilder::Linear {
-            id, x1, y1, x2, y2, units, transform, spread, stops,
+            id,
+            x1,
+            y1,
+            x2,
+            y2,
+            units,
+            transform,
+            spread,
+            stops,
         } => SvgGradient::Linear {
-            id, x1, y1, x2, y2, units, transform, spread,
+            id,
+            x1,
+            y1,
+            x2,
+            y2,
+            units,
+            transform,
+            spread,
             stops: normalize_gradient_stops(stops),
         },
         GradientBuilder::Radial {
-            id, cx, cy, radius, fx, fy, focal_radius, units, transform, spread, stops,
+            id,
+            cx,
+            cy,
+            radius,
+            fx,
+            fy,
+            focal_radius,
+            units,
+            transform,
+            spread,
+            stops,
         } => SvgGradient::Radial {
-            id, cx, cy, radius, fx, fy, focal_radius, units, transform, spread,
+            id,
+            cx,
+            cy,
+            radius,
+            fx,
+            fy,
+            focal_radius,
+            units,
+            transform,
+            spread,
             stops: normalize_gradient_stops(stops),
         },
     };
@@ -1280,8 +1739,41 @@ fn normalize_gradient_stops(stops: Vec<SvgGradientStop>) -> Arc<[SvgGradientStop
         .into()
 }
 
-fn gradient_number(attrs:&HashMap<String,String>,name:&str,default:f32)->Result<f32,SvgParseError>{let Some(value)=attrs.get(name)else{return Ok(default)};let value=value.trim();let (number,percent)=value.strip_suffix('%').map_or((value,false),|v|(v,true));let number=number.parse::<f32>().map_err(|_|SvgParseError::InvalidNumber)?;let number=if percent{number/100.0}else{number};number.is_finite().then_some(number).ok_or(SvgParseError::InvalidNumber)}
-fn gradient_offset(value:&str)->Result<f32,SvgParseError>{let(value,percent)=value.trim().strip_suffix('%').map_or((value.trim(),false),|v|(v,true));let number=value.parse::<f32>().map_err(|_|SvgParseError::InvalidNumber)?;let number=if percent{number/100.0}else{number};number.is_finite().then_some(number).ok_or(SvgParseError::InvalidNumber)}
+fn gradient_number(
+    attrs: &HashMap<String, String>,
+    name: &str,
+    default: f32,
+) -> Result<f32, SvgParseError> {
+    let Some(value) = attrs.get(name) else {
+        return Ok(default);
+    };
+    let value = value.trim();
+    let (number, percent) = value
+        .strip_suffix('%')
+        .map_or((value, false), |v| (v, true));
+    let number = number
+        .parse::<f32>()
+        .map_err(|_| SvgParseError::InvalidNumber)?;
+    let number = if percent { number / 100.0 } else { number };
+    number
+        .is_finite()
+        .then_some(number)
+        .ok_or(SvgParseError::InvalidNumber)
+}
+fn gradient_offset(value: &str) -> Result<f32, SvgParseError> {
+    let (value, percent) = value
+        .trim()
+        .strip_suffix('%')
+        .map_or((value.trim(), false), |v| (v, true));
+    let number = value
+        .parse::<f32>()
+        .map_err(|_| SvgParseError::InvalidNumber)?;
+    let number = if percent { number / 100.0 } else { number };
+    number
+        .is_finite()
+        .then_some(number)
+        .ok_or(SvgParseError::InvalidNumber)
+}
 
 fn collect_node_paints(
     source: &str,
@@ -1303,7 +1795,10 @@ fn collect_node_paints(
         }
         let body = body.strip_suffix('/').unwrap_or(body).trim_end();
         let (tag, attrs) = parse_tag(body)?;
-        if !matches!(tag, "path" | "rect" | "circle" | "ellipse" | "line" | "polyline" | "polygon") {
+        if !matches!(
+            tag,
+            "path" | "rect" | "circle" | "ellipse" | "line" | "polyline" | "polygon"
+        ) {
             continue;
         }
         let fill = style_paint(&attrs, tag, "fill", gradients, stylesheet)?;
@@ -1328,7 +1823,10 @@ fn collect_node_paints(
             .and_then(|id| authored.get(id).cloned())
             .or_else(|| unnamed.next());
         let fallback_fill = node.fill.as_ref().map(|fill| SvgPaint::Solid(fill.color));
-        let fallback_stroke = node.stroke.as_ref().map(|stroke| SvgPaint::Solid(stroke.color));
+        let fallback_stroke = node
+            .stroke
+            .as_ref()
+            .map(|stroke| SvgPaint::Solid(stroke.color));
         let (fill, stroke) = paints.unwrap_or((None, None));
         result.insert(
             node.node_id,
@@ -1428,7 +1926,10 @@ fn resolve_use_references(
         };
         use_node.opacity *= target.opacity;
         use_node.visible &= target.visible;
-        use_node.clip_path = target.clip_path.clone().or_else(|| use_node.clip_path.clone());
+        use_node.clip_path = target
+            .clip_path
+            .clone()
+            .or_else(|| use_node.clip_path.clone());
         use_node.mask = target.mask.clone().or_else(|| use_node.mask.clone());
         use_node.filter = target.filter.clone().or_else(|| use_node.filter.clone());
         use_node.paint_order = target.paint_order;
@@ -1459,7 +1960,10 @@ fn style_paint(
         return Ok(None);
     };
     let value = value.trim();
-    if let Some(reference) = value.strip_prefix("url(").and_then(|value| value.strip_suffix(')')) {
+    if let Some(reference) = value
+        .strip_prefix("url(")
+        .and_then(|value| value.strip_suffix(')'))
+    {
         let reference = reference.trim().trim_matches(['\'', '"']);
         let Some(id) = reference.strip_prefix('#').filter(|id| !id.is_empty()) else {
             return Err(SvgParseError::ExternalResource(reference.to_owned()));
@@ -1517,7 +2021,11 @@ fn computed_style_value(
                     &mut declarations,
                     property,
                     &declaration.value,
-                    CascadePriority::stylesheet(declaration.important, specificity, declaration.order),
+                    CascadePriority::stylesheet(
+                        declaration.important,
+                        specificity,
+                        declaration.order,
+                    ),
                 );
             }
         }
@@ -1615,26 +2123,30 @@ fn collect_resources(
             "clipPath" => {
                 let id = resource_id(&attrs)?;
                 clip_paths.push(SvgClipPath {
-                        id: id.clone(),
-                        units: resource_units(
-                            &attrs,
-                            "clipPathUnits",
-                            SvgResourceUnits::UserSpaceOnUse,
-                        )?,
-                        transform: attrs
-                            .get("transform")
-                            .map(|value| parse_transform(value))
-                            .transpose()?
-                            .unwrap_or_default(),
-                        nodes: definition_nodes(nodes, &id),
-                    });
+                    id: id.clone(),
+                    units: resource_units(
+                        &attrs,
+                        "clipPathUnits",
+                        SvgResourceUnits::UserSpaceOnUse,
+                    )?,
+                    transform: attrs
+                        .get("transform")
+                        .map(|value| parse_transform(value))
+                        .transpose()?
+                        .unwrap_or_default(),
+                    nodes: definition_nodes(nodes, &id),
+                });
             }
             "mask" => {
                 let id = resource_id(&attrs)?;
                 let mask_type = match attrs
                     .get("mask-type")
                     .map(String::as_str)
-                    .or_else(|| attrs.get("style").and_then(|value| style_property(value, "mask-type")))
+                    .or_else(|| {
+                        attrs
+                            .get("style")
+                            .and_then(|value| style_property(value, "mask-type"))
+                    })
                     .unwrap_or("luminance")
                 {
                     "alpha" => SvgMaskType::Alpha,
@@ -1642,54 +2154,54 @@ fn collect_resources(
                     _ => return Err(SvgParseError::Unsupported("mask-type")),
                 };
                 masks.push(SvgMask {
-                        id: id.clone(),
-                        units: resource_units(
-                            &attrs,
-                            "maskUnits",
-                            SvgResourceUnits::ObjectBoundingBox,
-                        )?,
-                        content_units: resource_units(
-                            &attrs,
-                            "maskContentUnits",
-                            SvgResourceUnits::UserSpaceOnUse,
-                        )?,
-                        mask_type,
-                        region: [
-                            resource_number(&attrs, "x", -0.1)?,
-                            resource_number(&attrs, "y", -0.1)?,
-                            resource_number(&attrs, "width", 1.2)?,
-                            resource_number(&attrs, "height", 1.2)?,
-                        ],
-                        nodes: definition_nodes(nodes, &id),
-                    });
+                    id: id.clone(),
+                    units: resource_units(
+                        &attrs,
+                        "maskUnits",
+                        SvgResourceUnits::ObjectBoundingBox,
+                    )?,
+                    content_units: resource_units(
+                        &attrs,
+                        "maskContentUnits",
+                        SvgResourceUnits::UserSpaceOnUse,
+                    )?,
+                    mask_type,
+                    region: [
+                        resource_number(&attrs, "x", -0.1)?,
+                        resource_number(&attrs, "y", -0.1)?,
+                        resource_number(&attrs, "width", 1.2)?,
+                        resource_number(&attrs, "height", 1.2)?,
+                    ],
+                    nodes: definition_nodes(nodes, &id),
+                });
             }
             "pattern" => {
                 let id = resource_id(&attrs)?;
                 patterns.push(SvgPattern {
-                        id: id.clone(),
-                        units: resource_units(
-                            &attrs,
-                            "patternUnits",
-                            SvgResourceUnits::ObjectBoundingBox,
-                        )?,
-                        content_units: resource_units(
-                            &attrs,
-                            "patternContentUnits",
-                            SvgResourceUnits::UserSpaceOnUse,
-                        )?,
-                        tile: [
-                            resource_number(&attrs, "x", 0.0)?,
-                            resource_number(&attrs, "y", 0.0)?,
-                            resource_number(&attrs, "width", 0.0)?,
-                            resource_number(&attrs, "height", 0.0)?,
-                        ],
-                        transform: attrs
-                            .get("patternTransform")
-                            .map(|value| parse_transform(value))
-                            .transpose()?
-                            .unwrap_or_default(),
-                        nodes: definition_nodes(nodes, &id),
-                    });
+                    id: id.clone(),
+                    units: resource_units(
+                        &attrs,
+                        "patternUnits",
+                        SvgResourceUnits::ObjectBoundingBox,
+                    )?,
+                    content_units: resource_units(
+                        &attrs,
+                        "patternContentUnits",
+                        SvgResourceUnits::UserSpaceOnUse,
+                    )?,
+                    tile: [
+                        resource_number(&attrs, "x", 0.0)?,
+                        resource_number(&attrs, "y", 0.0)?,
+                        resource_number(&attrs, "width", 0.0)?,
+                        resource_number(&attrs, "height", 0.0)?,
+                    ],
+                    transform: attrs
+                        .get("patternTransform")
+                        .map(|value| parse_transform(value))
+                        .transpose()?
+                        .unwrap_or_default(),
+                    nodes: definition_nodes(nodes, &id),
+                });
             }
             "filter" => {
                 let id = resource_id(&attrs)?;
@@ -1805,7 +2317,10 @@ fn definition_nodes(nodes: &[SvgNode], id: &str) -> Arc<[u32]> {
 fn style_property<'a>(style: &'a str, wanted: &str) -> Option<&'a str> {
     style.split(';').find_map(|declaration| {
         let (property, value) = declaration.split_once(':')?;
-        property.trim().eq_ignore_ascii_case(wanted).then_some(value.trim())
+        property
+            .trim()
+            .eq_ignore_ascii_case(wanted)
+            .then_some(value.trim())
     })
 }
 
@@ -1829,7 +2344,12 @@ fn parse_filter_primitive(
     default_input: SvgFilterInput,
 ) -> Result<SvgFilterPrimitive, SvgParseError> {
     let input = || filter_input(attrs.get("in").map(String::as_str), default_input.clone());
-    let input2 = || filter_input(attrs.get("in2").map(String::as_str), SvgFilterInput::SourceGraphic);
+    let input2 = || {
+        filter_input(
+            attrs.get("in2").map(String::as_str),
+            SvgFilterInput::SourceGraphic,
+        )
+    };
     match name {
         "feGaussianBlur" => {
             let deviations = attrs
@@ -1837,7 +2357,9 @@ fn parse_filter_primitive(
                 .map(|value| parse_numbers(value))
                 .unwrap_or_else(|| vec![0.0]);
             if !(1..=2).contains(&deviations.len())
-                || deviations.iter().any(|value| !value.is_finite() || *value < 0.0)
+                || deviations
+                    .iter()
+                    .any(|value| !value.is_finite() || *value < 0.0)
             {
                 return Err(SvgParseError::InvalidNumber);
             }
@@ -1858,11 +2380,11 @@ fn parse_filter_primitive(
                 .transpose()?
                 .flatten()
                 .unwrap_or(SvgColor::rgba8(0, 0, 0, 255));
-            if let Some(opacity) = attrs
-                .get("flood-opacity")
-                .map(String::as_str)
-                .or_else(|| attrs.get("style").and_then(|style| style_property(style, "flood-opacity")))
-            {
+            if let Some(opacity) = attrs.get("flood-opacity").map(String::as_str).or_else(|| {
+                attrs
+                    .get("style")
+                    .and_then(|style| style_property(style, "flood-opacity"))
+            }) {
                 color.a *= parse_unit(opacity)?;
             }
             Ok(SvgFilterPrimitive::Flood { color })
@@ -1876,7 +2398,11 @@ fn parse_filter_primitive(
                 "xor" => SvgCompositeOperator::Xor,
                 "lighter" => SvgCompositeOperator::Lighter,
                 "arithmetic" => SvgCompositeOperator::Arithmetic,
-                _ => return Ok(SvgFilterPrimitive::Unsupported(Arc::from("feComposite operator"))),
+                _ => {
+                    return Ok(SvgFilterPrimitive::Unsupported(Arc::from(
+                        "feComposite operator",
+                    )));
+                }
             };
             let mut coefficients = [0.0; 4];
             for (index, name) in ["k1", "k2", "k3", "k4"].into_iter().enumerate() {
@@ -1919,7 +2445,10 @@ fn parse_filter_primitive(
                 "luminanceToAlpha" => SvgColorMatrix::LuminanceToAlpha,
                 _ => return Err(SvgParseError::InvalidNumber),
             };
-            Ok(SvgFilterPrimitive::ColorMatrix { input: input(), matrix })
+            Ok(SvgFilterPrimitive::ColorMatrix {
+                input: input(),
+                matrix,
+            })
         }
         // `feMerge` is assembled from its child `feMergeNode` tags in the scanner.
         "feMerge" | "feMergeNode" => Ok(SvgFilterPrimitive::Unsupported(Arc::from(name))),
@@ -1933,105 +2462,548 @@ fn parse_transform(value: &str) -> Result<SvgTransform, SvgParseError> {
         let (name, args) = part.split_once('(').ok_or(SvgParseError::InvalidNumber)?;
         let values = parse_numbers(args);
         let current = match name.trim() {
-            "matrix" if values.len() == 6 => SvgTransform { sx: values[0], ky: values[1], kx: values[2], sy: values[3], tx: values[4], ty: values[5] },
-            "translate" if (1..=2).contains(&values.len()) => SvgTransform { tx: values[0], ty: *values.get(1).unwrap_or(&0.0), ..SvgTransform::default() },
-            "scale" if (1..=2).contains(&values.len()) => SvgTransform { sx: values[0], sy: *values.get(1).unwrap_or(&values[0]), ..SvgTransform::default() },
-            "rotate" if (1..=3).contains(&values.len()) => { let a = values[0].to_radians(); let rotation = SvgTransform { sx: a.cos(), ky: a.sin(), kx: -a.sin(), sy: a.cos(), ..SvgTransform::default() }; if values.len() == 3 { SvgTransform { tx: values[1], ty: values[2], ..SvgTransform::default() }.mul(rotation).mul(SvgTransform { tx: -values[1], ty: -values[2], ..SvgTransform::default() }) } else { rotation } },
-            "skewX" if values.len() == 1 => SvgTransform { kx: values[0].to_radians().tan(), ..SvgTransform::default() },
-            "skewY" if values.len() == 1 => SvgTransform { ky: values[0].to_radians().tan(), ..SvgTransform::default() },
+            "matrix" if values.len() == 6 => SvgTransform {
+                sx: values[0],
+                ky: values[1],
+                kx: values[2],
+                sy: values[3],
+                tx: values[4],
+                ty: values[5],
+            },
+            "translate" if (1..=2).contains(&values.len()) => SvgTransform {
+                tx: values[0],
+                ty: *values.get(1).unwrap_or(&0.0),
+                ..SvgTransform::default()
+            },
+            "scale" if (1..=2).contains(&values.len()) => SvgTransform {
+                sx: values[0],
+                sy: *values.get(1).unwrap_or(&values[0]),
+                ..SvgTransform::default()
+            },
+            "rotate" if (1..=3).contains(&values.len()) => {
+                let a = values[0].to_radians();
+                let rotation = SvgTransform {
+                    sx: a.cos(),
+                    ky: a.sin(),
+                    kx: -a.sin(),
+                    sy: a.cos(),
+                    ..SvgTransform::default()
+                };
+                if values.len() == 3 {
+                    SvgTransform {
+                        tx: values[1],
+                        ty: values[2],
+                        ..SvgTransform::default()
+                    }
+                    .mul(rotation)
+                    .mul(SvgTransform {
+                        tx: -values[1],
+                        ty: -values[2],
+                        ..SvgTransform::default()
+                    })
+                } else {
+                    rotation
+                }
+            }
+            "skewX" if values.len() == 1 => SvgTransform {
+                kx: values[0].to_radians().tan(),
+                ..SvgTransform::default()
+            },
+            "skewY" if values.len() == 1 => SvgTransform {
+                ky: values[0].to_radians().tan(),
+                ..SvgTransform::default()
+            },
             _ => return Err(SvgParseError::Unsupported("transform")),
         };
-        if !current.is_finite() { return Err(SvgParseError::InvalidNumber); }
+        if !current.is_finite() {
+            return Err(SvgParseError::InvalidNumber);
+        }
         result = result.mul(current);
     }
     Ok(result)
 }
 
-fn element_path(tag: &str, attrs: &std::collections::HashMap<String, String>) -> Result<Vec<SvgPathCommand>, SvgParseError> {
-    let number = |name: &str, default: f32| attrs.get(name).map(|s| parse_length(s).ok_or(SvgParseError::InvalidNumber)).transpose().map(|v| v.unwrap_or(default));
+fn element_path(
+    tag: &str,
+    attrs: &std::collections::HashMap<String, String>,
+) -> Result<Vec<SvgPathCommand>, SvgParseError> {
+    let number = |name: &str, default: f32| {
+        attrs
+            .get(name)
+            .map(|s| parse_length(s).ok_or(SvgParseError::InvalidNumber))
+            .transpose()
+            .map(|v| v.unwrap_or(default))
+    };
     match tag {
         "path" => parse_path(attrs.get("d").ok_or(SvgParseError::InvalidPath)?),
-        "rect" => { let x=number("x",0.0)?; let y=number("y",0.0)?; let w=number("width",0.0)?; let h=number("height",0.0)?; if w < 0.0 || h < 0.0 { return Err(SvgParseError::InvalidNumber); } Ok(vec![m(x,y), l(x+w,y), l(x+w,y+h), l(x,y+h), SvgPathCommand::Close]) },
-        "circle" | "ellipse" => { let cx=number("cx",0.0)?; let cy=number("cy",0.0)?; let rx=if tag=="circle" { number("r",0.0)? } else { number("rx",0.0)? }; let ry=if tag=="circle" { rx } else { number("ry",0.0)? }; if rx < 0.0 || ry < 0.0 { return Err(SvgParseError::InvalidNumber); } ellipse_path(cx,cy,rx,ry) },
-        "line" => Ok(vec![m(number("x1",0.0)?,number("y1",0.0)?), l(number("x2",0.0)?,number("y2",0.0)?)]),
-        "polyline" | "polygon" => { let points=parse_numbers(attrs.get("points").map(String::as_str).unwrap_or("")); if points.len()<4 || points.len()%2!=0 { return Err(SvgParseError::InvalidPath); } let mut p=vec![m(points[0],points[1])]; for pair in points[2..].chunks_exact(2) { p.push(l(pair[0],pair[1])); } if tag=="polygon" { p.push(SvgPathCommand::Close); } Ok(p) },
+        "rect" => {
+            let x = number("x", 0.0)?;
+            let y = number("y", 0.0)?;
+            let w = number("width", 0.0)?;
+            let h = number("height", 0.0)?;
+            if w < 0.0 || h < 0.0 {
+                return Err(SvgParseError::InvalidNumber);
+            }
+            Ok(vec![
+                m(x, y),
+                l(x + w, y),
+                l(x + w, y + h),
+                l(x, y + h),
+                SvgPathCommand::Close,
+            ])
+        }
+        "circle" | "ellipse" => {
+            let cx = number("cx", 0.0)?;
+            let cy = number("cy", 0.0)?;
+            let rx = if tag == "circle" {
+                number("r", 0.0)?
+            } else {
+                number("rx", 0.0)?
+            };
+            let ry = if tag == "circle" {
+                rx
+            } else {
+                number("ry", 0.0)?
+            };
+            if rx < 0.0 || ry < 0.0 {
+                return Err(SvgParseError::InvalidNumber);
+            }
+            ellipse_path(cx, cy, rx, ry)
+        }
+        "line" => Ok(vec![
+            m(number("x1", 0.0)?, number("y1", 0.0)?),
+            l(number("x2", 0.0)?, number("y2", 0.0)?),
+        ]),
+        "polyline" | "polygon" => {
+            let points = parse_numbers(attrs.get("points").map(String::as_str).unwrap_or(""));
+            if points.len() < 4 || points.len() % 2 != 0 {
+                return Err(SvgParseError::InvalidPath);
+            }
+            let mut p = vec![m(points[0], points[1])];
+            for pair in points[2..].chunks_exact(2) {
+                p.push(l(pair[0], pair[1]));
+            }
+            if tag == "polygon" {
+                p.push(SvgPathCommand::Close);
+            }
+            Ok(p)
+        }
         _ => Err(SvgParseError::Unsupported("shape")),
     }
 }
 
-fn ellipse_path(cx:f32,cy:f32,rx:f32,ry:f32)->Result<Vec<SvgPathCommand>,SvgParseError>{
-    if rx==0.0 || ry==0.0 { return Ok(Vec::new()); }
-    let k=0.552_284_8; Ok(vec![m(cx+rx,cy), c(cx+rx,cy+k*ry,cx+k*rx,cy+ry,cx,cy+ry), c(cx-k*rx,cy+ry,cx-rx,cy+k*ry,cx-rx,cy), c(cx-rx,cy-k*ry,cx-k*rx,cy-ry,cx,cy-ry), c(cx+k*rx,cy-ry,cx+rx,cy-k*ry,cx+rx,cy), SvgPathCommand::Close])
+fn ellipse_path(cx: f32, cy: f32, rx: f32, ry: f32) -> Result<Vec<SvgPathCommand>, SvgParseError> {
+    if rx == 0.0 || ry == 0.0 {
+        return Ok(Vec::new());
+    }
+    let k = 0.552_284_8;
+    Ok(vec![
+        m(cx + rx, cy),
+        c(cx + rx, cy + k * ry, cx + k * rx, cy + ry, cx, cy + ry),
+        c(cx - k * rx, cy + ry, cx - rx, cy + k * ry, cx - rx, cy),
+        c(cx - rx, cy - k * ry, cx - k * rx, cy - ry, cx, cy - ry),
+        c(cx + k * rx, cy - ry, cx + rx, cy - k * ry, cx + rx, cy),
+        SvgPathCommand::Close,
+    ])
 }
 
-fn parse_path(data:&str)->Result<Vec<SvgPathCommand>,SvgParseError>{
-    let mut scan=Numbers::new(data); let mut out=Vec::new(); let mut command=' '; let mut current=(0.0,0.0); let mut start=(0.0,0.0); let mut last_cubic=None; let mut last_quad=None;
-    while scan.skip_separators() { if let Some(c)=scan.peek_char().filter(|c| c.is_ascii_alphabetic()) { command=c; scan.bump(); } else if command==' ' { return Err(SvgParseError::InvalidPath); }
-        let relative=command.is_ascii_lowercase(); let upper=command.to_ascii_uppercase();
+fn parse_path(data: &str) -> Result<Vec<SvgPathCommand>, SvgParseError> {
+    let mut scan = Numbers::new(data);
+    let mut out = Vec::new();
+    let mut command = ' ';
+    let mut current = (0.0, 0.0);
+    let mut start = (0.0, 0.0);
+    let mut last_cubic = None;
+    let mut last_quad = None;
+    while scan.skip_separators() {
+        if let Some(c) = scan.peek_char().filter(|c| c.is_ascii_alphabetic()) {
+            command = c;
+            scan.bump();
+        } else if command == ' ' {
+            return Err(SvgParseError::InvalidPath);
+        }
+        let relative = command.is_ascii_lowercase();
+        let upper = command.to_ascii_uppercase();
         match upper {
-            'Z'=>{ out.push(SvgPathCommand::Close); current=start; last_cubic=None; last_quad=None; command=' '; },
-            'M'|'L' => { let (mut x,mut y)=(scan.number()?,scan.number()?); if relative {x+=current.0;y+=current.1;} if upper=='M' { out.push(m(x,y)); start=(x,y); command=if relative {'l'} else {'L'}; } else {out.push(l(x,y));} current=(x,y); last_cubic=None;last_quad=None; },
-            'H' => {let mut x=scan.number()?; if relative{x+=current.0;} current.0=x;out.push(l(x,current.1));last_cubic=None;last_quad=None;},
-            'V' => {let mut y=scan.number()?;if relative{y+=current.1;}current.1=y;out.push(l(current.0,y));last_cubic=None;last_quad=None;},
-            'C' => {let(mut x1,mut y1,mut x2,mut y2,mut x,mut y)=(scan.number()?,scan.number()?,scan.number()?,scan.number()?,scan.number()?,scan.number()?);if relative{x1+=current.0;y1+=current.1;x2+=current.0;y2+=current.1;x+=current.0;y+=current.1;}out.push(c(x1,y1,x2,y2,x,y));current=(x,y);last_cubic=Some((x2,y2));last_quad=None;},
-            'S' => {let(mut x2,mut y2,mut x,mut y)=(scan.number()?,scan.number()?,scan.number()?,scan.number()?);if relative{x2+=current.0;y2+=current.1;x+=current.0;y+=current.1;}let(x1,y1)=last_cubic.map(|p|(2.0*current.0-p.0,2.0*current.1-p.1)).unwrap_or(current);out.push(c(x1,y1,x2,y2,x,y));current=(x,y);last_cubic=Some((x2,y2));last_quad=None;},
-            'Q' => {let(mut x1,mut y1,mut x,mut y)=(scan.number()?,scan.number()?,scan.number()?,scan.number()?);if relative{x1+=current.0;y1+=current.1;x+=current.0;y+=current.1;}out.push(q(x1,y1,x,y));current=(x,y);last_quad=Some((x1,y1));last_cubic=None;},
-            'T' => {let(mut x,mut y)=(scan.number()?,scan.number()?);if relative{x+=current.0;y+=current.1;}let(x1,y1)=last_quad.map(|p|(2.0*current.0-p.0,2.0*current.1-p.1)).unwrap_or(current);out.push(q(x1,y1,x,y));current=(x,y);last_quad=Some((x1,y1));last_cubic=None;},
+            'Z' => {
+                out.push(SvgPathCommand::Close);
+                current = start;
+                last_cubic = None;
+                last_quad = None;
+                command = ' ';
+            }
+            'M' | 'L' => {
+                let (mut x, mut y) = (scan.number()?, scan.number()?);
+                if relative {
+                    x += current.0;
+                    y += current.1;
+                }
+                if upper == 'M' {
+                    out.push(m(x, y));
+                    start = (x, y);
+                    command = if relative { 'l' } else { 'L' };
+                } else {
+                    out.push(l(x, y));
+                }
+                current = (x, y);
+                last_cubic = None;
+                last_quad = None;
+            }
+            'H' => {
+                let mut x = scan.number()?;
+                if relative {
+                    x += current.0;
+                }
+                current.0 = x;
+                out.push(l(x, current.1));
+                last_cubic = None;
+                last_quad = None;
+            }
+            'V' => {
+                let mut y = scan.number()?;
+                if relative {
+                    y += current.1;
+                }
+                current.1 = y;
+                out.push(l(current.0, y));
+                last_cubic = None;
+                last_quad = None;
+            }
+            'C' => {
+                let (mut x1, mut y1, mut x2, mut y2, mut x, mut y) = (
+                    scan.number()?,
+                    scan.number()?,
+                    scan.number()?,
+                    scan.number()?,
+                    scan.number()?,
+                    scan.number()?,
+                );
+                if relative {
+                    x1 += current.0;
+                    y1 += current.1;
+                    x2 += current.0;
+                    y2 += current.1;
+                    x += current.0;
+                    y += current.1;
+                }
+                out.push(c(x1, y1, x2, y2, x, y));
+                current = (x, y);
+                last_cubic = Some((x2, y2));
+                last_quad = None;
+            }
+            'S' => {
+                let (mut x2, mut y2, mut x, mut y) = (
+                    scan.number()?,
+                    scan.number()?,
+                    scan.number()?,
+                    scan.number()?,
+                );
+                if relative {
+                    x2 += current.0;
+                    y2 += current.1;
+                    x += current.0;
+                    y += current.1;
+                }
+                let (x1, y1) = last_cubic
+                    .map(|p| (2.0 * current.0 - p.0, 2.0 * current.1 - p.1))
+                    .unwrap_or(current);
+                out.push(c(x1, y1, x2, y2, x, y));
+                current = (x, y);
+                last_cubic = Some((x2, y2));
+                last_quad = None;
+            }
+            'Q' => {
+                let (mut x1, mut y1, mut x, mut y) = (
+                    scan.number()?,
+                    scan.number()?,
+                    scan.number()?,
+                    scan.number()?,
+                );
+                if relative {
+                    x1 += current.0;
+                    y1 += current.1;
+                    x += current.0;
+                    y += current.1;
+                }
+                out.push(q(x1, y1, x, y));
+                current = (x, y);
+                last_quad = Some((x1, y1));
+                last_cubic = None;
+            }
+            'T' => {
+                let (mut x, mut y) = (scan.number()?, scan.number()?);
+                if relative {
+                    x += current.0;
+                    y += current.1;
+                }
+                let (x1, y1) = last_quad
+                    .map(|p| (2.0 * current.0 - p.0, 2.0 * current.1 - p.1))
+                    .unwrap_or(current);
+                out.push(q(x1, y1, x, y));
+                current = (x, y);
+                last_quad = Some((x1, y1));
+                last_cubic = None;
+            }
             'A' => {
-                let (rx, ry, rotation) = (scan.number()?.abs(), scan.number()?.abs(), scan.number()?.to_radians());
+                let (rx, ry, rotation) = (
+                    scan.number()?.abs(),
+                    scan.number()?.abs(),
+                    scan.number()?.to_radians(),
+                );
                 let large = scan.number()?;
                 let sweep = scan.number()?;
                 let (mut x, mut y) = (scan.number()?, scan.number()?);
-                if !matches!(large, 0.0 | 1.0) || !matches!(sweep, 0.0 | 1.0) { return Err(SvgParseError::InvalidPath); }
-                if relative { x += current.0; y += current.1; }
-                if rx == 0.0 || ry == 0.0 { out.push(l(x,y)); }
-                else { out.extend(arc_to_cubics(current, (x,y), rx, ry, rotation, large != 0.0, sweep != 0.0)?); }
-                current=(x,y); last_cubic=None;last_quad=None;
-            },
+                if !matches!(large, 0.0 | 1.0) || !matches!(sweep, 0.0 | 1.0) {
+                    return Err(SvgParseError::InvalidPath);
+                }
+                if relative {
+                    x += current.0;
+                    y += current.1;
+                }
+                if rx == 0.0 || ry == 0.0 {
+                    out.push(l(x, y));
+                } else {
+                    out.extend(arc_to_cubics(
+                        current,
+                        (x, y),
+                        rx,
+                        ry,
+                        rotation,
+                        large != 0.0,
+                        sweep != 0.0,
+                    )?);
+                }
+                current = (x, y);
+                last_cubic = None;
+                last_quad = None;
+            }
             _ => return Err(SvgParseError::InvalidPath),
         }
-        if out.len()>MAX_COMMANDS{return Err(SvgParseError::LimitExceeded("path command"));}
+        if out.len() > MAX_COMMANDS {
+            return Err(SvgParseError::LimitExceeded("path command"));
+        }
     }
-    if out.is_empty() {Err(SvgParseError::InvalidPath)} else {Ok(out)}
+    if out.is_empty() {
+        Err(SvgParseError::InvalidPath)
+    } else {
+        Ok(out)
+    }
 }
 
-fn arc_to_cubics(start:(f32,f32),end:(f32,f32),mut rx:f32,mut ry:f32,phi:f32,large:bool,sweep:bool)->Result<Vec<SvgPathCommand>,SvgParseError>{
-    if start==end { return Ok(Vec::new()); }
-    let (sin_phi,cos_phi)=phi.sin_cos();
-    let dx=(start.0-end.0)*0.5; let dy=(start.1-end.1)*0.5;
-    let xp=cos_phi*dx+sin_phi*dy; let yp=-sin_phi*dx+cos_phi*dy;
-    let lambda=xp*xp/(rx*rx)+yp*yp/(ry*ry);
-    if lambda>1.0 {let scale=lambda.sqrt();rx*=scale;ry*=scale;}
-    let numerator=(rx*rx*ry*ry-rx*rx*yp*yp-ry*ry*xp*xp).max(0.0);
-    let denominator=rx*rx*yp*yp+ry*ry*xp*xp;
-    let sign=if large==sweep{-1.0}else{1.0};
-    let factor=if denominator<=f32::EPSILON{0.0}else{sign*(numerator/denominator).sqrt()};
-    let cxp=factor*(rx*yp/ry); let cyp=factor*(-ry*xp/rx);
-    let cx=cos_phi*cxp-sin_phi*cyp+(start.0+end.0)*0.5;
-    let cy=sin_phi*cxp+cos_phi*cyp+(start.1+end.1)*0.5;
-    let angle=|ux:f32,uy:f32,vx:f32,vy:f32| (ux*vy-uy*vx).atan2(ux*vx+uy*vy);
-    let ux=(xp-cxp)/rx;let uy=(yp-cyp)/ry;let vx=(-xp-cxp)/rx;let vy=(-yp-cyp)/ry;
-    let theta=uy.atan2(ux); let mut delta=angle(ux,uy,vx,vy);
-    if !sweep && delta>0.0 {delta-=std::f32::consts::TAU;} else if sweep && delta<0.0 {delta+=std::f32::consts::TAU;}
-    let count=(delta.abs()/(std::f32::consts::FRAC_PI_2)).ceil() as usize;
-    if count==0 || count>4 {return Err(SvgParseError::InvalidPath)}
-    let map=|u:f32,v:f32|(cx+rx*cos_phi*u-ry*sin_phi*v,cy+rx*sin_phi*u+ry*cos_phi*v);
-    let mut out=Vec::with_capacity(count);
-    for index in 0..count {let a=theta+delta*index as f32/count as f32;let b=theta+delta*(index+1) as f32/count as f32;let step=b-a;let k=4.0/3.0*(step*0.25).tan();let (sa,ca)=a.sin_cos();let(sb,cb)=b.sin_cos();let p1=map(ca-k*sa,sa+k*ca);let p2=map(cb+k*sb,sb-k*cb);let p=map(cb,sb);out.push(c(p1.0,p1.1,p2.0,p2.1,p.0,p.1));}
-    if let Some(SvgPathCommand::CubicTo{ x,y,.. })=out.last_mut(){*x=end.0;*y=end.1;}
-    if out.iter().all(command_finite){Ok(out)}else{Err(SvgParseError::InvalidNumber)}
+fn arc_to_cubics(
+    start: (f32, f32),
+    end: (f32, f32),
+    mut rx: f32,
+    mut ry: f32,
+    phi: f32,
+    large: bool,
+    sweep: bool,
+) -> Result<Vec<SvgPathCommand>, SvgParseError> {
+    if start == end {
+        return Ok(Vec::new());
+    }
+    let (sin_phi, cos_phi) = phi.sin_cos();
+    let dx = (start.0 - end.0) * 0.5;
+    let dy = (start.1 - end.1) * 0.5;
+    let xp = cos_phi * dx + sin_phi * dy;
+    let yp = -sin_phi * dx + cos_phi * dy;
+    let lambda = xp * xp / (rx * rx) + yp * yp / (ry * ry);
+    if lambda > 1.0 {
+        let scale = lambda.sqrt();
+        rx *= scale;
+        ry *= scale;
+    }
+    let numerator = (rx * rx * ry * ry - rx * rx * yp * yp - ry * ry * xp * xp).max(0.0);
+    let denominator = rx * rx * yp * yp + ry * ry * xp * xp;
+    let sign = if large == sweep { -1.0 } else { 1.0 };
+    let factor = if denominator <= f32::EPSILON {
+        0.0
+    } else {
+        sign * (numerator / denominator).sqrt()
+    };
+    let cxp = factor * (rx * yp / ry);
+    let cyp = factor * (-ry * xp / rx);
+    let cx = cos_phi * cxp - sin_phi * cyp + (start.0 + end.0) * 0.5;
+    let cy = sin_phi * cxp + cos_phi * cyp + (start.1 + end.1) * 0.5;
+    let angle = |ux: f32, uy: f32, vx: f32, vy: f32| (ux * vy - uy * vx).atan2(ux * vx + uy * vy);
+    let ux = (xp - cxp) / rx;
+    let uy = (yp - cyp) / ry;
+    let vx = (-xp - cxp) / rx;
+    let vy = (-yp - cyp) / ry;
+    let theta = uy.atan2(ux);
+    let mut delta = angle(ux, uy, vx, vy);
+    if !sweep && delta > 0.0 {
+        delta -= std::f32::consts::TAU;
+    } else if sweep && delta < 0.0 {
+        delta += std::f32::consts::TAU;
+    }
+    let count = (delta.abs() / (std::f32::consts::FRAC_PI_2)).ceil() as usize;
+    if count == 0 || count > 4 {
+        return Err(SvgParseError::InvalidPath);
+    }
+    let map = |u: f32, v: f32| {
+        (
+            cx + rx * cos_phi * u - ry * sin_phi * v,
+            cy + rx * sin_phi * u + ry * cos_phi * v,
+        )
+    };
+    let mut out = Vec::with_capacity(count);
+    for index in 0..count {
+        let a = theta + delta * index as f32 / count as f32;
+        let b = theta + delta * (index + 1) as f32 / count as f32;
+        let step = b - a;
+        let k = 4.0 / 3.0 * (step * 0.25).tan();
+        let (sa, ca) = a.sin_cos();
+        let (sb, cb) = b.sin_cos();
+        let p1 = map(ca - k * sa, sa + k * ca);
+        let p2 = map(cb + k * sb, sb - k * cb);
+        let p = map(cb, sb);
+        out.push(c(p1.0, p1.1, p2.0, p2.1, p.0, p.1));
+    }
+    if let Some(SvgPathCommand::CubicTo { x, y, .. }) = out.last_mut() {
+        *x = end.0;
+        *y = end.1;
+    }
+    if out.iter().all(command_finite) {
+        Ok(out)
+    } else {
+        Err(SvgParseError::InvalidNumber)
+    }
 }
 
-fn command_finite(command:&SvgPathCommand)->bool { match command { SvgPathCommand::MoveTo{x,y}|SvgPathCommand::LineTo{x,y}=>x.is_finite()&&y.is_finite(),SvgPathCommand::QuadraticTo{control_x,control_y,x,y}=>[control_x,control_y,x,y].into_iter().all(|v|v.is_finite()),SvgPathCommand::CubicTo{control1_x,control1_y,control2_x,control2_y,x,y}=>[control1_x,control1_y,control2_x,control2_y,x,y].into_iter().all(|v|v.is_finite()),SvgPathCommand::Close=>true} }
+fn command_finite(command: &SvgPathCommand) -> bool {
+    match command {
+        SvgPathCommand::MoveTo { x, y } | SvgPathCommand::LineTo { x, y } => {
+            x.is_finite() && y.is_finite()
+        }
+        SvgPathCommand::QuadraticTo {
+            control_x,
+            control_y,
+            x,
+            y,
+        } => [control_x, control_y, x, y]
+            .into_iter()
+            .all(|v| v.is_finite()),
+        SvgPathCommand::CubicTo {
+            control1_x,
+            control1_y,
+            control2_x,
+            control2_y,
+            x,
+            y,
+        } => [control1_x, control1_y, control2_x, control2_y, x, y]
+            .into_iter()
+            .all(|v| v.is_finite()),
+        SvgPathCommand::Close => true,
+    }
+}
 
-fn parse_numbers(s:&str)->Vec<f32>{let mut scanner=Numbers::new(s);let mut out=Vec::new();while scanner.skip_separators(){match scanner.number(){Ok(v)=>out.push(v),Err(_)=>return Vec::new()}}out}
-struct Numbers<'a>{s:&'a str,i:usize}
-impl<'a> Numbers<'a>{fn new(s:&'a str)->Self{Self{s,i:0}}fn peek_char(&self)->Option<char>{self.s[self.i..].chars().next()}fn bump(&mut self){if let Some(c)=self.peek_char(){self.i+=c.len_utf8();}}fn skip_separators(&mut self)->bool{while let Some(c)=self.peek_char(){if c.is_ascii_whitespace()||c==','{self.bump()}else{break}}self.i<self.s.len()}fn number(&mut self)->Result<f32,SvgParseError>{self.skip_separators();let start=self.i;if self.peek_char().is_some_and(|c|c=='+'||c=='-'){self.bump()}while self.peek_char().is_some_and(|c|c.is_ascii_digit()){self.bump()}if self.peek_char()==Some('.') {self.bump();while self.peek_char().is_some_and(|c|c.is_ascii_digit()){self.bump()}}if self.peek_char().is_some_and(|c|c=='e'||c=='E'){self.bump();if self.peek_char().is_some_and(|c|c=='+'||c=='-'){self.bump()}while self.peek_char().is_some_and(|c|c.is_ascii_digit()){self.bump()}}if self.i==start{return Err(SvgParseError::InvalidNumber)}let n=self.s[start..self.i].parse::<f32>().map_err(|_|SvgParseError::InvalidNumber)?;if n.is_finite(){Ok(n)}else{Err(SvgParseError::InvalidNumber)}}}
+fn parse_numbers(s: &str) -> Vec<f32> {
+    let mut scanner = Numbers::new(s);
+    let mut out = Vec::new();
+    while scanner.skip_separators() {
+        match scanner.number() {
+            Ok(v) => out.push(v),
+            Err(_) => return Vec::new(),
+        }
+    }
+    out
+}
+struct Numbers<'a> {
+    s: &'a str,
+    i: usize,
+}
+impl<'a> Numbers<'a> {
+    fn new(s: &'a str) -> Self {
+        Self { s, i: 0 }
+    }
+    fn peek_char(&self) -> Option<char> {
+        self.s[self.i..].chars().next()
+    }
+    fn bump(&mut self) {
+        if let Some(c) = self.peek_char() {
+            self.i += c.len_utf8();
+        }
+    }
+    fn skip_separators(&mut self) -> bool {
+        while let Some(c) = self.peek_char() {
+            if c.is_ascii_whitespace() || c == ',' {
+                self.bump()
+            } else {
+                break;
+            }
+        }
+        self.i < self.s.len()
+    }
+    fn number(&mut self) -> Result<f32, SvgParseError> {
+        self.skip_separators();
+        let start = self.i;
+        if self.peek_char().is_some_and(|c| c == '+' || c == '-') {
+            self.bump()
+        }
+        while self.peek_char().is_some_and(|c| c.is_ascii_digit()) {
+            self.bump()
+        }
+        if self.peek_char() == Some('.') {
+            self.bump();
+            while self.peek_char().is_some_and(|c| c.is_ascii_digit()) {
+                self.bump()
+            }
+        }
+        if self.peek_char().is_some_and(|c| c == 'e' || c == 'E') {
+            self.bump();
+            if self.peek_char().is_some_and(|c| c == '+' || c == '-') {
+                self.bump()
+            }
+            while self.peek_char().is_some_and(|c| c.is_ascii_digit()) {
+                self.bump()
+            }
+        }
+        if self.i == start {
+            return Err(SvgParseError::InvalidNumber);
+        }
+        let n = self.s[start..self.i]
+            .parse::<f32>()
+            .map_err(|_| SvgParseError::InvalidNumber)?;
+        if n.is_finite() {
+            Ok(n)
+        } else {
+            Err(SvgParseError::InvalidNumber)
+        }
+    }
+}
 
-fn m(x:f32,y:f32)->SvgPathCommand{SvgPathCommand::MoveTo{x,y}}
-fn l(x:f32,y:f32)->SvgPathCommand{SvgPathCommand::LineTo{x,y}}
-fn q(control_x:f32,control_y:f32,x:f32,y:f32)->SvgPathCommand{SvgPathCommand::QuadraticTo{control_x,control_y,x,y}}
-fn c(control1_x:f32,control1_y:f32,control2_x:f32,control2_y:f32,x:f32,y:f32)->SvgPathCommand{SvgPathCommand::CubicTo{control1_x,control1_y,control2_x,control2_y,x,y}}
+fn m(x: f32, y: f32) -> SvgPathCommand {
+    SvgPathCommand::MoveTo { x, y }
+}
+fn l(x: f32, y: f32) -> SvgPathCommand {
+    SvgPathCommand::LineTo { x, y }
+}
+fn q(control_x: f32, control_y: f32, x: f32, y: f32) -> SvgPathCommand {
+    SvgPathCommand::QuadraticTo {
+        control_x,
+        control_y,
+        x,
+        y,
+    }
+}
+fn c(
+    control1_x: f32,
+    control1_y: f32,
+    control2_x: f32,
+    control2_y: f32,
+    x: f32,
+    y: f32,
+) -> SvgPathCommand {
+    SvgPathCommand::CubicTo {
+        control1_x,
+        control1_y,
+        control2_x,
+        control2_y,
+        x,
+        y,
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -2081,10 +3053,12 @@ mod tests {
         )
         .expect("local use references should resolve after the full document is parsed");
 
-        assert!(parsed
-            .unsupported_elements
-            .iter()
-            .all(|tag| tag.as_ref() != "use"));
+        assert!(
+            parsed
+                .unsupported_elements
+                .iter()
+                .all(|tag| tag.as_ref() != "use")
+        );
         assert_eq!(parsed.resources.clip_paths[0].nodes.len(), 1);
         let clip_node = parsed
             .scene
@@ -2099,14 +3073,15 @@ mod tests {
 
     #[test]
     fn unresolved_local_use_is_skipped_and_external_use_is_rejected() {
-        let parsed = parse_svg_document(
-            br##"<svg width="8" height="8"><use href="#missing"/></svg>"##,
-        )
-        .expect("unresolved local references should not discard the whole SVG");
-        assert!(parsed
-            .unsupported_elements
-            .iter()
-            .any(|tag| tag.as_ref() == "use"));
+        let parsed =
+            parse_svg_document(br##"<svg width="8" height="8"><use href="#missing"/></svg>"##)
+                .expect("unresolved local references should not discard the whole SVG");
+        assert!(
+            parsed
+                .unsupported_elements
+                .iter()
+                .any(|tag| tag.as_ref() == "use")
+        );
 
         let error = parse_svg_document(
             br##"<svg width="8" height="8"><use href="https://example.com/icon.svg#shape"/></svg>"##,
@@ -2132,21 +3107,55 @@ mod tests {
         .expect("supported local resources should parse");
 
         assert_eq!(parsed.resources.clip_paths.len(), 1);
-        assert_eq!(parsed.resources.clip_paths[0].units, SvgResourceUnits::ObjectBoundingBox);
+        assert_eq!(
+            parsed.resources.clip_paths[0].units,
+            SvgResourceUnits::ObjectBoundingBox
+        );
         assert_eq!(parsed.resources.clip_paths[0].nodes.len(), 1);
         assert_eq!(parsed.resources.masks[0].mask_type, SvgMaskType::Alpha);
         assert_eq!(parsed.resources.patterns[0].nodes.len(), 1);
-        assert!(matches!(parsed.resources.filters[0].primitives[0], SvgFilterPrimitive::GaussianBlur { deviation: [2.0, 3.0], .. }));
-        assert!(matches!(parsed.resources.filters[0].primitives[3], SvgFilterPrimitive::Composite { operator: SvgCompositeOperator::Atop, .. }));
-        assert!(matches!(parsed.resources.filters[0].primitives[4], SvgFilterPrimitive::Blend { mode: SvgBlendMode::Multiply, .. }));
-        assert!(matches!(parsed.resources.filters[0].primitives[5], SvgFilterPrimitive::Merge { .. }));
-        assert!(matches!(parsed.resources.filters[0].primitives[6], SvgFilterPrimitive::ColorMatrix { .. }));
+        assert!(matches!(
+            parsed.resources.filters[0].primitives[0],
+            SvgFilterPrimitive::GaussianBlur {
+                deviation: [2.0, 3.0],
+                ..
+            }
+        ));
+        assert!(matches!(
+            parsed.resources.filters[0].primitives[3],
+            SvgFilterPrimitive::Composite {
+                operator: SvgCompositeOperator::Atop,
+                ..
+            }
+        ));
+        assert!(matches!(
+            parsed.resources.filters[0].primitives[4],
+            SvgFilterPrimitive::Blend {
+                mode: SvgBlendMode::Multiply,
+                ..
+            }
+        ));
+        assert!(matches!(
+            parsed.resources.filters[0].primitives[5],
+            SvgFilterPrimitive::Merge { .. }
+        ));
+        assert!(matches!(
+            parsed.resources.filters[0].primitives[6],
+            SvgFilterPrimitive::ColorMatrix { .. }
+        ));
 
-        let target = parsed.scene.nodes.iter().find(|node| node.svg_id.as_deref() == Some("target")).unwrap();
+        let target = parsed
+            .scene
+            .nodes
+            .iter()
+            .find(|node| node.svg_id.as_deref() == Some("target"))
+            .unwrap();
         assert_eq!(target.clip_path.as_deref(), Some("clip"));
         assert_eq!(target.mask.as_deref(), Some("mask"));
         assert_eq!(target.filter.as_deref(), Some("fx"));
-        assert!(matches!(target.fill_paint, Some(SvgPaint::Pattern { ref id }) if id.as_ref() == "dots"));
+        assert!(
+            matches!(target.fill_paint, Some(SvgPaint::Pattern { ref id }) if id.as_ref() == "dots")
+        );
     }
 
     #[test]
@@ -2165,8 +3174,19 @@ mod tests {
             br#"<svg width="8" height="8"><text><tspan>label</tspan></text><path id="visible" d="M0 0h8v8z" fill="red"/></svg>"#,
         ).expect("unsupported text should not discard renderable siblings");
 
-        assert!(parsed.unsupported_elements.iter().any(|tag| tag.as_ref() == "text"));
-        assert!(parsed.scene.nodes.iter().any(|node| node.svg_id.as_deref() == Some("visible")));
+        assert!(
+            parsed
+                .unsupported_elements
+                .iter()
+                .any(|tag| tag.as_ref() == "text")
+        );
+        assert!(
+            parsed
+                .scene
+                .nodes
+                .iter()
+                .any(|node| node.svg_id.as_deref() == Some("visible"))
+        );
     }
 
     #[test]

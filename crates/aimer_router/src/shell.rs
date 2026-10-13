@@ -1,12 +1,16 @@
+use std::cell::RefCell;
 use std::rc::Rc;
+#[cfg(feature = "portable-guest")]
+use aimer_widget::AnyWidgetExt;
 
 use aimer_widget::base::{BuildContext, ResolvedSize, Size, Vec2d};
 use aimer_widget::{
-    AnyElement, AnyWidget, AnyWidgetExt, Drawable, Element, EventElement, LayoutElement,
+    AnyElement, AnyWidget, Drawable, Element, EventElement, LayoutElement,
     Rebuildable, State, StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
 };
 
-use crate::Route;
+use crate::{Route, Router, NavigationAction, NavigationTransition, RoutedShell};
+use crate::routed_shell::{RouteOutlet, route_outlet_builder};
 use crate::outlet::{OutletChildBuilder, OutletSlot, RouteChildContext};
 
 /// A persistent layout frame (nav bar, drawer, header, ...) that stays mounted
@@ -22,6 +26,13 @@ pub struct Shell {
 }
 
 impl Shell {
+    /// Supplies the active child route so this shell's outlet can animate.
+    /// Configure an optional fallback with [`RoutedShell::transition`]. The
+    /// existing child builder is used unless a redirect selects another route.
+    #[inline]
+    pub fn route<R: Route + Router>(self, route: R) -> RoutedShell<R> {
+        RoutedShell::new(self.frame, self.child_builder, route)
+    }
     /// Creates a shell from a `frame` widget (containing an [`crate::Outlet`])
     /// and a closure that builds the active child widget.
     ///
@@ -59,10 +70,8 @@ impl aimer_widget::PortableWidget for Shell {
         self,
         ctx: &mut aimer_widget::portable::PortableBuildContext,
         source: aimer_widget::portable::SourceFingerprint,
-    ) -> Result<
-        aimer_widget::portable::PortableNodeId,
-        aimer_widget::portable::PortableBuildError,
-    > {
+    ) -> Result<aimer_widget::portable::PortableNodeId, aimer_widget::portable::PortableBuildError>
+    {
         let slot = OutletSlot::new(self.child_builder);
         ctx.with_state(slot, |ctx| {
             self.frame.into_portable_node(ctx, source.child(0))
@@ -136,7 +145,6 @@ impl Drawable for ShellElement {
     fn sync_paint_geometry(&self, ctx: &BuildContext) {
         self.scoped(ctx, |ctx| self.child.sync_paint_geometry(ctx));
     }
-
 }
 
 impl LayoutElement for ShellElement {
@@ -181,8 +189,7 @@ impl LayoutElement for ShellElement {
     }
 }
 
-impl EventElement for ShellElement {
-}
+impl EventElement for ShellElement {}
 
 impl Rebuildable for ShellElement {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
@@ -242,6 +249,8 @@ pub struct StatefulShell<R: Route> {
     pub frame: fn(&BuildContext) -> AnyWidget,
     #[portable_skip]
     pub routes: fn(R) -> AnyWidget,
+    #[portable_skip]
+    pub transition: Option<Rc<dyn NavigationTransition<R>>>,
 }
 
 impl<R: Route> StatefulShell<R> {
@@ -264,7 +273,15 @@ impl<R: Route> StatefulShell<R> {
             active: 0,
             frame,
             routes,
+            transition: None,
         }
+    }
+
+    /// Sets the fallback effect for visible branch and child-route changes.
+    #[inline]
+    pub fn transition(mut self, transition: impl NavigationTransition<R>) -> Self {
+        self.transition = Some(Rc::new(transition));
+        self
     }
 }
 
@@ -274,9 +291,18 @@ pub struct StatefulShellState<R: Route> {
     pub updater: StateUpdater<Self>,
     pub frame: fn(&BuildContext) -> AnyWidget,
     pub routes: fn(R) -> AnyWidget,
+    transition: Option<Rc<dyn NavigationTransition<R>>>,
+    retained_frame: RefCell<Option<aimer_widget::ChildBuilder>>,
+    outlet: Rc<RefCell<RouteOutlet<R>>>,
+    action: NavigationAction,
 }
 
 impl<R: Route> State<StatefulShell<R>> for StatefulShellState<R> {
+    fn adopt_config_from(&mut self, new: Self) {
+        self.routes = new.routes;
+        self.transition = new.transition;
+    }
+
     fn init_state(&mut self, updater: StateUpdater<Self>) {
         self.updater = updater;
     }
@@ -287,40 +313,48 @@ impl<R: Route> State<StatefulShell<R>> for StatefulShellState<R> {
             go_branch_fn: {
                 let updater = self.updater;
                 Rc::new(move |index: usize| {
-                    updater.set_state(move |state| state.active = index);
+                    updater.set_state(move |state| {
+                        if index < state.branches.len() && index != state.active {
+                            state.active = index;
+                            state.action = NavigationAction::BranchSwitch;
+                        }
+                    });
                 })
             },
             push_in_branch_fn: {
                 let updater = self.updater;
                 Rc::new(move |index: usize, route: R| {
-                    updater.set_state(move |state| branch_push(&mut state.branches, index, route));
+                    updater.set_state(move |state| {
+                        branch_push(&mut state.branches, index, route);
+                        if index == state.active { state.action = NavigationAction::Push; }
+                    });
                 })
             },
             pop_in_branch_fn: {
                 let updater = self.updater;
                 Rc::new(move |index: usize| {
-                    updater.set_state(move |state| branch_pop(&mut state.branches, index));
+                    updater.set_state(move |state| {
+                        branch_pop(&mut state.branches, index);
+                        if index == state.active { state.action = NavigationAction::Pop; }
+                    });
                 })
             },
             active_branch_fn: {
-                let active = self.active;
-                Rc::new(move || active)
+                let updater = self.updater;
+                Rc::new(move || updater.read(|state| state.active))
             },
             branch_len_fn: {
-                let branches = self.branches.clone();
-                Rc::new(move |index: usize| branches.get(index).map(|b| b.len()).unwrap_or(0))
+                let updater = self.updater;
+                Rc::new(move |index: usize| updater.read(|state| state.branches.get(index).map(|b| b.len()).unwrap_or(0)))
             },
         });
 
         // Feed only the active branch's top route into the `Outlet`.
-        let top = active_top(&self.branches, self.active);
+        let top = active_top(&self.branches, self.active).expect("StatefulShell branch stack must not be empty");
         let routes = self.routes;
-        ctx.insert_state(OutletSlot::new(Rc::new(move |_ctx: &BuildContext| {
-            let route = top
-                .clone()
-                .expect("StatefulShell branch stack must not be empty");
-            routes(route)
-        })));
+        self.outlet.borrow_mut().configure(top, self.action, self.transition.clone(),
+            Rc::new(move |route, _| routes(route)));
+        let child_builder = route_outlet_builder(&self.outlet);
 
         // Reflect the active branch's top route in the browser address bar.
         #[cfg(all(target_arch = "wasm32", not(aimer_portable_guest)))]
@@ -328,7 +362,9 @@ impl<R: Route> State<StatefulShell<R>> for StatefulShellState<R> {
             crate::navigator::browser_replace_state(&route.format());
         }
 
-        (self.frame)(ctx)
+        let frame = self.retained_frame.borrow_mut().get_or_insert_with(||
+            aimer_widget::ChildBuilder::from_widget((self.frame)(ctx))).clone();
+        Shell::new(frame, move |ctx| child_builder(ctx))
     }
 }
 
@@ -399,6 +435,10 @@ impl<R: Route> StatefulWidget for StatefulShell<R> {
             updater: StateUpdater::empty(),
             frame: self.frame,
             routes: self.routes,
+            transition: self.transition,
+            retained_frame: RefCell::new(None),
+            outlet: Rc::new(RefCell::new(RouteOutlet::default())),
+            action: NavigationAction::Push,
         }
     }
 }
@@ -541,7 +581,8 @@ mod tests {
             },
             |_| ShellRouteContextProbe.boxed(),
         );
-        let element = initial_context.with_state(AncestorShellProvider, |ctx| shell.to_element(ctx));
+        let element =
+            initial_context.with_state(AncestorShellProvider, |ctx| shell.to_element(ctx));
 
         let rebuild_context = context();
         element.rebuild_if_dirty(&rebuild_context);
@@ -621,11 +662,11 @@ mod tests {
     #[cfg(feature = "portable-guest")]
     #[test]
     fn shell_portable_lowering_replaces_outlet_with_the_active_child() {
+        use aimer_widget::portable::__anteros::{Version, WIDGET_TEXT, WidgetDocumentView};
         use aimer_widget::portable::{
             PortableBuildContext, PortableLimits, PortableWidgetLimits, SourceFingerprint,
             StableId128,
         };
-        use aimer_widget::portable::__anteros::{Version, WidgetDocumentView, WIDGET_TEXT};
         use aimer_widget::{ErrorWidget, PortableWidget};
 
         struct PortableLeaf;
@@ -666,7 +707,10 @@ mod tests {
         let bytes = document.encode().unwrap();
         let view = WidgetDocumentView::decode(&bytes, document.model_limits()).unwrap();
 
-        assert_eq!(view.node(view.root_node()).unwrap().widget_type(), WIDGET_TEXT);
+        assert_eq!(
+            view.node(view.root_node()).unwrap().widget_type(),
+            WIDGET_TEXT
+        );
         assert_eq!(view.node_count(), 1);
     }
 }

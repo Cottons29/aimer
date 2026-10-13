@@ -35,6 +35,21 @@ impl WindowEventHandler {
         legacy_handled || result.needs_redraw()
     }
 
+    /// Tells the application's services that the user's attention has left it.
+    ///
+    /// On a mobile OS a window that loses focus is about to be backgrounded and
+    /// may then be killed without notice, so it is as urgent as backgrounding
+    /// itself and pending saves are finished before this returns. Elsewhere it is
+    /// merely a good moment to start them.
+    fn notify_attention_lost() {
+        let event = if cfg!(any(target_os = "android", target_os = "ios")) {
+            aimer_venus::Lifecycle::Background
+        } else {
+            aimer_venus::Lifecycle::Inactive
+        };
+        aimer_venus::notify_lifecycle(event);
+    }
+
     pub(crate) fn handle_events<W: Widget + 'static>(
         app: &mut AimerApplicationHandler<W>,
         event_loop: &ActiveEventLoop,
@@ -51,7 +66,9 @@ impl WindowEventHandler {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     app.render_ctx.close();
-                    if app.render_ctx.is_stopped() { event_loop.exit(); }
+                    if app.render_ctx.is_stopped() {
+                        event_loop.exit();
+                    }
                 }
                 #[cfg(target_arch = "wasm32")]
                 event_loop.exit();
@@ -92,7 +109,7 @@ impl WindowEventHandler {
                     return;
                 }
                 Self::handle_cursor_move(position, app)
-            },
+            }
 
             WindowEvent::CursorLeft { .. } => Self::handle_cursor_left(app),
 
@@ -126,13 +143,18 @@ impl WindowEventHandler {
 
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 Self::update_scale_factor(&mut app.window_scale, scale_factor);
-                #[cfg(all(any(target_os = "macos", target_os = "ios"), feature = "native", not(feature = "wgpu")))]
+                #[cfg(all(
+                    any(target_os = "macos", target_os = "ios"),
+                    feature = "native",
+                    not(feature = "wgpu")
+                ))]
                 if app.render_ctx.is_ready()
                     && let Some(window) = app.native_window()
                 {
                     // Keep CAMetalLayer's contents scale current even when the
                     // physical drawable size did not change with the display.
-                    app.render_ctx.resize(aimer_widget::base::WindowHandle::native(window).inner_size());
+                    app.render_ctx
+                        .resize(aimer_widget::base::WindowHandle::native(window).inner_size());
                 }
                 app.sync_headless_metrics(None);
                 if let Some(root) = app.active_root() {
@@ -145,13 +167,15 @@ impl WindowEventHandler {
             }
 
             WindowEvent::ThemeChanged(theme) => {
-                if Self::handle_theme_changed(theme)
-                {
+                if Self::handle_theme_changed(theme) {
                     app.request_full_redraw();
                 }
             }
 
             WindowEvent::Focused(is_focus) => {
+                if !is_focus {
+                    Self::notify_attention_lost();
+                }
                 if app.active_root().is_none() {
                     return;
                 }
@@ -166,6 +190,9 @@ impl WindowEventHandler {
                     app.scroll_smoother.clear();
                 }
             }
+
+            // A hidden browser tab, or a window the OS has covered or minimized.
+            WindowEvent::Occluded(true) => Self::notify_attention_lost(),
 
             WindowEvent::HoveredFile(path) => {
                 let pos = Self::refresh_file_drag_cursor(app);
@@ -673,12 +700,15 @@ impl WindowEventHandler {
         const DELTA_MULTIPLY: f64 = if cfg!(target_os = "windows") {
             4.5
         } else {
-           1.0
+            1.0
         };
         let (scroll_delta, kind) = Self::normalize_wheel_delta(delta, app.window_scale);
         if app.active_root().is_some() {
             aimer_widget::record_scroll_event();
-            let delta = PhysicalPosition::new(scroll_delta.x  as f64 * DELTA_MULTIPLY, scroll_delta.y as f64 * DELTA_MULTIPLY);
+            let delta = PhysicalPosition::new(
+                scroll_delta.x as f64 * DELTA_MULTIPLY,
+                scroll_delta.y as f64 * DELTA_MULTIPLY,
+            );
             match kind {
                 aimer_events::element::ScrollDeltaKind::Pixel => {
                     app.scroll_smoother.on_pixel_delta(delta, phase);
@@ -919,8 +949,6 @@ impl WindowEventHandler {
         app: &mut AimerApplicationHandler<W>,
         event: &ElementEvent,
     ) {
-
-
         // info!("ElementEvent : {:?}", event);
         let mut result = app.dispatch_element_event(app.cursor_pos, event);
 

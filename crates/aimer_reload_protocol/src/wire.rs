@@ -9,8 +9,8 @@ use subtle::ConstantTimeEq;
 use zeroize::Zeroize;
 
 use super::{
-    ModuleMetadata, ProtocolError, ProtocolLimits, ReloadCommand, ReloadResult,
-    SessionCredentials, TransferAcknowledgement,
+    ModuleMetadata, ProtocolError, ProtocolLimits, ReloadCommand, ReloadResult, SessionCredentials,
+    TransferAcknowledgement,
 };
 
 const PROTOCOL_MAJOR: u16 = 1;
@@ -137,26 +137,23 @@ where
     )?;
     stream.flush()?;
 
-    let acknowledgement = read_frame(
-        stream,
-        &keys.server_to_client,
-        credentials.session_id(),
-        40,
-    )?;
+    let acknowledgement = read_frame(stream, &keys.server_to_client, credentials.session_id(), 40)?;
     if acknowledgement.kind != KIND_UPLOAD_ACCEPTED
         || acknowledgement.request_id != request_id
         || acknowledgement.sequence != 0
         || acknowledgement.payload.len() != 40
     {
-        return Err(ProtocolError::InvalidFrame("invalid upload acknowledgement"));
+        return Err(ProtocolError::InvalidFrame(
+            "invalid upload acknowledgement",
+        ));
     }
     let acknowledged_len = usize_from_u64(read_u64(&acknowledgement.payload[0..8])?)?;
     let mut acknowledged_digest = [0_u8; 32];
     acknowledged_digest.copy_from_slice(&acknowledgement.payload[8..40]);
-    if acknowledged_len != module.len()
-        || !bool::from(acknowledged_digest.ct_eq(&digest))
-    {
-        return Err(ProtocolError::InvalidFrame("acknowledgement does not match upload"));
+    if acknowledged_len != module.len() || !bool::from(acknowledged_digest.ct_eq(&digest)) {
+        return Err(ProtocolError::InvalidFrame(
+            "acknowledgement does not match upload",
+        ));
     }
 
     Ok(TransferAcknowledgement {
@@ -217,12 +214,7 @@ where
     )?;
     stream.flush()?;
 
-    let acknowledgement = read_frame(
-        stream,
-        &keys.server_to_client,
-        credentials.session_id(),
-        40,
-    )?;
+    let acknowledgement = read_frame(stream, &keys.server_to_client, credentials.session_id(), 40)?;
     validate_acknowledgement(&acknowledgement, request_id, module.len(), &digest)?;
     let max_result_bytes = limits
         .diagnostic_bytes_limit()
@@ -290,14 +282,7 @@ where
     )?;
     match first.kind {
         KIND_RELOAD_BEGIN => Ok(ReloadConnectionOutcome::Command(
-            receive_reload_command_after_begin(
-                stream,
-                credentials,
-                limits,
-                &keys,
-                first,
-                execute,
-            )?,
+            receive_reload_command_after_begin(stream, credentials, limits, &keys, first, execute)?,
         )),
         KIND_RESULT_QUERY => {
             if first.sequence != 0 || !first.payload.is_empty() {
@@ -392,7 +377,10 @@ where
     S: Read + Write,
     F: FnOnce(ReloadCommand) -> ReloadResult,
 {
-    if begin.kind != KIND_RELOAD_BEGIN || begin.sequence != 0 || begin.payload.len() != RELOAD_BEGIN_LEN {
+    if begin.kind != KIND_RELOAD_BEGIN
+        || begin.sequence != 0
+        || begin.payload.len() != RELOAD_BEGIN_LEN
+    {
         return Err(ProtocolError::InvalidFrame("invalid reload-begin frame"));
     }
     let module_len = usize_from_u64(read_u64(&begin.payload[0..8])?)?;
@@ -413,12 +401,7 @@ where
         begin.request_id,
         module_len,
     )?;
-    let end = read_frame(
-        stream,
-        &keys.client_to_server,
-        credentials.session_id(),
-        0,
-    )?;
+    let end = read_frame(stream, &keys.client_to_server, credentials.session_id(), 0)?;
     if end.kind != KIND_MODULE_END
         || end.request_id != begin.request_id
         || end.sequence != end_sequence
@@ -471,12 +454,7 @@ where
     F: FnOnce(Vec<u8>) -> Result<(), String>,
 {
     let keys = server_handshake(stream, credentials)?;
-    let begin = read_frame(
-        stream,
-        &keys.client_to_server,
-        credentials.session_id(),
-        40,
-    )?;
+    let begin = read_frame(stream, &keys.client_to_server, credentials.session_id(), 40)?;
     if begin.kind != KIND_MODULE_BEGIN || begin.sequence != 0 || begin.payload.len() != 40 {
         return Err(ProtocolError::InvalidFrame("invalid module-begin frame"));
     }
@@ -528,12 +506,7 @@ where
             .ok_or(ProtocolError::InvalidFrame("frame sequence overflow"))?;
     }
 
-    let end = read_frame(
-        stream,
-        &keys.client_to_server,
-        credentials.session_id(),
-        0,
-    )?;
+    let end = read_frame(stream, &keys.client_to_server, credentials.session_id(), 0)?;
     if end.kind != KIND_MODULE_END
         || end.request_id != begin.request_id
         || end.sequence != sequence
@@ -650,11 +623,7 @@ where
     derive_keys(credentials, &transcript)
 }
 
-fn transcript(
-    session_id: &[u8; 16],
-    server_nonce: &[u8; 32],
-    client_nonce: &[u8; 32],
-) -> Vec<u8> {
+fn transcript(session_id: &[u8; 16], server_nonce: &[u8; 32], client_nonce: &[u8; 32]) -> Vec<u8> {
     let mut transcript = Vec::with_capacity(84);
     transcript.extend_from_slice(&PROTOCOL_MAJOR.to_le_bytes());
     transcript.extend_from_slice(&PROTOCOL_MINOR.to_le_bytes());
@@ -759,7 +728,9 @@ where
     let encrypted_len = payload
         .len()
         .checked_add(aead::CHACHA20_POLY1305.tag_len())
-        .ok_or(ProtocolError::InvalidFrame("encrypted payload length overflow"))?;
+        .ok_or(ProtocolError::InvalidFrame(
+            "encrypted payload length overflow",
+        ))?;
     let mut header = [0_u8; FRAME_HEADER_LEN];
     header[0..4].copy_from_slice(FRAME_MAGIC);
     header[4..6].copy_from_slice(&PROTOCOL_MAJOR.to_le_bytes());
@@ -814,9 +785,7 @@ where
     let max_encrypted_payload = max_payload
         .checked_add(aead::CHACHA20_POLY1305.tag_len())
         .ok_or(ProtocolError::InvalidFrame("payload limit overflow"))?;
-    if payload_len < aead::CHACHA20_POLY1305.tag_len()
-        || payload_len > max_encrypted_payload
-    {
+    if payload_len < aead::CHACHA20_POLY1305.tag_len() || payload_len > max_encrypted_payload {
         return Err(ProtocolError::InvalidFrame("payload exceeds message limit"));
     }
     let mut payload = vec![0_u8; payload_len];
@@ -856,10 +825,7 @@ fn frame_nonce(sequence: u64) -> aead::Nonce {
     aead::Nonce::assume_unique_for_key(nonce)
 }
 
-fn validate_outgoing_module(
-    limits: ProtocolLimits,
-    module: &[u8],
-) -> Result<(), ProtocolError> {
+fn validate_outgoing_module(limits: ProtocolLimits, module: &[u8]) -> Result<(), ProtocolError> {
     if module.len() > limits.max_module_bytes() {
         return Err(ProtocolError::ModuleTooLarge {
             actual: module.len(),
@@ -968,7 +934,9 @@ fn validate_acknowledgement(
         || usize_from_u64(read_u64(&frame.payload[0..8])?)? != module_len
         || !bool::from(frame.payload[8..40].ct_eq(module_digest))
     {
-        return Err(ProtocolError::InvalidFrame("invalid upload acknowledgement"));
+        return Err(ProtocolError::InvalidFrame(
+            "invalid upload acknowledgement",
+        ));
     }
     Ok(())
 }
@@ -1009,7 +977,9 @@ fn encode_metadata(metadata: ModuleMetadata, bytes: &mut Vec<u8>) {
 
 fn decode_metadata(bytes: &[u8]) -> Result<ModuleMetadata, ProtocolError> {
     if bytes.len() != 68 {
-        return Err(ProtocolError::InvalidFrame("invalid module metadata length"));
+        return Err(ProtocolError::InvalidFrame(
+            "invalid module metadata length",
+        ));
     }
     let mut application_id = [0_u8; 16];
     application_id.copy_from_slice(&bytes[0..16]);
@@ -1074,15 +1044,10 @@ mod tests {
         let server_credentials = credentials.clone();
         let server = thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
-            receive_module_and_acknowledge(
-                &mut stream,
-                &server_credentials,
-                limits,
-                |module| {
-                    assert_eq!(module, b"0123456789");
-                    Ok(())
-                },
-            )
+            receive_module_and_acknowledge(&mut stream, &server_credentials, limits, |module| {
+                assert_eq!(module, b"0123456789");
+                Ok(())
+            })
             .unwrap()
         });
         let mut stream = TcpStream::connect(address).unwrap();
@@ -1097,11 +1062,7 @@ mod tests {
     #[test]
     fn authenticated_frame_has_a_stable_golden_vector() {
         let credentials = SessionCredentials::from_parts([0x11; 16], [0xA5; 32]);
-        let transcript = transcript(
-            credentials.session_id(),
-            &[0x22; 32],
-            &[0x33; 32],
-        );
+        let transcript = transcript(credentials.session_id(), &[0x22; 32], &[0x33; 32]);
         let keys = derive_keys(&credentials, &transcript).unwrap();
         let mut bytes = Vec::new();
 
@@ -1125,11 +1086,7 @@ mod tests {
     #[test]
     fn every_frame_truncation_and_authenticated_header_mutation_is_rejected() {
         let credentials = SessionCredentials::from_parts([0x11; 16], [0xA5; 32]);
-        let transcript = transcript(
-            credentials.session_id(),
-            &[0x22; 32],
-            &[0x33; 32],
-        );
+        let transcript = transcript(credentials.session_id(), &[0x22; 32], &[0x33; 32]);
         let keys = derive_keys(&credentials, &transcript).unwrap();
         let mut valid = Vec::new();
         write_frame(
@@ -1144,24 +1101,28 @@ mod tests {
         .unwrap();
 
         for end in 0..valid.len() {
-            assert!(read_frame(
-                &mut Cursor::new(&valid[..end]),
-                &keys.client_to_server,
-                credentials.session_id(),
-                5,
-            )
-            .is_err());
+            assert!(
+                read_frame(
+                    &mut Cursor::new(&valid[..end]),
+                    &keys.client_to_server,
+                    credentials.session_id(),
+                    5,
+                )
+                .is_err()
+            );
         }
         for index in [0, 4, 6, 10, 12, 14, 24, 56, valid.len() - 1] {
             let mut malformed = valid.clone();
             malformed[index] ^= 1;
-            assert!(read_frame(
-                &mut Cursor::new(malformed),
-                &keys.client_to_server,
-                credentials.session_id(),
-                5,
-            )
-            .is_err());
+            assert!(
+                read_frame(
+                    &mut Cursor::new(malformed),
+                    &keys.client_to_server,
+                    credentials.session_id(),
+                    5,
+                )
+                .is_err()
+            );
         }
     }
 
@@ -1186,14 +1147,8 @@ mod tests {
         let credentials = SessionCredentials::from_parts([0x11; 16], [0xA5; 32]);
         let limits = ProtocolLimits::new(6, Duration::from_secs(1)).max_chunk_bytes(3);
 
-        for (second_sequence, second_offset) in
-            [(1_u64, 3_u64), (3, 3), (2, 2), (2, 4)]
-        {
-            let transcript = transcript(
-                credentials.session_id(),
-                &[0x22; 32],
-                &[0x33; 32],
-            );
+        for (second_sequence, second_offset) in [(1_u64, 3_u64), (3, 3), (2, 2), (2, 4)] {
+            let transcript = transcript(credentials.session_id(), &[0x22; 32], &[0x33; 32]);
             let keys = derive_keys(&credentials, &transcript).unwrap();
             let mut frames = Vec::new();
             write_frame(
@@ -1217,31 +1172,25 @@ mod tests {
             )
             .unwrap();
 
-            assert!(read_module_chunks(
-                &mut Cursor::new(frames),
-                &keys.client_to_server,
-                credentials.session_id(),
-                limits,
-                7,
-                6,
-            )
-            .is_err());
+            assert!(
+                read_module_chunks(
+                    &mut Cursor::new(frames),
+                    &keys.client_to_server,
+                    credentials.session_id(),
+                    limits,
+                    7,
+                    6,
+                )
+                .is_err()
+            );
         }
     }
 
     #[test]
     fn reconnect_transcripts_derive_separate_keys_and_reject_replayed_frames() {
         let credentials = SessionCredentials::from_parts([0x11; 16], [0xA5; 32]);
-        let first_transcript = transcript(
-            credentials.session_id(),
-            &[0x22; 32],
-            &[0x33; 32],
-        );
-        let second_transcript = transcript(
-            credentials.session_id(),
-            &[0x44; 32],
-            &[0x55; 32],
-        );
+        let first_transcript = transcript(credentials.session_id(), &[0x22; 32], &[0x33; 32]);
+        let second_transcript = transcript(credentials.session_id(), &[0x44; 32], &[0x55; 32]);
         let first_keys = derive_keys(&credentials, &first_transcript).unwrap();
         let second_keys = derive_keys(&credentials, &second_transcript).unwrap();
         let mut first_frame = Vec::new();

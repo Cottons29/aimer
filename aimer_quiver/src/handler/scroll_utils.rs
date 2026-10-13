@@ -190,7 +190,15 @@ mod tests {
     #[test]
     fn one_frame_step_is_exactly_the_two_ticks_it_replaces() {
         for (friction, max_velocity) in [(0.40, 60.0), (0.15, 80.0), (0.65, 60.0), (0.9, 5.0)] {
-            for dt in [1.0 / 240.0, 1.0 / 120.0, 1.0 / 90.0, 1.0 / 60.0, 1.0 / 45.0, 1.0 / 30.0, 0.1] {
+            for dt in [
+                1.0 / 240.0,
+                1.0 / 120.0,
+                1.0 / 90.0,
+                1.0 / 60.0,
+                1.0 / 45.0,
+                1.0 / 30.0,
+                0.1,
+            ] {
                 for remaining in [0.004, 0.5, 8.0, 40.0, 120.0, 500.0, 5000.0] {
                     let mut former = scroller(friction, max_velocity, remaining);
                     let mut now = scroller(friction, max_velocity, remaining);
@@ -199,7 +207,9 @@ mod tests {
                     let second = former.tick_with_dt(FOLLOW_UP_DT);
                     let step = now.frame_step(dt);
 
-                    let case = format!("friction {friction}, cap {max_velocity}, dt {dt}, remaining {remaining}");
+                    let case = format!(
+                        "friction {friction}, cap {max_velocity}, dt {dt}, remaining {remaining}"
+                    );
                     assert_eq!(step, sum(first, second), "step, {case}");
                     assert_eq!(now.remaining, former.remaining, "left behind, {case}");
                 }
@@ -214,7 +224,10 @@ mod tests {
         let moved = (step.x * step.x + step.y * step.y).sqrt();
 
         assert!(moved <= 2.0 * 60.0 + 1e-9, "moved {moved}");
-        assert!(moved > 60.0, "the second sub-step still contributes: {moved}");
+        assert!(
+            moved > 60.0,
+            "the second sub-step still contributes: {moved}"
+        );
     }
 
     #[test]

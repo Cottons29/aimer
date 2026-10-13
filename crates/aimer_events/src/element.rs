@@ -182,7 +182,10 @@ pub enum ElementEvent {
     /// It carries no position: by the time an element learns it was left, the
     /// pointer is somewhere else entirely, and the only useful answer is "not
     /// here".
-    DragLeave { source: PointerSource, id: u64 },
+    DragLeave {
+        source: PointerSource,
+        id: u64,
+    },
 
     /// A drag was released at `pos`, over the element receiving this.
     DragDrop {

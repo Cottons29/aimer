@@ -7,7 +7,6 @@ use aimer::native::haptic::{HapticPattern, Haptics};
 use aimer::style::{FontWeight, TextDecoration, TextStyle, Theme, ThemeData};
 use aimer::*;
 
-
 #[widget(Stateful)]
 pub struct SameLookingSection {
     pub key: Option<Key>,

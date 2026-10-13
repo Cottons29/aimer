@@ -55,6 +55,7 @@ aimer_data_view.workspace = true
 aimer_i18n.workspace = true
 aimer_media.workspace = true
 aimer_storage.workspace = true
+aimer_persist.workspace = true
 aimer_shape.workspace = true
 aimer_collapsible.workspace = true
 aimer_canvas.workspace = true
@@ -203,6 +204,7 @@ members = [
     "crates/aimer_i18n",
     "crates/aimer_media",
     "crates/aimer_storage",
+    "crates/aimer_persist",
     "crates/aimer_shape",
     "crates/aimer_collapsible", "crates/aimer_simd", "crates/aimer_decoration",
 ]
@@ -254,6 +256,7 @@ aimer_data_view = { path = "crates/aimer_data_view" }
 aimer_i18n = { path = "crates/aimer_i18n" }
 aimer_media = { path = "crates/aimer_media" }
 aimer_storage = { path = "crates/aimer_storage" }
+aimer_persist = { path = "crates/aimer_persist" }
 aimer_shape = { path = "crates/aimer_shape" }
 aimer_collapsible = { path = "crates/aimer_collapsible" }
 aimer_native = { path = "crates/aimer_native" }
@@ -283,8 +286,8 @@ wgpu = { version = "30.0.0", features = ["gles", "webgl", "web"] }
 ash = "0.38.0"
 ash-window = "0.13.0"
 image = { version = "0.25.10", default-features = false }
-reqwest = { version = "0.13.4", default-features = false, features = ["native-tls", "http2"] }
-ureq = { version = "3.4.2", default-features = false, features = ["native-tls"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "http2"] }
+ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
 openssl = { version = "0.10.81", features = ["vendored"] }
 uuid = { version = "1.23.5", features = ["js", "v4", "serde"] }
 dirs = "6.0.0"
@@ -323,6 +326,7 @@ wasmparser = { version = "0.239.0", default-features = false }
 wasm-bindgen = "0.2.126"
 web-sys = { version = "0.3.103", features = ["CanvasRenderingContext2d", "Clipboard", "DomMatrix", "Navigator", "TextMetrics", "Window"] }
 wasm-bindgen-futures = "0.4.76"
+wasm-bindgen-test = "0.3.79"
 js-sys = "0.3.103"
 
 # Android Family
@@ -385,7 +389,11 @@ worker-macros = { version = "0.8.5", default-features = false }
 # Hundreds of thousands of them made the first Core Foundation call of every
 # test binary (a scan of its own directory) take 20+ seconds.
 [profile.dev]
-split-debuginfo = "packed"
+debug = "line-tables-only"
+opt-level = 0
+lto = "off"
+
+
 
 [profile.dev.package.aimer_rubick]
 opt-level = 3
@@ -401,9 +409,11 @@ lto = true
 split-debuginfo = "packed"
 panic = "abort"
 strip = "symbols"
+overflow-checks = false
 
 
 [lints.rust]
 unexpected_cfgs = { level = "allow", check-cfg = ['cfg(aimer_portable_guest)'] }
 [workspace.lints.rust]
 unexpected_cfgs = { level = "allow", check-cfg = ['cfg(aimer_portable_guest)'] }
+

@@ -348,7 +348,9 @@ where
 
     /// Returns the last child-load error message, if any.
     pub fn children_error(&self, id: &K) -> Option<&str> {
-        self.nodes.get(id).and_then(|node| node.child_error.as_deref())
+        self.nodes
+            .get(id)
+            .and_then(|node| node.child_error.as_deref())
     }
 
     /// Returns the label/value of a node.
@@ -492,7 +494,11 @@ where
     }
 
     fn focus_edge(&mut self, visible: &[K], last: bool) -> Result<TreeKeyResult<K>, TreeError<K>> {
-        let target = if last { visible.last() } else { visible.first() };
+        let target = if last {
+            visible.last()
+        } else {
+            visible.first()
+        };
         let Some(target) = target else {
             return Ok(TreeKeyResult::Noop);
         };
@@ -516,7 +522,11 @@ where
             .as_ref()
             .and_then(|focused| visible.iter().position(|id| id == focused));
         let Some(index) = index else {
-            let target = if forward { &visible[0] } else { visible.last().expect("non-empty") };
+            let target = if forward {
+                &visible[0]
+            } else {
+                visible.last().expect("non-empty")
+            };
             self.focused = Some(target.clone());
             return Ok(TreeKeyResult::Focused(target.clone()));
         };

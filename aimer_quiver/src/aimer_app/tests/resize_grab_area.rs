@@ -32,20 +32,30 @@ impl Widget for Layout {
                     .handle_outset(OUTER)
                     .direction(Direction::RIGHT)
                     .on_resize_zone(move |zone: Direction| zones.borrow_mut().push(zone))
-                    .child(SizedBox::new().width(Dimension::Px(WIDTH)).height(Dimension::Px(400.0)).color(Color::Rgb(40, 30, 30)))
+                    .child(
+                        SizedBox::new()
+                            .width(Dimension::Px(WIDTH))
+                            .height(Dimension::Px(400.0))
+                            .color(Color::Rgb(40, 30, 30)),
+                    )
                     .boxed(),
                 aimer_flex::Expanded::new()
                     .child(
                         // A content pane the way an application builds one: a
                         // scroll view of rows that react to the pointer.
-                        Scrollable::new().child(Column::new().children(
-                            (0..8)
-                                .map(|_| {
-                                    aimer_input::mouse_region::MouseRegion::new()
-                                        .box_child(SizedBox::new().height(Dimension::Px(60.0)).color(Color::Rgb(20, 20, 20)))
-                                })
-                                .collect::<Vec<_>>(),
-                        )),
+                        Scrollable::new().child(
+                            Column::new().children(
+                                (0..8)
+                                    .map(|_| {
+                                        aimer_input::mouse_region::MouseRegion::new().box_child(
+                                            SizedBox::new()
+                                                .height(Dimension::Px(60.0))
+                                                .color(Color::Rgb(20, 20, 20)),
+                                        )
+                                    })
+                                    .collect::<Vec<_>>(),
+                            ),
+                        ),
                     )
                     .boxed(),
             ])
@@ -63,15 +73,23 @@ fn zone_at(x: f64, y: f64) -> Direction {
 /// The same at a display scale: `x` and `y` are logical, the pointer is physical.
 fn zone_at_scale(x: f64, y: f64, scale: f64) -> Direction {
     let zones = Rc::new(RefCell::new(Vec::new()));
-    let mut app = AimerApp::start_headless_with(Layout { zones: zones.clone() }, HeadlessOptions {
-        size: PhysicalSize::new((600.0 * scale) as u32, (400.0 * scale) as u32), scale_factor: scale,
-    });
+    let mut app = AimerApp::start_headless_with(
+        Layout {
+            zones: zones.clone(),
+        },
+        HeadlessOptions {
+            size: PhysicalSize::new((600.0 * scale) as u32, (400.0 * scale) as u32),
+            scale_factor: scale,
+        },
+    );
     app.send_window_event(WindowEvent::CursorMoved {
-        device_id: DeviceId::dummy(), position: PhysicalPosition::new(500.0 * scale, 200.0 * scale),
+        device_id: DeviceId::dummy(),
+        position: PhysicalPosition::new(500.0 * scale, 200.0 * scale),
     });
     app.pump_frames(3);
     app.send_window_event(WindowEvent::CursorMoved {
-        device_id: DeviceId::dummy(), position: PhysicalPosition::new(x * scale, y * scale),
+        device_id: DeviceId::dummy(),
+        position: PhysicalPosition::new(x * scale, y * scale),
     });
     app.pump_frames(2);
     let last = zones.borrow().last().copied().unwrap_or(Direction::NONE);
@@ -80,7 +98,9 @@ fn zone_at_scale(x: f64, y: f64, scale: f64) -> Direction {
 
 #[test]
 fn the_right_edge_is_grabbed_across_its_whole_configured_band() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     let mut missed = Vec::new();
     // Inside the panel up to INNER from its edge, and outside it up to OUTER.
     for offset in [-13.0f32, -9.0, -5.0, -1.0, 1.0, 5.0, 9.0, 11.0] {
@@ -89,34 +109,68 @@ fn the_right_edge_is_grabbed_across_its_whole_configured_band() {
             missed.push((offset, zone));
         }
     }
-    assert!(missed.is_empty(), "points inside the configured band did not grab the edge: {missed:?}");
+    assert!(
+        missed.is_empty(),
+        "points inside the configured band did not grab the edge: {missed:?}"
+    );
 }
 
 #[test]
 fn the_right_edge_is_not_grabbed_beyond_its_band() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    assert_eq!(zone_at(f64::from(WIDTH - INNER - 4.0), 200.0), Direction::NONE);
-    assert_eq!(zone_at(f64::from(WIDTH + OUTER + 4.0), 200.0), Direction::NONE);
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    assert_eq!(
+        zone_at(f64::from(WIDTH - INNER - 4.0), 200.0),
+        Direction::NONE
+    );
+    assert_eq!(
+        zone_at(f64::from(WIDTH + OUTER + 4.0), 200.0),
+        Direction::NONE
+    );
 }
 
 #[test]
 fn the_zone_is_reported_empty_again_once_the_pointer_has_left_it() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    for exit_to in [(500.0, 200.0), (WIDTH + OUTER as f32 + 30.0, 200.0), (100.0, 200.0), (WIDTH as f64 as f32 + 3.0, 380.0)] {
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    for exit_to in [
+        (500.0, 200.0),
+        (WIDTH + OUTER as f32 + 30.0, 200.0),
+        (100.0, 200.0),
+        (WIDTH as f64 as f32 + 3.0, 380.0),
+    ] {
         let zones = Rc::new(RefCell::new(Vec::new()));
-        let mut app = AimerApp::start_headless_with(Layout { zones: zones.clone() }, HeadlessOptions {
-            size: PhysicalSize::new(600, 400), scale_factor: 1.0,
-        });
-        for (x, y) in [(500.0, 200.0), (f64::from(WIDTH) - 2.0, 200.0), (f64::from(WIDTH) + 3.0, 200.0), (f64::from(exit_to.0), f64::from(exit_to.1))] {
+        let mut app = AimerApp::start_headless_with(
+            Layout {
+                zones: zones.clone(),
+            },
+            HeadlessOptions {
+                size: PhysicalSize::new(600, 400),
+                scale_factor: 1.0,
+            },
+        );
+        for (x, y) in [
+            (500.0, 200.0),
+            (f64::from(WIDTH) - 2.0, 200.0),
+            (f64::from(WIDTH) + 3.0, 200.0),
+            (f64::from(exit_to.0), f64::from(exit_to.1)),
+        ] {
             app.send_window_event(WindowEvent::CursorMoved {
-                device_id: DeviceId::dummy(), position: PhysicalPosition::new(x, y),
+                device_id: DeviceId::dummy(),
+                position: PhysicalPosition::new(x, y),
             });
             app.pump_frames(2);
         }
         let reported = zones.borrow().clone();
         let leaves_the_band = exit_to.0 > WIDTH + OUTER as f32 || exit_to.0 < WIDTH - INNER;
         if leaves_the_band {
-            assert_eq!(reported.last().copied(), Some(Direction::NONE), "pointer moved to {exit_to:?}; reported {reported:?}");
+            assert_eq!(
+                reported.last().copied(),
+                Some(Direction::NONE),
+                "pointer moved to {exit_to:?}; reported {reported:?}"
+            );
         }
     }
 }
@@ -136,7 +190,11 @@ impl StatefulWidget for ZoneScreen {
     type State = ZoneState;
 
     fn create_state(self) -> ZoneState {
-        ZoneState { active: false, log: self.log, updater: self.updater }
+        ZoneState {
+            active: false,
+            log: self.log,
+            updater: self.updater,
+        }
     }
 }
 
@@ -160,10 +218,19 @@ impl State<ZoneScreen> for ZoneState {
                 .on_resize_zone(move |zone: Direction| {
                     updater.set_state(move |state| state.active = zone != Direction::NONE);
                 })
-                .child(SizedBox::new().width(Dimension::Px(WIDTH)).height(Dimension::Px(400.0)).color(Color::Rgb(40, 30, 30)))
+                .child(
+                    SizedBox::new()
+                        .width(Dimension::Px(WIDTH))
+                        .height(Dimension::Px(400.0))
+                        .color(Color::Rgb(40, 30, 30)),
+                )
                 .boxed(),
             aimer_flex::Expanded::new()
-                .child(SizedBox::new().height(Dimension::Px(400.0)).color(Color::Rgb(20, 20, 20)))
+                .child(
+                    SizedBox::new()
+                        .height(Dimension::Px(400.0))
+                        .color(Color::Rgb(20, 20, 20)),
+                )
                 .boxed(),
         ])
     }
@@ -171,7 +238,9 @@ impl State<ZoneScreen> for ZoneState {
 
 impl Widget for ZoneScreen {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
-        StatefulElement::new_with_name(self, ctx, "ZoneScreen", None).0.boxed()
+        StatefulElement::new_with_name(self, ctx, "ZoneScreen", None)
+            .0
+            .boxed()
     }
 }
 
@@ -179,48 +248,87 @@ impl aimer_widget::PortableWidget for ZoneScreen {}
 
 fn move_to<W: Widget + 'static>(app: &mut HeadlessAimerApp<W>, x: f64, y: f64) {
     app.send_window_event(WindowEvent::CursorMoved {
-        device_id: DeviceId::dummy(), position: PhysicalPosition::new(x, y),
+        device_id: DeviceId::dummy(),
+        position: PhysicalPosition::new(x, y),
     });
     app.pump_frames(2);
 }
 
 #[test]
 fn a_screen_that_rebuilds_for_the_zone_is_told_when_the_pointer_leaves_it() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     let log = Rc::new(RefCell::new(Vec::new()));
     let mut app = AimerApp::start_headless_with(
-        ZoneScreen { log: log.clone(), updater: Rc::new(RefCell::new(None)) },
-        HeadlessOptions { size: PhysicalSize::new(600, 400), scale_factor: 1.0 },
+        ZoneScreen {
+            log: log.clone(),
+            updater: Rc::new(RefCell::new(None)),
+        },
+        HeadlessOptions {
+            size: PhysicalSize::new(600, 400),
+            scale_factor: 1.0,
+        },
     );
     move_to(&mut app, 500.0, 200.0);
     move_to(&mut app, f64::from(WIDTH) - 3.0, 200.0);
-    assert_eq!(log.borrow().last().copied(), Some(true), "entering the zone must be reported: {:?}", log.borrow());
+    assert_eq!(
+        log.borrow().last().copied(),
+        Some(true),
+        "entering the zone must be reported: {:?}",
+        log.borrow()
+    );
 
     move_to(&mut app, 100.0, 200.0);
 
-    assert_eq!(log.borrow().last().copied(), Some(false), "leaving the zone left it reported active: {:?}", log.borrow());
+    assert_eq!(
+        log.borrow().last().copied(),
+        Some(false),
+        "leaving the zone left it reported active: {:?}",
+        log.borrow()
+    );
 }
 
 #[test]
 fn a_screen_that_rebuilds_for_the_zone_keeps_the_zone_while_the_pointer_moves_inside_it() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     let log = Rc::new(RefCell::new(Vec::new()));
     let mut app = AimerApp::start_headless_with(
-        ZoneScreen { log: log.clone(), updater: Rc::new(RefCell::new(None)) },
-        HeadlessOptions { size: PhysicalSize::new(600, 400), scale_factor: 1.0 },
+        ZoneScreen {
+            log: log.clone(),
+            updater: Rc::new(RefCell::new(None)),
+        },
+        HeadlessOptions {
+            size: PhysicalSize::new(600, 400),
+            scale_factor: 1.0,
+        },
     );
     move_to(&mut app, 500.0, 200.0);
-    for x in [WIDTH - 5.0, WIDTH - 3.0, WIDTH - 1.0, WIDTH + 1.0, WIDTH + 4.0] {
+    for x in [
+        WIDTH - 5.0,
+        WIDTH - 3.0,
+        WIDTH - 1.0,
+        WIDTH + 1.0,
+        WIDTH + 4.0,
+    ] {
         move_to(&mut app, f64::from(x), 200.0);
     }
     let builds = log.borrow().len();
     assert_eq!(log.borrow().last().copied(), Some(true));
-    assert!(builds <= 4, "moving inside one zone rebuilt the screen {builds} times: {:?}", log.borrow());
+    assert!(
+        builds <= 4,
+        "moving inside one zone rebuilt the screen {builds} times: {:?}",
+        log.borrow()
+    );
 }
 
 #[test]
 fn the_right_edge_is_grabbed_across_its_whole_band_on_a_2x_display() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     let mut missed = Vec::new();
     for offset in [-13.0f32, -9.0, -5.0, -1.0, 1.0, 5.0, 9.0, 11.0] {
         let zone = zone_at_scale(f64::from(WIDTH + offset), 200.0, 2.0);
@@ -228,8 +336,14 @@ fn the_right_edge_is_grabbed_across_its_whole_band_on_a_2x_display() {
             missed.push((offset, zone));
         }
     }
-    assert!(missed.is_empty(), "points inside the configured band did not grab the edge at 2x: {missed:?}");
-    assert_eq!(zone_at_scale(f64::from(WIDTH + OUTER + 4.0), 200.0, 2.0), Direction::NONE);
+    assert!(
+        missed.is_empty(),
+        "points inside the configured band did not grab the edge at 2x: {missed:?}"
+    );
+    assert_eq!(
+        zone_at_scale(f64::from(WIDTH + OUTER + 4.0), 200.0, 2.0),
+        Direction::NONE
+    );
 }
 
 /// A panel next to a pane whose rows claim the pointer, as selectable text does
@@ -250,13 +364,22 @@ impl Widget for ClaimingPane {
                     .handle_outset(OUTER)
                     .direction(Direction::RIGHT)
                     .on_resize_zone(move |zone: Direction| zones.borrow_mut().push(zone))
-                    .child(SizedBox::new().width(Dimension::Px(WIDTH)).height(Dimension::Px(400.0)).color(Color::Rgb(40, 30, 30)))
+                    .child(
+                        SizedBox::new()
+                            .width(Dimension::Px(WIDTH))
+                            .height(Dimension::Px(400.0))
+                            .color(Color::Rgb(40, 30, 30)),
+                    )
                     .boxed(),
                 aimer_flex::Expanded::new()
                     .child(
                         aimer_input::mouse_region::MouseRegion::new()
                             .cursor(winit::window::CursorIcon::Text)
-                            .box_child(SizedBox::new().height(Dimension::Px(400.0)).color(Color::Rgb(20, 20, 20))),
+                            .box_child(
+                                SizedBox::new()
+                                    .height(Dimension::Px(400.0))
+                                    .color(Color::Rgb(20, 20, 20)),
+                            ),
                     )
                     .boxed(),
             ])
@@ -268,16 +391,25 @@ impl aimer_widget::PortableWidget for ClaimingPane {}
 
 #[test]
 fn the_outer_band_is_grabbed_even_when_the_neighbouring_pane_claims_the_pointer() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     let mut missed = Vec::new();
     for offset in [1.0f32, 3.0, 5.0, 9.0, 11.0] {
         let zones = Rc::new(RefCell::new(Vec::new()));
-        let mut app = AimerApp::start_headless_with(ClaimingPane { zones: zones.clone() }, HeadlessOptions {
-            size: PhysicalSize::new(600, 400), scale_factor: 1.0,
-        });
+        let mut app = AimerApp::start_headless_with(
+            ClaimingPane {
+                zones: zones.clone(),
+            },
+            HeadlessOptions {
+                size: PhysicalSize::new(600, 400),
+                scale_factor: 1.0,
+            },
+        );
         for x in [500.0, 400.0, 300.0, f64::from(WIDTH + offset)] {
             app.send_window_event(WindowEvent::CursorMoved {
-                device_id: DeviceId::dummy(), position: PhysicalPosition::new(x, 200.0),
+                device_id: DeviceId::dummy(),
+                position: PhysicalPosition::new(x, 200.0),
             });
             app.pump_frames(2);
         }
@@ -285,7 +417,10 @@ fn the_outer_band_is_grabbed_even_when_the_neighbouring_pane_claims_the_pointer(
             missed.push((offset, zones.borrow().clone()));
         }
     }
-    assert!(missed.is_empty(), "the pane next to the panel took the pointer in its outer band: {missed:?}");
+    assert!(
+        missed.is_empty(),
+        "the pane next to the panel took the pointer in its outer band: {missed:?}"
+    );
 }
 
 /// Rows inside the resizable panel that count how many of them are hovered.
@@ -301,7 +436,12 @@ impl Widget for HoverPanel {
                 aimer_input::mouse_region::MouseRegion::new()
                     .on_hover_enter(move || enter.set(enter.get() + 1))
                     .on_hover_exit(move || exit.set(exit.get() - 1))
-                    .box_child(SizedBox::new().width(Dimension::Px(WIDTH - 40.0)).height(Dimension::Px(40.0)).color(Color::Rgb(50, 40, 40)))
+                    .box_child(
+                        SizedBox::new()
+                            .width(Dimension::Px(WIDTH - 40.0))
+                            .height(Dimension::Px(40.0))
+                            .color(Color::Rgb(50, 40, 40)),
+                    )
             })
             .collect();
         Row::new()
@@ -315,7 +455,11 @@ impl Widget for HoverPanel {
                     .child(Column::new().children(rows))
                     .boxed(),
                 aimer_flex::Expanded::new()
-                    .child(SizedBox::new().height(Dimension::Px(400.0)).color(Color::Rgb(20, 20, 20)))
+                    .child(
+                        SizedBox::new()
+                            .height(Dimension::Px(400.0))
+                            .color(Color::Rgb(20, 20, 20)),
+                    )
                     .boxed(),
             ])
             .to_element(ctx)
@@ -326,29 +470,50 @@ impl aimer_widget::PortableWidget for HoverPanel {}
 
 #[test]
 fn a_row_stops_being_hovered_when_the_pointer_slides_into_the_resize_band() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     let hovered = Rc::new(std::cell::Cell::new(0));
-    let mut app = AimerApp::start_headless_with(HoverPanel { hovered: hovered.clone() }, HeadlessOptions {
-        size: PhysicalSize::new(600, 400), scale_factor: 1.0,
-    });
+    let mut app = AimerApp::start_headless_with(
+        HoverPanel {
+            hovered: hovered.clone(),
+        },
+        HeadlessOptions {
+            size: PhysicalSize::new(600, 400),
+            scale_factor: 1.0,
+        },
+    );
     app.pump_frames(3);
 
     // Over the second row, then out along the row into the resize band, then
     // across it into the pane.
     let mut history = Vec::new();
-    for x in [100.0, 200.0, 215.0, 240.0, 248.0, 252.0, 258.0, 300.0, 400.0] {
+    for x in [
+        100.0, 200.0, 215.0, 240.0, 248.0, 252.0, 258.0, 300.0, 400.0,
+    ] {
         app.send_window_event(WindowEvent::CursorMoved {
-            device_id: DeviceId::dummy(), position: PhysicalPosition::new(x, 60.0),
+            device_id: DeviceId::dummy(),
+            position: PhysicalPosition::new(x, 60.0),
         });
         app.pump_frames(2);
         history.push((x, hovered.get()));
     }
 
-    assert_eq!(hovered.get(), 0, "a row is still hovered after the pointer left the panel: {history:?}");
+    assert_eq!(
+        hovered.get(),
+        0,
+        "a row is still hovered after the pointer left the panel: {history:?}"
+    );
     // The rows are 210 wide (WIDTH - 40) from x = 0, so the pointer has left the
     // row by x = 215 and must not be counted as over it from then on.
-    let lingering: Vec<_> = history.iter().filter(|(x, count)| *x > 215.0 && *count != 0).collect();
-    assert!(lingering.is_empty(), "the row stayed hovered after the pointer left it: {history:?}");
+    let lingering: Vec<_> = history
+        .iter()
+        .filter(|(x, count)| *x > 215.0 && *count != 0)
+        .collect();
+    assert!(
+        lingering.is_empty(),
+        "the row stayed hovered after the pointer left it: {history:?}"
+    );
 }
 
 struct ClickState {
@@ -366,7 +531,11 @@ impl StatefulWidget for ClickPanel {
     type State = ClickState;
 
     fn create_state(self) -> ClickState {
-        ClickState { selected: 0, hovered: self.hovered, updater: self.updater }
+        ClickState {
+            selected: 0,
+            hovered: self.hovered,
+            updater: self.updater,
+        }
     }
 }
 
@@ -408,7 +577,11 @@ impl State<ClickPanel> for ClickState {
                 .child(Column::new().children(rows))
                 .boxed(),
             aimer_flex::Expanded::new()
-                .child(SizedBox::new().height(Dimension::Px(400.0)).color(Color::Rgb(20, 20, 20)))
+                .child(
+                    SizedBox::new()
+                        .height(Dimension::Px(400.0))
+                        .color(Color::Rgb(20, 20, 20)),
+                )
                 .boxed(),
         ])
     }
@@ -416,7 +589,9 @@ impl State<ClickPanel> for ClickState {
 
 impl Widget for ClickPanel {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
-        StatefulElement::new_with_name(self, ctx, "ClickPanel", None).0.boxed()
+        StatefulElement::new_with_name(self, ctx, "ClickPanel", None)
+            .0
+            .boxed()
     }
 }
 
@@ -424,14 +599,23 @@ impl aimer_widget::PortableWidget for ClickPanel {}
 
 #[test]
 fn hover_keeps_following_the_pointer_after_a_click_that_rebuilds_the_panel() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     let hovered = Rc::new(std::cell::Cell::new(0));
     let mut app = AimerApp::start_headless_with(
-        ClickPanel { hovered: hovered.clone(), updater: Rc::new(RefCell::new(None)) },
-        HeadlessOptions { size: PhysicalSize::new(600, 400), scale_factor: 1.0 },
+        ClickPanel {
+            hovered: hovered.clone(),
+            updater: Rc::new(RefCell::new(None)),
+        },
+        HeadlessOptions {
+            size: PhysicalSize::new(600, 400),
+            scale_factor: 1.0,
+        },
     );
     app.send_window_event(WindowEvent::CursorMoved {
-        device_id: DeviceId::dummy(), position: PhysicalPosition::new(500.0, 200.0),
+        device_id: DeviceId::dummy(),
+        position: PhysicalPosition::new(500.0, 200.0),
     });
     app.pump_frames(3);
 
@@ -439,13 +623,19 @@ fn hover_keeps_following_the_pointer_after_a_click_that_rebuilds_the_panel() {
     for round in 0..4 {
         let y = 20.0 + 40.0 * f64::from(round);
         app.send_window_event(WindowEvent::CursorMoved {
-            device_id: DeviceId::dummy(), position: PhysicalPosition::new(100.0, y),
+            device_id: DeviceId::dummy(),
+            position: PhysicalPosition::new(100.0, y),
         });
         app.pump_frames(2);
         history.push(("over row", round, hovered.get()));
-        for state in [winit::event::ElementState::Pressed, winit::event::ElementState::Released] {
+        for state in [
+            winit::event::ElementState::Pressed,
+            winit::event::ElementState::Released,
+        ] {
             app.send_window_event(WindowEvent::MouseInput {
-                device_id: DeviceId::dummy(), state, button: winit::event::MouseButton::Left,
+                device_id: DeviceId::dummy(),
+                state,
+                button: winit::event::MouseButton::Left,
             });
             app.pump_frames(2);
         }
@@ -453,31 +643,51 @@ fn hover_keeps_following_the_pointer_after_a_click_that_rebuilds_the_panel() {
     }
     for x in [230.0, 252.0, 300.0, 450.0] {
         app.send_window_event(WindowEvent::CursorMoved {
-            device_id: DeviceId::dummy(), position: PhysicalPosition::new(x, 100.0),
+            device_id: DeviceId::dummy(),
+            position: PhysicalPosition::new(x, 100.0),
         });
         app.pump_frames(2);
     }
     history.push(("pointer in the pane", 0, hovered.get()));
 
-    assert_eq!(hovered.get(), 0, "a row is still hovered with the pointer in the pane: {history:?}");
+    assert_eq!(
+        hovered.get(),
+        0,
+        "a row is still hovered with the pointer in the pane: {history:?}"
+    );
     assert!(
-        history.iter().filter(|(label, _, _)| *label == "over row").all(|(_, _, count)| *count == 1),
+        history
+            .iter()
+            .filter(|(label, _, _)| *label == "over row")
+            .all(|(_, _, count)| *count == 1),
         "exactly the row under the pointer is hovered after each move: {history:?}"
     );
 }
 
 #[test]
 fn a_screen_that_rebuilds_for_the_zone_is_told_when_the_pointer_jumps_out_to_the_pane() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     for target in [(300.0, 200.0), (500.0, 200.0), (500.0, 20.0)] {
         let log = Rc::new(RefCell::new(Vec::new()));
         let mut app = AimerApp::start_headless_with(
-            ZoneScreen { log: log.clone(), updater: Rc::new(RefCell::new(None)) },
-            HeadlessOptions { size: PhysicalSize::new(600, 400), scale_factor: 1.0 },
+            ZoneScreen {
+                log: log.clone(),
+                updater: Rc::new(RefCell::new(None)),
+            },
+            HeadlessOptions {
+                size: PhysicalSize::new(600, 400),
+                scale_factor: 1.0,
+            },
         );
         move_to(&mut app, 500.0, 200.0);
         move_to(&mut app, f64::from(WIDTH) - 3.0, 200.0);
-        assert_eq!(log.borrow().last().copied(), Some(true), "entering the zone must be reported");
+        assert_eq!(
+            log.borrow().last().copied(),
+            Some(true),
+            "entering the zone must be reported"
+        );
 
         move_to(&mut app, target.0, target.1);
 

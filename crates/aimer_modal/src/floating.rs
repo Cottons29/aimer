@@ -15,8 +15,8 @@ use aimer_widget::{
     RequiredChild, VisitorElement, Widget,
 };
 
-use crate::animated_content::wrap_animated_content;
 use crate::anchor::AnchorHandle;
+use crate::animated_content::wrap_animated_content;
 use crate::host::{self, ModalHandle, ModalId, ModalTimeline};
 use crate::paint::{contains, overlay_child_context};
 use crate::placement::{FloatingAlign, FloatingSide, OverflowPolicy, PlacementSpec};
@@ -256,18 +256,14 @@ impl<W: Widget + 'static> Floating<W> {
         id: Option<ModalId>,
         timeline: Rc<RefCell<ModalTimeline>>,
     ) -> AnyElement {
-        let barrier_animation =
-            (self.barrier_color.to_rgba().3 != 0).then_some(self.animation).flatten();
+        let barrier_animation = (self.barrier_color.to_rgba().3 != 0)
+            .then_some(self.animation)
+            .flatten();
         let barrier = Container::new()
             .color(self.barrier_color)
             .child(ZeroSizedBox)
             .to_element(ctx);
-        let barrier = wrap_animated_content(
-            barrier,
-            barrier_animation,
-            timeline.clone(),
-            false,
-        );
+        let barrier = wrap_animated_content(barrier, barrier_animation, timeline.clone(), false);
         let child = wrap_animated_content(
             self.child.to_element(ctx),
             self.animation,
@@ -454,9 +450,7 @@ fn reserved_edges(
     margin: f32,
     requested: SafeAreaInsets,
 ) -> SafeAreaInsets {
-    system
-        .max(SafeAreaInsets::all(margin))
-        .max(requested)
+    system.max(SafeAreaInsets::all(margin)).max(requested)
 }
 
 impl Drawable for RawFloating {
@@ -473,8 +467,7 @@ impl Drawable for RawFloating {
             x: placement.origin.x - ctx.parent_pos.x,
             y: placement.origin.y - ctx.parent_pos.y,
         };
-        let child_ctx =
-            overlay_child_context(ctx, child_size, offset, &self.child_bounds);
+        let child_ctx = overlay_child_context(ctx, child_size, offset, &self.child_bounds);
         ctx.canvas.save();
         ctx.canvas.translate(offset);
         self.child.update(&child_ctx);
@@ -602,10 +595,7 @@ impl VisitorElement for RawFloating {
         visitor(self.child.as_ref());
     }
 
-    fn visit_retained_v2_children<'a>(
-        &'a self,
-        visitor: &mut dyn FnMut(usize, &'a dyn Element),
-    ) {
+    fn visit_retained_v2_children<'a>(&'a self, visitor: &mut dyn FnMut(usize, &'a dyn Element)) {
         visitor(0, self.barrier.as_ref());
         visitor(1, self.child.as_ref());
     }
@@ -717,14 +707,21 @@ mod tests {
 
         assert!(!panel.respect_safe_area);
         assert_eq!(
-            reserved_edges(SafeAreaInsets::ZERO, panel.viewport_margin, SafeAreaInsets::ZERO).top,
+            reserved_edges(
+                SafeAreaInsets::ZERO,
+                panel.viewport_margin,
+                SafeAreaInsets::ZERO
+            )
+            .top,
             12.0
         );
     }
 
     #[test]
     fn a_nonsense_margin_reserves_nothing() {
-        let panel = Floating::new().viewport_margin(f32::NAN).child(ZeroSizedBox);
+        let panel = Floating::new()
+            .viewport_margin(f32::NAN)
+            .child(ZeroSizedBox);
 
         assert_eq!(panel.viewport_margin, 0.0);
     }

@@ -405,7 +405,11 @@ pub fn resolve_placement(
         }
     };
     let clipped = !fits(rect, viewport);
-    ResolvedPlacement { rect, side, clipped }
+    ResolvedPlacement {
+        rect,
+        side,
+        clipped,
+    }
 }
 
 /// A request passed to the application's overlay host.
@@ -608,11 +612,7 @@ impl OverlayLifecycle {
     /// An existing overlay is replaced first. Focus is intentionally restored
     /// only when the final active overlay is dismissed, so replacing one
     /// modal with another does not briefly move focus through the old trigger.
-    pub fn present<H: OverlayHost>(
-        &mut self,
-        host: &mut H,
-        request: OverlayRequest,
-    ) -> OverlayId {
+    pub fn present<H: OverlayHost>(&mut self, host: &mut H, request: OverlayRequest) -> OverlayId {
         if let Some(previous) = self.active.take() {
             if !host.dismiss(previous.id, DismissReason::Replaced) {
                 // Do not create an orphaned second overlay when the host

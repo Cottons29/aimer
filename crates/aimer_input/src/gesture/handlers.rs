@@ -302,11 +302,9 @@ mod tests {
     fn a_secondary_tap_fires_only_the_secondary_handler() {
         let (log, handlers) = recorder();
 
-        handlers.dispatch(
-            GestureEvent::Tap {
-                pointer: mouse(PointerButton::Secondary),
-            },
-        );
+        handlers.dispatch(GestureEvent::Tap {
+            pointer: mouse(PointerButton::Secondary),
+        });
 
         assert_eq!(*log.borrow(), vec!["right_tap"]);
     }
@@ -315,11 +313,9 @@ mod tests {
     fn a_primary_tap_fires_only_the_primary_handler() {
         let (log, handlers) = recorder();
 
-        handlers.dispatch(
-            GestureEvent::Tap {
-                pointer: mouse(PointerButton::Primary),
-            },
-        );
+        handlers.dispatch(GestureEvent::Tap {
+            pointer: mouse(PointerButton::Primary),
+        });
 
         assert_eq!(*log.borrow(), vec!["tap"]);
     }
@@ -330,11 +326,9 @@ mod tests {
     fn a_middle_tap_fires_no_sugar_handler() {
         let (log, handlers) = recorder();
 
-        handlers.dispatch(
-            GestureEvent::Tap {
-                pointer: mouse(PointerButton::Middle),
-            },
-        );
+        handlers.dispatch(GestureEvent::Tap {
+            pointer: mouse(PointerButton::Middle),
+        });
 
         assert!(log.borrow().is_empty());
     }
@@ -386,10 +380,8 @@ mod tests {
     fn dispatching_to_a_missing_handler_is_a_no_op() {
         let handlers = GestureHandlers::new();
 
-        handlers.dispatch(
-            GestureEvent::Tap {
-                pointer: mouse(PointerButton::Primary),
-            },
-        );
+        handlers.dispatch(GestureEvent::Tap {
+            pointer: mouse(PointerButton::Primary),
+        });
     }
 }

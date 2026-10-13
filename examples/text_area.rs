@@ -1,5 +1,5 @@
-use aimer::input::{TextArea, TextEditingController};
 use aimer::AimerApp;
+use aimer::input::{TextArea, TextEditingController};
 
 fn main() {
     let controller = TextEditingController::new();

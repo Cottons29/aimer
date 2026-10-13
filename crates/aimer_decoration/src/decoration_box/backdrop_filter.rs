@@ -50,7 +50,12 @@ impl BackdropFilter {
     /// Creates a filter with a 16-pixel blur and unchanged backdrop colors.
     #[inline]
     pub fn new() -> Self {
-        Self { blur_radius: Self::DEFAULT_BLUR_RADIUS, saturation: 1.0, brightness: 1.0, contrast: 1.0 }
+        Self {
+            blur_radius: Self::DEFAULT_BLUR_RADIUS,
+            saturation: 1.0,
+            brightness: 1.0,
+            contrast: 1.0,
+        }
     }
 
     /// Sets the blur radius in logical pixels, clamped to `0.0..=96.0`.
@@ -99,11 +104,15 @@ impl Decoration for BackdropFilter {
         if size.width <= 0.0 || size.height <= 0.0 {
             return;
         }
-        if self.blur_radius == 0.0 && self.saturation == 1.0
-            && self.brightness == 1.0 && self.contrast == 1.0 {
+        if self.blur_radius == 0.0
+            && self.saturation == 1.0
+            && self.brightness == 1.0
+            && self.contrast == 1.0
+        {
             return;
         }
-        let mut request = MaterialDrawRequest::from_layout(MaterialKind::BackdropFilter, origin, size);
+        let mut request =
+            MaterialDrawRequest::from_layout(MaterialKind::BackdropFilter, origin, size);
         request.blur_radius = self.blur_radius;
         request.saturation = self.saturation;
         request.brightness = self.brightness;
@@ -126,5 +135,9 @@ impl Decoration for BackdropFilter {
 
 #[inline]
 fn normalize(value: f32, fallback: f32, max: f32) -> f32 {
-    if value.is_finite() { value.clamp(0.0, max) } else { fallback }
+    if value.is_finite() {
+        value.clamp(0.0, max)
+    } else {
+        fallback
+    }
 }

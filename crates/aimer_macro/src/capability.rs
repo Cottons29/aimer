@@ -3,8 +3,8 @@ use std::fs;
 use std::path::Path;
 
 use aimer_anteros::{StableId128, capability_contract_fingerprint};
-use proc_macro2::{Ident, Span, TokenStream};
 use proc_macro_crate::{FoundCrate, crate_name};
+use proc_macro2::{Ident, Span, TokenStream};
 use quote::{ToTokens, format_ident, quote};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
@@ -113,7 +113,12 @@ impl Parse for CapabilityArgs {
 
         let (name, name_span) = name
             .map(|value| (value, Span::call_site()))
-            .ok_or_else(|| syn::Error::new(Span::call_site(), "missing required `name` capability metadata"))?;
+            .ok_or_else(|| {
+                syn::Error::new(
+                    Span::call_site(),
+                    "missing required `name` capability metadata",
+                )
+            })?;
         let abi = abi.ok_or_else(|| {
             syn::Error::new(
                 Span::call_site(),
@@ -204,9 +209,9 @@ fn validate_component(kind: &str, value: &str, span: Span) -> syn::Result<()> {
 fn validate_since(since: &str) -> syn::Result<()> {
     let mut parts = since.split('.');
     let valid = (0..3).all(|_| {
-        parts
-            .next()
-            .is_some_and(|part| !part.is_empty() && part.chars().all(|value| value.is_ascii_digit()))
+        parts.next().is_some_and(|part| {
+            !part.is_empty() && part.chars().all(|value| value.is_ascii_digit())
+        })
     }) && parts.next().is_none();
     if !valid {
         return Err(syn::Error::new(
@@ -288,13 +293,17 @@ fn package_source(manifest_dir: &Path, package_name: &str) -> syn::Result<Option
     let source = fs::read_to_string(&source_map_path).map_err(|error| {
         syn::Error::new(
             Span::call_site(),
-            format!("failed to read Aimer capability package source map `{source_map_path}`: {error}"),
+            format!(
+                "failed to read Aimer capability package source map `{source_map_path}`: {error}"
+            ),
         )
     })?;
     let map = toml::from_str::<toml::Table>(&source).map_err(|error| {
         syn::Error::new(
             Span::call_site(),
-            format!("failed to parse Aimer capability package source map `{source_map_path}`: {error}"),
+            format!(
+                "failed to parse Aimer capability package source map `{source_map_path}`: {error}"
+            ),
         )
     })?;
     if map.get("version").and_then(toml::Value::as_integer) != Some(1) {
@@ -326,9 +335,7 @@ fn package_source(manifest_dir: &Path, package_name: &str) -> syn::Result<Option
                 "Aimer capability package source map contains a non-table package",
             ));
         };
-        let Some(candidate_path) = package
-            .get("manifest_path")
-            .and_then(toml::Value::as_str)
+        let Some(candidate_path) = package.get("manifest_path").and_then(toml::Value::as_str)
         else {
             return Err(syn::Error::new(
                 Span::call_site(),
@@ -532,7 +539,9 @@ fn canonical_wire_type(value: &Type, position: WirePosition) -> syn::Result<Stri
                 Type::Path(path) if simple_path_name(path).as_deref() == Some("str") => {
                     Ok("string".to_owned())
                 }
-                Type::Slice(slice) if simple_path_name_from_type(&slice.elem).as_deref() == Some("u8") => {
+                Type::Slice(slice)
+                    if simple_path_name_from_type(&slice.elem).as_deref() == Some("u8") =>
+                {
                     Ok("bytes".to_owned())
                 }
                 _ => Err(unsupported_wire_type(value)),
@@ -550,8 +559,8 @@ fn canonical_path_type(path: &TypePath, position: WirePosition) -> syn::Result<S
     let name = segment.ident.to_string();
     if path.qself.is_none() && path.path.segments.len() == 1 {
         match name.as_str() {
-            "bool" | "i8" | "u8" | "i16" | "u16" | "i32" | "u32" | "i64" | "u64"
-            | "f32" | "f64" => return Ok(name),
+            "bool" | "i8" | "u8" | "i16" | "u16" | "i32" | "u32" | "i64" | "u64" | "f32"
+            | "f64" => return Ok(name),
             "String" => return Ok("string".to_owned()),
             "Vec" => {
                 let element = one_type_argument(&segment.arguments)?;
@@ -724,7 +733,9 @@ fn generate_guest_proxy(
                 })
                 .collect::<syn::Result<Vec<_>>>()?;
             let result = match &method.sig.output {
-                ReturnType::Type(_, value) => decode_wire_value(capability_result_value(value)?, anteros)?,
+                ReturnType::Type(_, value) => {
+                    decode_wire_value(capability_result_value(value)?, anteros)?
+                }
                 ReturnType::Default => unreachable!("validated capability result"),
             };
 
@@ -835,9 +846,11 @@ fn generate_host_adapter(
             let decoders = parameters.iter().map(|(decoder, _)| decoder);
             let arguments = parameters.iter().map(|(_, argument)| argument);
             let result = match &method.sig.output {
-                ReturnType::Type(_, value) => {
-                    encode_provider_result(capability_result_value(value)?, &format_ident!("value"), anteros)?
-                }
+                ReturnType::Type(_, value) => encode_provider_result(
+                    capability_result_value(value)?,
+                    &format_ident!("value"),
+                    anteros,
+                )?,
                 ReturnType::Default => unreachable!("validated capability result"),
             };
 
@@ -926,10 +939,9 @@ fn decode_provider_parameter(
 ) -> syn::Result<(TokenStream, TokenStream)> {
     match value {
         Type::Reference(reference) => match reference.elem.as_ref() {
-            Type::Path(path) if simple_path_name(path).as_deref() == Some("str") => Ok((
-                quote!(let #name = request.read_string()?;),
-                quote!(&#name),
-            )),
+            Type::Path(path) if simple_path_name(path).as_deref() == Some("str") => {
+                Ok((quote!(let #name = request.read_string()?;), quote!(&#name)))
+            }
             Type::Slice(slice)
                 if simple_path_name_from_type(&slice.elem).as_deref() == Some("u8") =>
             {
@@ -955,10 +967,7 @@ fn decode_provider_parameter(
                 "Vec" => quote!(read_bytes),
                 _ => return Err(unsupported_wire_type(value)),
             };
-            Ok((
-                quote!(let #name = request.#reader()?;),
-                quote!(#name),
-            ))
+            Ok((quote!(let #name = request.#reader()?;), quote!(#name)))
         }
         _ => Err(unsupported_wire_type(value)),
     }
@@ -1011,13 +1020,19 @@ fn encode_provider_result(
     }
 }
 
-fn encode_wire_value(value: &Type, name: &Ident, anteros: &TokenStream) -> syn::Result<TokenStream> {
+fn encode_wire_value(
+    value: &Type,
+    name: &Ident,
+    anteros: &TokenStream,
+) -> syn::Result<TokenStream> {
     match value {
         Type::Reference(reference) => match reference.elem.as_ref() {
             Type::Path(path) if simple_path_name(path).as_deref() == Some("str") => {
                 Ok(quote!(request.write_string(#name)?;))
             }
-            Type::Slice(slice) if simple_path_name_from_type(&slice.elem).as_deref() == Some("u8") => {
+            Type::Slice(slice)
+                if simple_path_name_from_type(&slice.elem).as_deref() == Some("u8") =>
+            {
                 Ok(quote!(request.write_bytes(#name)?;))
             }
             _ => Err(unsupported_wire_type(value)),

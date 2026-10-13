@@ -224,12 +224,7 @@ impl LiquidMaterial {
     /// and ripples behind the droplet.
     #[inline]
     pub fn distortion_strength(mut self, strength: f32) -> Self {
-        self.distortion_strength = normalize(
-            strength,
-            0.12,
-            0.0,
-            Self::MAX_DISTORTION_STRENGTH,
-        );
+        self.distortion_strength = normalize(strength, 0.12, 0.0, Self::MAX_DISTORTION_STRENGTH);
         self
     }
 
@@ -244,12 +239,7 @@ impl LiquidMaterial {
     /// Sets normalized specular-highlight strength: the bright glossy glint.
     #[inline]
     pub fn specular_highlight(mut self, strength: f32) -> Self {
-        self.specular_highlight = normalize(
-            strength,
-            0.55,
-            0.0,
-            Self::MAX_SPECULAR_HIGHLIGHT,
-        );
+        self.specular_highlight = normalize(strength, 0.55, 0.0, Self::MAX_SPECULAR_HIGHLIGHT);
         self
     }
 
@@ -456,7 +446,8 @@ impl LiquidMaterial {
             0.0,
             Self::MAX_SPECULAR_HIGHLIGHT,
         );
-        self.animation_speed = normalize(self.animation_speed, 0.35, 0.0, Self::MAX_ANIMATION_SPEED);
+        self.animation_speed =
+            normalize(self.animation_speed, 0.35, 0.0, Self::MAX_ANIMATION_SPEED);
         self.animation_time = normalize(
             self.animation_time,
             0.0,
@@ -832,7 +823,6 @@ impl Drawable for RawLiquid {
     fn retained_v2_paint_outsets(&self, _ctx: &BuildContext) -> Option<[f32; 4]> {
         shadow_outsets(self.material.normalized().glass_material())
     }
-
 }
 
 impl EventElement for RawLiquid {
@@ -908,9 +898,7 @@ fn normalize(value: f32, fallback: f32, min: f32, max: f32) -> f32 {
 #[inline]
 fn with_opacity(color: Color, opacity: f32) -> Color {
     let (red, green, blue, alpha) = color.to_rgba();
-    let alpha = (f32::from(alpha) * opacity)
-        .round()
-        .clamp(0.0, 255.0) as u8;
+    let alpha = (f32::from(alpha) * opacity).round().clamp(0.0, 255.0) as u8;
     Color::Rgba(red, green, blue, alpha)
 }
 
@@ -947,11 +935,17 @@ mod tests {
         assert_eq!(material.interaction_value(), 0.0);
         assert_eq!(material.blob_amount_value(), 0.0);
         assert_eq!(material.blob_seed_value(), 0.0);
-        assert_eq!(material.magnification_value(), LiquidMaterial::MAX_MAGNIFICATION);
+        assert_eq!(
+            material.magnification_value(),
+            LiquidMaterial::MAX_MAGNIFICATION
+        );
         assert_eq!(material.tip_pull_value(), 0.0);
         assert_eq!(material.chromatic_aberration_value(), 0.3);
         assert_eq!(material.bevel_radius_value(), 0.0);
-        assert_eq!(material.glass_material().quality_value(), GlassMaterial::MAX_QUALITY);
+        assert_eq!(
+            material.glass_material().quality_value(),
+            GlassMaterial::MAX_QUALITY
+        );
     }
 
     #[test]
@@ -997,5 +991,4 @@ mod tests {
         assert_eq!(material.effective_phase(), 4.25);
         assert_eq!(material.effective_phase(), material.effective_phase());
     }
-
 }

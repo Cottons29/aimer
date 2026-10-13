@@ -1,7 +1,7 @@
 use aimer::style::{LayoutSpacing, Spacing, TextStyle};
 use aimer::{
-    AimerApp, BoxAlignment, Container, Dimension, Flex, FontError, FontFamily,
-    FontRegistration, FontRegistry, FontStyle, FontWeight, FlexDirection, SizedBox, Text, Widget,
+    AimerApp, BoxAlignment, Container, Dimension, Flex, FlexDirection, FontError, FontFamily,
+    FontRegistration, FontRegistry, FontStyle, FontWeight, SizedBox, Text, Widget,
 };
 
 use crate::theme;

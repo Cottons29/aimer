@@ -10,7 +10,7 @@ use super::raw_grid::{
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, aimer_macro::PortableValue)]
 #[portable_value(
     id = "aimer.value:aimer_grid::grid::GridAlignment",
-    max_encoded_bytes = 16,
+    max_encoded_bytes = 16
 )]
 pub enum GridAlignment {
     #[portable_value(tag = 0)]
@@ -27,7 +27,7 @@ pub enum GridAlignment {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, aimer_macro::PortableValue)]
 #[portable_value(
     id = "aimer.value:aimer_grid::grid::GridOverflow",
-    max_encoded_bytes = 16,
+    max_encoded_bytes = 16
 )]
 pub enum GridOverflow {
     #[default]
@@ -43,7 +43,7 @@ pub enum GridOverflow {
     id = "aimer.value:aimer_grid::grid::GridItemConfig",
     max_encoded_bytes = 256,
     max_depth = 8,
-    max_entries = 32,
+    max_entries = 32
 )]
 pub struct GridItemConfig {
     /// The explicit or auto-flow placement of the item.
@@ -60,7 +60,7 @@ pub struct GridItemConfig {
     id = "aimer.value:aimer_grid::grid::GridPortableConfig",
     max_encoded_bytes = 32_768,
     max_depth = 16,
-    max_entries = 512,
+    max_entries = 512
 )]
 pub struct GridPortableConfig {
     /// The column track definitions.
@@ -175,11 +175,7 @@ impl<W: Widget + 'static> GridItem<W> {
 ///                                  GridItem::new(SizedBox::new()).at(0, 1)]);
 /// ```
 #[derive(aimer_macro::PortableWidget)]
-#[portable_widget(
-    id = "aimer_grid::grid::Grid",
-    schema_only,
-    manual_lowering
-)]
+#[portable_widget(id = "aimer_grid::grid::Grid", schema_only, manual_lowering)]
 pub struct Grid<W: Widget + 'static = AnyWidget> {
     #[portable_skip]
     columns: Vec<GridTrack>,
@@ -413,10 +409,8 @@ impl<W: Widget + 'static> aimer_widget::PortableWidget for Grid<W> {
         self,
         ctx: &mut aimer_widget::portable::PortableBuildContext,
         source: aimer_widget::portable::SourceFingerprint,
-    ) -> Result<
-        aimer_widget::portable::PortableNodeId,
-        aimer_widget::portable::PortableBuildError,
-    > {
+    ) -> Result<aimer_widget::portable::PortableNodeId, aimer_widget::portable::PortableBuildError>
+    {
         let schema = <Self as aimer_widget::portable::PortableWidgetSchema>::SCHEMA;
         let property_id = aimer_widget::portable::__anteros::PropertyId::from_canonical_name(
             "aimer.property:aimer_grid::grid::Grid:config",
@@ -463,11 +457,11 @@ impl<W: Widget + 'static> aimer_widget::PortableWidget for Grid<W> {
 #[cfg(all(test, feature = "portable-guest"))]
 mod portable_layout_tests {
     use aimer_widget::base::BuildContext;
+    use aimer_widget::portable::__anteros::{Version, WIDGET_SIZED_BOX, WidgetDocumentView};
     use aimer_widget::portable::{
         PortableBuildContext, PortableLimits, PortableWidgetLimits, PortableWidgetSchema,
         SourceFingerprint, StableId128,
     };
-    use aimer_widget::portable::__anteros::{Version, WIDGET_SIZED_BOX, WidgetDocumentView};
     use aimer_widget::{AnyElement, ErrorWidget, PortableWidget, Widget};
 
     use super::{Grid, GridItem, GridTrack};
@@ -485,16 +479,11 @@ mod portable_layout_tests {
             self,
             ctx: &mut PortableBuildContext,
             source: SourceFingerprint,
-        ) -> Result<aimer_widget::portable::PortableNodeId, aimer_widget::portable::PortableBuildError>
-        {
-            ctx.push_node(
-                WIDGET_SIZED_BOX,
-                Version::new(1, 0),
-                None,
-                source,
-                &[],
-                &[],
-            )
+        ) -> Result<
+            aimer_widget::portable::PortableNodeId,
+            aimer_widget::portable::PortableBuildError,
+        > {
+            ctx.push_node(WIDGET_SIZED_BOX, Version::new(1, 0), None, source, &[], &[])
         }
     }
 
@@ -503,8 +492,7 @@ mod portable_layout_tests {
         let mut ctx = PortableBuildContext::new(
             1,
             1,
-            PortableWidgetLimits::new(16, 16, 16, 16, 1_024, 8_192)
-                .with_max_blob_bytes(128),
+            PortableWidgetLimits::new(16, 16, 16, 16, 1_024, 8_192).with_max_blob_bytes(128),
             PortableLimits::new(8, 16, 64, 128, 1_024),
         )
         .unwrap();

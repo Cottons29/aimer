@@ -21,7 +21,11 @@ impl FlexItemGeometry {
 
     /// Creates a record from the position and resolved size already produced by
     /// the Flex layout engine.
-    pub fn from_resolved(key: Key, position: Vec2d, size: ResolvedSize) -> Result<Self, KeyedLayoutError> {
+    pub fn from_resolved(
+        key: Key,
+        position: Vec2d,
+        size: ResolvedSize,
+    ) -> Result<Self, KeyedLayoutError> {
         Ok(Self::new(
             key,
             LayoutGeometry::try_new(position.x, position.y, size.width, size.height)?,
@@ -99,7 +103,10 @@ impl FlexGeometrySnapshot {
                 .into_iter()
                 .map(|child| aimer_animation::layout::LayoutItem::new(child.key, child.geometry)),
         )?;
-        Ok(Self { container, children })
+        Ok(Self {
+            container,
+            children,
+        })
     }
 
     /// Creates a snapshot from an optional-key child adapter and reports the
@@ -113,11 +120,12 @@ impl FlexGeometrySnapshot {
             .map_err(KeyedLayoutError::from)
             .map_err(FlexSnapshotError::from)?;
         let children = KeyedLayoutSnapshot::try_new_optional(children.into_iter().map(|child| {
-            child.map(|child| {
-                aimer_animation::layout::LayoutItem::new(child.key, child.geometry)
-            })
+            child.map(|child| aimer_animation::layout::LayoutItem::new(child.key, child.geometry))
         }))?;
-        Ok(Self { container, children })
+        Ok(Self {
+            container,
+            children,
+        })
     }
 
     /// Returns the container rectangle.

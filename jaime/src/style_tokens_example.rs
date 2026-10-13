@@ -47,14 +47,38 @@ impl Default for StyleTokensExample {
 impl Widget for StyleTokensExample {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
         let tokens = ThemeTokens::copied(ctx).normalized();
-        let high_contrast = self.variants.resolve(ThemeVariant::HighContrast);
-        let body = tokens.typography.body;
-        let control_height = tokens.density.target_size(tokens.control.min_height);
-        let hover_surface = tokens.state.hover.apply(tokens.colors.surface);
-        let contrast = tokens.control.focus_ring.minimum_contrast;
+        let high_contrast = self
+            .variants
+            .resolve(ThemeVariant::HighContrast);
+        let body = tokens
+            .typography
+            .body;
+        let control_height = tokens
+            .density
+            .target_size(
+                tokens
+                    .control
+                    .min_height,
+            );
+        let hover_surface = tokens
+            .state
+            .hover
+            .apply(
+                tokens
+                    .colors
+                    .surface,
+            );
+        let contrast = tokens
+            .control
+            .focus_ring
+            .minimum_contrast;
 
         Container::new()
-            .color(tokens.colors.background)
+            .color(
+                tokens
+                    .colors
+                    .background,
+            )
             .child(
                 Column::new()
                     .horizontal_alignment(BoxAlignment::Center)
@@ -63,11 +87,27 @@ impl Widget for StyleTokensExample {
                         Text::new("Semantic design tokens")
                             .text_style(
                                 TextStyle::new()
-                                    .font_size(tokens.typography.title.font_size as u32)
-                                    .color(tokens.colors.on_background),
+                                    .font_size(
+                                        tokens
+                                            .typography
+                                            .title
+                                            .font_size
+                                            as u32,
+                                    )
+                                    .color(
+                                        tokens
+                                            .colors
+                                            .on_background,
+                                    ),
                             )
                             .boxed(),
-                        SizedBox::new().height(tokens.spacing.medium as u32).boxed(),
+                        SizedBox::new()
+                            .height(
+                                tokens
+                                    .spacing
+                                    .medium as u32,
+                            )
+                            .boxed(),
                         Container::new()
                             .width(Dimension::Px(320.0))
                             .height(Dimension::Px(control_height))
@@ -75,27 +115,59 @@ impl Widget for StyleTokensExample {
                             .child(
                                 Text::new(format!(
                                     "body {:.0}px · gap {:.0}px · radius {:.0}px",
-                                    body.font_size, tokens.spacing.medium, tokens.shape.medium,
+                                    body.font_size,
+                                    tokens
+                                        .spacing
+                                        .medium,
+                                    tokens.shape.medium,
                                 ))
-                                .text_style(TextStyle::new().color(tokens.colors.on_surface)),
+                                .text_style(
+                                    TextStyle::new().color(
+                                        tokens
+                                            .colors
+                                            .on_surface,
+                                    ),
+                                ),
                             )
                             .boxed(),
-                        SizedBox::new().height(tokens.spacing.small as u32).boxed(),
+                        SizedBox::new()
+                            .height(tokens.spacing.small as u32)
+                            .boxed(),
                         Text::new(format!(
                             "focus contrast ≥ {:.1}: high-contrast primary {:?}",
-                            contrast, high_contrast.colors.primary,
+                            contrast,
+                            high_contrast
+                                .colors
+                                .primary,
                         ))
-                        .text_style(TextStyle::new().color(tokens.colors.on_background))
+                        .text_style(
+                            TextStyle::new().color(
+                                tokens
+                                    .colors
+                                    .on_background,
+                            ),
+                        )
                         .boxed(),
-                        SizedBox::new().height(tokens.spacing.small as u32).boxed(),
+                        SizedBox::new()
+                            .height(tokens.spacing.small as u32)
+                            .boxed(),
                         Text::new(format!(
                             "motion {:.0}ms · state opacity {:.2}",
-                            tokens.motion.effective_duration_ms(
-                                aimer::style::MotionDuration::Standard,
-                            ),
-                            tokens.state.pressed.opacity,
+                            tokens
+                                .motion
+                                .effective_duration_ms(aimer::style::MotionDuration::Standard,),
+                            tokens
+                                .state
+                                .pressed
+                                .opacity,
                         ))
-                        .text_style(TextStyle::new().color(tokens.colors.on_background))
+                        .text_style(
+                            TextStyle::new().color(
+                                tokens
+                                    .colors
+                                    .on_background,
+                            ),
+                        )
                         .boxed(),
                     ]),
             )
@@ -137,11 +209,23 @@ mod tests {
         let tokens = ThemeTokens::light();
 
         assert_eq!(
-            tokens.control.focus_ring.minimum_contrast,
-            tokens.focus.minimum_contrast
+            tokens
+                .control
+                .focus_ring
+                .minimum_contrast,
+            tokens
+                .focus
+                .minimum_contrast
         );
         assert_eq!(
-            tokens.state.hover.apply(tokens.colors.surface),
+            tokens
+                .state
+                .hover
+                .apply(
+                    tokens
+                        .colors
+                        .surface
+                ),
             Color::Rgb(255, 235, 235)
         );
     }

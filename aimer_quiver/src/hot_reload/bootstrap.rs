@@ -4,9 +4,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Duration;
 
-use aimer_anteros::{
-    GenerationLimits, ModelLimits, RuntimeConfig, StateTransferCoordinator,
-};
+use aimer_anteros::{GenerationLimits, ModelLimits, RuntimeConfig, StateTransferCoordinator};
 use aimer_reload_protocol::{
     DevelopmentHostConfig, MAX_DEVELOPMENT_HOST_CONFIG_TEXT_BYTES, ProtocolLimits,
     SessionCredentials,
@@ -114,8 +112,7 @@ fn initialize_hot_reload_host_inner() -> Result<(), ()> {
 /// local capability state that is intentionally not `Send`. Calling this more
 /// than once returns `None`, including when the first call observed a normal
 /// launch with no staged reload host.
-pub fn take_hot_reload_config(
-) -> Option<(SocketAddr, SessionCredentials, LiveReloadConfig)> {
+pub fn take_hot_reload_config() -> Option<(SocketAddr, SessionCredentials, LiveReloadConfig)> {
     let bootstrap = hot_reload_config();
     let state = bootstrap.state.load(Ordering::Acquire);
     let staged = match state {
@@ -128,7 +125,10 @@ pub fn take_hot_reload_config(
                     Ordering::AcqRel,
                     Ordering::Acquire,
                 )
-                .is_ok() => bootstrap.staged.pop()?,
+                .is_ok() =>
+        {
+            bootstrap.staged.pop()?
+        }
         BOOTSTRAP_EMPTY
             if bootstrap
                 .state
@@ -138,7 +138,10 @@ pub fn take_hot_reload_config(
                     Ordering::AcqRel,
                     Ordering::Acquire,
                 )
-                .is_ok() => return None,
+                .is_ok() =>
+        {
+            return None;
+        }
         BOOTSTRAP_CONSUMED | BOOTSTRAP_INITIALIZING | BOOTSTRAP_EMPTY | BOOTSTRAP_STAGED => {
             return None;
         }
@@ -148,9 +151,7 @@ pub fn take_hot_reload_config(
 }
 
 impl StagedHostConfig {
-    fn into_live_reload_config(
-        self,
-    ) -> (SocketAddr, SessionCredentials, LiveReloadConfig) {
+    fn into_live_reload_config(self) -> (SocketAddr, SessionCredentials, LiveReloadConfig) {
         (
             self.address,
             self.credentials,
@@ -315,7 +316,9 @@ fn read_launch_config() -> Result<Option<StagedHostConfig>, ()> {
             .map(|value| value.into_string().map_err(|_| ()))
             .transpose()?;
         if let Some(config) = staged.as_mut() {
-            config.address.set_ip(ios_listener_ip(service_name.as_deref())?);
+            config
+                .address
+                .set_ip(ios_listener_ip(service_name.as_deref())?);
         } else if service_name.is_some() {
             return Err(());
         }
@@ -382,17 +385,10 @@ fn read_launch_config() -> Result<Option<StagedHostConfig>, ()> {
 #[cfg_attr(not(target_os = "android"), allow(dead_code))]
 fn parse_android_session(text: &str) -> Result<Option<StagedHostConfig>, ()> {
     let mut fields = text.splitn(4, '\n');
-    parse_launch_values([
-        fields.next(),
-        fields.next(),
-        fields.next(),
-        fields.next(),
-    ])
+    parse_launch_values([fields.next(), fields.next(), fields.next(), fields.next()])
 }
 
-fn parse_launch_values(
-    values: [Option<&str>; 4],
-) -> Result<Option<StagedHostConfig>, ()> {
+fn parse_launch_values(values: [Option<&str>; 4]) -> Result<Option<StagedHostConfig>, ()> {
     if values.iter().all(Option::is_none) {
         return Ok(None);
     }
@@ -461,16 +457,16 @@ mod tests {
     );
 
     fn host_config() -> String {
-        DevelopmentHostConfig::cli_safe_profile()
-            .to_text()
-            .unwrap()
+        DevelopmentHostConfig::cli_safe_profile().to_text().unwrap()
     }
 
     #[test]
     fn absent_launch_values_are_a_normal_launch() {
-        assert!(parse_launch_values([None, None, None, None])
-            .unwrap()
-            .is_none());
+        assert!(
+            parse_launch_values([None, None, None, None])
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -519,24 +515,52 @@ mod tests {
         assert_eq!(staged.address, "127.0.0.1:37654".parse().unwrap());
         assert_eq!(session_id.as_str(), SESSION_ID);
         assert_eq!(token.as_str(), TOKEN);
-        assert_eq!(staged.development, DevelopmentHostConfig::cli_safe_profile());
+        assert_eq!(
+            staged.development,
+            DevelopmentHostConfig::cli_safe_profile()
+        );
     }
 
     #[test]
     fn malformed_credentials_and_ports_fail_closed() {
         let config = host_config();
         for values in [
-            [Some("11"), Some(TOKEN), Some("37654"), Some(config.as_str())],
+            [
+                Some("11"),
+                Some(TOKEN),
+                Some("37654"),
+                Some(config.as_str()),
+            ],
             [
                 Some("gggggggggggggggggggggggggggggggg"),
                 Some(TOKEN),
                 Some("37654"),
                 Some(config.as_str()),
             ],
-            [Some(SESSION_ID), Some("a5"), Some("37654"), Some(config.as_str())],
-            [Some(SESSION_ID), Some(TOKEN), Some("0"), Some(config.as_str())],
-            [Some(SESSION_ID), Some(TOKEN), Some("037654"), Some(config.as_str())],
-            [Some(SESSION_ID), Some(TOKEN), Some("65536"), Some(config.as_str())],
+            [
+                Some(SESSION_ID),
+                Some("a5"),
+                Some("37654"),
+                Some(config.as_str()),
+            ],
+            [
+                Some(SESSION_ID),
+                Some(TOKEN),
+                Some("0"),
+                Some(config.as_str()),
+            ],
+            [
+                Some(SESSION_ID),
+                Some(TOKEN),
+                Some("037654"),
+                Some(config.as_str()),
+            ],
+            [
+                Some(SESSION_ID),
+                Some(TOKEN),
+                Some("65536"),
+                Some(config.as_str()),
+            ],
         ] {
             assert!(parse_launch_values(values).is_err());
         }
@@ -548,13 +572,10 @@ mod tests {
         let unknown = format!("{}unknown=1\n", host_config());
         let oversized = "x".repeat(MAX_DEVELOPMENT_HOST_CONFIG_TEXT_BYTES + 1);
         for config in [malformed, unknown.as_str(), oversized.as_str()] {
-            assert!(parse_launch_values([
-                Some(SESSION_ID),
-                Some(TOKEN),
-                Some("37654"),
-                Some(config),
-            ])
-            .is_err());
+            assert!(
+                parse_launch_values([Some(SESSION_ID), Some(TOKEN), Some("37654"), Some(config),])
+                    .is_err()
+            );
         }
     }
 
@@ -580,25 +601,69 @@ mod tests {
             .unwrap();
         let policy = HostPolicy::from(config);
 
-        assert_eq!(policy.runtime_fuel_per_call, config.runtime_fuel_per_call_limit());
+        assert_eq!(
+            policy.runtime_fuel_per_call,
+            config.runtime_fuel_per_call_limit()
+        );
         assert_eq!(policy.module_bytes, config.module_bytes_limit());
-        assert_eq!(policy.runtime_memory_pages, config.runtime_memory_pages_limit());
-        assert_eq!(policy.runtime_table_elements, config.runtime_table_elements_limit() as usize);
-        assert_eq!(policy.runtime_call_depth, config.runtime_call_depth_limit() as usize);
-        assert_eq!(policy.protocol_chunk_bytes, config.protocol_chunk_bytes_limit());
-        assert_eq!(policy.protocol_diagnostic_bytes, config.protocol_diagnostic_bytes_limit());
-        assert_eq!(policy.protocol_terminal_results, config.protocol_terminal_result_limit());
-        assert_eq!(policy.protocol_io_timeout_ms, config.protocol_io_timeout_ms_limit());
-        assert_eq!(policy.listener_credential_ttl_ms, config.listener_credential_ttl_ms_limit());
-        assert_eq!(policy.listener_authentication_failures, config.listener_authentication_failure_limit());
-        assert_eq!(policy.listener_authentication_backoff_ms, config.listener_authentication_backoff_ms_limit());
-        assert_eq!(policy.model_document_bytes, config.model_document_bytes_limit() as u32);
+        assert_eq!(
+            policy.runtime_memory_pages,
+            config.runtime_memory_pages_limit()
+        );
+        assert_eq!(
+            policy.runtime_table_elements,
+            config.runtime_table_elements_limit() as usize
+        );
+        assert_eq!(
+            policy.runtime_call_depth,
+            config.runtime_call_depth_limit() as usize
+        );
+        assert_eq!(
+            policy.protocol_chunk_bytes,
+            config.protocol_chunk_bytes_limit()
+        );
+        assert_eq!(
+            policy.protocol_diagnostic_bytes,
+            config.protocol_diagnostic_bytes_limit()
+        );
+        assert_eq!(
+            policy.protocol_terminal_results,
+            config.protocol_terminal_result_limit()
+        );
+        assert_eq!(
+            policy.protocol_io_timeout_ms,
+            config.protocol_io_timeout_ms_limit()
+        );
+        assert_eq!(
+            policy.listener_credential_ttl_ms,
+            config.listener_credential_ttl_ms_limit()
+        );
+        assert_eq!(
+            policy.listener_authentication_failures,
+            config.listener_authentication_failure_limit()
+        );
+        assert_eq!(
+            policy.listener_authentication_backoff_ms,
+            config.listener_authentication_backoff_ms_limit()
+        );
+        assert_eq!(
+            policy.model_document_bytes,
+            config.model_document_bytes_limit() as u32
+        );
         assert_eq!(policy.model_collection_entries, 17);
         assert_eq!(policy.model_widget_depth, config.model_widget_depth_limit());
         assert_eq!(policy.callback_bindings, config.callback_binding_limit());
-        assert_eq!(policy.state_transfer_migration_fuel, config.state_transfer_migration_fuel_limit());
+        assert_eq!(
+            policy.state_transfer_migration_fuel,
+            config.state_transfer_migration_fuel_limit()
+        );
         assert!(policy.retained_generations <= config.retired_generation_limit());
-        assert!(policy.reload_command_queue_capacity <= config.reload_command_queue_capacity_limit());
-        assert_eq!(policy.event_queue_capacity, config.event_queue_capacity_limit());
+        assert!(
+            policy.reload_command_queue_capacity <= config.reload_command_queue_capacity_limit()
+        );
+        assert_eq!(
+            policy.event_queue_capacity,
+            config.event_queue_capacity_limit()
+        );
     }
 }

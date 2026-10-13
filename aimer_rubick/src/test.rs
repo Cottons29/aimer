@@ -100,7 +100,10 @@ mod tests {
             INLINE_CAPACITY + OWNER_OVERHEAD,
             "no storage tag and no per-instance operation table"
         );
-        assert_eq!(size_of::<Rubick<dyn Value>>(), INLINE_CAPACITY + OWNER_OVERHEAD);
+        assert_eq!(
+            size_of::<Rubick<dyn Value>>(),
+            INLINE_CAPACITY + OWNER_OVERHEAD
+        );
         assert_eq!(align_of::<Rubick<u32>>(), align_of::<usize>());
     }
 
@@ -108,7 +111,10 @@ mod tests {
     fn capacity_is_selected_per_alias() {
         assert_eq!(size_of::<Rubick<dyn Value, 1>>(), 2 * size_of::<usize>());
         assert_eq!(size_of::<Rubick<dyn Value, 8>>(), 9 * size_of::<usize>());
-        assert_eq!(<Rubick<dyn Value, 8>>::INLINE_CAPACITY / size_of::<usize>(), 8);
+        assert_eq!(
+            <Rubick<dyn Value, 8>>::INLINE_CAPACITY / size_of::<usize>(),
+            8
+        );
 
         let thin: Rubick<dyn Value, 1> = Rubick::erase(ExactBoundary([1; INLINE_CAPACITY]));
         let roomy: Rubick<dyn Value, 8> = Rubick::erase(ExactBoundary([1; INLINE_CAPACITY]));

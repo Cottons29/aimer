@@ -74,10 +74,7 @@ impl SvgDocument {
         Self::parse_with_limits(bytes, SvgLimits::default())
     }
 
-    fn parse_with_limits(
-        bytes: impl AsRef<[u8]>,
-        limits: SvgLimits,
-    ) -> Result<Self, SvgError> {
+    fn parse_with_limits(bytes: impl AsRef<[u8]>, limits: SvgLimits) -> Result<Self, SvgError> {
         let bytes = bytes.as_ref();
         if bytes.is_empty() {
             return Err(SvgError::EmptyInput);
@@ -88,8 +85,8 @@ impl SvgDocument {
             bytes.len(),
             SvgLimits::default().max_source_bytes,
         )?;
-        let source = std::str::from_utf8(bytes)
-            .map_err(|error| SvgError::Parse(error.to_string()))?;
+        let source =
+            std::str::from_utf8(bytes).map_err(|error| SvgError::Parse(error.to_string()))?;
         reject_non_finite_literals(source)?;
         let parsed = parse_svg_document(bytes).map_err(map_parse_error)?;
         let viewport = parsed.scene.viewport;
@@ -228,9 +225,7 @@ impl SvgDocument {
             sy: destination_height / self.scene.viewport.height,
             ..SvgTransform::default()
         };
-        let source_inverse = source_to_destination
-            .inverse()
-            .ok_or(SvgError::NonFinite)?;
+        let source_inverse = source_to_destination.inverse().ok_or(SvgError::NonFinite)?;
         let root_inverse = self.root_transform.inverse().ok_or(SvgError::NonFinite)?;
         let compensation = source_inverse.mul(desired).mul(root_inverse);
         compensation
@@ -325,9 +320,9 @@ fn map_parse_error(error: aimer_cupid::svg::SvgParseError) -> SvgError {
             SvgError::Parse(format!("unsupported SVG feature: {feature}"))
         }
         ParseError::InvalidViewBox => SvgError::InvalidViewBox("invalid viewBox".to_owned()),
-        ParseError::InvalidPreserveAspectRatio => SvgError::InvalidPreserveAspectRatio(
-            "invalid preserveAspectRatio".to_owned(),
-        ),
+        ParseError::InvalidPreserveAspectRatio => {
+            SvgError::InvalidPreserveAspectRatio("invalid preserveAspectRatio".to_owned())
+        }
         ParseError::ExternalResource(resource) => SvgError::ExternalResource(resource),
         ParseError::LimitExceeded(resource) => SvgError::LimitExceeded {
             resource,
@@ -366,7 +361,11 @@ fn collect_diagnostics(
                     filter.primitives.iter().all(|primitive| match primitive {
                         aimer_cupid::svg::SvgFilterPrimitive::Offset { input, .. }
                         | aimer_cupid::svg::SvgFilterPrimitive::ColorMatrix { input, .. } => {
-                            matches!(input, aimer_cupid::svg::SvgFilterInput::SourceGraphic | aimer_cupid::svg::SvgFilterInput::Previous)
+                            matches!(
+                                input,
+                                aimer_cupid::svg::SvgFilterInput::SourceGraphic
+                                    | aimer_cupid::svg::SvgFilterInput::Previous
+                            )
                         }
                         _ => false,
                     })
@@ -412,9 +411,7 @@ fn collect_diagnostics(
                                         matches!(paint, aimer_cupid::svg::SvgPaint::Solid(_))
                                     })
                                     && mask_node.stroke.is_none()
-                                    && scene
-                                        .geometry(mask_node)
-                                        .is_some_and(is_rect_geometry)
+                                    && scene.geometry(mask_node).is_some_and(is_rect_geometry)
                             })
                 })
         })
@@ -436,9 +433,14 @@ fn collect_diagnostics(
                             pattern.tile[2] > 0.0
                                 && pattern.tile[3] > 0.0
                                 && is_identity_transform(pattern.transform)
-                                && node.geometry.and_then(|index| scene.geometries.get(index)).is_some_and(is_rect_geometry)
+                                && node
+                                    .geometry
+                                    .and_then(|index| scene.geometries.get(index))
+                                    .is_some_and(is_rect_geometry)
                                 && pattern.nodes.iter().all(|node_id| {
-                                    let Some(pattern_node) = scene.node(aimer_cupid::svg::SvgNodeId(*node_id)) else {
+                                    let Some(pattern_node) =
+                                        scene.node(aimer_cupid::svg::SvgNodeId(*node_id))
+                                    else {
                                         return false;
                                     };
                                     pattern_node.geometry.is_none()
@@ -446,15 +448,28 @@ fn collect_diagnostics(
                                             && pattern_node.clip_path.is_none()
                                             && pattern_node.mask.is_none()
                                             && pattern_node.filter.is_none()
-                                            && !pattern_node
-                                                .fill_paint
+                                            && !pattern_node.fill_paint.as_ref().is_some_and(
+                                                |paint| {
+                                                    matches!(
+                                                        paint,
+                                                        aimer_cupid::svg::SvgPaint::Pattern { .. }
+                                                    )
+                                                },
+                                            )
+                                            && !pattern_node.stroke_paint.as_ref().is_some_and(
+                                                |paint| {
+                                                    matches!(
+                                                        paint,
+                                                        aimer_cupid::svg::SvgPaint::Pattern { .. }
+                                                    )
+                                                },
+                                            )
+                                            && pattern_node
+                                                .stroke
                                                 .as_ref()
-                                                .is_some_and(|paint| matches!(paint, aimer_cupid::svg::SvgPaint::Pattern { .. }))
-                                            && !pattern_node
-                                                .stroke_paint
-                                                .as_ref()
-                                                .is_some_and(|paint| matches!(paint, aimer_cupid::svg::SvgPaint::Pattern { .. }))
-                                            && pattern_node.stroke.as_ref().map_or(true, |stroke| stroke.dash_array.is_empty()))
+                                                .map_or(true, |stroke| {
+                                                    stroke.dash_array.is_empty()
+                                                }))
                                 })
                         })
                 }
@@ -467,8 +482,17 @@ fn collect_diagnostics(
             message: Arc::from("only untransformed patterns used on rectangular paths are applied; other pattern paints are retained and skipped"),
         });
     }
-    if lower.contains("stroke-dasharray") && !lower.contains("stroke-dasharray=\"none\"") && !lower.contains("stroke-dasharray='none'") && found.insert("dashed-stroke") {
-        diagnostics.push(SvgDiagnostic { feature: "dashed-stroke", message: Arc::from("dashed stroke is retained in the model; renderer support is deferred") });
+    if lower.contains("stroke-dasharray")
+        && !lower.contains("stroke-dasharray=\"none\"")
+        && !lower.contains("stroke-dasharray='none'")
+        && found.insert("dashed-stroke")
+    {
+        diagnostics.push(SvgDiagnostic {
+            feature: "dashed-stroke",
+            message: Arc::from(
+                "dashed stroke is retained in the model; renderer support is deferred",
+            ),
+        });
     }
     diagnostics
 }
@@ -502,8 +526,8 @@ fn reject_non_finite_literals(source: &str) -> Result<(), SvgError> {
         !(character.is_ascii_alphanumeric() || matches!(character, '+' | '-' | '.'))
     }) {
         match value.to_ascii_lowercase().as_str() {
-            "nan" | "+nan" | "-nan" | "inf" | "+inf" | "-inf" | "infinity"
-            | "+infinity" | "-infinity" => return Err(SvgError::NonFinite),
+            "nan" | "+nan" | "-nan" | "inf" | "+inf" | "-inf" | "infinity" | "+infinity"
+            | "-infinity" => return Err(SvgError::NonFinite),
             _ => {}
         }
     }
@@ -512,7 +536,11 @@ fn reject_non_finite_literals(source: &str) -> Result<(), SvgError> {
 
 fn check_limit(resource: &'static str, actual: usize, limit: usize) -> Result<(), SvgError> {
     if actual > limit {
-        Err(SvgError::LimitExceeded { resource, actual, limit })
+        Err(SvgError::LimitExceeded {
+            resource,
+            actual,
+            limit,
+        })
     } else {
         Ok(())
     }

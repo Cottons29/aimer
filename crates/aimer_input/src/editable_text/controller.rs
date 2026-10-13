@@ -5,8 +5,8 @@ use aimer_cupid::font::TextLanguage;
 use aimer_text::TextSelection;
 use unicode_segmentation::UnicodeSegmentation;
 
-use super::editing;
 use super::TextEditingValue;
+use super::editing;
 
 struct ControllerState {
     value: TextEditingValue,
@@ -155,12 +155,7 @@ impl TextEditingController {
         self.apply_value(value, Some(previous));
     }
 
-
-    fn apply_value(
-        &self,
-        value: TextEditingValue,
-        history: Option<TextEditingValue>,
-    ) -> bool {
+    fn apply_value(&self, value: TextEditingValue, history: Option<TextEditingValue>) -> bool {
         let (revision, attachments) = {
             let mut state = self.core.state.borrow_mut();
             if state.value == value {
@@ -188,7 +183,6 @@ impl TextEditingController {
         true
     }
 
-
     pub(crate) fn replace_selection_graphemes(
         &self,
         anchor: usize,
@@ -207,7 +201,6 @@ impl TextEditingController {
         )
     }
 
-
     pub(crate) fn delete_backward_graphemes(&self, anchor: usize, focus: usize) -> bool {
         self.edit_from_graphemes(anchor, focus, editing::delete_backward, true)
     }
@@ -216,13 +209,7 @@ impl TextEditingController {
         self.edit_from_graphemes(anchor, focus, editing::delete_forward, true)
     }
 
-
-    pub(crate) fn move_left_graphemes(
-        &self,
-        anchor: usize,
-        focus: usize,
-        extend: bool,
-    ) -> bool {
+    pub(crate) fn move_left_graphemes(&self, anchor: usize, focus: usize, extend: bool) -> bool {
         self.edit_from_graphemes(
             anchor,
             focus,
@@ -231,12 +218,7 @@ impl TextEditingController {
         )
     }
 
-    pub(crate) fn move_right_graphemes(
-        &self,
-        anchor: usize,
-        focus: usize,
-        extend: bool,
-    ) -> bool {
+    pub(crate) fn move_right_graphemes(&self, anchor: usize, focus: usize, extend: bool) -> bool {
         self.edit_from_graphemes(
             anchor,
             focus,
@@ -244,7 +226,6 @@ impl TextEditingController {
             false,
         )
     }
-
 
     pub(crate) fn update_composing_graphemes(
         &self,
@@ -273,11 +254,7 @@ impl TextEditingController {
         self.apply_value(editing::update_composing(&selected, preedit), None)
     }
 
-    pub(crate) fn commit_composing(
-        &self,
-        committed: &str,
-        max_length: Option<usize>,
-    ) -> bool {
+    pub(crate) fn commit_composing(&self, committed: &str, max_length: Option<usize>) -> bool {
         let origin = self.core.state.borrow_mut().composition_origin.take();
         let origin = origin.unwrap_or_else(|| self.value());
         let value = editing::replace_selection(&origin, committed, max_length);
@@ -360,7 +337,11 @@ impl TextEditingController {
                 .revision
                 .checked_add(1)
                 .expect("exhausted all text editing revisions");
-            (state.value.clone(), state.revision, state.attachments.clone())
+            (
+                state.value.clone(),
+                state.revision,
+                state.attachments.clone(),
+            )
         };
         notify_attachments(&attachments, &value, revision);
     }
@@ -392,7 +373,6 @@ impl TextEditingController {
     pub(crate) fn grapheme_count(&self) -> usize {
         self.value().text().graphemes(true).count()
     }
-
 
     pub(crate) fn selection_graphemes(&self) -> (usize, usize) {
         let value = self.value();

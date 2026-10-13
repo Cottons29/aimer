@@ -227,7 +227,10 @@ impl GestureState {
     /// every mouse move that merely crosses it.
     #[inline]
     pub fn is_engaged(&self) -> bool {
-        self.press.is_some() || self.drag.is_some() || self.pinch.is_some() || !self.touches.is_empty()
+        self.press.is_some()
+            || self.drag.is_some()
+            || self.pinch.is_some()
+            || !self.touches.is_empty()
     }
 
     /// Forgets everything about the single-pointer press: the press itself, any

@@ -34,10 +34,7 @@ const FONT_SIZE: f32 = 28.0;
 const MEASURED_ITERATIONS: usize = 20;
 
 const MIXED_SAMPLES: &[(&str, Option<TextLanguage>)] = &[
-    (
-        "English — Hello / Hi; éclair, naïve, à, 👋",
-        None,
-    ),
+    ("English — Hello / Hi; éclair, naïve, à, 👋", None),
     ("Greek — Ελληνικά: Καλημέρα κόσμε", None),
     ("Cyrillic — Русский: Добрый день мир", None),
     ("Armenian — Հայերեն: Բարեւ աշխարհ", None),
@@ -61,14 +58,23 @@ const MIXED_SAMPLES: &[(&str, Option<TextLanguage>)] = &[
     ("Myanmar — မြန်မာ: မင်္ဂလာပါ ကမ္ဘာ", None),
     ("Tibetan — བོད་ཡིག: བཀྲ་ཤིས", None),
     ("Chinese — 中文: 你好世界", Some(TextLanguage::Chinese)),
-    ("Japanese — 日本語: こんにちは世界", Some(TextLanguage::Japanese)),
-    ("Korean — 한국어: 안녕하세요 세계", Some(TextLanguage::Korean)),
+    (
+        "Japanese — 日本語: こんにちは世界",
+        Some(TextLanguage::Japanese),
+    ),
+    (
+        "Korean — 한국어: 안녕하세요 세계",
+        Some(TextLanguage::Korean),
+    ),
     (
         "CJK punctuation — 「」『』【】（）〈〉《》、。！？：；…·—〜¥",
         None,
     ),
     ("Combining — é å ö ñ Ž Ā ॐ + ़ + ि", None),
-    ("Symbols — © ® ™ § ¶ † ‡ № °C °F → ← ↔ ⇧ ∞ ≈ ≠ ≤ ≥ √ Σ Δ", None),
+    (
+        "Symbols — © ® ™ § ¶ † ‡ № °C °F → ← ↔ ⇧ ∞ ≈ ≠ ≤ ≥ √ Σ Δ",
+        None,
+    ),
 ];
 
 fn gpu() -> Option<(wgpu::Device, wgpu::Queue)> {
@@ -96,12 +102,7 @@ fn gpu() -> Option<(wgpu::Device, wgpu::Queue)> {
 }
 
 fn requests() -> Vec<TextDrawRequest> {
-    let clip = [
-        0.0,
-        0.0,
-        SURFACE_WIDTH as f32,
-        SURFACE_HEIGHT as f32,
-    ];
+    let clip = [0.0, 0.0, SURFACE_WIDTH as f32, SURFACE_HEIGHT as f32];
     MIXED_SAMPLES
         .iter()
         .enumerate()
@@ -304,7 +305,10 @@ fn main() {
     );
     print_stats("cold first-use prepare", cold_samples);
     print_stats("warm cache-hit prepare", warm_samples);
-    print_profile("cold repeated profile (excluding first)", &cold_profiles[1..]);
+    print_profile(
+        "cold repeated profile (excluding first)",
+        &cold_profiles[1..],
+    );
     print_profile("warm profile", &warm_profiles);
 
     let edit_a = shifted_requests(&requests, 1.0);

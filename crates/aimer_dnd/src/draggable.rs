@@ -16,12 +16,12 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use aimer_animation::AnimInstant;
-use aimer_widget::InteractionBounds;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use aimer_events::pointer::PointerSource;
 use aimer_input::gesture::{LONG_PRESS_DURATION, tap_slop};
+use aimer_widget::InteractionBounds;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
     AnyElement, AnyWidget, Drawable, Element, EventElement, EventResult, FollowUp, LayoutElement,
@@ -225,9 +225,7 @@ impl<W> Draggable<W> {
 impl<W: Widget + 'static> Widget for Draggable<W> {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
         RawDraggable {
-            child_when_dragging: self
-                .child_when_dragging
-                .map(|child| child.to_element(ctx)),
+            child_when_dragging: self.child_when_dragging.map(|child| child.to_element(ctx)),
             child: self.child.to_element(ctx),
             payload: self.payload.clone(),
             feedback: self.feedback.clone(),
@@ -346,10 +344,7 @@ impl VisitorElement for RawDraggable {
         }
     }
 
-    fn visit_retained_v2_children<'a>(
-        &'a self,
-        visitor: &mut dyn FnMut(usize, &'a dyn Element),
-    ) {
+    fn visit_retained_v2_children<'a>(&'a self, visitor: &mut dyn FnMut(usize, &'a dyn Element)) {
         visitor(0, self.visible_child());
     }
 
@@ -498,7 +493,9 @@ impl Drawable for RawDraggable {
     }
 
     #[inline]
-    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+    fn retained_v2_interaction_disagreement(
+        &self,
+    ) -> Option<aimer_widget::InteractionDisagreement> {
         self.bounds.disagreement("Draggable")
     }
 
@@ -765,15 +762,9 @@ mod tests {
         let _ = card.on_event(&moved(15.0, 10.0));
         assert!(DragSession::is_active());
 
-        let result = card.on_event(&ElementEvent::PointerExited(
-            pointer.source,
-            pointer.id,
-        ));
+        let result = card.on_event(&ElementEvent::PointerExited(pointer.source, pointer.id));
 
-        assert_eq!(
-            result.capture_request(),
-            CaptureRequest::Release(pointer)
-        );
+        assert_eq!(result.capture_request(), CaptureRequest::Release(pointer));
         assert!(!DragSession::is_active());
         fresh();
     }
