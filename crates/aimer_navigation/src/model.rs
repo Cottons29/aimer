@@ -165,17 +165,20 @@ pub struct TabBar<K> {
 impl<K: PartialEq> TabBar<K> {
     /// Creates a tab bar with the first enabled item selected and focused.
     pub fn new(tabs: Vec<Tab<K>>) -> Result<Self, NavigationError> {
-        let first_enabled = tabs
-            .iter()
-            .position(|tab| !tab.is_disabled())
-            .ok_or(if tabs.is_empty() {
-                NavigationError::EmptyItems
-            } else {
-                NavigationError::AllItemsDisabled
-            })?;
+        let first_enabled =
+            tabs.iter()
+                .position(|tab| !tab.is_disabled())
+                .ok_or(if tabs.is_empty() {
+                    NavigationError::EmptyItems
+                } else {
+                    NavigationError::AllItemsDisabled
+                })?;
 
         for (index, tab) in tabs.iter().enumerate() {
-            if tabs[index + 1..].iter().any(|other| other.key() == tab.key()) {
+            if tabs[index + 1..]
+                .iter()
+                .any(|other| other.key() == tab.key())
+            {
                 return Err(NavigationError::DuplicateKey);
             }
         }
@@ -286,7 +289,10 @@ impl<K: PartialEq> TabBar<K> {
         let Some(index) = self.tabs.iter().position(|tab| tab.key() == key) else {
             return false;
         };
-        matches!(self.focus(index), NavigationAction::FocusChanged(_) | NavigationAction::Ignored)
+        matches!(
+            self.focus(index),
+            NavigationAction::FocusChanged(_) | NavigationAction::Ignored
+        )
     }
 
     /// Handles one keyboard command, including arrow, Home/End, Enter/Space,
@@ -303,12 +309,8 @@ impl<K: PartialEq> TabBar<K> {
             NavigationKey::Right if self.orientation == Orientation::Horizontal => {
                 self.move_focus(1)
             }
-            NavigationKey::Up if self.orientation == Orientation::Vertical => {
-                self.move_focus(-1)
-            }
-            NavigationKey::Down if self.orientation == Orientation::Vertical => {
-                self.move_focus(1)
-            }
+            NavigationKey::Up if self.orientation == Orientation::Vertical => self.move_focus(-1),
+            NavigationKey::Down if self.orientation == Orientation::Vertical => self.move_focus(1),
             _ => NavigationAction::Ignored,
         }
     }
@@ -370,11 +372,7 @@ impl<K: PartialEq> TabBar<K> {
                 if !self.wrap_navigation {
                     return NavigationAction::Ignored;
                 }
-                candidate = if direction < 0 {
-                    count as isize - 1
-                } else {
-                    0
-                };
+                candidate = if direction < 0 { count as isize - 1 } else { 0 };
             }
             let index = candidate as usize;
             if !self.tabs[index].is_disabled() {
@@ -436,7 +434,9 @@ impl<K: Clone + PartialEq, V> TabView<K, V> {
     /// Returns the selected retained page.
     #[inline]
     pub fn selected_page(&self) -> Option<&V> {
-        self.pages.get(self.bar.selected_index()).map(|page| &page.content)
+        self.pages
+            .get(self.bar.selected_index())
+            .map(|page| &page.content)
     }
 
     /// Returns mutable state for a page by key.
@@ -530,10 +530,7 @@ pub struct NavigationMenu<K> {
 
 impl<K: PartialEq> NavigationMenu<K> {
     /// Creates a navigation menu with the first enabled destination selected.
-    pub fn new(
-        surface: NavigationSurface,
-        items: Vec<Tab<K>>,
-    ) -> Result<Self, NavigationError> {
+    pub fn new(surface: NavigationSurface, items: Vec<Tab<K>>) -> Result<Self, NavigationError> {
         Ok(Self {
             surface,
             selection: TabBar::new(items)?.orientation(match surface {
@@ -596,7 +593,10 @@ impl<K: PartialEq> NavigationMenu<K> {
 
     /// Calculates visible and hidden items without making a layout decision for
     /// the eventual renderer.
-    pub fn layout(&self, constraints: LayoutConstraints) -> Result<NavigationLayout, NavigationError> {
+    pub fn layout(
+        &self,
+        constraints: LayoutConstraints,
+    ) -> Result<NavigationLayout, NavigationError> {
         if constraints.item_extent == 0 {
             return Err(NavigationError::InvalidItemExtent);
         }
@@ -695,7 +695,10 @@ impl<K: PartialEq> Breadcrumbs<K> {
             return Err(NavigationError::EmptyItems);
         }
         for (index, item) in items.iter().enumerate() {
-            if items[index + 1..].iter().any(|other| other.key() == item.key()) {
+            if items[index + 1..]
+                .iter()
+                .any(|other| other.key() == item.key())
+            {
                 return Err(NavigationError::DuplicateKey);
             }
         }
@@ -846,7 +849,10 @@ impl<K: PartialEq> Stepper<K> {
             return Err(NavigationError::EmptyItems);
         }
         for (index, step) in steps.iter().enumerate() {
-            if steps[index + 1..].iter().any(|other| other.key() == step.key()) {
+            if steps[index + 1..]
+                .iter()
+                .any(|other| other.key() == step.key())
+            {
                 return Err(NavigationError::DuplicateKey);
             }
         }

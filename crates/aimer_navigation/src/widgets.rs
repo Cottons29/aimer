@@ -6,7 +6,10 @@
 //! and paints the current model state. A portable renderer can replace the
 //! presentation without duplicating navigation rules.
 
-use std::rc::Rc;
+use crate::{
+    Breadcrumb, Breadcrumbs, NavigationAction, NavigationError, NavigationKey, NavigationSurface,
+    Orientation, OverflowPolicy, RouteTab, RouteTabBar, Step, StepStatus, Stepper, Tab, TabBar,
+};
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_container::Container;
@@ -20,15 +23,11 @@ use aimer_style::{BoxDecoration, LayoutSpacing, TextStyle, ThemeData};
 use aimer_text::Text;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
-    AnyElement, AnyWidget, ChildBuilder, Drawable, Element, ErrorWidget,
-    EventElement, EventResult, Focusable, LayoutElement, PortableWidget, Rebuildable,
-    RequiredChild, State, StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
+    AnyElement, AnyWidget, ChildBuilder, Drawable, Element, ErrorWidget, EventElement, EventResult,
+    Focusable, LayoutElement, PortableWidget, Rebuildable, RequiredChild, State, StateUpdater,
+    StatefulElement, StatefulWidget, VisitorElement, Widget,
 };
-use crate::{
-    Breadcrumb, Breadcrumbs, NavigationAction, NavigationError, NavigationKey,
-    NavigationSurface, Orientation, OverflowPolicy, RouteTab, RouteTabBar, Step, StepStatus,
-    Stepper, Tab, TabBar,
-};
+use std::rc::Rc;
 
 /// A callback invoked after a navigation item is activated.
 pub type NavigationCallback<K> = Rc<dyn Fn(K)>;
@@ -74,8 +73,10 @@ pub(crate) struct SelectionRuntime<K> {
 
 impl<K: Clone + PartialEq> SelectionRuntime<K> {
     pub(crate) fn new(tabs: Vec<Tab<K>>, orientation: Orientation, wrap_navigation: bool) -> Self {
-        let model = TabBar::new(tabs.clone())
-            .map(|bar| bar.orientation(orientation).wrap_navigation(wrap_navigation));
+        let model = TabBar::new(tabs.clone()).map(|bar| {
+            bar.orientation(orientation)
+                .wrap_navigation(wrap_navigation)
+        });
         let nodes = tabs.iter().map(|_| FocusNode::new()).collect();
         Self { tabs, model, nodes }
     }
@@ -154,10 +155,7 @@ impl<K: Clone + PartialEq> SelectionRuntime<K> {
     }
 }
 
-fn build_selection_surface(
-    orientation: Orientation,
-    children: Vec<AnyWidget>,
-) -> AnyWidget {
+fn build_selection_surface(orientation: Orientation, children: Vec<AnyWidget>) -> AnyWidget {
     match orientation {
         Orientation::Horizontal => Row::new().children(children).boxed(),
         Orientation::Vertical => Column::new().children(children).boxed(),
@@ -404,9 +402,7 @@ impl<K: Clone + PartialEq + ToString + 'static> Widget for TabBarWidget<K> {
 
 impl<K: Clone + PartialEq + ToString + 'static> PortableWidget for TabBarWidget<K> {}
 
-impl<K: Clone + PartialEq + ToString + 'static> State<TabBarWidget<K>>
-    for TabBarWidgetState<K>
-{
+impl<K: Clone + PartialEq + ToString + 'static> State<TabBarWidget<K>> for TabBarWidgetState<K> {
     fn init_state(&mut self, updater: StateUpdater<Self>)
     where
         Self: Sized,
@@ -439,7 +435,8 @@ impl<K: Clone + PartialEq + ToString + 'static> State<TabBarWidget<K>>
             let updater = self.updater;
             Rc::new(move |interaction| {
                 updater.set_state(move |state| {
-                    if let Some(index) = apply_selection_interaction(&mut state.runtime, interaction)
+                    if let Some(index) =
+                        apply_selection_interaction(&mut state.runtime, interaction)
                     {
                         if let Some(key) = selected_key(&state.runtime, index) {
                             if let Some(callback) = state.on_changed.as_ref() {
@@ -646,8 +643,8 @@ impl<K: Clone + PartialEq + ToString + 'static> State<NavigationMenuWidget<K>>
             Orientation::Horizontal => window_extent.width,
             Orientation::Vertical => window_extent.height,
         };
-        let visible_count = ((extent / self.item_extent as f32).floor() as usize)
-            .min(self.runtime.tabs.len());
+        let visible_count =
+            ((extent / self.item_extent as f32).floor() as usize).min(self.runtime.tabs.len());
         let visible_count = if self.overflow == OverflowPolicy::Menu {
             if visible_count < self.runtime.tabs.len() {
                 visible_count.saturating_sub(1)
@@ -810,7 +807,9 @@ fn apply_route_interaction<R: Route>(
     let index = match interaction {
         ItemInteraction::Activate(index) => match model.activate(index) {
             crate::RouteActivation::Pushed(index) => index,
-            crate::RouteActivation::Disabled(_) | crate::RouteActivation::InvalidIndex => return None,
+            crate::RouteActivation::Disabled(_) | crate::RouteActivation::InvalidIndex => {
+                return None;
+            }
         },
         ItemInteraction::Key(key) => match model.handle_key(key) {
             NavigationAction::Activated(index) => index,
@@ -895,12 +894,16 @@ impl<R: Route> State<RouteTabBarWidget<R>> for RouteTabBarWidgetState<R> {
         };
         let old_nodes = std::mem::replace(&mut self.nodes, Vec::new());
         let mut new_model = new.model.into_inner();
-        let new_nodes_len = new_model.as_ref().map(|model| model.tabs().len()).unwrap_or(0);
-        let mut nodes = (0..new_nodes_len).map(|_| FocusNode::new()).collect::<Vec<_>>();
+        let new_nodes_len = new_model
+            .as_ref()
+            .map(|model| model.tabs().len())
+            .unwrap_or(0);
+        let mut nodes = (0..new_nodes_len)
+            .map(|_| FocusNode::new())
+            .collect::<Vec<_>>();
         if let Ok(new_model_ref) = new_model.as_ref() {
             for (new_index, new_tab) in new_model_ref.tabs().iter().enumerate() {
-                if let Some(old_index) = old_keys.iter().position(|key| key == new_tab.key())
-                {
+                if let Some(old_index) = old_keys.iter().position(|key| key == new_tab.key()) {
                     nodes[new_index] = old_nodes[old_index].clone();
                 }
             }
@@ -957,7 +960,8 @@ impl<R: Route> State<RouteTabBarWidget<R>> for RouteTabBarWidgetState<R> {
                 let updater = updater;
                 let navigator = navigator.clone();
                 updater.set_state(move |state| {
-                    if let Some(route) = apply_route_interaction(state, interaction, navigator.as_ref())
+                    if let Some(route) =
+                        apply_route_interaction(state, interaction, navigator.as_ref())
                     {
                         if let Some(callback) = state.on_changed.as_ref() {
                             callback(route);
@@ -1117,8 +1121,10 @@ impl<K: Clone + PartialEq> TabViewRuntime<K> {
                 child: ChildBuilder::from_widget(child),
             })
             .collect();
-        let model = TabBar::new(tabs.clone())
-            .map(|bar| bar.orientation(orientation).wrap_navigation(wrap_navigation));
+        let model = TabBar::new(tabs.clone()).map(|bar| {
+            bar.orientation(orientation)
+                .wrap_navigation(wrap_navigation)
+        });
         let nodes = tabs.iter().map(|_| FocusNode::new()).collect();
         Self {
             tabs,
@@ -1240,8 +1246,11 @@ impl<K: Clone + PartialEq + ToString + 'static> State<TabViewWidget<K>> for TabV
             let updater = self.updater;
             Rc::new(move |interaction| {
                 updater.set_state(move |state| {
-                    if let Some(index) = apply_tab_view_interaction(&mut state.runtime, interaction) {
-                        if let Some(key) = state.runtime.tabs.get(index).map(|tab| tab.key().clone()) {
+                    if let Some(index) = apply_tab_view_interaction(&mut state.runtime, interaction)
+                    {
+                        if let Some(key) =
+                            state.runtime.tabs.get(index).map(|tab| tab.key().clone())
+                        {
                             if let Some(callback) = state.on_changed.as_ref() {
                                 callback(key);
                             }
@@ -1393,7 +1402,11 @@ impl<K: Clone + PartialEq + ToString + 'static> StatefulWidget for BreadcrumbsWi
         let model = Breadcrumbs::new(self.items);
         let (focus, nodes) = match model.as_ref() {
             Ok(model) => (
-                focus_model(breadcrumb_tabs(model), model.current_index(), Orientation::Horizontal),
+                focus_model(
+                    breadcrumb_tabs(model),
+                    model.current_index(),
+                    Orientation::Horizontal,
+                ),
                 model.items().iter().map(|_| FocusNode::new()).collect(),
             ),
             Err(error) => (Err(*error), Vec::new()),
@@ -1472,7 +1485,9 @@ impl<K: Clone + PartialEq + ToString + 'static> State<BreadcrumbsWidget<K>>
                     .iter()
                     .enumerate()
                     .map(|(_, item)| {
-                        old_keys.iter().position(|old| old == item.key())
+                        old_keys
+                            .iter()
+                            .position(|old| old == item.key())
                             .and_then(|index| old_nodes.get(index).cloned())
                             .unwrap_or_default()
                     })
@@ -1772,7 +1787,9 @@ impl<K: Clone + PartialEq + ToString + 'static> State<StepperWidget<K>> for Step
                     .steps()
                     .iter()
                     .map(|step| {
-                        old_keys.iter().position(|old| old == step.key())
+                        old_keys
+                            .iter()
+                            .position(|old| old == step.key())
                             .and_then(|index| old_nodes.get(index).cloned())
                             .unwrap_or_default()
                     })
@@ -1873,9 +1890,9 @@ pub(crate) fn event_navigation_key(event: &ElementEvent) -> Option<NavigationKey
         ElementEvent::CharInput {
             ch: ' ', action, ..
         } if matches!(action, KeyAction::Pressed | KeyAction::Repeat) => Some(NavigationKey::Space),
-        ElementEvent::TextInput {
-            text, action, ..
-        } if text == " " && matches!(action, KeyAction::Pressed | KeyAction::Repeat) => {
+        ElementEvent::TextInput { text, action, .. }
+            if text == " " && matches!(action, KeyAction::Pressed | KeyAction::Repeat) =>
+        {
             Some(NavigationKey::Space)
         }
         _ => None,
@@ -1967,7 +1984,6 @@ impl Drawable for RawNavigationKeyRelay {
     fn sync_paint_geometry(&self, ctx: &BuildContext) {
         self.child.sync_paint_geometry(ctx);
     }
-
 }
 
 impl LayoutElement for RawNavigationKeyRelay {

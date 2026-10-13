@@ -113,7 +113,10 @@ mod tests {
     fn tab_view_retains_each_page_while_selection_changes() {
         let mut view = TabView::new(vec![
             (Tab::new("home", "Home"), String::from("home state")),
-            (Tab::new("settings", "Settings"), String::from("settings state")),
+            (
+                Tab::new("settings", "Settings"),
+                String::from("settings state"),
+            ),
         ])
         .expect("valid tabs");
 
@@ -121,9 +124,14 @@ mod tests {
         assert!(view.select_key(&"settings"));
         assert_eq!(view.selected_page(), Some(&"settings state".to_string()));
 
-        view.page_mut(&"home").expect("home exists").push_str(" updated");
+        view.page_mut(&"home")
+            .expect("home exists")
+            .push_str(" updated");
         assert!(view.select_key(&"home"));
-        assert_eq!(view.selected_page(), Some(&"home state updated".to_string()));
+        assert_eq!(
+            view.selected_page(),
+            Some(&"home state updated".to_string())
+        );
     }
 
     #[test]
@@ -135,11 +143,26 @@ mod tests {
         ])
         .expect("valid tabs");
 
-        assert_eq!(tabs.handle_key(NavigationKey::Right), NavigationAction::FocusChanged(2));
-        assert_eq!(tabs.handle_key(NavigationKey::Home), NavigationAction::FocusChanged(0));
-        assert_eq!(tabs.handle_key(NavigationKey::End), NavigationAction::FocusChanged(2));
-        assert_eq!(tabs.handle_key(NavigationKey::Tab), NavigationAction::TabbedAway);
-        assert_eq!(tabs.handle_key(NavigationKey::ShiftTab), NavigationAction::TabbedAway);
+        assert_eq!(
+            tabs.handle_key(NavigationKey::Right),
+            NavigationAction::FocusChanged(2)
+        );
+        assert_eq!(
+            tabs.handle_key(NavigationKey::Home),
+            NavigationAction::FocusChanged(0)
+        );
+        assert_eq!(
+            tabs.handle_key(NavigationKey::End),
+            NavigationAction::FocusChanged(2)
+        );
+        assert_eq!(
+            tabs.handle_key(NavigationKey::Tab),
+            NavigationAction::TabbedAway
+        );
+        assert_eq!(
+            tabs.handle_key(NavigationKey::ShiftTab),
+            NavigationAction::TabbedAway
+        );
     }
 
     #[test]
@@ -150,7 +173,10 @@ mod tests {
         ])
         .expect("valid route tabs");
 
-        assert_eq!(tabs.sync_from_route(&TestRoute::Settings), RouteSync::Selected(1));
+        assert_eq!(
+            tabs.sync_from_route(&TestRoute::Settings),
+            RouteSync::Selected(1)
+        );
         assert_eq!(tabs.selected_index(), 1);
 
         let mut pushed = Vec::new();
@@ -160,7 +186,10 @@ mod tests {
         );
         assert_eq!(pushed, vec![TestRoute::Home]);
         assert_eq!(tabs.sync_from_route(&TestRoute::Home), RouteSync::Unchanged);
-        assert_eq!(tabs.sync_from_route(&TestRoute::Missing), RouteSync::NoMatch);
+        assert_eq!(
+            tabs.sync_from_route(&TestRoute::Missing),
+            RouteSync::NoMatch
+        );
     }
 
     #[test]
