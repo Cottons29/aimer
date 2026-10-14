@@ -36,6 +36,10 @@ use aimer_widget::portable::{
 };
 
 use crate::control::controller::{AnimationController, AnimationStatus};
+use crate::control::keyframe_timeline::{KeyframeTimeline, TimelineFrame};
+use crate::control::timed_keyframe::TimedKeyframeAnimation;
+use crate::control::tween_animation::TweenAnimation;
+use crate::primitives::animatable::Animatable;
 use crate::primitives::time::AnimInstant;
 
 type AnimatedElementBuilder = dyn Fn(f32, &BuildContext) -> AnyElement;
@@ -203,6 +207,108 @@ impl AnimatedBuilder {
             #[cfg(feature = "portable-guest")]
             portable_builder,
         }
+    }
+
+    /// Creates a builder that receives `animation`'s value instead of raw
+    /// progress.
+    ///
+    /// The builder is called with the interpolated `T` under the same rules as
+    /// [`new`](Self::new): once on creation and again whenever the value
+    /// changes. The animation's controller drives it, so start the animation
+    /// through the handle you kept (clones share playback).
+    ///
+    /// ```rust
+    /// use std::time::Duration;
+    ///
+    /// use aimer_animation::{AnimatedBuilder, Curve, TweenAnimation};
+    /// use aimer_widget::ErrorWidget;
+    ///
+    /// let slide = TweenAnimation::new(0.0f32, 120.0, Duration::from_millis(250), Curve::EaseOut);
+    /// let animated = AnimatedBuilder::tween(slide.clone(), |offset| {
+    ///     ErrorWidget::new(format!("offset {offset:.0}"))
+    /// });
+    /// slide.forward();
+    /// ```
+    pub fn tween<T, F, W>(animation: TweenAnimation<T>, builder: F) -> Self
+    where
+        T: Animatable + 'static,
+        F: Fn(T) -> W + 'static,
+        W: Widget,
+    {
+        let controller = animation.controller().clone();
+        // The builder is handed the controller's curved progress, which is what
+        // `TweenAnimation::value` maps through its tween.
+        Self::new(controller, move |progress| {
+            builder(animation.tween().lerp(progress))
+        })
+    }
+
+    /// Creates a builder that receives the value of a timed keyframe
+    /// animation.
+    ///
+    /// See [`tween`](Self::tween) for when the builder runs.
+    ///
+    /// ```rust
+    /// use std::time::Duration;
+    ///
+    /// use aimer_animation::{AnimatedBuilder, KeyframeTrack, TimedKeyframeAnimation};
+    /// use aimer_widget::ErrorWidget;
+    ///
+    /// let ms = Duration::from_millis;
+    /// let track = KeyframeTrack::builder()
+    ///     .at(ms(0), 1.0f32)
+    ///     .at(ms(120), 1.2)
+    ///     .at(ms(300), 1.0)
+    ///     .build()
+    ///     .unwrap();
+    /// let pulse = TimedKeyframeAnimation::new(track);
+    /// let animated = AnimatedBuilder::keyframes(pulse.clone(), |scale| {
+    ///     ErrorWidget::new(format!("scale {scale:.2}"))
+    /// });
+    /// pulse.forward();
+    /// ```
+    pub fn keyframes<T, F, W>(animation: TimedKeyframeAnimation<T>, builder: F) -> Self
+    where
+        T: Animatable + Clone + 'static,
+        F: Fn(T) -> W + 'static,
+        W: Widget,
+    {
+        let controller = animation.controller().clone();
+        Self::new(controller, move |progress| {
+            builder(animation.track().at_progress(progress))
+        })
+    }
+
+    /// Creates a builder that receives a [`TimelineFrame`], from which any
+    /// number of tracks are sampled in step.
+    ///
+    /// See [`tween`](Self::tween) for when the builder runs.
+    ///
+    /// ```rust
+    /// use std::time::Duration;
+    ///
+    /// use aimer_animation::{AnimatedBuilder, KeyframeTimeline, KeyframeTrack};
+    /// use aimer_widget::ErrorWidget;
+    ///
+    /// let ms = Duration::from_millis;
+    /// let fade = KeyframeTrack::builder().at(ms(0), 0.0f32).at(ms(200), 1.0).build().unwrap();
+    /// let grow = KeyframeTrack::builder().at(ms(0), 0.8f32).at(ms(400), 1.0).build().unwrap();
+    /// let timeline = KeyframeTimeline::new(Duration::ZERO).including(&fade).including(&grow);
+    ///
+    /// let animated = AnimatedBuilder::timeline(timeline.clone(), move |frame| {
+    ///     ErrorWidget::new(format!("{:.2} {:.2}", frame.sample(&fade), frame.sample(&grow)))
+    /// });
+    /// timeline.forward();
+    /// ```
+    pub fn timeline<F, W>(timeline: KeyframeTimeline, builder: F) -> Self
+    where
+        F: Fn(TimelineFrame) -> W + 'static,
+        W: Widget,
+    {
+        let controller = timeline.controller().clone();
+        Self::new(controller, move |progress| {
+            builder(timeline.frame_at_progress(progress))
+        })
     }
 }
 

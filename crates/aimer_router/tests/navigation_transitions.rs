@@ -92,8 +92,8 @@ fn navigation_retains_two_pages_without_rebuilding_them_on_animation_frames() {
         let finish = finish_sampler.clone();
         ResolvedNavigationTransition::new(Duration::from_secs(60), Curve::Linear, move |p, _| {
             NavigationTransitionFrame {
-                incoming: PaintPresentation { transform: aimer_canvas::Mat3::identity(), opacity: if finish.get() { f32::NAN } else { p } },
-                outgoing: PaintPresentation { transform: aimer_canvas::Mat3::identity(), opacity: 1.0 - p },
+                incoming: PaintPresentation { transform: aimer_canvas::Mat3::identity(), opacity: if finish.get() { f32::NAN } else { p }, corner_radius: 0.0 },
+                outgoing: PaintPresentation { transform: aimer_canvas::Mat3::identity(), opacity: 1.0 - p, corner_radius: 0.0 },
             }
         })
     });
@@ -282,8 +282,8 @@ fn custom_presentations_reach_retained_nodes_without_rerecording_page_lists() {
     let navigator = Navigator::new(Page::Home, routes).transition(DynamicTransitions::new(
         |_: &NavigationContext<'_, '_, Page>| ResolvedNavigationTransition::new(
             Duration::from_secs(60), Curve::Linear, |_, _| NavigationTransitionFrame {
-                incoming: PaintPresentation { transform: aimer_canvas::Mat3::translate(25.0, 0.0), opacity: 0.25 },
-                outgoing: PaintPresentation { transform: aimer_canvas::Mat3::identity(), opacity: 0.75 },
+                incoming: PaintPresentation { transform: aimer_canvas::Mat3::translate(25.0, 0.0), opacity: 0.25, corner_radius: 0.0 },
+                outgoing: PaintPresentation { transform: aimer_canvas::Mat3::identity(), opacity: 0.75, corner_radius: 0.0 },
             }))).to_element(&ctx);
     NavigatorController::<Page>::of(&ctx).push(Page::Detail);
     navigator.rebuild_if_dirty(&ctx);
@@ -377,7 +377,7 @@ fn high_dpi_transitions_sample_and_clip_the_logical_viewport() {
                 observed.set(size);
                 NavigationTransitionFrame {
                     outgoing: PaintPresentation::IDENTITY_OPAQUE,
-                    incoming: PaintPresentation { transform: aimer_canvas::Mat3::translate(size.width * 0.5, size.height * 0.5), opacity: 1.0 },
+                    incoming: PaintPresentation { transform: aimer_canvas::Mat3::translate(size.width * 0.5, size.height * 0.5), opacity: 1.0, corner_radius: 0.0 },
                 }
             })
         })).to_element(&ctx);

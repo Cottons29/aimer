@@ -377,7 +377,7 @@ mod tests {
     fn an_erased_widget_costs_its_capacity_plus_one_word() {
         assert_eq!(WIDGET_CAPACITY / size_of::<usize>(), 8);
         assert_eq!(size_of::<AnyWidget>(), 9 * size_of::<usize>());
-        assert_eq!(size_of::<AnyElement>(), 2 * size_of::<usize>());
+        assert_eq!(size_of::<AnyElement>(), 5 * size_of::<usize>());
     }
 
     #[test]

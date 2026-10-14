@@ -10,8 +10,10 @@ pub mod widgets;
 // Core primitives
 // Animation orchestration
 pub use control::{
-    AnimationController, AnimationStatus, Keyframe, KeyframeAnimation, ParallelAnimation,
-    SequentialAnimation, StaggeredAnimation, StatusListener,
+    AnimationController, AnimationStatus, Keyframe, KeyframeAnimation, KeyframeBuilder,
+    KeyframeError, KeyframeTimeline, KeyframeTrack, ParallelAnimation, SequentialAnimation,
+    StaggeredAnimation, StatusListener, TimedKeyframeAnimation, TimedKeyframeBuilder,
+    TimelineFrame, TweenAnimation,
 };
 pub use primitives::{AnimInstant, Animatable, AnimatableExt, Curve, Tween};
 // Widget layer
@@ -19,7 +21,9 @@ pub use widgets::AnimatedBuilder;
 #[doc(hidden)]
 pub use widgets::animated_builder::ensure_portable_native_registrations;
 pub use widgets::{
-    Animated, AnimatedPaint, AnimatedSwitcher, AnimationEffect, FadeTransition,
-    ImplicitAnimatedBuilder, MorphTransition, PaintPresentation, Rgba, RotationTransition,
-    ScaleTransition, SlideTransition,
+    Animated, AnimatedPaint, AnimatedSwitcher, AnimationEffect, ContainerTransformFrame,
+    ContainerTransformSpec, ElementBounds, FadeTransition,
+    ImplicitAnimatedBuilder, MorphTransition, PaintPresentation, PresentationClip, Rgba,
+    RotationTransition, ScaleTransition, SharedElement, SlideTransition, last_shared_element, last_shared_element_bounds,
+    shared_element_bounds, SharedContent, SharedElementSnapshot,
 };

@@ -226,6 +226,24 @@ struct CurrentBuildConsumer(Rc<BuildConsumer>);
 #[derive(Clone)]
 struct CurrentLocalV2PaintContext(CurrentBuildContext);
 
+/// A retained render node that can report where it currently is.
+///
+/// It stays valid after the frame that produced it, so a registry can hold one
+/// and answer "where is this element now?" when a navigation starts, however
+/// the page has scrolled since.
+#[derive(Clone)]
+pub struct RetainedNodeHandle(CurrentBuildContext);
+
+impl RetainedNodeHandle {
+    /// Returns the node's `(x, y, width, height)` in logical pixels from the
+    /// window's top-left corner, or `None` once the node has left the tree.
+    pub fn world_bounds(&self) -> Option<(f32, f32, f32, f32)> {
+        self.0
+            .world_bounds()
+            .map(|rect| (rect.x, rect.y, rect.width, rect.height))
+    }
+}
+
 struct StateScopeGuard {
     states: Rc<RefCell<InheritedStates>>,
     type_id: TypeId,
@@ -495,6 +513,34 @@ impl<'a> BuildContext<'a> {
                     .0
                     .set_child_presentation_at(child_index, transform, opacity)
             })
+    }
+
+    /// Updates one direct retained child's own clip and corner radii during
+    /// local v2 state synchronization.
+    ///
+    /// `clip` is `(x, y, width, height)` local to the child, so it scales with
+    /// the child's presentation transform. Unchanged values record no damage.
+    #[doc(hidden)]
+    pub fn set_local_v2_child_clip_at(
+        &self,
+        child_index: usize,
+        clip: Option<(f32, f32, f32, f32)>,
+        radius: [f32; 4],
+    ) -> bool {
+        let clip = clip.map(|(x, y, width, height)| aimer_cupid::draw_cmd_v2::Rect::new(x, y, width, height));
+        self.get_state::<CurrentLocalV2PaintContext>()
+            .is_some_and(|context| context.0.set_child_clip_at(child_index, clip, radius))
+    }
+
+    /// Returns a handle to the render node being synchronized, from which its
+    /// on-screen bounds can be read later.
+    ///
+    /// Only available during local v2 state synchronization of an element that
+    /// paints locally.
+    #[doc(hidden)]
+    pub fn local_v2_node_handle(&self) -> Option<RetainedNodeHandle> {
+        self.get_state::<CurrentLocalV2PaintContext>()
+            .map(|context| RetainedNodeHandle(context.0.clone()))
     }
 
     /// Allows the current render node to escape all ancestor widget clips.

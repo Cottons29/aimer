@@ -11,6 +11,8 @@ mod magnification;
 mod multi_decoration_box;
 mod navigation_transitions;
 mod scrolling;
+mod selection;
+mod set_state_profile;
 
 #[test]
 fn showcase_has_unique_registered_examples() {
@@ -438,7 +440,7 @@ fn report_cached_bounds_against_the_render_tree() {
 fn the_default_selection_is_the_first_registered_example() {
     let state = ExampleShowcase::new().create_state();
 
-    assert_eq!(state.selected, EXAMPLES[0]);
+    assert_eq!(state.selection.read().selected, EXAMPLES[0]);
 }
 
 #[test]

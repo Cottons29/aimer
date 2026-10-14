@@ -9,6 +9,7 @@ mod assets_media_example;
 mod async_builder;
 mod backdrop_filter_example;
 mod collapsible_list_example;
+mod container_transform_example;
 mod color_sync;
 mod custom_animated_theme;
 mod custom_font;
@@ -57,6 +58,7 @@ pub mod text_area_example;
 pub mod text_field_example;
 mod text_properties_example;
 mod theme;
+mod tween_keyframe_example;
 mod window_example;
 
 use aimer::input::TextEditingController;

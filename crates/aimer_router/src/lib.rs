@@ -1,3 +1,4 @@
+mod container_transform;
 pub mod navigator;
 pub mod outlet;
 pub mod router;
@@ -6,6 +7,7 @@ pub mod transition;
 mod transition_host;
 mod routed_shell;
 pub use routed_shell::RoutedShell;
+pub use container_transform::ContainerTransform;
 
 pub use navigator::*;
 pub use outlet::*;

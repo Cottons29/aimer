@@ -99,8 +99,8 @@ fn custom_effects_reject_non_finite_values_and_clamp_opacity() {
     use aimer_router::{Curve, NavigationTransitionFrame, PaintPresentation, ResolvedNavigationTransition};
     let effect = ResolvedNavigationTransition::new(Duration::ZERO, Curve::Linear, |p, _| {
         NavigationTransitionFrame {
-            incoming: PaintPresentation { transform: aimer_canvas::Mat3::identity(), opacity: p * 4.0 },
-            outgoing: PaintPresentation { transform: aimer_canvas::Mat3::identity(), opacity: -1.0 },
+            incoming: PaintPresentation { transform: aimer_canvas::Mat3::identity(), opacity: p * 4.0, corner_radius: 0.0 },
+            outgoing: PaintPresentation { transform: aimer_canvas::Mat3::identity(), opacity: -1.0, corner_radius: 0.0 },
         }
     }).unwrap();
     let size = ResolvedSize { width: 200.0, height: 100.0 };
@@ -114,9 +114,61 @@ fn custom_effects_reject_non_finite_values_and_clamp_opacity() {
         Curve::CubicBezier(f32::NAN, 0.0, 1.0, 1.0), move |_, _| frame).is_none());
     let invalid = ResolvedNavigationTransition::new(Duration::ZERO, Curve::Linear, |_, _| {
         NavigationTransitionFrame {
-            incoming: PaintPresentation { transform: aimer_canvas::Mat3::translate(f32::NAN, 0.0), opacity: 1.0 },
+            incoming: PaintPresentation { transform: aimer_canvas::Mat3::translate(f32::NAN, 0.0), opacity: 1.0, corner_radius: 0.0 },
             outgoing: PaintPresentation::IDENTITY_OPAQUE,
         }
     }).unwrap();
     assert!(invalid.sample(0.0, size).is_none());
+}
+
+#[test]
+fn custom_effects_carry_a_corner_radius_and_reject_invalid_ones() {
+    use aimer_router::{Curve, NavigationTransitionFrame, PaintPresentation, ResolvedNavigationTransition};
+    let size = ResolvedSize { width: 200.0, height: 100.0 };
+    let with_radius = |radius: f32| ResolvedNavigationTransition::new(Duration::ZERO, Curve::Linear, move |_, _| {
+        NavigationTransitionFrame {
+            incoming: PaintPresentation { corner_radius: radius, ..PaintPresentation::IDENTITY_OPAQUE },
+            outgoing: PaintPresentation::IDENTITY_OPAQUE,
+        }
+    }).unwrap();
+
+    assert_eq!(with_radius(12.0).sample(0.5, size).unwrap().incoming.corner_radius, 12.0);
+    for invalid in [-1.0, f32::NAN, f32::INFINITY] {
+        assert!(with_radius(invalid).sample(0.5, size).is_none(), "{invalid}");
+    }
+}
+
+#[test]
+fn positioned_effects_receive_the_hosts_window_origin() {
+    use aimer_router::{Curve, NavigationTransitionFrame, PaintPresentation, ResolvedNavigationTransition};
+    let size = ResolvedSize { width: 200.0, height: 100.0 };
+    let effect = ResolvedNavigationTransition::positioned(Duration::from_millis(100), Curve::Linear, |_, _, origin| {
+        NavigationTransitionFrame {
+            incoming: PaintPresentation {
+                transform: aimer_canvas::Mat3::translate(origin.0, origin.1),
+                ..PaintPresentation::IDENTITY_OPAQUE
+            },
+            outgoing: PaintPresentation::IDENTITY_OPAQUE,
+        }
+    }).unwrap();
+
+    let at = effect.sample_at(0.5, size, (10.0, 20.0)).unwrap();
+    assert_eq!(at.incoming.transform.transform_point(0.0, 0.0), (10.0, 20.0));
+    // Plain sampling has no window position to offer.
+    let plain = effect.sample(0.5, size).unwrap();
+    assert_eq!(plain.incoming.transform.transform_point(0.0, 0.0), (0.0, 0.0));
+    assert!(effect.sample_at(0.5, size, (f32::NAN, 0.0)).is_none());
+}
+
+#[test]
+fn painting_the_departing_page_on_top_is_opt_in() {
+    use aimer_router::{Curve, NavigationTransitionFrame, ResolvedNavigationTransition};
+    let frame = NavigationTransitionFrame {
+        incoming: aimer_router::PaintPresentation::IDENTITY_OPAQUE,
+        outgoing: aimer_router::PaintPresentation::IDENTITY_OPAQUE,
+    };
+    let effect = ResolvedNavigationTransition::new(Duration::from_millis(100), Curve::Linear, move |_, _| frame).unwrap();
+
+    assert!(!effect.is_outgoing_on_top());
+    assert!(effect.outgoing_on_top(true).is_outgoing_on_top());
 }

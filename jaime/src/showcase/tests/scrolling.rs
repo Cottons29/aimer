@@ -16,10 +16,7 @@ struct CapturedShowcase {
 
 impl Widget for CapturedShowcase {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
-        let state = ExampleShowcaseState {
-            selected: self.selected,
-            updater: StateUpdater::empty(),
-        };
+        let state = ExampleShowcaseState::with_selected(self.selected);
         CapturedShowcaseElement {
             child: state
                 .build(ctx)

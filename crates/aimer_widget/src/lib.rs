@@ -140,7 +140,7 @@ pub use crate::components::element::{
     take_unmapped_draws, update_v2_render_node_geometry, with_v2_render_tree_context,
 };
 #[doc(hidden)]
-pub use crate::components::context::InheritedStates;
+pub use crate::components::context::{InheritedStates, RetainedNodeHandle};
 #[doc(hidden)]
 pub use crate::components::element::{
     VisibleWindow, may_escape_ancestor_clips, may_skip_settled_offscreen, retained_element_settled, retained_visible_window,

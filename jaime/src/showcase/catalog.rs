@@ -14,6 +14,7 @@ pub(super) enum ExampleId {
     Feedback,
     Navigation,
     NavigationTransitions,
+    ContainerTransform,
     RoutingContext,
     Animatable,
     DataView,
@@ -30,6 +31,7 @@ pub(super) enum ExampleId {
     Storage,
     CustomShape,
     AnimatedLayout,
+    TweenKeyframes,
     TextProperties,
     Window,
     Resizable,
@@ -77,6 +79,7 @@ pub(super) const EXAMPLES: &[ExampleId] = &[
     ExampleId::Feedback,
     ExampleId::Navigation,
     ExampleId::NavigationTransitions,
+    ExampleId::ContainerTransform,
     ExampleId::RoutingContext,
     ExampleId::Animatable,
     ExampleId::DataView,
@@ -93,6 +96,7 @@ pub(super) const EXAMPLES: &[ExampleId] = &[
     ExampleId::Storage,
     ExampleId::CustomShape,
     ExampleId::AnimatedLayout,
+    ExampleId::TweenKeyframes,
     ExampleId::TextProperties,
     ExampleId::Window,
     ExampleId::Resizable,
@@ -157,6 +161,7 @@ pub(super) const EXAMPLE_CATEGORIES: &[ExampleCategory] = &[
         examples: &[
             ExampleId::Navigation,
             ExampleId::NavigationTransitions,
+            ExampleId::ContainerTransform,
             ExampleId::RoutingContext,
             ExampleId::Floating,
             ExampleId::Modal,
@@ -167,6 +172,7 @@ pub(super) const EXAMPLE_CATEGORIES: &[ExampleCategory] = &[
         label: "State & data",
         examples: &[
             ExampleId::Animatable,
+            ExampleId::TweenKeyframes,
             ExampleId::DataView,
             ExampleId::Storage,
             ExampleId::Counter,
@@ -246,6 +252,7 @@ impl ExampleId {
             Self::Feedback => "Feedback and overlays",
             Self::Navigation => "Navigation widgets",
             Self::NavigationTransitions => "Navigation transitions",
+            Self::ContainerTransform => "Container transform",
             Self::RoutingContext => "Route-child context",
             Self::Animatable => "Derived Animatable values",
             Self::DataView => "Data views",
@@ -262,6 +269,7 @@ impl ExampleId {
             Self::Storage => "Durable storage",
             Self::CustomShape => "Custom shapes",
             Self::AnimatedLayout => "Animated layout",
+            Self::TweenKeyframes => "Tween and keyframes",
             Self::TextProperties => "Text properties",
             Self::Window => "Window showcase",
             Self::Resizable => "Resizable",
@@ -311,6 +319,7 @@ impl ExampleId {
             Self::Pickers => "▣",
             Self::Feedback => "!",
             Self::Navigation | Self::NavigationTransitions | Self::RoutingContext => "⌘",
+            Self::ContainerTransform => "❏",
             Self::Animatable => "◈",
             Self::DataView => "▤",
             Self::DndCompletion => "✥",
@@ -325,6 +334,7 @@ impl ExampleId {
             Self::MultiDecorationBox => "▱",
             Self::Storage => "▣",
             Self::AnimatedLayout => "↗",
+            Self::TweenKeyframes => "∿",
             Self::TextProperties
             | Self::Text
             | Self::TextArea
@@ -368,6 +378,7 @@ impl ExampleId {
             Self::Feedback => "feedback",
             Self::Navigation => "navigation",
             Self::NavigationTransitions => "navigation-transitions",
+            Self::ContainerTransform => "container-transform",
             Self::RoutingContext => "routing-context",
             Self::Animatable => "animatable",
             Self::DataView => "data-view",
@@ -384,6 +395,7 @@ impl ExampleId {
             Self::Storage => "storage",
             Self::CustomShape => "custom-shape",
             Self::AnimatedLayout => "animated-layout",
+            Self::TweenKeyframes => "tween-keyframes",
             Self::TextProperties => "text-properties",
             Self::Window => "window",
             Self::Resizable => "resizable",
@@ -449,6 +461,9 @@ impl ExampleId {
             Self::NavigationTransitions => {
                 "Compare zoom, cross-fade, dynamic selection, view levels, and persistent shell outlets."
             }
+            Self::ContainerTransform => {
+                "Grow a page out of the tapped item and shrink it back, standalone or on a Navigator."
+            }
             Self::RoutingContext => {
                 "Keep providers available across direct and Shell/Outlet route children."
             }
@@ -496,6 +511,9 @@ impl ExampleId {
             }
             Self::AnimatedLayout => {
                 "Transition Flex geometry with bounded duration and reduced-motion policy."
+            }
+            Self::TweenKeyframes => {
+                "Play typed tweens, timed keyframes, and multi-track timelines that own their own timing."
             }
             Self::TextProperties => {
                 "Explore typography, wrapping, spacing, indentation, and rich text."

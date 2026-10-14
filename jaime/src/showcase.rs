@@ -7,6 +7,7 @@ use crate::assets_media_example::assets_media_example;
 use crate::async_builder::async_builder_example;
 use crate::backdrop_filter_example::backdrop_filter_example;
 use crate::collapsible_list_example::collapsible_list_example;
+use crate::container_transform_example::container_transform_example;
 use crate::color_sync::ColorSync;
 use crate::custom_animated_theme::custom_animated_theme_example;
 use crate::custom_font::custom_font_example;
@@ -52,6 +53,7 @@ use crate::test_animation::TestFadingAnimation;
 use crate::text_area_example::TextAreaExample;
 use crate::text_field_example::TextFieldExample;
 use crate::text_properties_example::text_properties_example;
+use crate::tween_keyframe_example::tween_keyframe_example;
 use crate::theme;
 use crate::window_example::WindowShowcase;
 use aimer::input::button::Button;
@@ -67,8 +69,14 @@ use catalog::{EXAMPLE_CATEGORIES, EXAMPLES, ExampleCategory, ExampleId};
 /// The two-pane interactive example browser used by Jaime.
 ///
 /// The left pane owns only selection and navigation. The selected example is
-/// rebuilt in the keyed right viewport, so an example module can focus on its
-/// own widget without knowing anything about the catalogue shell.
+/// rebuilt in the right viewport, so an example module can focus on its own
+/// widget without knowing anything about the catalogue shell.
+///
+/// The selection lives in a provider rather than in this widget's state, so
+/// choosing an example rebuilds only what depends on it: the rows whose
+/// highlight flips and the content pane. The sidebar and the rest of the shell
+/// are not rebuilt, and choosing the example that is already selected rebuilds
+/// nothing.
 #[widget(Stateful)]
 pub struct ExampleShowcase {}
 
@@ -80,69 +88,90 @@ impl ExampleShowcase {
     }
 }
 
-pub struct ExampleShowcaseState {
+/// Counts `ExampleShowcaseState::build` calls so tests can prove that choosing
+/// an example does not rebuild the shell.
+#[cfg(test)]
+thread_local! {
+    static SHELL_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The example currently shown, provided to the sidebar rows and the content
+/// pane. Each reader subscribes to a projection of it with
+/// [`ProviderContext::select`], which wakes it only when that projection changes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Selection {
     selected: ExampleId,
-    updater: StateUpdater<Self>,
+}
+
+pub struct ExampleShowcaseState {
+    selection: ProviderHandle<Selection>,
+}
+
+impl ExampleShowcaseState {
+    /// Creates the state with `selected` already chosen.
+    fn with_selected(selected: ExampleId) -> Self {
+        Self {
+            selection: ProviderHandle::new(Selection { selected }),
+        }
+    }
 }
 
 impl StatefulWidget for ExampleShowcase {
     type State = ExampleShowcaseState;
 
     fn create_state(self) -> Self::State {
-        ExampleShowcaseState {
-            selected: EXAMPLES[0],
-            updater: StateUpdater::empty(),
-        }
+        ExampleShowcaseState::with_selected(EXAMPLES[0])
     }
 }
 
 impl State<ExampleShowcase> for ExampleShowcaseState {
-    fn init_state(&mut self, updater: StateUpdater<Self>)
+    fn init_state(&mut self, _updater: StateUpdater<Self>)
     where
         Self: Sized,
     {
-        self.updater = updater;
     }
 
     fn build(&self, ctx: &BuildContext) -> impl Widget {
+        #[cfg(test)]
+        SHELL_BUILDS.with(|builds| builds.set(builds.get() + 1));
         let app_theme = ThemeData::copied(ctx);
 
-        Container::new()
-            .box_decoration(
-                BoxDecoration::new()
-                    .background_color(app_theme.background_color)
-                    .border_radius(24),
-            )
-            .child(Column::new().children(vec![
-                // title_bar(),
-                Expanded::new()
-                    .child(
-                        Row::new().children(vec![
-                            sidebar(self.selected, self.updater, app_theme),
-                            SizedBox::new()
-                                .width(Dimension::Px(1.0))
-                                .color(theme::divider(&app_theme))
-                                .boxed(),
-                            Expanded::new()
-                                .child(content(self.selected, app_theme))
-                                .boxed(),
-                        ]),
+        Provider::new()
+            .handle(self.selection.clone())
+            .child(
+                Container::new()
+                    .box_decoration(
+                        BoxDecoration::new()
+                            .background_color(app_theme.background_color)
+                            .border_radius(24),
                     )
-                    .boxed(),
-            ]))
+                    .child(Column::new().children(vec![
+                        // title_bar(),
+                        Expanded::new()
+                            .child(
+                                Row::new().children(vec![
+                                    sidebar(app_theme),
+                                    SizedBox::new()
+                                        .width(Dimension::Px(1.0))
+                                        .color(theme::divider(&app_theme))
+                                        .boxed(),
+                                    Expanded::new()
+                                        .child(ContentPane::new(app_theme))
+                                        .boxed(),
+                                ]),
+                            )
+                            .boxed(),
+                    ])),
+            )
     }
 }
 
-fn sidebar(
-    selected: ExampleId,
-    updater: StateUpdater<ExampleShowcaseState>,
-    app_theme: ThemeData,
-) -> AnyWidget {
+fn sidebar(app_theme: ThemeData) -> AnyWidget {
     let categories = EXAMPLE_CATEGORIES
         .iter()
         .enumerate()
         .map(|(index, category)| {
-            let category = example_category(category, selected, updater, app_theme);
+            let category = example_category(category, app_theme);
             if cfg!(target_os = "macos") && index == 0 {
                 Container::new()
                     .margin(LayoutSpacing::new().top(38))
@@ -177,17 +206,12 @@ fn sidebar(
         .boxed()
 }
 
-fn example_category(
-    category: &ExampleCategory,
-    selected: ExampleId,
-    updater: StateUpdater<ExampleShowcaseState>,
-    app_theme: ThemeData,
-) -> AnyWidget {
+fn example_category(category: &ExampleCategory, app_theme: ThemeData) -> AnyWidget {
     let examples = category
         .examples
         .iter()
         .copied()
-        .map(|example| example_button(example, selected == example, updater, app_theme))
+        .map(|example| ExampleButton::new(example, app_theme).boxed())
         .collect::<Vec<AnyWidget>>();
 
     CollapsibleList::new()
@@ -212,119 +236,127 @@ fn example_category(
         .boxed()
 }
 
-fn navigation_button(
-    icon: &'static str,
-    label: &'static str,
-    selected: bool,
+/// One sidebar row. It reads whether it is the selected example itself, so a
+/// selection change rebuilds only the two rows whose answer changes.
+#[widget(Stateless)]
+struct ExampleButton {
     example: ExampleId,
-    updater: StateUpdater<ExampleShowcaseState>,
     app_theme: ThemeData,
-) -> AnyWidget {
-    example_button_with_label(icon, label, selected, example, updater, app_theme)
 }
 
-fn example_button(
-    example: ExampleId,
-    selected: bool,
-    updater: StateUpdater<ExampleShowcaseState>,
-    app_theme: ThemeData,
-) -> AnyWidget {
-    example_button_with_label(
-        example.icon(),
-        example.label(),
-        selected,
-        example,
-        updater,
-        app_theme,
-    )
+impl ExampleButton {
+    fn new(example: ExampleId, app_theme: ThemeData) -> Self {
+        Self { example, app_theme }
+    }
 }
 
-fn example_button_with_label(
-    icon: &'static str,
-    label: &'static str,
-    selected: bool,
-    example: ExampleId,
-    updater: StateUpdater<ExampleShowcaseState>,
-    app_theme: ThemeData,
-) -> AnyWidget {
-    let background = if selected {
-        app_theme.primary_color
-    } else {
-        Color::Transparent
-    };
-    let foreground = if selected {
-        app_theme.on_primary_color
-    } else {
-        app_theme.on_surface_color
-    };
+impl StatelessWidget for ExampleButton {
+    fn build(&self, ctx: &BuildContext) -> impl Widget {
+        let example = self.example;
+        let app_theme = self.app_theme;
+        let icon = example.icon();
+        let label = example.label();
+        let selected = ctx.select::<Selection, bool>(move |selection| selection.selected == example);
+        let selection = ProviderHandle::<Selection>::of(ctx);
+        let background = if selected {
+            app_theme.primary_color
+        } else {
+            Color::Transparent
+        };
+        let foreground = if selected {
+            app_theme.on_primary_color
+        } else {
+            app_theme.on_surface_color
+        };
 
-    Button::new()
-        .on_press(move || {
-            updater.set_state(move |state| state.selected = example);
-        })
-        .decoration(
-            BoxDecoration::new()
-                .background_color(background)
-                .border_radius(10),
-        )
-        .hover_decoration(
-            BoxDecoration::new()
-                .background_color(if selected {
-                    app_theme.primary_color
-                } else {
-                    theme::raised_surface(&app_theme)
-                })
-                .border_radius(10),
-        )
-        .press_decoration(
-            BoxDecoration::new()
-                .background_color(
-                    app_theme
-                        .primary_color
-                        .darken(0.08),
-                )
-                .border_radius(10),
-        )
-        .box_child(
-            Container::new()
-                .height(39)
-                .padding(
-                    LayoutSpacing::new()
-                        .left(11)
-                        .right(9),
-                )
-                .child(
-                    Row::new()
-                        .vertical_alignment(BoxAlignment::Center)
-                        .gaps(LayoutSpacing::all(Spacing::Px(10)))
-                        .children(vec![
-                            Container::new()
-                                .width(Dimension::Px(24.0))
-                                .child(
-                                    Text::new(icon)
-                                        .text_align(TextAlign::MidCenter)
-                                        .text_style(
-                                            TextStyle::new()
-                                                .font_size(18)
-                                                .color(foreground),
-                                        ),
-                                )
-                                .boxed(),
-                            Text::new(label)
-                                .text_style(
-                                    TextStyle::new()
-                                        .font_size(15)
-                                        .font_weight(if selected {
-                                            FontWeight::Bold
-                                        } else {
-                                            FontWeight::Normal
-                                        })
-                                        .color(foreground),
-                                )
-                                .boxed(),
-                        ]),
-                ),
-        )
+        Button::new()
+            .on_press(move || {
+                selection.update(|selection| selection.selected = example);
+            })
+            .decoration(
+                BoxDecoration::new()
+                    .background_color(background)
+                    .border_radius(10),
+            )
+            .hover_decoration(
+                BoxDecoration::new()
+                    .background_color(if selected {
+                        app_theme.primary_color
+                    } else {
+                        theme::raised_surface(&app_theme)
+                    })
+                    .border_radius(10),
+            )
+            .press_decoration(
+                BoxDecoration::new()
+                    .background_color(
+                        app_theme
+                            .primary_color
+                            .darken(0.08),
+                    )
+                    .border_radius(10),
+            )
+            .box_child(
+                Container::new()
+                    .height(39)
+                    .padding(
+                        LayoutSpacing::new()
+                            .left(11)
+                            .right(9),
+                    )
+                    .child(
+                        Row::new()
+                            .vertical_alignment(BoxAlignment::Center)
+                            .gaps(LayoutSpacing::all(Spacing::Px(10)))
+                            .children(vec![
+                                Container::new()
+                                    .width(Dimension::Px(24.0))
+                                    .child(
+                                        Text::new(icon)
+                                            .text_align(TextAlign::MidCenter)
+                                            .text_style(
+                                                TextStyle::new()
+                                                    .font_size(18)
+                                                    .color(foreground),
+                                            ),
+                                    )
+                                    .boxed(),
+                                Text::new(label)
+                                    .text_style(
+                                        TextStyle::new()
+                                            .font_size(15)
+                                            .font_weight(if selected {
+                                                FontWeight::Bold
+                                            } else {
+                                                FontWeight::Normal
+                                            })
+                                            .color(foreground),
+                                    )
+                                    .boxed(),
+                            ]),
+                    ),
+            )
+    }
+}
+
+/// The page header and the selected example. It reads the selection itself, so
+/// a change rebuilds this pane and nothing else of the shell.
+#[widget(Stateless)]
+struct ContentPane {
+    app_theme: ThemeData,
+}
+
+impl ContentPane {
+    fn new(app_theme: ThemeData) -> Self {
+        Self { app_theme }
+    }
+}
+
+impl StatelessWidget for ContentPane {
+    fn build(&self, ctx: &BuildContext) -> impl Widget {
+        let selected = ctx.select::<Selection, ExampleId>(|selection| selection.selected);
+        content(selected, self.app_theme)
+    }
 }
 
 fn content(selected: ExampleId, app_theme: ThemeData) -> AnyWidget {
@@ -380,6 +412,7 @@ fn build_example(example: ExampleId, app_theme: ThemeData) -> AnyWidget {
         ExampleId::Feedback => feedback_example().boxed(),
         ExampleId::Navigation => navigation_example().boxed(),
         ExampleId::NavigationTransitions => navigation_transitions_example().boxed(),
+        ExampleId::ContainerTransform => container_transform_example().boxed(),
         ExampleId::RoutingContext => routing_context_example().boxed(),
         ExampleId::Animatable => animatable_example().boxed(),
         ExampleId::DataView => data_view_example().boxed(),
@@ -396,6 +429,7 @@ fn build_example(example: ExampleId, app_theme: ThemeData) -> AnyWidget {
         ExampleId::Storage => storage_example().boxed(),
         ExampleId::CustomShape => custom_shape_example().boxed(),
         ExampleId::AnimatedLayout => animated_layout_example().boxed(),
+        ExampleId::TweenKeyframes => tween_keyframe_example().boxed(),
         ExampleId::TextProperties => text_properties_example().boxed(),
         ExampleId::Window => WindowShowcase::new().boxed(),
         ExampleId::Resizable => ResizableShowcase::new().boxed(),

@@ -9,6 +9,16 @@ impl CurrentBuildContext {
         self.element
     }
 
+    /// Returns where this node is in the world right now, or `None` once it has
+    /// left the tree.
+    ///
+    /// The answer follows every ancestor, so a context kept from an earlier
+    /// frame still reports the node's current position.
+    #[doc(hidden)]
+    pub fn world_bounds(&self) -> Option<Rect> {
+        self.draw_cmd.borrow().world_bounds(self.element)
+    }
+
     /// Updates one direct child's retained presentation without re-recording
     /// either command list.
     #[doc(hidden)]
@@ -30,6 +40,30 @@ impl CurrentBuildContext {
             draw_cmd: self.draw_cmd.clone(),
         }
         .set_presentation(child, transform, opacity)
+        .is_ok()
+    }
+
+    /// Updates one direct child's own rounded clip without re-recording either
+    /// command list. See [`RenderTree::set_clip_with_radius`].
+    #[doc(hidden)]
+    pub fn set_child_clip_at(
+        &self,
+        child_index: usize,
+        clip: Option<Rect>,
+        radius: [f32; 4],
+    ) -> bool {
+        let child = self
+            .draw_cmd
+            .borrow()
+            .node(self.element)
+            .and_then(|node| node.children.get(child_index).copied());
+        let Some(child) = child else {
+            return false;
+        };
+        RenderTree {
+            draw_cmd: self.draw_cmd.clone(),
+        }
+        .set_clip_with_radius(child, clip, radius)
         .is_ok()
     }
 

@@ -1,14 +1,17 @@
 use std::cell::{Cell, RefCell, UnsafeCell};
 use std::rc::Rc;
 
-use aimer_animation::{AnimInstant, AnimationController};
+use aimer_animation::{AnimInstant, AnimationController, PresentationClip};
 use aimer_cupid::utilities::Rect;
 use aimer_widget::base::{BuildContext, ResolvedSize, Size, Vec2d};
 use aimer_widget::{AnyElement, AnyWidget, ChildBuilder, Drawable, Element, EventElement,
     Key, LayoutElement, Rebuildable, VisitorElement, Widget, request_isolated_animation_frame};
 
+use aimer_attribute::Dimension;
+use aimer_container::SizedBox;
+
 use crate::outlet::RouteChildContext;
-use crate::{NavigationAction, NavigationContext, NavigationTransition,
+use crate::{AnchoredFrame, NavigationAction, NavigationContext, NavigationTransition,
     NavigationTransitionFrame, ResolvedNavigationTransition, Route, TransitionChoice};
 
 /// Ambient operation shared with nested shell outlets, independently of their route type.
@@ -97,12 +100,22 @@ impl Playback {
     }
 
     fn sample(&self, now: AnimInstant, size: ResolvedSize) -> NavigationTransitionFrame {
-        if self.finished.get() { return NavigationTransitionFrame::FINISHED; }
+        self.sample_at(now, size, (0.0, 0.0))
+    }
+
+    /// Samples for a host whose top-left corner is at `origin` in the window.
+    fn sample_at(&self, now: AnimInstant, size: ResolvedSize, origin: (f32, f32)) -> NavigationTransitionFrame {
+        self.sample_anchored_at(now, size, origin).frame
+    }
+
+    /// Like [`sample_at`](Self::sample_at), with the anchor layer's presentation.
+    fn sample_anchored_at(&self, now: AnimInstant, size: ResolvedSize, origin: (f32, f32)) -> AnchoredFrame {
+        if self.finished.get() { return AnchoredFrame::FINISHED; }
         let progress = self.controller.tick(now);
-        if !self.controller.is_animating() { self.finish(); return NavigationTransitionFrame::FINISHED; }
-        self.effect.sample(progress, size).unwrap_or_else(|| {
+        if !self.controller.is_animating() { self.finish(); return AnchoredFrame::FINISHED; }
+        self.effect.sample_anchored_at(progress, size, origin).unwrap_or_else(|| {
             self.finish();
-            NavigationTransitionFrame::FINISHED
+            AnchoredFrame::FINISHED
         })
     }
 }
@@ -121,8 +134,18 @@ impl Widget for NavigationFrame {
             playback.outgoing.borrow().as_ref().map(|child| child.build(ctx))
         });
         if let Some(child) = &outgoing { clear_departing_focus(child.as_ref(), ctx); }
+        // A copy of the item the effect leads with, laid out at the size the item
+        // had, which the host then scales above both pages.
+        let anchor = self.playback.as_ref().and_then(|playback| playback.effect.anchor()).map(|anchor| {
+            let size = anchor.size();
+            SizedBox::new().width(Dimension::Px(size.width)).height(Dimension::Px(size.height))
+                .child(anchor.build()).to_element(ctx)
+        });
         NavigationFrameElement {
-            incoming: self.child.build(ctx), outgoing: UnsafeCell::new(outgoing), playback: self.playback,
+            incoming: self.child.build(ctx), outgoing: UnsafeCell::new(outgoing), anchor: UnsafeCell::new(anchor),
+            playback: self.playback,
+            incoming_clip: PresentationClip::default(), outgoing_clip: PresentationClip::default(),
+            anchor_clip: PresentationClip::default(),
         }.boxed()
     }
 }
@@ -142,7 +165,14 @@ fn clear_departing_focus(element: &dyn Element, ctx: &BuildContext) {
 struct NavigationFrameElement {
     incoming: AnyElement,
     outgoing: UnsafeCell<Option<AnyElement>>,
+    /// An inert copy of an item, painted above both pages while the effect runs.
+    anchor: UnsafeCell<Option<AnyElement>>,
     playback: Option<Rc<Playback>>,
+    /// Which pages this host has put a rounded clip on, so a radius that
+    /// returns to zero removes only what the host added.
+    incoming_clip: PresentationClip,
+    outgoing_clip: PresentationClip,
+    anchor_clip: PresentationClip,
 }
 
 // Safety: element traversal and structural mutation run exclusively on the
@@ -154,9 +184,27 @@ impl NavigationFrameElement {
         unsafe { (&*self.outgoing.get()).as_ref() }
     }
 
-    fn sample(&self, ctx: &BuildContext) -> NavigationTransitionFrame {
-        self.playback.as_ref().map_or(NavigationTransitionFrame::FINISHED,
-            |playback| playback.sample(AnimInstant::now(), self.logical_size(ctx)))
+    fn anchor(&self) -> Option<&AnyElement> {
+        // Safety: as for `outgoing`.
+        unsafe { (&*self.anchor.get()).as_ref() }
+    }
+
+    fn sample(&self, ctx: &BuildContext, origin: (f32, f32)) -> AnchoredFrame {
+        self.playback.as_ref().map_or(AnchoredFrame::FINISHED,
+            |playback| playback.sample_anchored_at(AnimInstant::now(), self.logical_size(ctx), origin))
+    }
+
+    /// Where the host's top-left corner is in the window, in logical pixels.
+    /// Read live, so it follows layout without the effect being resolved again.
+    fn window_origin(ctx: &BuildContext) -> (f32, f32) {
+        ctx.local_v2_node_handle()
+            .and_then(|node| node.world_bounds())
+            .map_or((0.0, 0.0), |(x, y, _, _)| (x, y))
+    }
+
+    /// Whether the departing page is painted above the arriving one.
+    fn outgoing_on_top(&self) -> bool {
+        self.playback.as_ref().is_some_and(|playback| playback.effect.outgoing_on_top)
     }
 
     fn logical_size(&self, ctx: &BuildContext) -> ResolvedSize {
@@ -165,9 +213,13 @@ impl NavigationFrameElement {
     }
 
     fn cleanup(&self) {
-        if self.playback.as_ref().is_some_and(|playback| playback.finished.get()) && self.outgoing().is_some() {
+        let finished = self.playback.as_ref().is_some_and(|playback| playback.finished.get());
+        if finished && (self.outgoing().is_some() || self.anchor().is_some()) {
             // Safety: no child traversal or callbacks are active at this point.
-            unsafe { (*self.outgoing.get()).take(); }
+            unsafe {
+                (*self.outgoing.get()).take();
+                (*self.anchor.get()).take();
+            }
             aimer_widget::notify_hosted_element_tree_changed();
             aimer_events::window::request_animation_frame();
         }
@@ -180,24 +232,44 @@ impl VisitorElement for NavigationFrameElement {
         // Stable structural order keeps the incoming page in slot zero.
         visitor(self.incoming.as_ref());
         if let Some(child) = self.outgoing() { visitor(child.as_ref()); }
+        if let Some(child) = self.anchor() { visitor(child.as_ref()); }
     }
     fn visit_retained_v2_children<'a>(&'a self, visitor: &mut dyn FnMut(usize, &'a dyn Element)) {
-        if let Some(child) = self.outgoing() { visitor(1, child.as_ref()); }
+        // Later is painted above. The structural slot is fixed (arriving page 0,
+        // departing page 1, item copy 2); only the pages' paint order changes.
+        // The copy always leads, so it is always last.
+        let outgoing = self.outgoing();
+        let on_top = self.outgoing_on_top();
+        if let Some(child) = outgoing.filter(|_| !on_top) { visitor(1, child.as_ref()); }
         visitor(0, self.incoming.as_ref());
+        if let Some(child) = outgoing.filter(|_| on_top) { visitor(1, child.as_ref()); }
+        if let Some(child) = self.anchor() { visitor(2, child.as_ref()); }
     }
 }
 
 impl Drawable for NavigationFrameElement {
     fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool { ctx.scale.is_finite() && ctx.scale > 0.0 }
     fn sync_local_v2_state(&self, ctx: &BuildContext) -> bool {
-        let frame = self.sample(ctx);
+        let frame = self.sample(ctx, Self::window_origin(ctx));
         if self.playback.as_ref().is_some_and(|playback| !playback.finished.get()) {
             request_isolated_animation_frame(ctx);
         }
-        // Indices are retained visitation ordinals, not structural source indices.
+        // Indices are retained visitation ordinals, not structural source indices:
+        // the page painted first is ordinal 0.
         let has_old = self.outgoing().is_some();
-        if has_old && !ctx.set_local_v2_child_presentation_at(0, frame.outgoing.transform, frame.outgoing.opacity) { return false; }
-        ctx.set_local_v2_child_presentation_at(usize::from(has_old), frame.incoming.transform, frame.incoming.opacity)
+        let (outgoing_ordinal, incoming_ordinal) = match (has_old, self.outgoing_on_top()) {
+            (false, _) => (0, 0),
+            (true, false) => (0, 1),
+            (true, true) => (1, 0),
+        };
+        // Both pages are as large as the host, which is what a corner radius rounds.
+        let size = self.logical_size(ctx);
+        if has_old && !frame.frame.outgoing.apply_to_child(ctx, outgoing_ordinal, size, &self.outgoing_clip) { return false; }
+        if !frame.frame.incoming.apply_to_child(ctx, incoming_ordinal, size, &self.incoming_clip) { return false; }
+        // The item copy is last, and is as large as the item was.
+        let Some(anchor) = self.playback.as_ref().and_then(|playback| playback.effect.anchor()) else { return true; };
+        if self.anchor().is_none() { return true; }
+        frame.anchor.apply_to_child(ctx, usize::from(has_old) + 1, anchor.size(), &self.anchor_clip)
     }
     fn retained_clip(&self, ctx: &BuildContext) -> Option<Rect> {
         let playback = self.playback.as_ref()?;
@@ -213,9 +285,10 @@ impl Drawable for NavigationFrameElement {
         Some(ctx.clone())
     }
     fn update(&self, ctx: &BuildContext) {
-        self.sample(ctx);
+        self.sample(ctx, (0.0, 0.0));
         if let Some(child) = self.outgoing() { child.update(ctx); }
         self.incoming.update(ctx);
+        if let Some(child) = self.anchor() { child.update(ctx); }
         if self.playback.as_ref().is_some_and(|playback| !playback.finished.get()) {
             aimer_events::window::request_animation_frame();
         }
@@ -224,12 +297,15 @@ impl Drawable for NavigationFrameElement {
     fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
         if let Some(child) = self.outgoing() { child.update(ctx); }
         self.incoming.update(ctx);
+        if let Some(child) = self.anchor() { child.update(ctx); }
         self.cleanup();
     }
 }
 
 impl EventElement for NavigationFrameElement {
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) { visitor(self.incoming.as_ref()); }
+    /// The page that left and the copy of the item are only visual.
+    fn focus_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) { visitor(self.incoming.as_ref()); }
 }
 impl Rebuildable for NavigationFrameElement {}
 impl LayoutElement for NavigationFrameElement {

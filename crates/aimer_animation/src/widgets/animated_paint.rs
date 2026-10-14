@@ -14,8 +14,9 @@ use crate::primitives::time::AnimInstant;
 
 /// How [`AnimatedPaint`] presents its child for one controller sample.
 ///
-/// The child keeps its recorded paint; the transform and opacity are applied
-/// to the child's render node, so a frame costs no re-recording.
+/// The child keeps its recorded paint; the transform, opacity and corner
+/// radius are applied to the child's render node, so a frame costs no
+/// re-recording.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PaintPresentation {
     /// Maps the child's logical coordinates (relative to its own origin) to
@@ -24,6 +25,11 @@ pub struct PaintPresentation {
     /// Multiplies the child's opacity. Values are clamped to `0.0..=1.0`; a
     /// non-finite value paints nothing for that frame.
     pub opacity: f32,
+    /// Rounds the corners of the child's own bounds, measured as shown: after
+    /// `transform`, in logical pixels. `0.0` adds no clip at all, so a child
+    /// that clips itself keeps doing so. A negative or non-finite value paints
+    /// nothing for that frame.
+    pub corner_radius: f32,
 }
 
 impl PaintPresentation {
@@ -31,15 +37,87 @@ impl PaintPresentation {
     pub const IDENTITY_OPAQUE: Self = Self {
         transform: Mat3::identity(),
         opacity: 1.0,
+        corner_radius: 0.0,
     };
+
+    /// Whether every component can be shown. A presentation that is not is
+    /// declined for the frame instead of painting the child wrongly.
+    pub fn is_finite(&self) -> bool {
+        self.opacity.is_finite()
+            && self.corner_radius.is_finite()
+            && self.corner_radius >= 0.0
+            && self.transform.cols.iter().flatten().all(|value| value.is_finite())
+    }
+
+    /// Applies this presentation to the retained child at `child_index` of the
+    /// element being synchronized, returning whether it could be shown.
+    ///
+    /// `child_size` is the child's size in logical pixels; a corner radius
+    /// clips exactly that rectangle. `clip` remembers whether this host put a
+    /// clip on the child, so that a presentation without a radius removes only
+    /// what the host added.
+    ///
+    /// Call it from `Drawable::sync_local_v2_state`.
+    pub fn apply_to_child(
+        &self,
+        ctx: &BuildContext,
+        child_index: usize,
+        child_size: ResolvedSize,
+        clip: &PresentationClip,
+    ) -> bool {
+        if !self.is_finite() {
+            return false;
+        }
+        if !ctx.set_local_v2_child_presentation_at(
+            child_index,
+            self.transform,
+            self.opacity.clamp(0.0, 1.0),
+        ) {
+            return false;
+        }
+        // The clip is local to the child, so the renderer scales its radius by
+        // the transform; divide it out to make `corner_radius` the shown size.
+        let scale = (self.transform.cols[0][0].abs() + self.transform.cols[1][1].abs()) * 0.5;
+        let fits = child_size.width.is_finite()
+            && child_size.height.is_finite()
+            && child_size.width > 0.0
+            && child_size.height > 0.0;
+        if self.corner_radius > 0.0 && scale > 0.0 && fits {
+            clip.applied.set(true);
+            ctx.set_local_v2_child_clip_at(
+                child_index,
+                Some((0.0, 0.0, child_size.width, child_size.height)),
+                [self.corner_radius / scale; 4],
+            )
+        } else if clip.applied.replace(false) {
+            ctx.set_local_v2_child_clip_at(child_index, None, [0.0; 4])
+        } else {
+            true
+        }
+    }
+}
+
+/// Remembers whether a host has put a rounded clip on its child.
+///
+/// A presentation with no corner radius must not touch the child's clip, which
+/// the child may own. Hosts keep one of these per presented child so that, when
+/// the radius returns to zero, only the clip they added is removed.
+#[derive(Debug, Default)]
+pub struct PresentationClip {
+    applied: std::cell::Cell<bool>,
 }
 
 type PresentationFn = dyn Fn(f32) -> PaintPresentation + 'static;
+
+/// Receives the controller's curved value, the child's size in logical pixels,
+/// and the wrapper's top-left corner in the window in logical pixels.
+type GeometryFn = dyn Fn(f32, ResolvedSize, (f32, f32)) -> PaintPresentation + 'static;
 
 enum PaintEffect {
     Noop,
     Opacity,
     Presentation(Box<PresentationFn>),
+    Geometry(Box<GeometryFn>),
 }
 
 /// Applies a controller-driven presentation to a retained child.
@@ -63,6 +141,7 @@ pub struct AnimatedPaint<T> {
     controller: AnimationController,
     child: T,
     effect: PaintEffect,
+    inert: bool,
 }
 
 impl<T: Widget> AnimatedPaint<T> {
@@ -74,7 +153,20 @@ impl<T: Widget> AnimatedPaint<T> {
             controller,
             child,
             effect: PaintEffect::Noop,
+            inert: false,
         }
+    }
+
+    /// Makes the child take no pointer input and no focus, while it is still
+    /// painted and presented as usual.
+    ///
+    /// For a copy of something drawn above the real thing, such as the item a
+    /// container transform scales up, which must not answer a tap that the
+    /// item underneath is also waiting for.
+    #[inline]
+    pub fn inert(mut self) -> Self {
+        self.inert = true;
+        self
     }
 
     /// Sets the presentation applied to the retained child.
@@ -88,6 +180,22 @@ impl<T: Widget> AnimatedPaint<T> {
         F: Fn(f32) -> PaintPresentation + 'static,
     {
         self.effect = PaintEffect::Presentation(Box::new(effect));
+        self
+    }
+
+    /// Sets a presentation that depends on where the child is.
+    ///
+    /// Like [`effect`](Self::effect), but the closure also receives the child's
+    /// size and the wrapper's top-left corner in the window, both in logical
+    /// pixels, read live each frame. An effect that grows the child out of
+    /// something measured in the window, such as a
+    /// [`SharedElement`](crate::SharedElement), needs both.
+    #[inline]
+    pub fn geometry_effect<F>(mut self, effect: F) -> Self
+    where
+        F: Fn(f32, ResolvedSize, (f32, f32)) -> PaintPresentation + 'static,
+    {
+        self.effect = PaintEffect::Geometry(Box::new(effect));
         self
     }
 
@@ -110,6 +218,8 @@ impl<T: Widget + 'static> Widget for AnimatedPaint<T> {
             child: self.child.to_element(ctx),
             controller: self.controller,
             effect: self.effect,
+            inert: self.inert,
+            clip: PresentationClip::default(),
         }
         .boxed()
     }
@@ -125,6 +235,8 @@ struct AnimatedPaintElement {
     child: AnyElement,
     controller: AnimationController,
     effect: PaintEffect,
+    inert: bool,
+    clip: PresentationClip,
 }
 
 // Safety: widget rendering and the retained element tree are single-threaded.
@@ -132,13 +244,15 @@ unsafe impl Send for AnimatedPaintElement {}
 unsafe impl Sync for AnimatedPaintElement {}
 
 impl AnimatedPaintElement {
-    /// The presentation for one sampled controller value.
-    fn presentation(&self, progress: f32) -> PaintPresentation {
+    /// The presentation for one sampled controller value. `size` is the
+    /// child's logical size and `origin` the wrapper's window position.
+    fn presentation(&self, progress: f32, size: ResolvedSize, origin: impl FnOnce() -> (f32, f32)) -> PaintPresentation {
         match &self.effect {
+            PaintEffect::Geometry(effect) => effect(progress, size, origin()),
             PaintEffect::Noop => PaintPresentation::IDENTITY_OPAQUE,
             PaintEffect::Opacity => PaintPresentation {
-                transform: Mat3::identity(),
                 opacity: progress.clamp(0.0, 1.0),
+                ..PaintPresentation::IDENTITY_OPAQUE
             },
             PaintEffect::Presentation(effect) => effect(progress),
         }
@@ -175,22 +289,17 @@ impl Drawable for AnimatedPaintElement {
             return false;
         }
         self.child.sync_paint_geometry(ctx);
-        let presentation = self.presentation(progress);
-        if !presentation.opacity.is_finite()
-            || !presentation
-                .transform
-                .cols
-                .iter()
-                .flatten()
-                .all(|value| value.is_finite())
-        {
-            return false;
-        }
-        ctx.set_local_v2_child_presentation_at(
-            0,
-            presentation.transform,
-            presentation.opacity.clamp(0.0, 1.0),
-        )
+        let size = self.child.computed_size(ctx);
+        let size = ResolvedSize {
+            width: size.width / ctx.scale,
+            height: size.height / ctx.scale,
+        };
+        let presentation = self.presentation(progress, size, || {
+            ctx.local_v2_node_handle()
+                .and_then(|node| node.world_bounds())
+                .map_or((0.0, 0.0), |(x, y, _, _)| (x, y))
+        });
+        presentation.apply_to_child(ctx, 0, size, &self.clip)
     }
 
     #[inline]
@@ -212,11 +321,27 @@ impl VisitorElement for AnimatedPaintElement {
 
 impl EventElement for AnimatedPaintElement {
     fn on_event(&self, event: &ElementEvent) -> EventResult {
+        if self.inert {
+            return EventResult::ignored();
+        }
         self.child.on_event(event)
     }
 
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        if !self.inert {
+            visitor(self.child.as_ref());
+        }
+    }
+
+    fn structural_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        // Reconciliation still needs the child even when it takes no input.
         visitor(self.child.as_ref());
+    }
+
+    fn focus_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        if !self.inert {
+            visitor(self.child.as_ref());
+        }
     }
 }
 
@@ -423,6 +548,7 @@ mod tests {
             .effect(|value| PaintPresentation {
                 transform: aimer_canvas::Mat3::translate(value * 10.0, 0.0),
                 opacity: value,
+                ..PaintPresentation::IDENTITY_OPAQUE
             })
             .to_element(&context);
         assert!(sync_state(shifted.as_ref(), &context));
@@ -432,15 +558,15 @@ mod tests {
         let invalid = AnimatedPaint::new(controller.clone(), StableLeaf)
             .effect(|_| PaintPresentation {
                 transform: aimer_canvas::Mat3::translate(f32::NAN, 0.0),
-                opacity: 1.0,
+                ..PaintPresentation::IDENTITY_OPAQUE
             })
             .to_element(&context);
         assert!(!sync_state(invalid.as_ref(), &context));
 
         let non_finite_opacity = AnimatedPaint::new(controller, StableLeaf)
             .effect(|_| PaintPresentation {
-                transform: aimer_canvas::Mat3::identity(),
                 opacity: f32::NAN,
+                ..PaintPresentation::IDENTITY_OPAQUE
             })
             .to_element(&context);
         assert!(!sync_state(non_finite_opacity.as_ref(), &context));
@@ -485,5 +611,175 @@ mod tests {
         );
 
         assert!(result.is_err());
+    }
+
+    /// A retained tree whose root holds the element's child, kept alive so a
+    /// test can read back what synchronization did to that child.
+    struct Retained {
+        tree: aimer_cupid::draw_cmd_v2::RenderTree,
+        root: aimer_cupid::draw_cmd_v2::RenderNodeId,
+        child: aimer_cupid::draw_cmd_v2::RenderNodeId,
+    }
+
+    impl Retained {
+        fn new() -> Self {
+            Self::at(aimer_cupid::draw_cmd_v2::Rect::new(0.0, 0.0, 101.0, 101.0))
+        }
+
+        fn at(bounds: aimer_cupid::draw_cmd_v2::Rect) -> Self {
+            use aimer_cupid::draw_cmd_v2::{Rect, RenderTree};
+
+            let tree = RenderTree::new();
+            let root = tree.add_root(bounds).unwrap();
+            let child = tree
+                .add_child(root, Rect::new(0.0, 0.0, 10.0, 10.0))
+                .unwrap();
+            Self { tree, root, child }
+        }
+
+        fn sync(&self, element: &dyn Element, context: &BuildContext<'_>) -> bool {
+            let retained = self.tree.context(self.root).unwrap();
+            context.with_local_v2_paint_context(retained, |context| {
+                element.sync_local_v2_state(context)
+            })
+        }
+
+        fn drawn_child(&self) -> aimer_cupid::draw_cmd_v2::RenderItem {
+            use aimer_cupid::draw_cmd_v2::RenderOp;
+
+            self.tree
+                .render_all()
+                .into_iter()
+                .find_map(|op| match op {
+                    RenderOp::Draw(item) if item.element == self.child => Some(item),
+                    _ => None,
+                })
+                .expect("the child must draw")
+        }
+    }
+
+    fn rounded(radius: Rc<Cell<f32>>) -> impl Fn(f32) -> PaintPresentation {
+        move |_| PaintPresentation {
+            transform: aimer_canvas::Mat3::translate(20.0, 30.0)
+                .mul(&aimer_canvas::Mat3::scale(0.5, 0.5)),
+            corner_radius: radius.get(),
+            ..PaintPresentation::IDENTITY_OPAQUE
+        }
+    }
+
+    #[test]
+    fn a_corner_radius_clips_the_child_and_follows_its_transform() {
+        use aimer_cupid::draw_cmd_v2::Rect;
+
+        let context = context();
+        let element = AnimatedPaint::new(controller(), StableLeaf)
+            .effect(rounded(Rc::new(Cell::new(2.0))))
+            .to_element(&context);
+        let retained = Retained::new();
+
+        assert!(retained.sync(element.as_ref(), &context));
+
+        // The child is 10x10, drawn at half size, so the visual radius of 2
+        // is a local radius of 4.
+        let item = retained.drawn_child();
+        assert_eq!(item.clip, Some(Rect::new(20.0, 30.0, 5.0, 5.0)));
+        assert_eq!(item.clip_radius, [2.0; 4]);
+    }
+
+    #[test]
+    fn without_a_corner_radius_the_childs_own_clip_is_left_alone() {
+        use aimer_cupid::draw_cmd_v2::Rect;
+
+        let context = context();
+        let element = AnimatedPaint::new(controller(), StableLeaf)
+            .effect(rounded(Rc::new(Cell::new(0.0))))
+            .to_element(&context);
+        let retained = Retained::new();
+        retained
+            .tree
+            .set_clip(retained.child, Some(Rect::new(0.0, 0.0, 6.0, 6.0)))
+            .unwrap();
+
+        assert!(retained.sync(element.as_ref(), &context));
+
+        assert_eq!(
+            retained.drawn_child().clip,
+            Some(Rect::new(20.0, 30.0, 3.0, 3.0))
+        );
+    }
+
+    #[test]
+    fn dropping_the_corner_radius_removes_the_clip_it_added() {
+        let radius = Rc::new(Cell::new(2.0));
+        let context = context();
+        let element = AnimatedPaint::new(controller(), StableLeaf)
+            .effect(rounded(radius.clone()))
+            .to_element(&context);
+        let retained = Retained::new();
+        assert!(retained.sync(element.as_ref(), &context));
+        assert!(retained.drawn_child().clip.is_some());
+
+        radius.set(0.0);
+        assert!(retained.sync(element.as_ref(), &context));
+
+        assert_eq!(retained.drawn_child().clip, None);
+        assert_eq!(retained.drawn_child().clip_radius, [0.0; 4]);
+    }
+
+    #[test]
+    fn an_invalid_corner_radius_declines_the_frame() {
+        let context = context();
+        for radius in [f32::NAN, f32::INFINITY, -1.0] {
+            let element = AnimatedPaint::new(controller(), StableLeaf)
+                .effect(rounded(Rc::new(Cell::new(radius))))
+                .to_element(&context);
+
+            assert!(!Retained::new().sync(element.as_ref(), &context), "{radius}");
+        }
+    }
+
+    #[test]
+    fn a_geometry_effect_is_told_the_childs_size_and_where_the_wrapper_is_in_the_window() {
+        let seen = Rc::new(Cell::new(None));
+        let recorded = seen.clone();
+        let context = context();
+        let element = AnimatedPaint::new(controller(), StableLeaf)
+            .geometry_effect(move |progress, size, origin| {
+                recorded.set(Some((progress, size.width, size.height, origin)));
+                PaintPresentation {
+                    transform: aimer_canvas::Mat3::translate(origin.0, origin.1),
+                    ..PaintPresentation::IDENTITY_OPAQUE
+                }
+            })
+            .to_element(&context);
+        let retained = Retained::at(aimer_cupid::draw_cmd_v2::Rect::new(30.0, 40.0, 101.0, 101.0));
+
+        assert!(retained.sync(element.as_ref(), &context));
+
+        // The child is 10x10 at scale 1; progress has not started yet.
+        assert_eq!(seen.get(), Some((0.0, 10.0, 10.0, (30.0, 40.0))));
+        let (transform, _) = retained.tree.presentation(retained.child).unwrap();
+        assert_eq!(transform, aimer_canvas::Mat3::translate(30.0, 40.0));
+    }
+
+    fn count(visit: impl Fn(&mut dyn FnMut(&dyn Element))) -> usize {
+        let mut count = 0;
+        visit(&mut |_| count += 1);
+        count
+    }
+
+    #[test]
+    fn an_inert_wrapper_takes_no_input_and_no_focus_but_still_paints() {
+        let context = context();
+        let live = AnimatedPaint::new(controller(), StableLeaf).to_element(&context);
+        let inert = AnimatedPaint::new(controller(), StableLeaf).inert().to_element(&context);
+
+        assert_eq!(count(|visit| live.event_children(visit)), 1);
+        assert_eq!(count(|visit| live.focus_children(visit)), 1);
+        assert_eq!(count(|visit| inert.event_children(visit)), 0);
+        assert_eq!(count(|visit| inert.focus_children(visit)), 0);
+        // It is still part of the tree and still presents its child.
+        assert_eq!(count(|visit| inert.structural_children(visit)), 1);
+        assert!(Retained::new().sync(inert.as_ref(), &context));
     }
 }

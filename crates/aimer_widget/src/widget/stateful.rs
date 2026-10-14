@@ -2169,6 +2169,9 @@ impl Rebuildable for StatefulElement {
 }
 
 #[cfg(test)]
+mod rebuild_scope_tests;
+
+#[cfg(test)]
 mod tests {
     use std::panic::AssertUnwindSafe;
 

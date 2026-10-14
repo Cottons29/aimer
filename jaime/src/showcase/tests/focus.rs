@@ -20,10 +20,7 @@ struct Captured {
 
 impl Widget for Captured {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
-        let state = ExampleShowcaseState {
-            selected: ExampleId::FocusNode,
-            updater: StateUpdater::empty(),
-        };
+        let state = ExampleShowcaseState::with_selected(ExampleId::FocusNode);
         CapturedElement {
             child: state
                 .build(ctx)

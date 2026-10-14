@@ -9,6 +9,10 @@ mod clip_policy;
 mod command_equality;
 mod current_build_context;
 #[cfg(test)]
+mod clip_radius_tests;
+#[cfg(test)]
+mod context_bounds_tests;
+#[cfg(test)]
 mod render_order_tests;
 #[cfg(test)]
 mod sync_damage_tests;
@@ -1426,6 +1430,47 @@ impl RenderTree {
             .ok_or(RenderTreeError::UnknownNode(element))?;
         node.clip = clip;
         node.clip_radius = [0.0; 4];
+        let new_bounds = tree.visible_subtree_bounds(element);
+        if let Some(damage) = old_bounds.into_iter().chain(new_bounds).reduce(Rect::union) {
+            tree.push_damage(damage);
+        }
+        Ok(())
+    }
+
+    /// Applies a local clip with rounded corners to the element and its
+    /// descendants.
+    ///
+    /// `radius` is top-left, top-right, bottom-right, bottom-left in the
+    /// element's own logical pixels, so it scales with the node's presentation
+    /// transform exactly as the clip rectangle does. It is dropped when `clip`
+    /// is `None`. An unchanged clip and radius record no damage, which lets a
+    /// caller update the radius every frame of an animation.
+    #[doc(hidden)]
+    pub fn set_clip_with_radius(
+        &self,
+        element: RenderNodeId,
+        clip: Option<Rect>,
+        radius: [f32; 4],
+    ) -> Result<(), RenderTreeError> {
+        if clip.is_some_and(|clip| !clip.is_valid())
+            || radius.iter().any(|corner| !corner.is_finite() || *corner < 0.0)
+        {
+            return Err(RenderTreeError::InvalidBounds);
+        }
+        let radius = if clip.is_some() { radius } else { [0.0; 4] };
+        let mut tree = self.draw_cmd.borrow_mut();
+        let node = tree
+            .node(element)
+            .ok_or(RenderTreeError::UnknownNode(element))?;
+        if node.clip == clip && node.clip_radius == radius {
+            return Ok(());
+        }
+        let old_bounds = tree.visible_subtree_bounds(element);
+        let node = tree
+            .node_mut(element)
+            .ok_or(RenderTreeError::UnknownNode(element))?;
+        node.clip = clip;
+        node.clip_radius = radius;
         let new_bounds = tree.visible_subtree_bounds(element);
         if let Some(damage) = old_bounds.into_iter().chain(new_bounds).reduce(Rect::union) {
             tree.push_damage(damage);

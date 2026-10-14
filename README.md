@@ -15,6 +15,13 @@ Aimer is a new way to build the application with **Rust**, It's a toolset that t
 without relied on system UI or webview.
 >   **A**imer **I**s **M**ade **E**ntirely in **R**ust
 
+
+## Disclaimer
+
+Aimer framework is build exclusively with AI `(Aimer Intellegent)`.
+
+
+
 ## Installation
 
 Aimer has been design to make the 
