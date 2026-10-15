@@ -20,11 +20,10 @@ without relied on system UI or webview.
 
 Aimer framework is build exclusively with AI `(Aimer Intellegent)`.
 
+[//]: # (## Installation)
 
-
-## Installation
-
-Aimer has been design to make the 
+[//]: # ()
+[//]: # (Aimer has been design to make the )
 
 ---
 
