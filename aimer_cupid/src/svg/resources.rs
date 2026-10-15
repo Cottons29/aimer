@@ -159,22 +159,30 @@ impl SvgResourceGraph {
 
     /// Returns the first clip path with the given local fragment id.
     pub fn clip_path(&self, id: &str) -> Option<&SvgClipPath> {
-        self.clip_paths.iter().find(|resource| resource.id.as_ref() == id)
+        self.clip_paths
+            .iter()
+            .find(|resource| resource.id.as_ref() == id)
     }
 
     /// Returns the first mask with the given local fragment id.
     pub fn mask(&self, id: &str) -> Option<&SvgMask> {
-        self.masks.iter().find(|resource| resource.id.as_ref() == id)
+        self.masks
+            .iter()
+            .find(|resource| resource.id.as_ref() == id)
     }
 
     /// Returns the first filter with the given local fragment id.
     pub fn filter(&self, id: &str) -> Option<&SvgFilter> {
-        self.filters.iter().find(|resource| resource.id.as_ref() == id)
+        self.filters
+            .iter()
+            .find(|resource| resource.id.as_ref() == id)
     }
 
     /// Returns the first pattern with the given local fragment id.
     pub fn pattern(&self, id: &str) -> Option<&SvgPattern> {
-        self.patterns.iter().find(|resource| resource.id.as_ref() == id)
+        self.patterns
+            .iter()
+            .find(|resource| resource.id.as_ref() == id)
     }
 }
 

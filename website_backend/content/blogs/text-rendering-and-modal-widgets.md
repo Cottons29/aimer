@@ -163,11 +163,11 @@ background input until its exit animation finishes.
 Callers can configure durations, curves, and the initial content scale:
 
 ```rust
-use aimer::animation::Curve;
+use aimer::animation::curves;
 
 let animation = ModalAnimation::new()
-    .enter_curve(Curve::FastOutSlowIn)
-    .exit_curve(Curve::EaseIn)
+    .enter_curve(curves::FAST_OUT_SLOW_IN)
+    .exit_curve(curves::EASE_IN)
     .content_scale_from(0.9);
 ```
 

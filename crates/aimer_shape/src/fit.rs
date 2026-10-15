@@ -14,7 +14,9 @@ pub enum FitError {
 impl fmt::Display for FitError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidGeometry => f.write_str("shape bounds and target size must be finite and non-negative"),
+            Self::InvalidGeometry => {
+                f.write_str("shape bounds and target size must be finite and non-negative")
+            }
             Self::NonFiniteTransform => f.write_str("shape fit produced a non-finite transform"),
         }
     }
@@ -40,7 +42,11 @@ pub enum ShapeFit {
 
 impl ShapeFit {
     /// Computes a finite affine transform for `bounds` inside `target`.
-    pub fn transform(self, bounds: ShapeBounds, target: ShapeSize) -> Result<ShapeTransform, FitError> {
+    pub fn transform(
+        self,
+        bounds: ShapeBounds,
+        target: ShapeSize,
+    ) -> Result<ShapeTransform, FitError> {
         if !bounds.min.is_finite()
             || !bounds.max.is_finite()
             || bounds.min.x > bounds.max.x

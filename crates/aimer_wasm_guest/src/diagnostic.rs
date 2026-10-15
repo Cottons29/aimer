@@ -150,7 +150,11 @@ fn bounded_panic_payload(payload: &str) -> String {
 impl fmt::Display for GuestError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Some(diagnostic) = &self.diagnostic {
-            write!(formatter, "guest operation failed with {:?}: {diagnostic}", self.status)
+            write!(
+                formatter,
+                "guest operation failed with {:?}: {diagnostic}",
+                self.status
+            )
         } else {
             write!(formatter, "guest operation failed with {:?}", self.status)
         }
@@ -168,13 +172,9 @@ mod tests {
     #[test]
     fn panic_payloads_are_bounded_without_splitting_utf8() {
         let payload = "é".repeat(MAX_GUEST_PANIC_PAYLOAD_BYTES);
-        let panic = capture_guest_panic(|| panic!("{payload}"))
-            .expect_err("panic should recover");
+        let panic = capture_guest_panic(|| panic!("{payload}")).expect_err("panic should recover");
         let error = GuestError::from_panic(GuestOperation::Build, panic);
-        let diagnostic = error
-            .diagnostic()
-            .unwrap()
-            .message();
+        let diagnostic = error.diagnostic().unwrap().message();
 
         assert!(diagnostic.len() < MAX_GUEST_PANIC_PAYLOAD_BYTES + 32);
         assert!(diagnostic.ends_with("… [truncated]"));

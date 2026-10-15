@@ -50,7 +50,10 @@ impl MemoryBudget {
 
     fn release(&self, amount: usize) {
         let previous = self.committed.fetch_sub(amount, Ordering::Relaxed);
-        debug_assert!(previous >= amount, "released more UI memory than was committed");
+        debug_assert!(
+            previous >= amount,
+            "released more UI memory than was committed"
+        );
     }
 }
 
@@ -358,47 +361,48 @@ mod tests {
 #[cfg(target_arch = "wasm32")]
 fn take_wasm_region(pages: usize, page_size: usize) -> Option<*mut u8> {
     let requested_size = pages.checked_mul(page_size)?;
-    WASM_FREE_REGIONS.try_with(|free_regions| {
-        let mut previous = std::ptr::null_mut::<FreeRegion>();
-        let mut current = free_regions.get();
-        while !current.is_null() {
-            // SAFETY: the free list contains only nodes written into live,
-            // page-aligned linear-memory regions by `return_wasm_region`.
-            let node = unsafe { &*current };
-            let available_pages = node.pages;
-            let next = node.next;
-            if available_pages >= pages {
-                let base = current.cast::<u8>();
-                let remaining_pages = available_pages - pages;
-                let replacement = if remaining_pages == 0 {
-                    next
-                } else {
-                    // SAFETY: the remaining range starts after the allocated
-                    // prefix and still has at least one whole page.
-                    let remainder = unsafe { base.add(requested_size).cast::<FreeRegion>() };
-                    unsafe {
-                        remainder.write(FreeRegion {
-                            pages: remaining_pages,
-                            next,
-                        });
+    WASM_FREE_REGIONS
+        .try_with(|free_regions| {
+            let mut previous = std::ptr::null_mut::<FreeRegion>();
+            let mut current = free_regions.get();
+            while !current.is_null() {
+                // SAFETY: the free list contains only nodes written into live,
+                // page-aligned linear-memory regions by `return_wasm_region`.
+                let node = unsafe { &*current };
+                let available_pages = node.pages;
+                let next = node.next;
+                if available_pages >= pages {
+                    let base = current.cast::<u8>();
+                    let remaining_pages = available_pages - pages;
+                    let replacement = if remaining_pages == 0 {
+                        next
+                    } else {
+                        // SAFETY: the remaining range starts after the allocated
+                        // prefix and still has at least one whole page.
+                        let remainder = unsafe { base.add(requested_size).cast::<FreeRegion>() };
+                        unsafe {
+                            remainder.write(FreeRegion {
+                                pages: remaining_pages,
+                                next,
+                            });
+                        }
+                        remainder
+                    };
+                    if previous.is_null() {
+                        free_regions.set(replacement);
+                    } else {
+                        // SAFETY: `previous` remains a live free-list node.
+                        unsafe { (*previous).next = replacement };
                     }
-                    remainder
-                };
-                if previous.is_null() {
-                    free_regions.set(replacement);
-                } else {
-                    // SAFETY: `previous` remains a live free-list node.
-                    unsafe { (*previous).next = replacement };
+                    return Some(base);
                 }
-                return Some(base);
+                previous = current;
+                current = next;
             }
-            previous = current;
-            current = next;
-        }
-        None
-    })
-    .ok()
-    .flatten()
+            None
+        })
+        .ok()
+        .flatten()
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -420,7 +424,12 @@ fn return_wasm_region(base: *mut u8, size: usize, page_size: usize) {
         let node = base.cast::<FreeRegion>();
         // SAFETY: the region is no longer owned by a heap and has enough
         // committed bytes for this intrusive free-list header.
-        unsafe { node.write(FreeRegion { pages, next: current }) };
+        unsafe {
+            node.write(FreeRegion {
+                pages,
+                next: current,
+            })
+        };
         if previous.is_null() {
             free_regions.set(node);
         } else {
@@ -440,8 +449,7 @@ fn return_wasm_region(base: *mut u8, size: usize, page_size: usize) {
 
         if !previous.is_null() {
             let previous_end = unsafe {
-                (previous as usize)
-                    .checked_add((*previous).pages.saturating_mul(page_size))
+                (previous as usize).checked_add((*previous).pages.saturating_mul(page_size))
             };
             if previous_end == Some(node as usize) {
                 // SAFETY: the preceding region ends exactly where this one
@@ -563,5 +571,7 @@ pub(crate) fn growth_granularity(limit: usize, page_size: usize) -> usize {
         return DEFAULT_GROWTH;
     }
     let highest_power = 1usize << (usize::BITS - cap.leading_zeros() - 1);
-    highest_power.max(page_size).max(2 * std::mem::size_of::<usize>())
+    highest_power
+        .max(page_size)
+        .max(2 * std::mem::size_of::<usize>())
 }

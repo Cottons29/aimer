@@ -101,10 +101,14 @@ aimer_cupid.workspace = true
 workspace = true
 
 [target.'cfg(target_os = "android")'.dependencies]
+aimer_storage.workspace = true
 jni.workspace = true
 ndk-glue.workspace = true
 ndk.workspace = true
 rustls-platform-verifier .workspace = true
+
+[target.'cfg(all(unix, not(any(target_os = "android", target_os = "ios"))))'.dependencies]
+libc.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 muda.workspace = true

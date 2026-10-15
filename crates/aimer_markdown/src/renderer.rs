@@ -137,9 +137,7 @@ pub fn default_image_resolver(image: &MarkdownImage) -> AnyWidget {
 
         Container::new()
             // .height(400)
-            .child(
-                Row::new().children([NetworkImage::new(image.source.to_string()).height(400)]),
-            )
+            .child(Row::new().children([NetworkImage::new(image.source.to_string()).height(400)]))
             .boxed()
     } else {
         // debug!("Loading asset image {}", image.source);
@@ -155,11 +153,7 @@ pub(crate) fn inline_spans<'a>(
     inlines: impl IntoIterator<Item = &'a Inline>,
     theme: &MarkdownTheme,
 ) -> TextSpan {
-    TextSpan::root(
-        inlines
-            .into_iter()
-            .map(|inline| inline_span(inline, theme)),
-    )
+    TextSpan::root(inlines.into_iter().map(|inline| inline_span(inline, theme)))
 }
 
 fn inline_span(inline: &Inline, theme: &MarkdownTheme) -> TextSpan {
@@ -191,16 +185,14 @@ fn inline_span(inline: &Inline, theme: &MarkdownTheme) -> TextSpan {
                 TextSpan::new_shared(alt.clone()),
                 TextSpan::new("]"),
             ]),
-        Inline::FootnoteReference { identifier } => {
-            TextSpan::new("")
-                .style(theme.link)
-                .children([
-                    TextSpan::new("["),
-                    TextSpan::new_shared(identifier.clone()),
-                    TextSpan::new("]"),
-                ])
-                .link(format!("#footnote-{identifier}"))
-        }
+        Inline::FootnoteReference { identifier } => TextSpan::new("")
+            .style(theme.link)
+            .children([
+                TextSpan::new("["),
+                TextSpan::new_shared(identifier.clone()),
+                TextSpan::new("]"),
+            ])
+            .link(format!("#footnote-{identifier}")),
         Inline::Custom(data) => TextSpan::new_shared(data.text.clone()),
     }
 }
@@ -592,7 +584,11 @@ fn highlighted_code_spans(value: &ShareRef<str>, language: Option<&str>) -> Vec<
         offset = end;
     }
     if offset < value.len() {
-        spans.push(TextSpan::new_shared(share_ref_range(value, offset, value.len())));
+        spans.push(TextSpan::new_shared(share_ref_range(
+            value,
+            offset,
+            value.len(),
+        )));
     }
     spans
 }
@@ -775,9 +771,21 @@ fn rich_text_for_inline_flow(
     has_custom_inline: bool,
 ) -> AnyWidget {
     if has_custom_inline {
-        rich_text_aligned_wrappable(inlines.iter().copied(), style, alignment, theme, link_handler)
+        rich_text_aligned_wrappable(
+            inlines.iter().copied(),
+            style,
+            alignment,
+            theme,
+            link_handler,
+        )
     } else {
-        rich_text_aligned(inlines.iter().copied(), style, alignment, theme, link_handler)
+        rich_text_aligned(
+            inlines.iter().copied(),
+            style,
+            alignment,
+            theme,
+            link_handler,
+        )
     }
 }
 
@@ -1093,7 +1101,8 @@ mod tests {
         element.update(&ctx);
         let mut commands = Vec::new();
         recorded_commands(element.as_ref(), &ctx, &mut commands);
-        let text = commands.iter()
+        let text = commands
+            .iter()
             .flat_map(|command| match command {
                 aimer_cupid::draw_cmd_v2::DrawCommand::DrawText { text, .. } => vec![text.as_ref()],
                 aimer_cupid::draw_cmd_v2::DrawCommand::DrawRichText { spans, .. } => {
@@ -1119,13 +1128,21 @@ mod tests {
         if element.can_paint_local_v2(&node_ctx) {
             let tree = aimer_cupid::draw_cmd_v2::RenderTree::new();
             let root = tree
-                .add_root(aimer_cupid::draw_cmd_v2::Rect::new(0.0, 0.0, 1_000.0, 1_000.0))
+                .add_root(aimer_cupid::draw_cmd_v2::Rect::new(
+                    0.0, 0.0, 1_000.0, 1_000.0,
+                ))
                 .unwrap();
             let retained = tree.context(root).unwrap();
             node_ctx.with_local_v2_paint_context(retained, |node_ctx| {
                 element.paint_local_v2(node_ctx);
             });
-            commands.extend(tree.draw_list_snapshot(root).unwrap().commands.iter().cloned());
+            commands.extend(
+                tree.draw_list_snapshot(root)
+                    .unwrap()
+                    .commands
+                    .iter()
+                    .cloned(),
+            );
         }
         element.visit_children(&mut |child| recorded_commands(child, ctx, commands));
     }
@@ -1156,12 +1173,10 @@ mod tests {
                     if text.as_ref() == "A plain Markdown paragraph"
             )
         }));
-        assert!(
-            !commands.iter().any(|command| matches!(
-                command,
-                aimer_cupid::draw_cmd_v2::DrawCommand::DrawRichText { .. }
-            ))
-        );
+        assert!(!commands.iter().any(|command| matches!(
+            command,
+            aimer_cupid::draw_cmd_v2::DrawCommand::DrawRichText { .. }
+        )));
     }
 
     #[test]

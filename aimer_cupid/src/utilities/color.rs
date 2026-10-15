@@ -1,7 +1,7 @@
 use std::ops::Mul;
 
-use aimer_color::prelude::Color as AimerColor;
 pub use super::rgba8::Rgba8;
+use aimer_color::prelude::Color as AimerColor;
 
 /// Cupid's renderer-side paint color.
 ///
@@ -138,9 +138,7 @@ mod tests {
     #[test]
     fn opacity_only_rewrites_the_alpha_byte() {
         assert_eq!(
-            Rgba8::new(10, 20, 30, 128)
-                .with_opacity(0.5)
-                .as_array(),
+            Rgba8::new(10, 20, 30, 128).with_opacity(0.5).as_array(),
             [10, 20, 30, 64]
         );
     }

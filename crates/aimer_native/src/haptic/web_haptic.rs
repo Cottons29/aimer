@@ -11,7 +11,9 @@ pub fn web_perform_haptic() {
     // }
 
     let Some(window) = window() else { return };
-    let Some(document) = window.document() else { return };
+    let Some(document) = window.document() else {
+        return;
+    };
     let Some(body) = document.body() else { return };
 
     // Try to find an existing switch element first
@@ -22,8 +24,12 @@ pub fn web_perform_haptic() {
     }
 
     // Not found — create a new one
-    let Ok(switch_el) = document.create_element("input") else { return };
-    let Ok(switch_el) = switch_el.dyn_into::<HtmlInputElement>() else { return };
+    let Ok(switch_el) = document.create_element("input") else {
+        return;
+    };
+    let Ok(switch_el) = switch_el.dyn_into::<HtmlInputElement>() else {
+        return;
+    };
 
     switch_el.set_type("checkbox");
     let _ = switch_el.set_attribute("switch", "");

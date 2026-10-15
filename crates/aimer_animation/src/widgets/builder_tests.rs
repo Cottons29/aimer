@@ -3,12 +3,11 @@ use std::sync::OnceLock;
 use aimer_attribute::BoxConstraint;
 use aimer_widget::base::{BuildContext, ResolvedSize, Vec2d, WindowHandle};
 use aimer_widget::{
-    AnyElement, Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement,
-    Widget,
+    AnyElement, Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget,
 };
 
 use super::{Animated, AnimatedBuilder, AnimationEffect};
-use crate::{AnimationController, Curve};
+use crate::{AnimationController, curves};
 
 const FRAME_WIDTH: u32 = 101;
 const FRAME_HEIGHT: u32 = 101;
@@ -63,7 +62,6 @@ struct StableElement(f32);
 
 impl Drawable for StableElement {
     fn update(&self, _context: &BuildContext) {}
-
 }
 
 impl EventElement for StableElement {}
@@ -129,7 +127,7 @@ fn animated_exposes_its_child_to_the_retained_render_tree() {
     // The render tree is built from `visit_retained_v2_children`. An element
     // that draws a child without exposing it there leaves that child without a
     // render node, so its paint is silently dropped under retained presentation.
-    let controller = AnimationController::with_millis(1000, Curve::Linear);
+    let controller = AnimationController::with_millis(1000, curves::LINEAR);
     let context = context();
     let element = Animated::new(
         controller,
@@ -151,7 +149,7 @@ fn animated_exposes_its_child_to_the_retained_render_tree() {
 
 #[test]
 fn animated_builder_updates_its_child_while_preserving_retained_identity() {
-    let controller = AnimationController::with_millis(1000, Curve::Linear);
+    let controller = AnimationController::with_millis(1000, curves::LINEAR);
     controller.set_value(0.0);
     controller.forward_from_first_tick();
     let context = context();
@@ -161,7 +159,7 @@ fn animated_builder_updates_its_child_while_preserving_retained_identity() {
         built_values.borrow_mut().push(value);
         StableLeaf(10.0 + value * 10.0)
     })
-        .to_element(&context);
+    .to_element(&context);
 
     element.update(&context);
     let mut original_child = None;
@@ -178,7 +176,10 @@ fn animated_builder_updates_its_child_while_preserving_retained_identity() {
     let mut rebuilt_child = None;
     element.visit_retained_v2_children(&mut |_, child| rebuilt_child = child.element_id());
     assert!(rebuilt_child.is_some());
-    assert_eq!(original_child, rebuilt_child, "reconciliation keeps the child's identity");
+    assert_eq!(
+        original_child, rebuilt_child,
+        "reconciliation keeps the child's identity"
+    );
     assert_eq!(element.computed_size(&context).width, 15.0);
     assert_eq!(*values.borrow(), [0.0, 0.5]);
 
@@ -187,7 +188,11 @@ fn animated_builder_updates_its_child_while_preserving_retained_identity() {
     let mut unchanged_child = None;
     element.visit_retained_v2_children(&mut |_, child| unchanged_child = child.element_id());
     assert_eq!(unchanged_child, rebuilt_child);
-    assert_eq!(*values.borrow(), [0.0, 0.5], "a stable value reuses its child");
+    assert_eq!(
+        *values.borrow(),
+        [0.0, 0.5],
+        "a stable value reuses its child"
+    );
 }
 
 #[test]
@@ -195,10 +200,113 @@ fn animated_builder_paints_locally_whatever_its_child_is() {
     // The builder records nothing itself: its rebuilt child owns its render
     // nodes and decides its own paint source. Declining local paint because the
     // child is not "bounded" would put the whole subtree on the legacy path.
-    let controller = AnimationController::with_millis(1000, Curve::Linear);
+    let controller = AnimationController::with_millis(1000, curves::LINEAR);
     let context = context();
     let element = AnimatedBuilder::new(controller, |_value| UnknownLeaf).to_element(&context);
 
     assert!(element.as_ref().can_paint_local_v2(&context));
     assert!(element.as_ref().sync_local_v2_state(&context));
+}
+
+mod typed_constructors {
+    use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
+    use std::time::Duration;
+
+    use aimer_widget::Widget;
+
+    use super::{AnimatedBuilder, StableLeaf, context};
+    use crate::{
+        curves, KeyframeTimeline, KeyframeTrack, TimedKeyframeAnimation, TweenAnimation,
+    };
+
+    fn ms(millis: u64) -> Duration {
+        Duration::from_millis(millis)
+    }
+
+    #[test]
+    fn tween_builder_receives_the_interpolated_value() {
+        let animation = TweenAnimation::new(10.0f32, 20.0, ms(100), curves::LINEAR);
+        animation.controller().set_value(0.5);
+        let seen = Rc::new(Cell::new(f32::NAN));
+        let recorded = Rc::clone(&seen);
+
+        let _element = AnimatedBuilder::tween(animation, move |value: f32| {
+            recorded.set(value);
+            StableLeaf(value)
+        })
+        .to_element(&context());
+
+        assert_eq!(seen.get(), 15.0);
+    }
+
+    #[test]
+    fn tween_builder_applies_the_controller_curve() {
+        let animation = TweenAnimation::new(0.0f32, 100.0, ms(100), curves::EASE_IN);
+        animation.controller().set_value(0.5);
+        let seen = Rc::new(Cell::new(f32::NAN));
+        let recorded = Rc::clone(&seen);
+
+        let _element = AnimatedBuilder::tween(animation, move |value: f32| {
+            recorded.set(value);
+            StableLeaf(value)
+        })
+        .to_element(&context());
+
+        // EaseIn is t^3, so half the progress is 12.5% of the range.
+        assert!((seen.get() - 12.5).abs() < 1e-3, "got {}", seen.get());
+    }
+
+    #[test]
+    fn keyframe_builder_receives_the_sampled_value() {
+        let track = KeyframeTrack::builder()
+            .at(ms(0), 0.0f32)
+            .at(ms(100), 10.0)
+            .at(ms(300), 0.0)
+            .build()
+            .unwrap();
+        let animation = TimedKeyframeAnimation::new(track);
+        animation.controller().set_value(1.0 / 3.0);
+        let seen = Rc::new(Cell::new(f32::NAN));
+        let recorded = Rc::clone(&seen);
+
+        let _element = AnimatedBuilder::keyframes(animation, move |value: f32| {
+            recorded.set(value);
+            StableLeaf(value)
+        })
+        .to_element(&context());
+
+        assert!((seen.get() - 10.0).abs() < 1e-3, "got {}", seen.get());
+    }
+
+    #[test]
+    fn timeline_builder_receives_a_frame_to_sample_tracks_from() {
+        let fade = KeyframeTrack::builder()
+            .at(ms(0), 0.0f32)
+            .at(ms(200), 1.0)
+            .build()
+            .unwrap();
+        let grow = KeyframeTrack::builder()
+            .at(ms(0), 10.0f32)
+            .at(ms(400), 20.0)
+            .build()
+            .unwrap();
+        let timeline = KeyframeTimeline::new(Duration::ZERO)
+            .including(&fade)
+            .including(&grow);
+        timeline.controller().set_value(0.5);
+        let seen = Rc::new(RefCell::new(None));
+        let recorded = Rc::clone(&seen);
+
+        let _element = AnimatedBuilder::timeline(timeline, move |frame| {
+            *recorded.borrow_mut() = Some((frame.elapsed(), frame.sample(&fade), frame.sample(&grow)));
+            StableLeaf(1.0)
+        })
+        .to_element(&context());
+
+        let (elapsed, fade, grow) = seen.borrow().expect("the builder ran");
+        assert_eq!(elapsed, ms(200));
+        assert_eq!(fade, 1.0);
+        assert!((grow - 15.0).abs() < 1e-3);
+    }
 }

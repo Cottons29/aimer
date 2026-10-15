@@ -19,11 +19,20 @@ pub struct PipelineTiming {
 static UI: AtomicPhase = AtomicPhase::new();
 static QUEUE: AtomicPhase = AtomicPhase::new();
 static ACQUIRE: AtomicPhase = AtomicPhase::new();
-pub(super) enum Phase { Ui, Queue, Acquire }
+pub(super) enum Phase {
+    Ui,
+    Queue,
+    Acquire,
+}
 
 #[cfg(feature = "frame-stats")]
 pub(super) fn record(phase: Phase, elapsed: Duration) {
-    match phase { Phase::Ui => &UI, Phase::Queue => &QUEUE, Phase::Acquire => &ACQUIRE }.record(elapsed);
+    match phase {
+        Phase::Ui => &UI,
+        Phase::Queue => &QUEUE,
+        Phase::Acquire => &ACQUIRE,
+    }
+    .record(elapsed);
 }
 
 /// Snapshots UI, queue, and acquisition timing without resetting their counters.
@@ -32,12 +41,23 @@ pub fn pipeline_timing() -> PipelineTiming {
     let (ui_p95, ui_p95_saturated) = UI.p95_bucket();
     #[cfg(not(feature = "frame-stats"))]
     let (ui_p95, ui_p95_saturated) = (Duration::ZERO, false);
-    PipelineTiming { ui: UI.snapshot(), ui_p95, ui_p95_saturated,
-        queue: QUEUE.snapshot(), acquire: ACQUIRE.snapshot() }
+    PipelineTiming {
+        ui: UI.snapshot(),
+        ui_p95,
+        ui_p95_saturated,
+        queue: QUEUE.snapshot(),
+        acquire: ACQUIRE.snapshot(),
+    }
 }
 
 #[cfg(feature = "frame-stats")]
 pub(super) fn take() -> PipelineTiming {
     let (ui, (ui_p95, ui_p95_saturated)) = UI.take();
-    PipelineTiming { ui, ui_p95, ui_p95_saturated, queue: QUEUE.take().0, acquire: ACQUIRE.take().0 }
+    PipelineTiming {
+        ui,
+        ui_p95,
+        ui_p95_saturated,
+        queue: QUEUE.take().0,
+        acquire: ACQUIRE.take().0,
+    }
 }

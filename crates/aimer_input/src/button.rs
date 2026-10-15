@@ -1,4 +1,7 @@
 mod decoration;
+mod visual;
+
+pub use visual::ButtonVisualState;
 
 use std::cell::Cell;
 use std::future::Future;
@@ -7,17 +10,16 @@ use std::panic::Location;
 use std::rc::Rc;
 
 use aimer_container::Container;
+use aimer_decoration::Decoration;
 use aimer_style::BoxDecoration;
 use aimer_widget::base::{BuildContext, Color};
 use aimer_widget::{
-    AnyElement, AnyWidget, ChildBuilder, Key, RequiredChild, State, StateUpdater,
-    StatefulElement, StatefulWidget, Widget,
+    AnyElement, AnyWidget, ChildBuilder, Key, RequiredChild, State, StateUpdater, StatefulElement,
+    StatefulWidget, Widget,
 };
 
 #[cfg(feature = "portable-guest")]
-use aimer_widget::portable::{
-    PortableBuildContext, PortableBuildError, SourceFingerprint,
-};
+use aimer_widget::portable::{PortableBuildContext, PortableBuildError, SourceFingerprint};
 
 use crate::callback::VoidCallback;
 use crate::gesture::GestureEvent;
@@ -37,12 +39,13 @@ const PRESSED_DARKEN: f32 = 0.15;
 /// provides callbacks for primary tap, double-tap, long-press, and
 /// secondary-button tap. It supports optional decorations for hover, press,
 /// and disabled states, and suppresses all pointer callbacks when disabled.
-/// Hover and press select retained decoration without rebuilding the input
-/// wrappers or the child.
+/// Hover and press keep the input wrappers and child mounted. With
+/// [`BoxDecoration`], feedback changes retained paint directly; custom
+/// state decorations rebuild only their decoration owner.
 ///
 /// The default button is enabled, has an empty [`BoxDecoration`], and has no-op
 /// callbacks. Finish construction with [`Button::child`] or
-/// [`Button::box_child`].
+/// [`Button::box_child`], or use [`Button::build`] for a complete custom visual.
 ///
 /// # Example
 ///
@@ -72,6 +75,13 @@ pub struct Button<W = RequiredChild> {
     pub on_right_press: VoidCallback,
     #[portable_optional]
     pub decoration: BoxDecoration,
+    #[portable_skip]
+    no_decor: bool,
+    #[portable_skip]
+    // Normal, hover, press and disabled overrides, respectively.
+    custom_decorations: [Option<Rc<dyn Decoration>>; 4],
+    #[portable_skip]
+    visual_builder: Option<visual::VisualBuilder>,
     #[portable_skip]
     pub hover_decoration: Option<BoxDecoration>,
     #[portable_skip]
@@ -112,6 +122,9 @@ pub struct ButtonState<W: Widget + 'static> {
     pub on_double_press: VoidCallback,
     pub on_right_press: VoidCallback,
     pub decoration: BoxDecoration,
+    no_decor: bool,
+    custom_decorations: [Option<Rc<dyn Decoration>>; 4],
+    visual_builder: Option<visual::VisualBuilder>,
     pub hover_decoration: Option<BoxDecoration>,
     pub press_decoration: Option<BoxDecoration>,
     pub disable_decoration: Option<BoxDecoration>,
@@ -138,6 +151,9 @@ impl Button {
             on_double_press: VoidCallback::default(),
             on_right_press: VoidCallback::default(),
             decoration: BoxDecoration::default(),
+            no_decor: false,
+            custom_decorations: Default::default(),
+            visual_builder: None,
             hover_decoration: None,
             press_decoration: None,
             disable_decoration: None,
@@ -211,6 +227,28 @@ impl<W> Button<W> {
         self
     }
 
+    /// Omits all button-owned decorations and their container in every state.
+    ///
+    /// This overrides decoration settings regardless of builder order. The
+    /// child, gesture callbacks, and visuals supplied by [`Button::build`] are
+    /// preserved. Hover and press do not rebuild the child.
+    /// Requires native rendering; portable lowering reports an unsupported
+    /// property.
+    ///
+    /// ```
+    /// use aimer_input::button::Button;
+    /// use aimer_text::Text;
+    ///
+    /// let button = Button::new().no_decor()
+    ///     .on_press(|| println!("pressed"))
+    ///     .child(Text::new("Save"));
+    /// ```
+    #[inline]
+    pub fn no_decor(mut self) -> Self {
+        self.no_decor = true;
+        self
+    }
+
     /// Registers an asynchronous double-press callback.
     ///
     /// Like [`Button::on_press_async`], this one-shot closure is taken on its
@@ -247,41 +285,56 @@ impl<W> Button<W> {
 
     /// Replaces the decoration drawn behind the child.
     ///
-    /// Hovering lightens an existing background color. Disabled buttons replace
-    /// that background with translucent black.
-    pub fn decoration(mut self, decoration: BoxDecoration) -> Self {
-        self.decoration = decoration;
+    /// Accepts any [`Decoration`], including `LightEdge`, without requiring
+    /// `Clone`. A [`BoxDecoration`] retains automatic hover lightening and
+    /// press darkening. Other decorations keep their own appearance.
+    /// Custom decorations require native rendering; portable lowering reports
+    /// an unsupported property.
+    #[inline]
+    pub fn decoration<D: Decoration + 'static>(mut self, decoration: D) -> Self {
+        let (decoration, custom) = decoration::split(decoration);
+        self.decoration = decoration.unwrap_or_default();
+        self.custom_decorations[0] = custom;
         self
     }
 
     /// Sets the decoration drawn while the enabled button is hovered.
     ///
-    /// When unset, the normal decoration is lightened automatically.
+    /// When unset, a normal [`BoxDecoration`] is lightened automatically;
+    /// custom decorations retain their appearance.
     #[inline]
-    pub fn hover_decoration(mut self, hover_decoration: BoxDecoration) -> Self {
-        self.hover_decoration = Some(hover_decoration);
+    pub fn hover_decoration<D: Decoration + 'static>(mut self, hover_decoration: D) -> Self {
+        let (decoration, custom) = decoration::split(hover_decoration);
+        self.hover_decoration = decoration;
+        self.custom_decorations[1] = custom;
         self
     }
 
     /// Sets the decoration drawn while the button is pressed.
     ///
-    /// When unset, the active decoration is darkened automatically.
+    /// When unset, an active [`BoxDecoration`] is darkened automatically;
+    /// custom decorations retain their appearance.
     #[inline]
-    pub fn press_decoration(mut self, press_decoration: BoxDecoration) -> Self {
-        self.press_decoration = Some(press_decoration);
+    pub fn press_decoration<D: Decoration + 'static>(mut self, press_decoration: D) -> Self {
+        let (decoration, custom) = decoration::split(press_decoration);
+        self.press_decoration = decoration;
+        self.custom_decorations[2] = custom;
         self
     }
 
     /// Sets the decoration drawn while the button is disabled.
     ///
-    /// When unset, the background is replaced with translucent black.
+    /// When unset, a normal [`BoxDecoration`] background is replaced with
+    /// translucent black. Custom decorations retain their appearance.
     #[inline]
-    pub fn disable_decoration(mut self, disable_decoration: BoxDecoration) -> Self {
-        self.disable_decoration = Some(disable_decoration);
+    pub fn disable_decoration<D: Decoration + 'static>(mut self, disable_decoration: D) -> Self {
+        let (decoration, custom) = decoration::split(disable_decoration);
+        self.disable_decoration = decoration;
+        self.custom_decorations[3] = custom;
         self
     }
 
-    /// Enables or disables primary, double, and long-press interaction.
+    /// Enables or disables all button gesture callbacks.
     ///
     /// A disabled button omits its hover and gesture wrappers and draws its
     /// disabled background.
@@ -310,6 +363,9 @@ impl<W> Button<W> {
             on_double_press: self.on_double_press,
             on_right_press: self.on_right_press,
             decoration: self.decoration,
+            no_decor: self.no_decor,
+            custom_decorations: self.custom_decorations,
+            visual_builder: None,
             hover_decoration: self.hover_decoration,
             press_decoration: self.press_decoration,
             disable_decoration: self.disable_decoration,
@@ -330,12 +386,41 @@ impl<W> Button<W> {
     pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget {
         self.child(child).boxed()
     }
+
+    /// Builds the complete button appearance from its interaction state.
+    ///
+    /// This completes the builder in place of [`Button::child`]. No container,
+    /// decoration, padding or other visuals are added; configured decorations
+    /// are ignored. Gesture handling, callbacks, disabling and keys still work.
+    /// The closure runs initially, on configuration updates and when hover or
+    /// press changes. Only its visual subtree rebuilds; input wrappers remain
+    /// mounted. Use [`ChildBuilder`] to retain state-independent subtrees.
+    /// This builder requires native rendering; portable lowering reports an
+    /// unsupported property.
+    ///
+    /// ```
+    /// use aimer_input::button::Button;
+    /// use aimer_text::Text;
+    ///
+    /// let button = Button::new().on_press(|| println!("save"))
+    ///     .build(|state| Text::new(if state.is_pressed { "Saving" } else { "Save" }));
+    /// ```
+    #[inline]
+    pub fn build<C: Widget + 'static>(
+        self, build: impl Fn(ButtonVisualState) -> C + 'static,
+    ) -> Button<ChildBuilder> {
+        let mut button = self.child(ChildBuilder::required());
+        button.child = None;
+        button.visual_builder = Some(Rc::new(move |state| build(state).boxed()));
+        button
+    }
 }
 
 impl<W: Widget + 'static> StatefulWidget for Button<W> {
     type State = ButtonState<W>;
 
     fn create_state(self) -> Self::State {
+        debug_assert!(self.child.is_some() || self.visual_builder.is_some());
         ButtonState {
             is_hover: Rc::new(Cell::new(false)),
             is_pressed: Rc::new(Cell::new(false)),
@@ -344,14 +429,15 @@ impl<W: Widget + 'static> StatefulWidget for Button<W> {
             on_double_press: self.on_double_press,
             on_right_press: self.on_right_press,
             decoration: self.decoration,
+            no_decor: self.no_decor,
+            custom_decorations: self.custom_decorations,
+            visual_builder: self.visual_builder,
             hover_decoration: self.hover_decoration,
             press_decoration: self.press_decoration,
             disable_decoration: self.disable_decoration,
             current_state: Rc::new(Cell::new(PointerState::Outside)),
-            child: ChildBuilder::from_widget(
-                self.child
-                    .expect("a completed Button always owns its required child"),
-            ),
+            child: self.child.map(ChildBuilder::from_widget)
+                .unwrap_or_else(ChildBuilder::required),
             is_disabled: self.is_disabled,
             marker: PhantomData,
         }
@@ -377,6 +463,27 @@ fn validate_portable_button<W>(
     _ctx: &PortableBuildContext,
     source: SourceFingerprint,
 ) -> Result<(), PortableBuildError> {
+    if button.visual_builder.is_some() {
+        return Err(PortableBuildError::UnsupportedProperty {
+            widget: "Button",
+            property: "build",
+            source,
+        });
+    }
+    if button.no_decor {
+        return Err(PortableBuildError::UnsupportedProperty {
+            widget: "Button",
+            property: "no_decor",
+            source,
+        });
+    }
+    if button.custom_decorations.iter().any(Option::is_some) {
+        return Err(PortableBuildError::UnsupportedProperty {
+            widget: "Button",
+            property: "decoration",
+            source,
+        });
+    }
     if button.is_disabled {
         return Err(PortableBuildError::UnsupportedProperty {
             widget: "Button",
@@ -421,6 +528,9 @@ impl<W: Widget + 'static> State<Button<W>> for ButtonState<W> {
         self.on_double_press = new.on_double_press;
         self.on_right_press = new.on_right_press;
         self.decoration = new.decoration;
+        self.no_decor = new.no_decor;
+        self.custom_decorations = new.custom_decorations;
+        self.visual_builder = new.visual_builder;
         self.hover_decoration = new.hover_decoration;
         self.press_decoration = new.press_decoration;
         self.disable_decoration = new.disable_decoration;
@@ -428,53 +538,70 @@ impl<W: Widget + 'static> State<Button<W>> for ButtonState<W> {
     }
 
     fn build(&self, _: &BuildContext) -> impl Widget {
+        if let Some(builder) = &self.visual_builder {
+            let (child, feedback) = visual::Feedback::visual(self, builder.clone());
+            if self.is_disabled {
+                self.is_pressed.set(false);
+                return child;
+            }
+            return self.wrap_input(child, feedback);
+        }
+        if self.no_decor {
+            let child = self.child.clone();
+            if self.is_disabled {
+                self.is_pressed.set(false);
+                return child.boxed();
+            }
+            return self.wrap_input(child, visual::Feedback::Fixed {
+                hover: self.is_hover.clone(),
+                pressed: self.is_pressed.clone(),
+            });
+        }
+        if self.custom_decorations.iter().any(Option::is_some) {
+            return self.build_custom_decorations();
+        }
         let child = self.child.clone();
         if self.is_disabled {
-            return Container::new().box_decoration(self.decoration_for(false, false))
-                .child(child).boxed();
+            self.is_pressed.set(false);
+            return Container::new()
+                .box_decoration(self.decoration_for(false, false))
+                .child(child)
+                .boxed();
         }
         let decoration = Rc::new(decoration::ButtonDecoration::new(self));
         let child = Container::new().retained_box_decoration(decoration.clone()).child(child);
 
+        self.wrap_input(child, visual::Feedback::Decoration(decoration))
+    }
+}
+
+impl<W: Widget + 'static> ButtonState<W> {
+    fn wrap_input<C: Widget + 'static>(&self, child: C, feedback: visual::Feedback) -> AnyWidget {
         MouseRegion::new()
             .on_hover_enter({
-                let decoration = decoration.clone();
-                move || decoration.set_hover(true)
+                let feedback = feedback.clone();
+                move || feedback.set_hover(true)
             })
             .on_hover_exit({
-                let decoration = decoration.clone();
-                move || decoration.set_hover(false)
+                let feedback = feedback.clone();
+                move || feedback.set_hover(false)
             })
             .current_state(self.current_state.clone())
             .child(
                 GestureDetector::new()
                     .behavior(GestureDetectorBehavior::BlockChild)
-                    .on_tap(if self.is_disabled {
-                        VoidCallback::default()
-                    } else {
-                        self.on_press.clone()
-                    })
-                    .on_double_press(if self.is_disabled {
-                        VoidCallback::default()
-                    } else {
-                        self.on_double_press.clone()
-                    })
-                    .on_long_press(if self.is_disabled {
-                        VoidCallback::default()
-                    } else {
-                        self.on_long_press.clone()
-                    })
+                    .on_tap(self.on_press.clone())
+                    .on_double_press(self.on_double_press.clone())
+                    .on_long_press(self.on_long_press.clone())
                     .on_right_tap(self.on_right_press.clone())
                     .on_gesture({
                         move |event: GestureEvent| match event {
-                            GestureEvent::TapDown { .. } => {
-                                decoration.set_pressed(true)
-                            }
+                            GestureEvent::TapDown { .. } => feedback.set_pressed(true),
                             // Either terminator ends the press: the recognizer
                             // guarantees one of them arrives, so the highlight
                             // cannot be left stuck on.
                             GestureEvent::TapUp { .. } | GestureEvent::TapCancel => {
-                                decoration.set_pressed(false)
+                                feedback.set_pressed(false)
                             }
                             _ => {}
                         }
@@ -499,14 +626,15 @@ impl<W: Widget + 'static> ButtonState<W> {
             }
 
             let decoration = self.decoration.clone();
-            decoration.background_color.set(Some(Color::BLACK.with_opacity(120)));
+            decoration
+                .background_color
+                .set(Some(Color::BLACK.with_opacity(120)));
             return decoration;
         }
 
-        if is_pressed
-            && let Some(decoration) = &self.press_decoration {
-                return decoration.clone();
-            }
+        if is_pressed && let Some(decoration) = &self.press_decoration {
+            return decoration.clone();
+        }
 
         let decoration = if is_hover {
             self.hover_decoration
@@ -529,7 +657,9 @@ impl<W: Widget + 'static> ButtonState<W> {
             && self.press_decoration.is_none()
             && let Some(color) = decoration.background_color.get()
         {
-            decoration.background_color.set(Some(color.darken(PRESSED_DARKEN)));
+            decoration
+                .background_color
+                .set(Some(color.darken(PRESSED_DARKEN)));
         }
 
         decoration

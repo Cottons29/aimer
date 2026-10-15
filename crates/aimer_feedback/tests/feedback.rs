@@ -1,10 +1,10 @@
 use std::time::Duration;
 
 use aimer_feedback::{
-    Announcer, Announcement, AnnouncementPriority, DismissReason, FocusTarget, OverlayHost,
-    OverlayId, OverlayLifecycle, OverlayModality, OverlayRequest, ManualClock, StatusBanner,
-    StatusKind, Toast, ToastAction, ToastQueue, ToastQueueEvent, MotionPolicy, ProgressError,
-    ProgressIndicator, ProgressState, Spinner, Tooltip, TooltipController, TooltipEvent,
+    Announcement, AnnouncementPriority, Announcer, DismissReason, FocusTarget, ManualClock,
+    MotionPolicy, OverlayHost, OverlayId, OverlayLifecycle, OverlayModality, OverlayRequest,
+    ProgressError, ProgressIndicator, ProgressState, Spinner, StatusBanner, StatusKind, Toast,
+    ToastAction, ToastQueue, ToastQueueEvent, Tooltip, TooltipController, TooltipEvent,
     TooltipTouch, TouchPolicy,
 };
 
@@ -116,7 +116,10 @@ fn queue_replacement_updates_the_active_overlay_and_actions_dismiss_it() {
             .kind(aimer_feedback::ToastKind::Success)
             .replacement_key("save"),
     );
-    assert_eq!(queue.active_handles().map(|handles| handles.0), Some(replacement_id));
+    assert_eq!(
+        queue.active_handles().map(|handles| handles.0),
+        Some(replacement_id)
+    );
     assert!(matches!(
         queue.pump(&mut host, None),
         ToastQueueEvent::Updated(_)
@@ -156,7 +159,10 @@ fn queue_keeps_the_previous_overlay_when_replacement_cannot_be_dismissed() {
     assert_eq!(queue.active().map(Toast::message), Some("old"));
 
     host.reject_dismiss = false;
-    assert!(matches!(queue.pump(&mut host, None), ToastQueueEvent::Updated(_)));
+    assert!(matches!(
+        queue.pump(&mut host, None),
+        ToastQueueEvent::Updated(_)
+    ));
     assert_eq!(queue.active().map(Toast::message), Some("new"));
 }
 
@@ -211,7 +217,10 @@ fn overlay_lifecycle_keeps_previous_request_when_replacement_is_rejected() {
 
     assert_eq!(returned, first);
     assert_eq!(lifecycle.active_id(), Some(first));
-    assert_eq!(lifecycle.active_request().map(OverlayRequest::text), Some("first"));
+    assert_eq!(
+        lifecycle.active_request().map(OverlayRequest::text),
+        Some("first")
+    );
     assert_eq!(host.presented.len(), 1);
 }
 
@@ -232,9 +241,18 @@ fn tooltip_waits_for_hover_delay_and_dismisses_when_the_trigger_leaves() {
     clock.advance(Duration::from_millis(499));
     assert!(matches!(tooltip.pump(&mut host), TooltipEvent::Pending));
     clock.advance(Duration::from_millis(1));
-    assert!(matches!(tooltip.pump(&mut host), TooltipEvent::Presented(_)));
-    assert_eq!(host.presented[0].kind(), aimer_feedback::OverlayKind::Tooltip);
-    assert_eq!(host.presented[0].modality_value(), aimer_feedback::OverlayModality::NonModal);
+    assert!(matches!(
+        tooltip.pump(&mut host),
+        TooltipEvent::Presented(_)
+    ));
+    assert_eq!(
+        host.presented[0].kind(),
+        aimer_feedback::OverlayKind::Tooltip
+    );
+    assert_eq!(
+        host.presented[0].modality_value(),
+        aimer_feedback::OverlayModality::NonModal
+    );
     assert!(host.presented[0].dismiss_on_outside_press_value());
 
     tooltip.set_hovered(false);
@@ -250,17 +268,20 @@ fn tooltip_waits_for_hover_delay_and_dismisses_when_the_trigger_leaves() {
 #[test]
 fn visible_tooltip_reanchors_through_the_same_host_lifecycle() {
     let clock = ManualClock::new();
-    let mut tooltip = TooltipController::new(
-        Tooltip::new("Anchored").delay(Duration::ZERO),
-        clock,
-    );
+    let mut tooltip = TooltipController::new(Tooltip::new("Anchored").delay(Duration::ZERO), clock);
     let mut host = TestHost::default();
     tooltip.set_anchor(aimer_feedback::Rect::new(4.0, 4.0, 12.0, 12.0));
     tooltip.set_hovered(true);
-    assert!(matches!(tooltip.pump(&mut host), TooltipEvent::Presented(_)));
+    assert!(matches!(
+        tooltip.pump(&mut host),
+        TooltipEvent::Presented(_)
+    ));
 
     tooltip.set_anchor(aimer_feedback::Rect::new(80.0, 80.0, 12.0, 12.0));
-    assert!(matches!(tooltip.pump(&mut host), TooltipEvent::Presented(_)));
+    assert!(matches!(
+        tooltip.pump(&mut host),
+        TooltipEvent::Presented(_)
+    ));
     assert_eq!(host.dismissed[0].1, DismissReason::Replaced);
     assert_eq!(host.presented[1].anchor_value().unwrap().x(), 80.0);
 }
@@ -268,13 +289,14 @@ fn visible_tooltip_reanchors_through_the_same_host_lifecycle() {
 #[test]
 fn tooltip_keeps_visible_state_when_the_host_rejects_dismissal() {
     let clock = ManualClock::new();
-    let mut tooltip = TooltipController::new(
-        Tooltip::new("Still visible").delay(Duration::ZERO),
-        clock,
-    );
+    let mut tooltip =
+        TooltipController::new(Tooltip::new("Still visible").delay(Duration::ZERO), clock);
     let mut host = TestHost::default();
     tooltip.set_hovered(true);
-    assert!(matches!(tooltip.pump(&mut host), TooltipEvent::Presented(_)));
+    assert!(matches!(
+        tooltip.pump(&mut host),
+        TooltipEvent::Presented(_)
+    ));
 
     host.reject_dismiss = true;
     tooltip.set_hovered(false);
@@ -305,7 +327,10 @@ fn immediate_touch_policy_can_show_without_hover_and_hides_on_touch_end() {
     let mut host = TestHost::default();
 
     tooltip.touch(TooltipTouch::Started);
-    assert!(matches!(tooltip.pump(&mut host), TooltipEvent::Presented(_)));
+    assert!(matches!(
+        tooltip.pump(&mut host),
+        TooltipEvent::Presented(_)
+    ));
     tooltip.touch(TooltipTouch::Ended);
     assert!(matches!(
         tooltip.pump(&mut host),
@@ -392,8 +417,7 @@ fn feedback_indicators_and_status_banners_are_composable_widgets() {
     assert_widget(Toast::new("saved"));
     assert_widget(StatusBanner::new("Saved").kind(StatusKind::Success));
     assert_widget(
-        aimer_feedback::FeedbackSlot::new(StatusKind::Loading)
-            .child(aimer_container::ZeroSizedBox),
+        aimer_feedback::FeedbackSlot::new(StatusKind::Loading).child(aimer_container::ZeroSizedBox),
     );
     assert_eq!(
         StatusBanner::new("failure")

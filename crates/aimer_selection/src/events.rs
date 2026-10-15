@@ -92,7 +92,10 @@ pub(crate) fn is_next_key(key: Key) -> bool {
 
 /// Emits a controlled change and returns the value that the owner should
 /// adopt. The model itself deliberately remains unchanged.
-pub(crate) fn emit_change<T: Clone>(callback: &Option<ChangeCallback<T>>, value: T) -> ControlAction<T> {
+pub(crate) fn emit_change<T: Clone>(
+    callback: &Option<ChangeCallback<T>>,
+    value: T,
+) -> ControlAction<T> {
     if let Some(callback) = callback {
         callback(value.clone());
     }

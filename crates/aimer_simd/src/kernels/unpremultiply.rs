@@ -21,9 +21,17 @@ pub fn unpremultiply_rgba8(bitmap: &mut [u8]) {
         unpremultiply_scalar(bitmap);
         return;
     }
-    #[cfg(all(not(feature = "force-scalar"), target_endian = "little", any(target_arch = "aarch64", target_arch = "x86_64")))]
+    #[cfg(all(
+        not(feature = "force-scalar"),
+        target_endian = "little",
+        any(target_arch = "aarch64", target_arch = "x86_64")
+    ))]
     let processed = crate::backend::rgba::unpremultiply(bitmap);
-    #[cfg(any(feature = "force-scalar", target_endian = "big", not(any(target_arch = "aarch64", target_arch = "x86_64"))))]
+    #[cfg(any(
+        feature = "force-scalar",
+        target_endian = "big",
+        not(any(target_arch = "aarch64", target_arch = "x86_64"))
+    ))]
     let processed = 0;
     unpremultiply_scalar(&mut bitmap[processed..]);
 }
@@ -32,10 +40,12 @@ pub fn unpremultiply_rgba8(bitmap: &mut [u8]) {
 fn unpremultiply_scalar(bitmap: &mut [u8]) {
     for pixel in bitmap.as_chunks_mut::<4>().0.iter_mut() {
         let alpha = pixel[3];
-        if alpha == 0 || alpha == 255 { continue; }
+        if alpha == 0 || alpha == 255 {
+            continue;
+        }
         for channel in &mut pixel[..3] {
-            *channel = ((u16::from(*channel) * 255 + u16::from(alpha) / 2)
-                / u16::from(alpha)).min(255) as u8;
+            *channel = ((u16::from(*channel) * 255 + u16::from(alpha) / 2) / u16::from(alpha))
+                .min(255) as u8;
         }
     }
 }
@@ -44,34 +54,43 @@ fn unpremultiply_scalar(bitmap: &mut [u8]) {
 mod tests {
     #[test]
     fn unpremultiply_preserves_alpha_rounding_saturation_and_inactive_pixels() {
-        let mut bitmap = [64, 32, 16, 128, 8, 9, 17, 17,
-            17, 99, 231, 0, 1, 128, 255, 255,
-            1, 1, 1, 1, 255, 13, 7, 1, 1, 0, 2, 2, 0, 0, 0, 127];
+        let mut bitmap = [
+            64, 32, 16, 128, 8, 9, 17, 17, 17, 99, 231, 0, 1, 128, 255, 255, 1, 1, 1, 1, 255, 13,
+            7, 1, 1, 0, 2, 2, 0, 0, 0, 127,
+        ];
         super::unpremultiply_rgba8(&mut bitmap);
-        assert_eq!(bitmap, [128, 64, 32, 128, 120, 135, 255, 17,
-            17, 99, 231, 0, 1, 128, 255, 255,
-            255, 255, 255, 1, 255, 255, 255, 1, 128, 0, 255, 2, 0, 0, 0, 127]);
+        assert_eq!(
+            bitmap,
+            [
+                128, 64, 32, 128, 120, 135, 255, 17, 17, 99, 231, 0, 1, 128, 255, 255, 255, 255,
+                255, 1, 255, 255, 255, 1, 128, 0, 255, 2, 0, 0, 0, 127
+            ]
+        );
     }
 
     // Frozen pre-SIMD Core Text implementation used as the compatibility oracle.
     fn reference(bitmap: &mut [u8]) {
         for pixel in bitmap.chunks_exact_mut(4) {
             let alpha = pixel[3];
-            if alpha == 0 || alpha == u8::MAX { continue; }
+            if alpha == 0 || alpha == u8::MAX {
+                continue;
+            }
             for channel in &mut pixel[..3] {
-                *channel = ((*channel as u16 * 255 + alpha as u16 / 2)
-                    / alpha as u16).min(255) as u8;
+                *channel =
+                    ((*channel as u16 * 255 + alpha as u16 / 2) / alpha as u16).min(255) as u8;
             }
         }
     }
 
     #[test]
     fn unpremultiply_matches_every_channel_and_alpha_pair() {
-        let original: Vec<u8> = (0..=255_u8).flat_map(|alpha| {
-            (0..=255_u8).flat_map(move |channel| {
-                [channel, channel.wrapping_mul(73), 255 - channel, alpha]
+        let original: Vec<u8> = (0..=255_u8)
+            .flat_map(|alpha| {
+                (0..=255_u8).flat_map(move |channel| {
+                    [channel, channel.wrapping_mul(73), 255 - channel, alpha]
+                })
             })
-        }).collect();
+            .collect();
         let mut expected = original.clone();
         reference(&mut expected);
         for offset in 0..16 {
@@ -79,7 +98,12 @@ mod tests {
             actual[offset..offset + original.len()].copy_from_slice(&original);
             super::unpremultiply_rgba8(&mut actual[offset..offset + original.len()]);
             assert_eq!(&actual[offset..offset + original.len()], expected);
-            assert!(actual[..offset].iter().chain(&actual[offset + original.len()..]).all(|&v| v == 99));
+            assert!(
+                actual[..offset]
+                    .iter()
+                    .chain(&actual[offset + original.len()..])
+                    .all(|&v| v == 99)
+            );
         }
     }
 
@@ -99,9 +123,9 @@ mod tests {
     #[test]
     fn unpremultiply_preserves_all_transparent_and_opaque_block_patterns() {
         for mask in 0..16 {
-            let mut bitmap: Vec<u8> = (0..4).flat_map(|i| {
-                [17, 99, 231, if mask & (1 << i) == 0 { 0 } else { 255 }]
-            }).collect();
+            let mut bitmap: Vec<u8> = (0..4)
+                .flat_map(|i| [17, 99, 231, if mask & (1 << i) == 0 { 0 } else { 255 }])
+                .collect();
             let expected = bitmap.clone();
             super::unpremultiply_rgba8(&mut bitmap);
             assert_eq!(bitmap, expected);
@@ -135,17 +159,20 @@ mod tests {
     fn profile_unpremultiply_kernel() {
         for pixels in [1_usize, 4, 16, 1024, 4096, 16384] {
             for pattern in ["mixed", "edges", "transparent", "opaque"] {
-                let initial: Vec<u8> = (0..pixels).flat_map(|i| {
-                    let alpha = match pattern {
-                        "transparent" => 0, "opaque" => 255,
-                        "edges" => (i % 254 + 1) as u8,
-                        _ if i % 16 < 6 => 0,
-                        _ if i % 16 < 12 => 255,
-                        _ => (i % 254 + 1) as u8,
-                    };
-                    let channel = |factor| ((i * factor + 17) % (usize::from(alpha) + 1)) as u8;
-                    [channel(71), channel(137), channel(29), alpha]
-                }).collect();
+                let initial: Vec<u8> = (0..pixels)
+                    .flat_map(|i| {
+                        let alpha = match pattern {
+                            "transparent" => 0,
+                            "opaque" => 255,
+                            "edges" => (i % 254 + 1) as u8,
+                            _ if i % 16 < 6 => 0,
+                            _ if i % 16 < 12 => 255,
+                            _ => (i % 254 + 1) as u8,
+                        };
+                        let channel = |factor| ((i * factor + 17) % (usize::from(alpha) + 1)) as u8;
+                        [channel(71), channel(137), channel(29), alpha]
+                    })
+                    .collect();
                 let mut expected = initial.clone();
                 let mut actual = initial.clone();
                 reference(&mut expected);
@@ -153,9 +180,11 @@ mod tests {
                 assert_eq!(actual, expected);
                 let scalar = measure(reference, &initial);
                 let simd = measure(super::unpremultiply_rgba8, &initial);
-                println!("pixels={pixels:5} {pattern:11}: scalar={scalar:9.3} us SIMD={simd:9.3} us speedup={:.2}x", scalar / simd);
+                println!(
+                    "pixels={pixels:5} {pattern:11}: scalar={scalar:9.3} us SIMD={simd:9.3} us speedup={:.2}x",
+                    scalar / simd
+                );
             }
         }
     }
-
 }

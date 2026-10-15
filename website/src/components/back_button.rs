@@ -10,7 +10,6 @@ use aimer::{
     SvgStyle, Text, Widget, widget,
 };
 
-
 #[widget(Stateful)]
 pub struct BlogBackButton {
     on_click: VoidCallback,

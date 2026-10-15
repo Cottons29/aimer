@@ -1,4 +1,7 @@
-#[cfg(all(not(feature = "force-scalar"), any(target_arch = "aarch64", target_arch = "x86_64")))]
+#[cfg(all(
+    not(feature = "force-scalar"),
+    any(target_arch = "aarch64", target_arch = "x86_64")
+))]
 use crate::simd_traits::{Simd, SimdAdd};
 
 /// Adds a constant to every byte in place using the target's SIMD backend.
@@ -19,16 +22,32 @@ use crate::simd_traits::{Simd, SimdAdd};
 /// ```
 #[inline]
 pub fn add_u8_in_place(values: &mut [u8], amount: u8) {
-    if amount == 0 { return; }
+    if amount == 0 {
+        return;
+    }
     #[cfg(all(not(feature = "force-scalar"), target_arch = "aarch64"))]
-    { add_constant_with::<crate::backend::Neon>(values, amount); }
+    {
+        add_constant_with::<crate::backend::Neon>(values, amount);
+    }
     #[cfg(all(not(feature = "force-scalar"), target_arch = "x86_64"))]
-    { add_constant_with::<crate::backend::Sse2>(values, amount); }
-    #[cfg(any(feature = "force-scalar", not(any(target_arch = "aarch64", target_arch = "x86_64"))))]
-    { for value in values { *value += amount; } }
+    {
+        add_constant_with::<crate::backend::Sse2>(values, amount);
+    }
+    #[cfg(any(
+        feature = "force-scalar",
+        not(any(target_arch = "aarch64", target_arch = "x86_64"))
+    ))]
+    {
+        for value in values {
+            *value += amount;
+        }
+    }
 }
 
-#[cfg(all(not(feature = "force-scalar"), any(target_arch = "aarch64", target_arch = "x86_64")))]
+#[cfg(all(
+    not(feature = "force-scalar"),
+    any(target_arch = "aarch64", target_arch = "x86_64")
+))]
 #[inline]
 fn add_constant_with<K: Simd<u8, 16> + SimdAdd<u8, 16>>(values: &mut [u8], amount: u8) {
     let vector_end = values.len() / 16 * 16;
@@ -46,7 +65,9 @@ fn add_constant_with<K: Simd<u8, 16> + SimdAdd<u8, 16>>(values: &mut [u8], amoun
             index += 16;
         }
     }
-    for value in &mut values[index..] { *value += amount; }
+    for value in &mut values[index..] {
+        *value += amount;
+    }
 }
 
 /// Converts coverage sample counts into rounded alpha bytes in place.
@@ -76,7 +97,8 @@ pub fn normalize_coverage_u8(counts: &mut [u8], sample_grid: u32) {
         _ => {
             for count in counts {
                 *count = (u32::from(*count) * 255 + denominator / 2)
-                    .checked_div(denominator).unwrap_or(0) as u8;
+                    .checked_div(denominator)
+                    .unwrap_or(0) as u8;
             }
         }
     }
@@ -84,11 +106,20 @@ pub fn normalize_coverage_u8(counts: &mut [u8], sample_grid: u32) {
 
 #[inline]
 fn normalize_power_of_two<const SHIFT: i32>(counts: &mut [u8]) {
-    #[cfg(all(not(feature = "force-scalar"), any(target_arch = "aarch64", target_arch = "x86_64")))]
+    #[cfg(all(
+        not(feature = "force-scalar"),
+        any(target_arch = "aarch64", target_arch = "x86_64")
+    ))]
     let mut index = 0;
-    #[cfg(any(feature = "force-scalar", not(any(target_arch = "aarch64", target_arch = "x86_64"))))]
+    #[cfg(any(
+        feature = "force-scalar",
+        not(any(target_arch = "aarch64", target_arch = "x86_64"))
+    ))]
     let index = 0;
-    #[cfg(all(not(feature = "force-scalar"), any(target_arch = "aarch64", target_arch = "x86_64")))]
+    #[cfg(all(
+        not(feature = "force-scalar"),
+        any(target_arch = "aarch64", target_arch = "x86_64")
+    ))]
     {
         let vector_end = counts.len() / 16 * 16;
         let pointer = counts.as_mut_ptr();
@@ -123,7 +154,12 @@ mod tests {
                 storage[offset..offset + len].fill(247);
                 add_u8_in_place(&mut storage[offset..offset + len], 8);
                 assert_eq!(&storage[offset..offset + len], vec![255; len]);
-                assert!(storage[..offset].iter().chain(&storage[offset + len..]).all(|&x| x == 99));
+                assert!(
+                    storage[..offset]
+                        .iter()
+                        .chain(&storage[offset + len..])
+                        .all(|&x| x == 99)
+                );
                 add_u8_in_place(&mut storage[offset..offset + len], 0);
                 assert_eq!(&storage[offset..offset + len], vec![255; len]);
             }
@@ -152,14 +188,28 @@ mod tests {
                 for offset in 0..16 {
                     let mut storage = vec![99; len + 16];
                     let values = &mut storage[offset..offset + len];
-                    for (i, count) in values.iter_mut().enumerate() { *count = i as u8; }
-                    let expected: Vec<u8> = values.iter().map(|&count| {
-                        ((u32::from(count) * 255 + denominator / 2)
-                            .checked_div(denominator).unwrap_or(0)) as u8
-                    }).collect();
+                    for (i, count) in values.iter_mut().enumerate() {
+                        *count = i as u8;
+                    }
+                    let expected: Vec<u8> = values
+                        .iter()
+                        .map(|&count| {
+                            ((u32::from(count) * 255 + denominator / 2)
+                                .checked_div(denominator)
+                                .unwrap_or(0)) as u8
+                        })
+                        .collect();
                     normalize_coverage_u8(values, grid);
-                    assert_eq!(values, expected, "grid {grid}, length {len}, offset {offset}");
-                    assert!(storage[..offset].iter().chain(&storage[offset + len..]).all(|&x| x == 99));
+                    assert_eq!(
+                        values, expected,
+                        "grid {grid}, length {len}, offset {offset}"
+                    );
+                    assert!(
+                        storage[..offset]
+                            .iter()
+                            .chain(&storage[offset + len..])
+                            .all(|&x| x == 99)
+                    );
                 }
             }
         }

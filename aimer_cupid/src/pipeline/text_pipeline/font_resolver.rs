@@ -7,12 +7,12 @@ use std::fmt::Write as FmtWrite;
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "linux")]
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
-#[cfg(not(target_arch = "wasm32"))]
-use std::sync::{LazyLock, RwLock};
 use std::sync::Arc;
 #[cfg(not(any(target_os = "ios", target_os = "macos")))]
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::{LazyLock, RwLock};
 
 use aimer_utils::info;
 
@@ -170,16 +170,13 @@ pub(crate) fn fallback_script_for_codepoint(codepoint: char) -> Option<FallbackS
         | 0xF900..=0xFAFF
         | 0xFF00..=0xFFEF
         | 0x20000..=0x3FFFF => Some(FallbackScript::Cjk),
-        0x1100..=0x11FF
-        | 0x3130..=0x318F
-        | 0xA960..=0xA97F
-        | 0xAC00..=0xD7FF => Some(FallbackScript::Hangul),
+        0x1100..=0x11FF | 0x3130..=0x318F | 0xA960..=0xA97F | 0xAC00..=0xD7FF => {
+            Some(FallbackScript::Hangul)
+        }
         0x0590..=0x05FF => Some(FallbackScript::Hebrew),
-        0x0600..=0x06FF
-        | 0x0750..=0x077F
-        | 0x08A0..=0x08FF
-        | 0xFB50..=0xFDFF
-        | 0xFE70..=0xFEFF => Some(FallbackScript::Arabic),
+        0x0600..=0x06FF | 0x0750..=0x077F | 0x08A0..=0x08FF | 0xFB50..=0xFDFF | 0xFE70..=0xFEFF => {
+            Some(FallbackScript::Arabic)
+        }
         0x0900..=0x097F => Some(FallbackScript::Devanagari),
         0x0B80..=0x0BFF => Some(FallbackScript::Tamil),
         0x0E00..=0x0E7F => Some(FallbackScript::Thai),
@@ -326,11 +323,8 @@ impl AsRef<[u8]> for FontData {
 pub(crate) const REGULAR_WEIGHT: u16 = 400;
 
 fn face_metadata(data: FontData, collection_index: u32) -> Option<bool> {
-    let face = crate::text_pipeline::aimer_font::SfntFace::from_font_data(
-        data,
-        collection_index,
-    )
-    .ok()?;
+    let face =
+        crate::text_pipeline::aimer_font::SfntFace::from_font_data(data, collection_index).ok()?;
     face.metrics().ok()?;
     face.table(*b"cmap")?;
     Some(face.has_color_tables() || face.has_apple_private_color_tables())
@@ -395,11 +389,7 @@ impl FontRecord {
     /// bytes remain file-backed rather than becoming part of the application
     /// binary or an eagerly copied heap allocation.
     #[allow(dead_code)]
-    pub(crate) fn from_file(
-        id: FontId,
-        path: PathBuf,
-        collection_index: u32,
-    ) -> Option<Self> {
+    pub(crate) fn from_file(id: FontId, path: PathBuf, collection_index: u32) -> Option<Self> {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let data = mapped_font_file(&path)?;
@@ -441,11 +431,8 @@ impl FontRecord {
     #[allow(dead_code)]
     pub(crate) fn ensure_face(&self) -> Option<()> {
         let data = self.data()?;
-        crate::text_pipeline::aimer_font::SfntFace::from_font_data(
-            data,
-            self.collection_index,
-        )
-        .ok()?;
+        crate::text_pipeline::aimer_font::SfntFace::from_font_data(data, self.collection_index)
+            .ok()?;
         Some(())
     }
 
@@ -469,23 +456,17 @@ impl FontRecord {
         let Some(data) = self.data() else {
             return false;
         };
-        crate::text_pipeline::aimer_font::SfntFace::from_font_data(
-            data,
-            self.collection_index,
-        )
-        .ok()
-        .is_some_and(|face| face.has_standard_outline())
+        crate::text_pipeline::aimer_font::SfntFace::from_font_data(data, self.collection_index)
+            .ok()
+            .is_some_and(|face| face.has_standard_outline())
     }
 
     /// Returns a face's design weight from its `OS/2` table.
     pub(crate) fn design_weight(&self) -> Option<u16> {
         let data = self.data()?;
-        crate::text_pipeline::aimer_font::SfntFace::from_bytes(
-            data.as_ref(),
-            self.collection_index,
-        )
-        .ok()?
-        .design_weight()
+        crate::text_pipeline::aimer_font::SfntFace::from_bytes(data.as_ref(), self.collection_index)
+            .ok()?
+            .design_weight()
     }
 
     /// Returns a glyph's scaled horizontal advance from the active reader.
@@ -500,11 +481,9 @@ impl FontRecord {
             return None;
         }
         let data = self.data()?;
-        let metrics = crate::text_pipeline::aimer_font::metrics_from_font_data(
-            data,
-            self.collection_index,
-        )
-        .ok()?;
+        let metrics =
+            crate::text_pipeline::aimer_font::metrics_from_font_data(data, self.collection_index)
+                .ok()?;
         let scale = font_size / f32::from(metrics.units_per_em);
         Some((
             f32::from(metrics.ascender) * scale,
@@ -515,13 +494,10 @@ impl FontRecord {
 
     pub(crate) fn glyph_index(&self, codepoint: char) -> Option<u16> {
         let data = self.data()?;
-        crate::text_pipeline::aimer_font::SfntFace::from_font_data(
-            data,
-            self.collection_index,
-        )
-        .ok()?
-        .glyph_index(codepoint as u32)
-        .ok()?
+        crate::text_pipeline::aimer_font::SfntFace::from_font_data(data, self.collection_index)
+            .ok()?
+            .glyph_index(codepoint as u32)
+            .ok()?
     }
 }
 
@@ -534,7 +510,8 @@ pub fn advance_width_from_face(
     if !font_size.is_finite() || font_size <= 0.0 {
         return None;
     }
-    let face = crate::text_pipeline::aimer_font::SfntFace::from_bytes(bytes, collection_index).ok()?;
+    let face =
+        crate::text_pipeline::aimer_font::SfntFace::from_bytes(bytes, collection_index).ok()?;
     let metrics = face.metrics().ok()?;
     let advance = face.glyph_advance_with_metrics(glyph_id, metrics).ok()??;
     let scale = font_size / f32::from(metrics.units_per_em);
@@ -615,9 +592,7 @@ static PROBE_GROUPS: &[ProbeGroup] = &[
 /// declare a cmap entry for a codepoint but store the glyph as a composite with
 /// no direct outline (e.g., some older pan-Unicode fonts for certain CJK
 /// ranges).
-#[cfg(all(
-    not(any(target_os = "ios", target_os = "macos"))
-))]
+#[cfg(all(not(any(target_os = "ios", target_os = "macos"))))]
 fn face_matches_probes(
     face: &crate::text_pipeline::aimer_font::SfntFace<'_>,
     probes: &[char],
@@ -647,10 +622,7 @@ fn face_matches_probes(
         let Some(glyph_id) = face.glyph_index(codepoint as u32).ok().flatten() else {
             return false;
         };
-        face.outline(glyph_id)
-            .ok()
-            .flatten()
-            .is_some()
+        face.outline(glyph_id).ok().flatten().is_some()
             || face.cff_outline(glyph_id).ok().flatten().is_some()
     });
     if !has_usable_outline {
@@ -706,9 +678,7 @@ fn retain_probed_font_file(path: &Path, mapping: Arc<memmap2::Mmap>) {
 /// `lookup` is called at most once per probe and stops at the first hit.
 #[cfg_attr(any(target_os = "ios", target_os = "macos"), allow(dead_code))]
 fn any_probe_is_mapped(mut lookup: impl FnMut(char) -> Option<u32>, probes: &[char]) -> bool {
-    probes
-        .iter()
-        .any(|&codepoint| lookup(codepoint).is_some())
+    probes.iter().any(|&codepoint| lookup(codepoint).is_some())
 }
 
 /// Claims the highest-priority group slot that is still open and whose probes
@@ -772,9 +742,7 @@ fn build_fallback_chain_for_script(script: FallbackScript) -> Vec<FontRecord> {
 #[cfg(target_os = "windows")]
 fn windows_fallback_font_filename(script: FallbackScript) -> Option<&'static str> {
     match script {
-        FallbackScript::Thai | FallbackScript::Khmer | FallbackScript::Lao => {
-            Some("LeelawUI.ttf")
-        }
+        FallbackScript::Thai | FallbackScript::Khmer | FallbackScript::Lao => Some("LeelawUI.ttf"),
         FallbackScript::Myanmar => Some("mmrtext.ttf"),
         FallbackScript::Devanagari
         | FallbackScript::Tamil
@@ -823,15 +791,12 @@ fn prioritized_fallback_paths<'a>(
     ordered
 }
 
-#[cfg(all(
-    not(any(target_os = "ios", target_os = "macos"))
-))]
+#[cfg(all(not(any(target_os = "ios", target_os = "macos"))))]
 fn build_fallback_chain_for_scripts(
     scripts: &[FallbackScript],
     font_paths: &[PathBuf],
 ) -> Vec<FontRecord> {
-    let mut slots: Vec<Option<FontRecord>> =
-        (0..scripts.len()).map(|_| None).collect();
+    let mut slots: Vec<Option<FontRecord>> = (0..scripts.len()).map(|_| None).collect();
     let mut open = vec![true; scripts.len()];
     let mut open_count = scripts.len();
     if open_count == 0 {
@@ -918,10 +883,9 @@ fn build_fallback_chain_for_scripts(
         };
         let data = &mapping[..];
         for collection_index in 0..64 {
-            let Ok(face) = crate::text_pipeline::aimer_font::SfntFace::from_bytes(
-                data,
-                collection_index,
-            ) else {
+            let Ok(face) =
+                crate::text_pipeline::aimer_font::SfntFace::from_bytes(data, collection_index)
+            else {
                 break;
             };
 
@@ -958,15 +922,10 @@ fn build_fallback_chain_for_scripts(
         }
     }
 
-    slots
-        .into_iter()
-        .flatten()
-        .collect()
+    slots.into_iter().flatten().collect()
 }
 
-#[cfg(all(
-    not(any(target_os = "ios", target_os = "macos"))
-))]
+#[cfg(all(not(any(target_os = "ios", target_os = "macos"))))]
 fn system_font_paths() -> Vec<PathBuf> {
     let mut roots = vec![
         PathBuf::from("/usr/share/fonts"),
@@ -1001,7 +960,10 @@ fn system_font_paths() -> Vec<PathBuf> {
             let Some(extension) = path.extension().and_then(|extension| extension.to_str()) else {
                 continue;
             };
-            if matches!(extension.to_ascii_lowercase().as_str(), "ttf" | "otf" | "ttc" | "otc") {
+            if matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "ttf" | "otf" | "ttc" | "otc"
+            ) {
                 paths.push(path);
             }
         }
@@ -1062,8 +1024,7 @@ fn fontconfig_font_record(
         if index != 0 {
             pattern.push(',');
         }
-        write!(&mut pattern, "{:x}", codepoint as u32)
-            .expect("writing to a String cannot fail");
+        write!(&mut pattern, "{:x}", codepoint as u32).expect("writing to a String cannot fail");
     }
 
     // Use the host's Fontconfig ordering when available. Calling through argv
@@ -1093,10 +1054,9 @@ fn fontconfig_font_record(
         let Some(mapping) = probe_font_file(&path) else {
             continue;
         };
-        let Ok(face) = crate::text_pipeline::aimer_font::SfntFace::from_bytes(
-            &mapping,
-            collection_index,
-        ) else {
+        let Ok(face) =
+            crate::text_pipeline::aimer_font::SfntFace::from_bytes(&mapping, collection_index)
+        else {
             continue;
         };
         let has_color_tables = face.has_color_tables() || face.has_apple_private_color_tables();
@@ -1162,10 +1122,9 @@ fn system_font_record_from_paths(
         };
         let data = &mapping[..];
         for collection_index in 0..64 {
-            let Ok(face) = crate::text_pipeline::aimer_font::SfntFace::from_bytes(
-                data,
-                collection_index,
-            ) else {
+            let Ok(face) =
+                crate::text_pipeline::aimer_font::SfntFace::from_bytes(data, collection_index)
+            else {
                 break;
             };
             let is_color = face.has_color_tables() || face.has_apple_private_color_tables();
@@ -1256,13 +1215,7 @@ pub(crate) fn system_monospace_font(id: FontId) -> Option<FontRecord> {
         MONOSPACE
             .get_or_init(|| {
                 #[cfg(target_os = "linux")]
-                match fontconfig_font_record(
-                    id,
-                    "monospace",
-                    &['M', 'i', '0'],
-                    None,
-                    false,
-                ) {
+                match fontconfig_font_record(id, "monospace", &['M', 'i', '0'], None, false) {
                     Ok(record) => return record,
                     Err(_) => {}
                 }
@@ -1279,9 +1232,8 @@ pub(crate) fn system_monospace_font(id: FontId) -> Option<FontRecord> {
 }
 
 #[cfg(not(any(target_os = "ios", target_os = "macos")))]
-static SHARED_FALLBACKS_BY_SCRIPT: OnceLock<
-    [OnceLock<Vec<FontRecord>>; FallbackScript::COUNT],
-> = OnceLock::new();
+static SHARED_FALLBACKS_BY_SCRIPT: OnceLock<[OnceLock<Vec<FontRecord>>; FallbackScript::COUNT]> =
+    OnceLock::new();
 
 #[cfg(not(any(target_os = "ios", target_os = "macos")))]
 fn shared_fallback_lanes() -> &'static [OnceLock<Vec<FontRecord>>; FallbackScript::COUNT] {
@@ -1314,9 +1266,8 @@ pub fn shared_fallback_chain() -> Vec<FontRecord> {
             {
                 let paths = system_font_paths();
                 let records = build_fallback_chain_for_scripts(&missing_scripts, &paths);
-                let mut lane_records: Vec<Vec<FontRecord>> = (0..missing_scripts.len())
-                    .map(|_| Vec::new())
-                    .collect();
+                let mut lane_records: Vec<Vec<FontRecord>> =
+                    (0..missing_scripts.len()).map(|_| Vec::new()).collect();
                 for record in records {
                     if let Some(index) = missing_scripts
                         .iter()
@@ -1427,9 +1378,9 @@ pub fn warm_fallbacks_in_background() {
 mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     use std::path::PathBuf;
-    use std::sync::atomic::{AtomicBool, Ordering};
     #[cfg(not(target_arch = "wasm32"))]
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     use super::{
         FallbackScript, any_probe_is_mapped, claim_warm_up, fallback_script_for_codepoint,
@@ -1437,9 +1388,7 @@ mod tests {
     };
 
     #[cfg(not(target_arch = "wasm32"))]
-    use super::{
-        FontData, FontRecord, cached_font_file, mapped_font_file, publish_font_file,
-    };
+    use super::{FontData, FontRecord, cached_font_file, mapped_font_file, publish_font_file};
 
     const TEST_FONT: &[u8] = include_bytes!("../../../fonts/JetBrainsMono-Regular.ttf");
 
@@ -1468,7 +1417,10 @@ mod tests {
     #[test]
     fn fallback_lane_ids_are_stable_and_disjoint() {
         for (index, script) in FallbackScript::ALL.iter().copied().enumerate() {
-            assert_eq!(script.id_base(), super::FALLBACK_CHAIN_ID_BASE + index as u32 * 0x1000);
+            assert_eq!(
+                script.id_base(),
+                super::FALLBACK_CHAIN_ID_BASE + index as u32 * 0x1000
+            );
             assert_eq!(
                 super::fallback_script_for_font_id(script.id_base()),
                 Some(script)
@@ -1485,16 +1437,24 @@ mod tests {
         let record = FontRecord::from_bytes(7, TEST_FONT.to_vec())
             .expect("the checked-in face should pass the Aimer validator");
 
-        assert!(record.glyph_index('A').is_some_and(|glyph_id| glyph_id != 0));
+        assert!(
+            record
+                .glyph_index('A')
+                .is_some_and(|glyph_id| glyph_id != 0)
+        );
         assert_eq!(record.design_weight(), Some(400));
         assert!(record.has_standard_outline());
         assert!(!record.is_color);
-        assert!(record
-            .advance_width_for_glyph(record.glyph_index('A').unwrap(), 16.0)
-            .is_some_and(|advance| advance > 0.0));
-        assert!(record
-            .line_metrics(16.0)
-            .is_some_and(|(ascent, descent, _)| ascent > 0.0 && descent < 0.0));
+        assert!(
+            record
+                .advance_width_for_glyph(record.glyph_index('A').unwrap(), 16.0)
+                .is_some_and(|advance| advance > 0.0)
+        );
+        assert!(
+            record
+                .line_metrics(16.0)
+                .is_some_and(|(ascent, descent, _)| ascent > 0.0 && descent < 0.0)
+        );
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -1516,7 +1476,8 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn file_backed_font_data_maps_each_file_once_per_process() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fonts/JetBrainsMono-Regular.ttf");
+        let path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fonts/JetBrainsMono-Regular.ttf");
         let first = FontRecord {
             id: 1,
             bytes: None,
@@ -1775,5 +1736,4 @@ mod tests {
             assert_eq!(batched_lane, separate_lane, "lane {script:?} changed");
         }
     }
-
 }

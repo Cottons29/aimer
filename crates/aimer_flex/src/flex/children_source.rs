@@ -300,11 +300,7 @@ impl<T, F> WindowedChildren<T, F> {
     /// Nothing is materialized yet: the first [`ChildrenSource::window`] call
     /// decides what exists.
     #[inline]
-    pub(crate) fn new(
-        items: Rc<Vec<T>>,
-        builder: Rc<F>,
-        keyed: Option<KeyMapper<T>>,
-    ) -> Self {
+    pub(crate) fn new(items: Rc<Vec<T>>, builder: Rc<F>, keyed: Option<KeyMapper<T>>) -> Self {
         Self {
             items,
             builder,

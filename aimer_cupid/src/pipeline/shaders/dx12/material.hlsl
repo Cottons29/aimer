@@ -391,7 +391,37 @@ float3 lens_bevel_normal(float2 point, float2 half_size, float4 radii, float dis
     return normalize(float3(outward * slope, 1.0));
 }
 
+float4 light_edge(float2 pixel) {
+    float2 half_size = material.bounds.zw * 0.5;
+    float2 point = pixel - material.bounds.xy - half_size;
+    float radius = min(selected_radius(point, material.radii), min(half_size.x, half_size.y));
+    float2 q = abs(point) - half_size + float2(radius, radius);
+    float2 outer = max(q, float2(0.0, 0.0));
+    // Smooth only the lighting normal across straight/curved joins. Keep
+    // the exact SDF for coverage; limiting the blend to flat spans preserves circles.
+    float2 blend = min(float2(material.detail.w, material.detail.w), max(half_size - float2(radius, radius), float2(0.0, 0.0)));
+    float2 join = max(blend - abs(q), float2(0.0, 0.0));
+    float2 lighting_outer = outer + join * join / max(4.0 * blend, float2(0.0001, 0.0001));
+    float2 outward = q.x > q.y ? float2(1.0, 0.0) : float2(0.0, 1.0);
+    if (dot(lighting_outer, lighting_outer) > 0.0) outward = normalize(lighting_outer);
+    outward *= sign(point);
+    float distance = length(outer) + min(max(q.x, q.y), 0.0) - radius;
+    // A cubic inward falloff has no solid band or abrupt inner boundary.
+    // Grazing light narrows the bevel; the opposite side catches a weaker reflection.
+    float alignment = dot(outward, material.effect.zw);
+    float width = max(material.detail.w * (0.35 + 0.65 * abs(alignment)), 0.0001);
+    float remaining = 1.0 - clamp(max(-distance, 0.0) / width, 0.0, 1.0);
+    float coverage = sdf_alpha(distance) * remaining * remaining * remaining;
+    float facing = pow(abs(alignment), 2.4) * (alignment >= 0.0 ? 1.0 : material.light.w);
+    float alpha = clamp(coverage * facing * material.detail.x * material.border_color.a
+        * material.effect.y * clip_alpha(pixel), 0.0, 1.0);
+    float3 rgb = material.border_color.rgb;
+    float3 converted = material.viewport.z > 0.5 ? srgb_rgb_to_linear(rgb) : rgb;
+    return float4(converted * alpha, alpha);
+}
+
 float4 fs_main(MaterialVaryings input) : SV_Target0 {
+    if (material.effect.x > 3.5) return light_edge(input.pixel_pos);
     if (material.effect.x > 1.5 && material.viewport.w < 0.5) {
         discard;
     }

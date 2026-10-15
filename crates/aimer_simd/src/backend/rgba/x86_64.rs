@@ -4,9 +4,15 @@ use core::arch::asm;
 #[inline]
 pub(crate) fn composite(bitmap: &mut [u8], coverage: &[u8], color: [u8; 4]) -> usize {
     let end = (bitmap.len() / 4).min(coverage.len()) / 4 * 4;
-    if end == 0 { return 0; }
-    let color = [f32::from(color[0]), f32::from(color[1]),
-        f32::from(color[2]), f32::from(color[3])];
+    if end == 0 {
+        return 0;
+    }
+    let color = [
+        f32::from(color[0]),
+        f32::from(color[1]),
+        f32::from(color[2]),
+        f32::from(color[3]),
+    ];
     let constants = [255.0_f32, 127.0, 1.0, 0.0];
     let mut index = 0;
     while index < end {

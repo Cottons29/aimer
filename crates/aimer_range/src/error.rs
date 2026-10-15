@@ -85,7 +85,10 @@ impl fmt::Display for RangeError {
                 write!(formatter, "minimum {min} is greater than maximum {max}")
             }
             Self::ReversedValues { lower, upper } => {
-                write!(formatter, "lower value {lower} is greater than upper value {upper}")
+                write!(
+                    formatter,
+                    "lower value {lower} is greater than upper value {upper}"
+                )
             }
             Self::NegativeTrackLength { length } => {
                 write!(formatter, "track length must not be negative, got {length}")

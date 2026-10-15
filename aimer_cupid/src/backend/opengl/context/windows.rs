@@ -3,8 +3,9 @@ use std::mem::size_of;
 use std::ptr::null_mut;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use raw_window_handle::{RawDisplayHandle, RawWindowHandle, Win32WindowHandle, WindowsDisplayHandle};
-
+use raw_window_handle::{
+    RawDisplayHandle, RawWindowHandle, Win32WindowHandle, WindowsDisplayHandle,
+};
 
 type Hwnd = *mut c_void;
 type Hdc = *mut c_void;

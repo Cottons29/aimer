@@ -627,7 +627,9 @@ fn bench_decorated_tree() {
 }
 
 fn bench_scalar() {
-    header(&format!("scalar widget: no heap field, {LEAVES} conversions"));
+    header(&format!(
+        "scalar widget: no heap field, {LEAVES} conversions"
+    ));
 
     duel(
         LEAVES,

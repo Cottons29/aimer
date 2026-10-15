@@ -52,14 +52,26 @@ unsafe extern "C" {
 
 type EglGetDisplay = unsafe extern "C" fn(*mut c_void) -> EglDisplay;
 type EglInitialize = unsafe extern "C" fn(EglDisplay, *mut EglInt, *mut EglInt) -> EglBoolean;
-type EglChooseConfig = unsafe extern "C" fn(EglDisplay, *const EglInt, *mut EglConfig, EglInt, *mut EglInt) -> EglBoolean;
+type EglChooseConfig = unsafe extern "C" fn(
+    EglDisplay,
+    *const EglInt,
+    *mut EglConfig,
+    EglInt,
+    *mut EglInt,
+) -> EglBoolean;
 type EglBindApi = unsafe extern "C" fn(EglEnum) -> EglBoolean;
-type EglCreateContext = unsafe extern "C" fn(EglDisplay, EglConfig, EglContext, *const EglInt) -> EglContext;
-type EglCreateWindowSurface = unsafe extern "C" fn(EglDisplay, EglConfig, *mut c_void, *const EglInt) -> EglSurface;
-type EglCreatePbufferSurface = unsafe extern "C" fn(EglDisplay, EglConfig, *const EglInt) -> EglSurface;
-type EglCreatePlatformWindowSurface = unsafe extern "C" fn(EglDisplay, EglConfig, *mut c_void, *const EglInt) -> EglSurface;
-type EglGetPlatformDisplay = unsafe extern "C" fn(EglEnum, *mut c_void, *const EglInt) -> EglDisplay;
-type EglMakeCurrent = unsafe extern "C" fn(EglDisplay, EglSurface, EglSurface, EglContext) -> EglBoolean;
+type EglCreateContext =
+    unsafe extern "C" fn(EglDisplay, EglConfig, EglContext, *const EglInt) -> EglContext;
+type EglCreateWindowSurface =
+    unsafe extern "C" fn(EglDisplay, EglConfig, *mut c_void, *const EglInt) -> EglSurface;
+type EglCreatePbufferSurface =
+    unsafe extern "C" fn(EglDisplay, EglConfig, *const EglInt) -> EglSurface;
+type EglCreatePlatformWindowSurface =
+    unsafe extern "C" fn(EglDisplay, EglConfig, *mut c_void, *const EglInt) -> EglSurface;
+type EglGetPlatformDisplay =
+    unsafe extern "C" fn(EglEnum, *mut c_void, *const EglInt) -> EglDisplay;
+type EglMakeCurrent =
+    unsafe extern "C" fn(EglDisplay, EglSurface, EglSurface, EglContext) -> EglBoolean;
 type EglSwapBuffers = unsafe extern "C" fn(EglDisplay, EglSurface) -> EglBoolean;
 type EglSwapInterval = unsafe extern "C" fn(EglDisplay, EglInt) -> EglBoolean;
 type EglDestroySurface = unsafe extern "C" fn(EglDisplay, EglSurface) -> EglBoolean;
@@ -117,7 +129,11 @@ impl EglFns {
                 let address = unsafe { dlsym(library, cstr!($name).as_ptr()) };
                 if address.is_null() {
                     unsafe { dlclose(library) };
-                    return Err(format!("{} is missing {}", library_name.to_string_lossy(), $name));
+                    return Err(format!(
+                        "{} is missing {}",
+                        library_name.to_string_lossy(),
+                        $name
+                    ));
                 }
                 // SAFETY: the EGL implementation exports this function with the declared ABI.
                 unsafe { std::mem::transmute::<*mut c_void, $ty>(address) }
@@ -151,7 +167,10 @@ impl EglFns {
             get_error: symbol!("eglGetError", EglGetError),
             get_proc_address: symbol!("eglGetProcAddress", EglGetProcAddress),
             get_platform_display: optional_symbol!("eglGetPlatformDisplay", EglGetPlatformDisplay),
-            create_platform_window_surface: optional_symbol!("eglCreatePlatformWindowSurface", EglCreatePlatformWindowSurface),
+            create_platform_window_surface: optional_symbol!(
+                "eglCreatePlatformWindowSurface",
+                EglCreatePlatformWindowSurface
+            ),
         })
     }
 
@@ -201,7 +220,12 @@ impl WaylandEgl {
             unsafe { dlclose(library) };
             return Err("wl_egl_window_create failed".to_owned());
         }
-        Ok(Self { library, window, resize, destroy })
+        Ok(Self {
+            library,
+            window,
+            resize,
+            destroy,
+        })
     }
 }
 
@@ -239,12 +263,18 @@ impl Context {
             display = unsafe { (egl.get_display)(EGL_DEFAULT_DISPLAY) };
         }
         if display.is_null() {
-            return Err(format!("EGL could not open a headless display (error {:#x})", unsafe { (egl.get_error)() }));
+            return Err(format!(
+                "EGL could not open a headless display (error {:#x})",
+                unsafe { (egl.get_error)() }
+            ));
         }
         let mut egl_major = 0;
         let mut egl_minor = 0;
         if unsafe { (egl.initialize)(display, &mut egl_major, &mut egl_minor) } == EGL_FALSE {
-            return Err(format!("eglInitialize failed for the headless display (error {:#x})", unsafe { (egl.get_error)() }));
+            return Err(format!(
+                "eglInitialize failed for the headless display (error {:#x})",
+                unsafe { (egl.get_error)() }
+            ));
         }
         #[cfg(target_os = "android")]
         let gl_api = EGL_OPENGL_ES_API;
@@ -252,34 +282,59 @@ impl Context {
         let gl_api = EGL_OPENGL_API;
         if unsafe { (egl.bind_api)(gl_api) } == EGL_FALSE {
             unsafe { (egl.terminate)(display) };
-            return Err(format!("eglBindAPI(OpenGL) failed (error {:#x})", unsafe { (egl.get_error)() }));
+            return Err(format!("eglBindAPI(OpenGL) failed (error {:#x})", unsafe {
+                (egl.get_error)()
+            }));
         }
         #[cfg(target_os = "android")]
         let renderable_type = EGL_OPENGL_ES3_BIT;
         #[cfg(not(target_os = "android"))]
         let renderable_type = EGL_OPENGL_BIT;
         let mut attributes = vec![
-            EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
-            EGL_RENDERABLE_TYPE, renderable_type,
-            EGL_RED_SIZE, 8,
-            EGL_GREEN_SIZE, 8,
-            EGL_BLUE_SIZE, 8,
-            EGL_ALPHA_SIZE, 8,
+            EGL_SURFACE_TYPE,
+            EGL_PBUFFER_BIT,
+            EGL_RENDERABLE_TYPE,
+            renderable_type,
+            EGL_RED_SIZE,
+            8,
+            EGL_GREEN_SIZE,
+            8,
+            EGL_BLUE_SIZE,
+            8,
+            EGL_ALPHA_SIZE,
+            8,
         ];
         #[cfg(not(target_os = "android"))]
         attributes.extend([EGL_DEPTH_SIZE, 24, EGL_STENCIL_SIZE, 8]);
         attributes.push(EGL_NONE);
         let mut config = null_mut();
         let mut config_count = 0;
-        if unsafe { (egl.choose_config)(display, attributes.as_ptr(), &mut config, 1, &mut config_count) } == EGL_FALSE || config_count == 0 {
+        if unsafe {
+            (egl.choose_config)(
+                display,
+                attributes.as_ptr(),
+                &mut config,
+                1,
+                &mut config_count,
+            )
+        } == EGL_FALSE
+            || config_count == 0
+        {
             unsafe { (egl.terminate)(display) };
-            return Err(format!("EGL found no headless OpenGL pbuffer config (error {:#x})", unsafe { (egl.get_error)() }));
+            return Err(format!(
+                "EGL found no headless OpenGL pbuffer config (error {:#x})",
+                unsafe { (egl.get_error)() }
+            ));
         }
         let pbuffer_attributes = [EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE];
-        let surface = unsafe { (egl.create_pbuffer_surface)(display, config, pbuffer_attributes.as_ptr()) };
+        let surface =
+            unsafe { (egl.create_pbuffer_surface)(display, config, pbuffer_attributes.as_ptr()) };
         if surface.is_null() {
             unsafe { (egl.terminate)(display) };
-            return Err(format!("eglCreatePbufferSurface failed (error {:#x})", unsafe { (egl.get_error)() }));
+            return Err(format!(
+                "eglCreatePbufferSurface failed (error {:#x})",
+                unsafe { (egl.get_error)() }
+            ));
         }
         #[cfg(target_os = "android")]
         let context_attributes = [EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE];
@@ -293,13 +348,18 @@ impl Context {
             EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT_KHR,
             EGL_NONE,
         ];
-        let context = unsafe { (egl.create_context)(display, config, null_mut(), context_attributes.as_ptr()) };
+        let context = unsafe {
+            (egl.create_context)(display, config, null_mut(), context_attributes.as_ptr())
+        };
         if context.is_null() {
             unsafe {
                 (egl.destroy_surface)(display, surface);
                 (egl.terminate)(display);
             }
-            return Err(format!("EGL could not create a headless OpenGL 3.3 context (error {:#x})", unsafe { (egl.get_error)() }));
+            return Err(format!(
+                "EGL could not create a headless OpenGL 3.3 context (error {:#x})",
+                unsafe { (egl.get_error)() }
+            ));
         }
         if unsafe { (egl.make_current)(display, surface, surface, context) } == EGL_FALSE {
             unsafe {
@@ -307,14 +367,24 @@ impl Context {
                 (egl.destroy_surface)(display, surface);
                 (egl.terminate)(display);
             }
-            return Err(format!("eglMakeCurrent failed for the headless context (error {:#x})", unsafe { (egl.get_error)() }));
+            return Err(format!(
+                "eglMakeCurrent failed for the headless context (error {:#x})",
+                unsafe { (egl.get_error)() }
+            ));
         }
         #[cfg(target_os = "android")]
         let gl_library_name = c"libGLESv3.so";
         #[cfg(not(target_os = "android"))]
         let gl_library_name = c"libGL.so.1";
         let gl_library = unsafe { dlopen(gl_library_name.as_ptr(), RTLD_NOW | RTLD_LOCAL) };
-        Ok(Self { egl, display, surface, context, wayland: None, _gl_library: gl_library })
+        Ok(Self {
+            egl,
+            display,
+            surface,
+            context,
+            wayland: None,
+            _gl_library: gl_library,
+        })
     }
 
     pub fn new(
@@ -332,19 +402,27 @@ impl Context {
             (!address.is_null()).then(|| unsafe { std::mem::transmute(address) })
         }) {
             unsafe { get_platform_display(platform, native_display, null()) }
-        } else if matches!(display_handle, RawDisplayHandle::Xlib(_) | RawDisplayHandle::Xcb(_)) {
+        } else if matches!(
+            display_handle,
+            RawDisplayHandle::Xlib(_) | RawDisplayHandle::Xcb(_)
+        ) {
             unsafe { (egl.get_display)(native_display) }
         } else {
             null_mut()
         };
         if display.is_null() {
-            return Err(format!("EGL could not open the native display (error {:#x})", unsafe { (egl.get_error)() }));
+            return Err(format!(
+                "EGL could not open the native display (error {:#x})",
+                unsafe { (egl.get_error)() }
+            ));
         }
 
         let mut egl_major = 0;
         let mut egl_minor = 0;
         if unsafe { (egl.initialize)(display, &mut egl_major, &mut egl_minor) } == EGL_FALSE {
-            return Err(format!("eglInitialize failed (error {:#x})", unsafe { (egl.get_error)() }));
+            return Err(format!("eglInitialize failed (error {:#x})", unsafe {
+                (egl.get_error)()
+            }));
         }
         #[cfg(target_os = "android")]
         let gl_api = EGL_OPENGL_ES_API;
@@ -352,7 +430,9 @@ impl Context {
         let gl_api = EGL_OPENGL_API;
         if unsafe { (egl.bind_api)(gl_api) } == EGL_FALSE {
             unsafe { (egl.terminate)(display) };
-            return Err(format!("eglBindAPI(OpenGL) failed (error {:#x})", unsafe { (egl.get_error)() }));
+            return Err(format!("eglBindAPI(OpenGL) failed (error {:#x})", unsafe {
+                (egl.get_error)()
+            }));
         }
 
         #[cfg(target_os = "android")]
@@ -381,9 +461,22 @@ impl Context {
         config_attributes.push(EGL_NONE);
         let mut config = null_mut();
         let mut config_count = 0;
-        if unsafe { (egl.choose_config)(display, config_attributes.as_ptr(), &mut config, 1, &mut config_count) } == EGL_FALSE || config_count == 0 {
+        if unsafe {
+            (egl.choose_config)(
+                display,
+                config_attributes.as_ptr(),
+                &mut config,
+                1,
+                &mut config_count,
+            )
+        } == EGL_FALSE
+            || config_count == 0
+        {
             unsafe { (egl.terminate)(display) };
-            return Err(format!("eglChooseConfig found no desktop OpenGL window config (error {:#x})", unsafe { (egl.get_error)() }));
+            return Err(format!(
+                "eglChooseConfig found no desktop OpenGL window config (error {:#x})",
+                unsafe { (egl.get_error)() }
+            ));
         }
 
         let wayland = if let Some(surface) = wayland_surface {
@@ -397,7 +490,9 @@ impl Context {
         } else {
             None
         };
-        let native_window = wayland.as_ref().map_or(native_window, |wayland| wayland.window);
+        let native_window = wayland
+            .as_ref()
+            .map_or(native_window, |wayland| wayland.window);
         let create_window_surface = egl.create_platform_window_surface.or_else(|| {
             let address = unsafe { egl.proc(c"eglCreatePlatformWindowSurfaceEXT") };
             (!address.is_null()).then(|| unsafe { std::mem::transmute(address) })
@@ -409,7 +504,10 @@ impl Context {
         };
         if surface.is_null() {
             unsafe { (egl.terminate)(display) };
-            return Err(format!("EGL could not create a window surface (error {:#x})", unsafe { (egl.get_error)() }));
+            return Err(format!(
+                "EGL could not create a window surface (error {:#x})",
+                unsafe { (egl.get_error)() }
+            ));
         }
 
         #[cfg(target_os = "android")]
@@ -424,13 +522,18 @@ impl Context {
             EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT_KHR,
             EGL_NONE,
         ];
-        let context = unsafe { (egl.create_context)(display, config, null_mut(), context_attributes.as_ptr()) };
+        let context = unsafe {
+            (egl.create_context)(display, config, null_mut(), context_attributes.as_ptr())
+        };
         if context.is_null() {
             unsafe {
                 (egl.destroy_surface)(display, surface);
                 (egl.terminate)(display);
             }
-            return Err(format!("EGL could not create an OpenGL 3.3 Core context (error {:#x})", unsafe { (egl.get_error)() }));
+            return Err(format!(
+                "EGL could not create an OpenGL 3.3 Core context (error {:#x})",
+                unsafe { (egl.get_error)() }
+            ));
         }
         if unsafe { (egl.make_current)(display, surface, surface, context) } == EGL_FALSE {
             unsafe {
@@ -438,7 +541,9 @@ impl Context {
                 (egl.destroy_surface)(display, surface);
                 (egl.terminate)(display);
             }
-            return Err(format!("eglMakeCurrent failed (error {:#x})", unsafe { (egl.get_error)() }));
+            return Err(format!("eglMakeCurrent failed (error {:#x})", unsafe {
+                (egl.get_error)()
+            }));
         }
         unsafe { (egl.swap_interval)(display, 1) };
 
@@ -458,22 +563,37 @@ impl Context {
     }
 
     pub fn make_current(&self) -> Result<(), String> {
-        if unsafe { (self.egl.make_current)(self.display, self.surface, self.surface, self.context) } == EGL_FALSE {
-            return Err(format!("eglMakeCurrent failed (error {:#x})", unsafe { (self.egl.get_error)() }));
+        if unsafe {
+            (self.egl.make_current)(self.display, self.surface, self.surface, self.context)
+        } == EGL_FALSE
+        {
+            return Err(format!("eglMakeCurrent failed (error {:#x})", unsafe {
+                (self.egl.get_error)()
+            }));
         }
         Ok(())
     }
 
     pub fn swap_buffers(&self) -> Result<(), String> {
         if unsafe { (self.egl.swap_buffers)(self.display, self.surface) } == EGL_FALSE {
-            return Err(format!("eglSwapBuffers failed (error {:#x})", unsafe { (self.egl.get_error)() }));
+            return Err(format!("eglSwapBuffers failed (error {:#x})", unsafe {
+                (self.egl.get_error)()
+            }));
         }
         Ok(())
     }
 
     pub fn resize(&self, size: (u32, u32)) -> Result<(), String> {
         if let Some(wayland) = &self.wayland {
-            unsafe { (wayland.resize)(wayland.window, size.0.max(1) as i32, size.1.max(1) as i32, 0, 0) };
+            unsafe {
+                (wayland.resize)(
+                    wayland.window,
+                    size.0.max(1) as i32,
+                    size.1.max(1) as i32,
+                    0,
+                    0,
+                )
+            };
         }
         self.make_current()
     }
@@ -507,18 +627,31 @@ impl Drop for Context {
 fn native_handles(
     display: RawDisplayHandle,
     window: RawWindowHandle,
-) -> Result<(EglEnum, *mut c_void, *mut c_void, Option<u32>, Option<*mut c_void>), String> {
+) -> Result<
+    (
+        EglEnum,
+        *mut c_void,
+        *mut c_void,
+        Option<u32>,
+        Option<*mut c_void>,
+    ),
+    String,
+> {
     match (display, window) {
         (RawDisplayHandle::Xlib(display), RawWindowHandle::Xlib(window)) => Ok((
             EGL_PLATFORM_X11_EXT,
-            display.display.map_or(EGL_DEFAULT_DISPLAY, |display| display.as_ptr()),
+            display
+                .display
+                .map_or(EGL_DEFAULT_DISPLAY, |display| display.as_ptr()),
             window.window as usize as *mut c_void,
             (window.visual_id != 0).then_some(window.visual_id as u32),
             None,
         )),
         (RawDisplayHandle::Xcb(display), RawWindowHandle::Xcb(window)) => Ok((
             EGL_PLATFORM_XCB_EXT,
-            display.connection.map_or(EGL_DEFAULT_DISPLAY, |connection| connection.as_ptr()),
+            display
+                .connection
+                .map_or(EGL_DEFAULT_DISPLAY, |connection| connection.as_ptr()),
             window.window.get() as usize as *mut c_void,
             window.visual_id.map(|id| id.get()),
             None,

@@ -46,9 +46,15 @@ impl<E: Element, D: Decoration> RawContainer<E, D> {
 
     #[inline]
     pub(super) fn decoration_insets(&self, width: f32, height: f32, scale: f32) -> [f32; 4] {
-        self.decoration().content_insets(
-            ResolvedSize { width: width / scale, height: height / scale }, scale,
-        ).map(|inset| finite_nonnegative(inset) * scale)
+        self.decoration()
+            .content_insets(
+                ResolvedSize {
+                    width: width / scale,
+                    height: height / scale,
+                },
+                scale,
+            )
+            .map(|inset| finite_nonnegative(inset) * scale)
     }
 
     #[inline]
@@ -60,9 +66,9 @@ impl<E: Element, D: Decoration> RawContainer<E, D> {
 
     #[inline]
     pub(super) fn retained_decoration_needs_recording(&self) -> bool {
-        self.decoration_source.as_ref().is_some_and(|state| {
-            state.paint_revision.get() != Some(state.source.revision())
-        })
+        self.decoration_source
+            .as_ref()
+            .is_some_and(|state| state.paint_revision.get() != Some(state.source.revision()))
     }
 
     #[inline]
@@ -92,12 +98,20 @@ impl<D: Decoration> Decoration for ActiveDecoration<'_, D> {
 
     #[inline]
     fn paint_with_background(
-        &self, canvas: &aimer_canvas::Canvas, origin: Vec2d, size: ResolvedSize,
-        scale: f32, background: Option<Color>,
+        &self,
+        canvas: &aimer_canvas::Canvas,
+        origin: Vec2d,
+        size: ResolvedSize,
+        scale: f32,
+        background: Option<Color>,
     ) {
         match self {
-            Self::Direct(decoration) => decoration.paint_with_background(canvas, origin, size, scale, background),
-            Self::Retained(decoration) => decoration.paint_with_background(canvas, origin, size, scale, background),
+            Self::Direct(decoration) => {
+                decoration.paint_with_background(canvas, origin, size, scale, background)
+            }
+            Self::Retained(decoration) => {
+                decoration.paint_with_background(canvas, origin, size, scale, background)
+            }
         }
     }
 

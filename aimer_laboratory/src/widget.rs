@@ -69,6 +69,15 @@ pub trait Widget: 'static {
     {
         AnyWidget::new(self)
     }
+
+    /// Erases this widget into an [`AnyWidget`].
+    #[inline]
+    fn notype(self) -> AnyWidget
+    where
+        Self: Sized,
+    {
+        AnyWidget::new(self)
+    }
 }
 
 #[cfg(test)]

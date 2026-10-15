@@ -176,7 +176,10 @@ fn phase6_baseline_boundaries_preserve_descenders_bearings_and_empty_glyphs() {
 
     let descender_key = rasterizer.glyph_key_for_codepoint('g', 24.0);
     let descender = rasterizer.rasterize_key(descender_key, 24.0).clone();
-    assert!(!descender.bitmap.is_empty(), "the descender must remain visible");
+    assert!(
+        !descender.bitmap.is_empty(),
+        "the descender must remain visible"
+    );
     assert!(
         descender.offset_y < 0.0,
         "the descender must retain its negative baseline bearing: {}",
@@ -195,15 +198,20 @@ fn phase6_baseline_boundaries_preserve_descenders_bearings_and_empty_glyphs() {
         bearings.iter().any(|glyph| glyph.offset_x < 0.0),
         "at least one punctuation/italic-side bearing must be allowed to extend left"
     );
-    assert!(bearings
-        .iter()
-        .all(|glyph| glyph.offset_x.is_finite() && glyph.offset_y.is_finite()));
+    assert!(
+        bearings
+            .iter()
+            .all(|glyph| glyph.offset_x.is_finite() && glyph.offset_y.is_finite())
+    );
 
     let space_key = rasterizer.glyph_key_for_codepoint(' ', 24.0);
     let space = rasterizer.rasterize_key(space_key, 24.0).clone();
     assert!(space.bitmap.is_empty(), "space must stay an empty glyph");
     assert_eq!((space.width, space.height), (0, 0));
-    assert!(space.advance_width > 0.0, "empty glyphs still advance the pen");
+    assert!(
+        space.advance_width > 0.0,
+        "empty glyphs still advance the pen"
+    );
 
     let shaped = shape_text_styled(
         &mut rasterizer,

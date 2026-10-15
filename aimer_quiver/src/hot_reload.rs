@@ -9,16 +9,15 @@ use std::sync::mpsc::{
 };
 use std::time::Duration;
 
-use aimer_attribute::Dimension;
+use aimer_animation::AnyCurve;
 use aimer_anteros::{
-    BUILTIN_PORTABLE_WIDGET_SCHEMAS, BUILTIN_WIDGET_SCHEMA_VERSION, CallbackBindings,
-    EventId, ModelError, ModelLimits, PortableWidgetSchemaValidator, PropertyId, PropertyValue,
-    StableId128, Version, WidgetDocumentView, WidgetFactory, WidgetMaterializeError,
-    WidgetNodeView, WidgetSchemaId, WidgetSchemaSupport, disassemble_widget_document,
-    materialize_widget_tree,
+    BUILTIN_PORTABLE_WIDGET_SCHEMAS, BUILTIN_WIDGET_SCHEMA_VERSION, CallbackBindings, EventId,
+    ModelError, ModelLimits, PortableWidgetSchemaValidator, PropertyId, PropertyValue, StableId128,
+    Version, WidgetDocumentView, WidgetFactory, WidgetMaterializeError, WidgetNodeView,
+    WidgetSchemaId, WidgetSchemaSupport, disassemble_widget_document, materialize_widget_tree,
 };
 use aimer_anteros::{ReloadCommit, ReloadStage as RuntimeReloadStage};
-use aimer_animation::Curve;
+use aimer_attribute::Dimension;
 use aimer_container::SizedBox;
 use aimer_flex::{BoxAlignment, Column, JustifyContent, OverflowBehavior, Row};
 use aimer_grid::{Grid, GridItem, GridPortableConfig};
@@ -26,25 +25,23 @@ use aimer_input::button::Button;
 use aimer_input::gesture::gesture_detector::GestureDetector;
 use aimer_input::mouse_region::MouseRegion;
 use aimer_provider::{Provider, ProviderHandle};
+use aimer_reload_protocol::{ReloadCommand, ReloadResult, ReloadStage};
+use aimer_reload_server::ReloadCommandSink;
 use aimer_scroll::{ScrollBar, ScrollPortableConfig, Scrollable};
 use aimer_space::Stack;
-use aimer_style::{
-    AnimatedTheme, BoxDecoration, LayoutSpacing, TextStyle, ThemeData, ThemeMode,
-};
+use aimer_style::{AnimatedTheme, BoxDecoration, LayoutSpacing, TextStyle, ThemeData, ThemeMode};
 use aimer_text::{TextButton, TextSource};
 use aimer_widget::base::BuildContext;
 use aimer_widget::portable::{
-    PortableMaterializeError, PortableNativeMaterializer, PortableNativeWidgetRegistration,
-    PortableMaterializeProperty, linked_portable_native_widget_registrations,
+    PortableMaterializeError, PortableMaterializeProperty, PortableNativeMaterializer,
+    PortableNativeWidgetRegistration, linked_portable_native_widget_registrations,
     linked_portable_native_widget_schemas, optional_materialized_property,
     required_materialized_property,
 };
 use aimer_widget::{AnyElement, Element, ErrorWidget, Key, StatelessElement, Widget};
-use aimer_reload_protocol::{ReloadCommand, ReloadResult, ReloadStage};
-use aimer_reload_server::ReloadCommandSink;
 
-mod candidate;
 mod bootstrap;
+mod candidate;
 mod live;
 mod portable_http;
 
@@ -59,27 +56,24 @@ pub use live::{
 
 pub use aimer_anteros::{
     EVENT_BUTTON_DOUBLE_PRESS, EVENT_BUTTON_LONG_PRESS, EVENT_BUTTON_PRESS,
-    EVENT_BUTTON_RIGHT_PRESS, PROPERTY_BUTTON_DECORATION, PROPERTY_CONTAINER_COLOR,
-    PROPERTY_CONTAINER_HEIGHT,
-    PROPERTY_CONTAINER_MARGIN, PROPERTY_CONTAINER_PADDING, PROPERTY_CONTAINER_BOX_DECORATION,
-    PROPERTY_CONTAINER_WIDTH, PROPERTY_SIZED_BOX_HEIGHT, PROPERTY_SIZED_BOX_WIDTH,
-    PROPERTY_COLUMN_GAPS, PROPERTY_COLUMN_HORIZONTAL_ALIGNMENT, PROPERTY_COLUMN_JUSTIFY_CONTENT,
-    PROPERTY_COLUMN_OVERFLOW, PROPERTY_COLUMN_VERTICAL_ALIGNMENT, PROPERTY_ROW_GAPS,
-    PROPERTY_ROW_HORIZONTAL_ALIGNMENT, PROPERTY_ROW_JUSTIFY_CONTENT, PROPERTY_ROW_OVERFLOW,
-    PROPERTY_ROW_VERTICAL_ALIGNMENT,
-    PROPERTY_TEXT_CONTENT, PROPERTY_PROVIDER_SCHEMA_VERSION, PROPERTY_PROVIDER_TYPE,
-    PROPERTY_PROVIDER_VALUE, PROPERTY_ANIMATED_THEME_CURVE,
-    PROPERTY_ANIMATED_THEME_CURVE_X1, PROPERTY_ANIMATED_THEME_CURVE_X2,
-    PROPERTY_ANIMATED_THEME_CURVE_Y1, PROPERTY_ANIMATED_THEME_CURVE_Y2,
-    PROPERTY_ANIMATED_THEME_DURATION_MILLIS, PROPERTY_ANIMATED_THEME_MODE,
-    PROPERTY_ANIMATED_THEME_SCHEMA_VERSION, PROPERTY_ANIMATED_THEME_TYPE,
-    PROPERTY_ANIMATED_THEME_VALUE, THEME_DATA_VALUE_VERSION, WIDGET_ANIMATED_THEME,
-    WIDGET_BUTTON, WIDGET_COLUMN, WIDGET_CONTAINER, WIDGET_PROVIDER, WIDGET_ROW,
-    WIDGET_SIZED_BOX, WIDGET_TEXT,
-    EVENT_GESTURE_DETECTOR_DRAG_END, EVENT_GESTURE_DETECTOR_DOUBLE_PRESS,
+    EVENT_BUTTON_RIGHT_PRESS, EVENT_GESTURE_DETECTOR_DOUBLE_PRESS, EVENT_GESTURE_DETECTOR_DRAG_END,
     EVENT_GESTURE_DETECTOR_LONG_PRESS, EVENT_GESTURE_DETECTOR_RIGHT_TAP,
     EVENT_GESTURE_DETECTOR_TAP, EVENT_MOUSE_REGION_HOVER_ENTER, EVENT_MOUSE_REGION_HOVER_EXIT,
-    WIDGET_GESTURE_DETECTOR, WIDGET_MOUSE_REGION,
+    PROPERTY_ANIMATED_THEME_CURVE, PROPERTY_ANIMATED_THEME_CURVE_X1,
+    PROPERTY_ANIMATED_THEME_CURVE_X2, PROPERTY_ANIMATED_THEME_CURVE_Y1,
+    PROPERTY_ANIMATED_THEME_CURVE_Y2, PROPERTY_ANIMATED_THEME_DURATION_MILLIS,
+    PROPERTY_ANIMATED_THEME_MODE, PROPERTY_ANIMATED_THEME_SCHEMA_VERSION,
+    PROPERTY_ANIMATED_THEME_TYPE, PROPERTY_ANIMATED_THEME_VALUE, PROPERTY_BUTTON_DECORATION,
+    PROPERTY_COLUMN_GAPS, PROPERTY_COLUMN_HORIZONTAL_ALIGNMENT, PROPERTY_COLUMN_JUSTIFY_CONTENT,
+    PROPERTY_COLUMN_OVERFLOW, PROPERTY_COLUMN_VERTICAL_ALIGNMENT,
+    PROPERTY_CONTAINER_BOX_DECORATION, PROPERTY_CONTAINER_COLOR, PROPERTY_CONTAINER_HEIGHT,
+    PROPERTY_CONTAINER_MARGIN, PROPERTY_CONTAINER_PADDING, PROPERTY_CONTAINER_WIDTH,
+    PROPERTY_PROVIDER_SCHEMA_VERSION, PROPERTY_PROVIDER_TYPE, PROPERTY_PROVIDER_VALUE,
+    PROPERTY_ROW_GAPS, PROPERTY_ROW_HORIZONTAL_ALIGNMENT, PROPERTY_ROW_JUSTIFY_CONTENT,
+    PROPERTY_ROW_OVERFLOW, PROPERTY_ROW_VERTICAL_ALIGNMENT, PROPERTY_SIZED_BOX_HEIGHT,
+    PROPERTY_SIZED_BOX_WIDTH, PROPERTY_TEXT_CONTENT, THEME_DATA_VALUE_VERSION,
+    WIDGET_ANIMATED_THEME, WIDGET_BUTTON, WIDGET_COLUMN, WIDGET_CONTAINER, WIDGET_GESTURE_DETECTOR,
+    WIDGET_MOUSE_REGION, WIDGET_PROVIDER, WIDGET_ROW, WIDGET_SIZED_BOX, WIDGET_TEXT,
 };
 
 const BRIDGE_QUEUE_FULL: u32 = 0x7001;
@@ -335,8 +329,8 @@ pub fn materialize_aimer_widget_tree(
             error.to_string(),
         ))
     })?;
-    let registry = NativeWidgetMaterializerRegistry::new(&BUILTIN_NATIVE_MATERIALIZERS)
-        .map_err(|error| {
+    let registry =
+        NativeWidgetMaterializerRegistry::new(&BUILTIN_NATIVE_MATERIALIZERS).map_err(|error| {
             WidgetMaterializeError::FactorySetup(MissingNativeMaterializer::InvalidRegistry(
                 format!("{error:?}"),
             ))
@@ -597,9 +591,8 @@ const PROPERTY_GRID_CONFIG: PropertyId =
     PropertyId::from_canonical_name("aimer.property:aimer_grid::grid::Grid:config");
 const WIDGET_SCROLLABLE: WidgetSchemaId =
     WidgetSchemaId::from_canonical_name("aimer.widget:aimer_scroll::scrollable::Scrollable");
-const PROPERTY_SCROLLABLE_CONFIG: PropertyId = PropertyId::from_canonical_name(
-    "aimer.property:aimer_scroll::scrollable::Scrollable:config",
-);
+const PROPERTY_SCROLLABLE_CONFIG: PropertyId =
+    PropertyId::from_canonical_name("aimer.property:aimer_scroll::scrollable::Scrollable:config");
 #[cfg(test)]
 const WIDGET_SCROLL_BAR: WidgetSchemaId =
     WidgetSchemaId::from_canonical_name("aimer.widget:aimer_scroll::scrollable::ScrollBar");
@@ -607,9 +600,8 @@ const WIDGET_SCROLL_BAR: WidgetSchemaId =
 const WIDGET_ASPECT_RATIO: WidgetSchemaId =
     WidgetSchemaId::from_canonical_name("aimer.widget:aimer_container::single_child::AspectRatio");
 #[cfg(test)]
-const WIDGET_ZERO_SIZED_BOX: WidgetSchemaId = WidgetSchemaId::from_canonical_name(
-    "aimer.widget:aimer_container::single_child::ZeroSizedBox",
-);
+const WIDGET_ZERO_SIZED_BOX: WidgetSchemaId =
+    WidgetSchemaId::from_canonical_name("aimer.widget:aimer_container::single_child::ZeroSizedBox");
 #[cfg(test)]
 const WIDGET_OPACITY: WidgetSchemaId =
     WidgetSchemaId::from_canonical_name("aimer.widget:aimer_container::single_child::Opacity");
@@ -632,13 +624,11 @@ const WIDGET_CONTEXT_MENU_ROWS: WidgetSchemaId =
 const WIDGET_CONTEXT_MENU: WidgetSchemaId =
     WidgetSchemaId::from_canonical_name("aimer.widget:aimer_ctxmenu::ContextMenu");
 #[cfg(test)]
-const WIDGET_SCALABLE: WidgetSchemaId = WidgetSchemaId::from_canonical_name(
-    "aimer.widget:aimer_container::single_child::Scalable",
-);
+const WIDGET_SCALABLE: WidgetSchemaId =
+    WidgetSchemaId::from_canonical_name("aimer.widget:aimer_container::single_child::Scalable");
 #[cfg(test)]
-const WIDGET_RESIZABLE: WidgetSchemaId = WidgetSchemaId::from_canonical_name(
-    "aimer.widget:aimer_container::single_child::Resizable",
-);
+const WIDGET_RESIZABLE: WidgetSchemaId =
+    WidgetSchemaId::from_canonical_name("aimer.widget:aimer_container::single_child::Resizable");
 #[cfg(test)]
 const WIDGET_ANIMATED_BUILDER: WidgetSchemaId =
     WidgetSchemaId::from_canonical_name("aimer.widget:aimer_animation::AnimatedBuilder");
@@ -691,15 +681,13 @@ const BUILTIN_PORTABLE_COVERAGE: [BuiltinPortableCoverageSpec; 33] = [
         widget_type: WIDGET_EXPANDED,
         schema_only: false,
         guest_lowering: GuestLoweringKind::Generated,
-        focused_round_trip_test:
-            "safe_derived_portable_widgets_round_trip_through_linked_host_materializers",
+        focused_round_trip_test: "safe_derived_portable_widgets_round_trip_through_linked_host_materializers",
     },
     BuiltinPortableCoverageSpec {
         widget_type: WIDGET_POSITIONED,
         schema_only: false,
         guest_lowering: GuestLoweringKind::Generated,
-        focused_round_trip_test:
-            "safe_derived_portable_widgets_round_trip_through_linked_host_materializers",
+        focused_round_trip_test: "safe_derived_portable_widgets_round_trip_through_linked_host_materializers",
     },
     BuiltinPortableCoverageSpec {
         widget_type: WIDGET_STACK,
@@ -717,8 +705,7 @@ const BUILTIN_PORTABLE_COVERAGE: [BuiltinPortableCoverageSpec; 33] = [
         widget_type: WIDGET_SCROLLABLE,
         schema_only: true,
         guest_lowering: GuestLoweringKind::Manual,
-        focused_round_trip_test:
-            "scrollable_round_trips_axis_and_scrollbars_through_host_materializer",
+        focused_round_trip_test: "scrollable_round_trips_axis_and_scrollbars_through_host_materializer",
     },
     BuiltinPortableCoverageSpec {
         widget_type: WIDGET_SCROLL_BAR,
@@ -760,8 +747,7 @@ const BUILTIN_PORTABLE_COVERAGE: [BuiltinPortableCoverageSpec; 33] = [
         widget_type: WIDGET_GESTURE_DETECTOR,
         schema_only: true,
         guest_lowering: GuestLoweringKind::Generated,
-        focused_round_trip_test:
-            "gesture_detector_materializes_its_child_and_callback_binding",
+        focused_round_trip_test: "gesture_detector_materializes_its_child_and_callback_binding",
     },
     BuiltinPortableCoverageSpec {
         widget_type: WIDGET_MOUSE_REGION,
@@ -773,50 +759,43 @@ const BUILTIN_PORTABLE_COVERAGE: [BuiltinPortableCoverageSpec; 33] = [
         widget_type: WIDGET_SELECTION_AREA,
         schema_only: false,
         guest_lowering: GuestLoweringKind::Generated,
-        focused_round_trip_test:
-            "safe_derived_portable_widgets_round_trip_through_linked_host_materializers",
+        focused_round_trip_test: "safe_derived_portable_widgets_round_trip_through_linked_host_materializers",
     },
     BuiltinPortableCoverageSpec {
         widget_type: WIDGET_ASPECT_RATIO,
         schema_only: false,
         guest_lowering: GuestLoweringKind::Generated,
-        focused_round_trip_test:
-            "safe_derived_portable_widgets_round_trip_through_linked_host_materializers",
+        focused_round_trip_test: "safe_derived_portable_widgets_round_trip_through_linked_host_materializers",
     },
     BuiltinPortableCoverageSpec {
         widget_type: WIDGET_ZERO_SIZED_BOX,
         schema_only: false,
         guest_lowering: GuestLoweringKind::Generated,
-        focused_round_trip_test:
-            "safe_derived_portable_widgets_round_trip_through_linked_host_materializers",
+        focused_round_trip_test: "safe_derived_portable_widgets_round_trip_through_linked_host_materializers",
     },
     BuiltinPortableCoverageSpec {
         widget_type: WIDGET_OPACITY,
         schema_only: false,
         guest_lowering: GuestLoweringKind::Generated,
-        focused_round_trip_test:
-            "safe_derived_portable_widgets_round_trip_through_linked_host_materializers",
+        focused_round_trip_test: "safe_derived_portable_widgets_round_trip_through_linked_host_materializers",
     },
     BuiltinPortableCoverageSpec {
         widget_type: WIDGET_FOCUS_SCOPE,
         schema_only: false,
         guest_lowering: GuestLoweringKind::Generated,
-        focused_round_trip_test:
-            "safe_derived_portable_widgets_round_trip_through_linked_host_materializers",
+        focused_round_trip_test: "safe_derived_portable_widgets_round_trip_through_linked_host_materializers",
     },
     BuiltinPortableCoverageSpec {
         widget_type: WIDGET_TEXT_FIELD,
         schema_only: false,
         guest_lowering: GuestLoweringKind::Generated,
-        focused_round_trip_test:
-            "text_input_contract_round_trips_bounded_configuration_without_native_handles",
+        focused_round_trip_test: "text_input_contract_round_trips_bounded_configuration_without_native_handles",
     },
     BuiltinPortableCoverageSpec {
         widget_type: WIDGET_TEXT_AREA,
         schema_only: false,
         guest_lowering: GuestLoweringKind::Generated,
-        focused_round_trip_test:
-            "text_input_contract_round_trips_bounded_configuration_without_native_handles",
+        focused_round_trip_test: "text_input_contract_round_trips_bounded_configuration_without_native_handles",
     },
     BuiltinPortableCoverageSpec {
         widget_type: WIDGET_RICH_TEXT,
@@ -975,9 +954,8 @@ fn audit_portable_builtin_registry() -> PortableBuiltinCoverageReport {
             None
         }
     };
-    let native_registry = match NativeWidgetMaterializerRegistry::new(
-        &BUILTIN_NATIVE_MATERIALIZERS,
-    ) {
+    let native_registry = match NativeWidgetMaterializerRegistry::new(&BUILTIN_NATIVE_MATERIALIZERS)
+    {
         Ok(registry) => Some(registry),
         Err(error) => {
             registry_errors.push(format!("{error:?}"));
@@ -1088,7 +1066,9 @@ impl fmt::Display for MissingNativeMaterializer {
                 schema.major(),
                 schema.minor(),
             ),
-            Self::Derived(error) => write!(formatter, "derived native materializer failed: {error}"),
+            Self::Derived(error) => {
+                write!(formatter, "derived native materializer failed: {error}")
+            }
         }
     }
 }
@@ -1126,15 +1106,13 @@ impl WidgetSchemaSupport for AimerWidgetFactory<'_> {
             .ok_or(ModelError::NodeIndexOutOfBounds {
                 index: node_index,
                 node_count: document.node_count(),
-        })?;
+            })?;
         for property in node.properties() {
             validate_property_value(document, node_index, node.widget_type(), property)?;
         }
         match node.widget_type() {
             WIDGET_PROVIDER => validate_provider_value(document, node_index, node)?,
-            WIDGET_ANIMATED_THEME => {
-                validate_animated_theme_value(document, node_index, node)?
-            }
+            WIDGET_ANIMATED_THEME => validate_animated_theme_value(document, node_index, node)?,
             WIDGET_GRID => validate_grid_value(document, node_index, node)?,
             WIDGET_SCROLLABLE => validate_scrollable_value(document, node_index, node)?,
             _ => {}
@@ -1235,12 +1213,7 @@ static BUILTIN_NATIVE_MATERIALIZERS: [NativeWidgetMaterializerRegistration; 13] 
         SCHEMA_V1,
         materialize_column,
     ),
-    NativeWidgetMaterializerRegistration::new(
-        WIDGET_ROW,
-        SCHEMA_V1,
-        SCHEMA_V1,
-        materialize_row,
-    ),
+    NativeWidgetMaterializerRegistration::new(WIDGET_ROW, SCHEMA_V1, SCHEMA_V1, materialize_row),
     NativeWidgetMaterializerRegistration::new(
         WIDGET_SIZED_BOX,
         SCHEMA_V1,
@@ -1253,12 +1226,7 @@ static BUILTIN_NATIVE_MATERIALIZERS: [NativeWidgetMaterializerRegistration; 13] 
         SCHEMA_V1,
         materialize_stack,
     ),
-    NativeWidgetMaterializerRegistration::new(
-        WIDGET_GRID,
-        SCHEMA_V1,
-        SCHEMA_V1,
-        materialize_grid,
-    ),
+    NativeWidgetMaterializerRegistration::new(WIDGET_GRID, SCHEMA_V1, SCHEMA_V1, materialize_grid),
     NativeWidgetMaterializerRegistration::new(
         WIDGET_SCROLLABLE,
         SCHEMA_V1,
@@ -1335,13 +1303,10 @@ fn materialize_column(
         PROPERTY_COLUMN_JUSTIFY_CONTENT,
     )
     .expect("validated Column justify content is decodable");
-    let gaps = optional_materialized_property::<LayoutSpacing>(
-        document,
-        &node,
-        PROPERTY_COLUMN_GAPS,
-    )
-    .expect("validated Column gaps are decodable")
-    .unwrap_or_default();
+    let gaps =
+        optional_materialized_property::<LayoutSpacing>(document, &node, PROPERTY_COLUMN_GAPS)
+            .expect("validated Column gaps are decodable")
+            .unwrap_or_default();
     let overflow = optional_materialized_property::<OverflowBehavior>(
         document,
         &node,
@@ -1392,13 +1357,10 @@ fn materialize_row(
     let gaps = optional_materialized_property::<LayoutSpacing>(document, &node, PROPERTY_ROW_GAPS)
         .expect("validated Row gaps are decodable")
         .unwrap_or_default();
-    let overflow = optional_materialized_property::<OverflowBehavior>(
-        document,
-        &node,
-        PROPERTY_ROW_OVERFLOW,
-    )
-    .expect("validated Row overflow is decodable")
-    .unwrap_or_default();
+    let overflow =
+        optional_materialized_property::<OverflowBehavior>(document, &node, PROPERTY_ROW_OVERFLOW)
+            .expect("validated Row overflow is decodable")
+            .unwrap_or_default();
 
     let mut row = Row::new()
         .vertical_alignment(vertical_alignment)
@@ -1554,32 +1516,26 @@ fn materialize_text_button(
     children: Vec<AnyElement>,
 ) -> AnyElement {
     debug_assert!(children.is_empty());
-    let disabled = required_materialized_property::<bool>(
-        document,
-        &node,
-        PROPERTY_TEXT_BUTTON_DISABLED,
-    )
-    .expect("validated TextButton disabled property is present and decodable");
-    let label = required_materialized_property::<TextSource>(
-        document,
-        &node,
-        PROPERTY_TEXT_BUTTON_LABEL,
-    )
-    .expect("validated TextButton label property is present and decodable");
+    let disabled =
+        required_materialized_property::<bool>(document, &node, PROPERTY_TEXT_BUTTON_DISABLED)
+            .expect("validated TextButton disabled property is present and decodable");
+    let label =
+        required_materialized_property::<TextSource>(document, &node, PROPERTY_TEXT_BUTTON_LABEL)
+            .expect("validated TextButton label property is present and decodable");
     let color: Option<aimer_widget::base::Color> =
         aimer_widget::portable::optional_materialized_property(
-        document,
-        &node,
-        PROPERTY_TEXT_BUTTON_COLOR,
-    )
-    .expect("validated TextButton color property is decodable");
+            document,
+            &node,
+            PROPERTY_TEXT_BUTTON_COLOR,
+        )
+        .expect("validated TextButton color property is decodable");
     let hover_color: Option<aimer_widget::base::Color> =
         aimer_widget::portable::optional_materialized_property(
-        document,
-        &node,
-        PROPERTY_TEXT_BUTTON_HOVER_COLOR,
-    )
-    .expect("validated TextButton hover color property is decodable");
+            document,
+            &node,
+            PROPERTY_TEXT_BUTTON_HOVER_COLOR,
+        )
+        .expect("validated TextButton hover color property is decodable");
     let disabled_color: Option<aimer_widget::base::Color> =
         aimer_widget::portable::optional_materialized_property(
             document,
@@ -1587,24 +1543,15 @@ fn materialize_text_button(
             PROPERTY_TEXT_BUTTON_DISABLED_COLOR,
         )
         .expect("validated TextButton disabled color property is decodable");
-    let style: Option<TextStyle> = optional_materialized_property(
-        document,
-        &node,
-        PROPERTY_TEXT_BUTTON_STYLE,
-    )
-    .expect("validated TextButton style property is decodable");
-    let hover_style: Option<TextStyle> = optional_materialized_property(
-        document,
-        &node,
-        PROPERTY_TEXT_BUTTON_HOVER_STYLE,
-    )
-    .expect("validated TextButton hover style property is decodable");
-    let disabled_style: Option<TextStyle> = optional_materialized_property(
-        document,
-        &node,
-        PROPERTY_TEXT_BUTTON_DISABLED_STYLE,
-    )
-    .expect("validated TextButton disabled style property is decodable");
+    let style: Option<TextStyle> =
+        optional_materialized_property(document, &node, PROPERTY_TEXT_BUTTON_STYLE)
+            .expect("validated TextButton style property is decodable");
+    let hover_style: Option<TextStyle> =
+        optional_materialized_property(document, &node, PROPERTY_TEXT_BUTTON_HOVER_STYLE)
+            .expect("validated TextButton hover style property is decodable");
+    let disabled_style: Option<TextStyle> =
+        optional_materialized_property(document, &node, PROPERTY_TEXT_BUTTON_DISABLED_STYLE)
+            .expect("validated TextButton disabled style property is decodable");
 
     let mut button = TextButton::new(label).disabled(disabled);
     if let Some(style) = style {
@@ -1658,9 +1605,13 @@ fn materialize_mouse_region(
         .pop()
         .expect("validated MouseRegion has exactly one child");
     debug_assert!(children.is_empty());
-    bind_mouse_region_callbacks(MouseRegion::new(), node.callbacks(), &factory.dispatch_callback)
-        .child(RetainedElementWidget(child))
-        .to_element(factory.ctx)
+    bind_mouse_region_callbacks(
+        MouseRegion::new(),
+        node.callbacks(),
+        &factory.dispatch_callback,
+    )
+    .child(RetainedElementWidget(child))
+    .to_element(factory.ctx)
 }
 
 fn materialize_button(
@@ -1733,12 +1684,11 @@ fn materialize_animated_theme(
             .expect("validated AnimatedTheme mode property is present"),
     )
     .expect("validated AnimatedTheme mode is supported");
-    let duration_millis = animated_theme_i64_property(
-        &node,
-        PROPERTY_ANIMATED_THEME_DURATION_MILLIS,
-    )
-    .expect("validated AnimatedTheme duration property is present") as u64;
-    let curve = decode_animated_theme_curve(&node).expect("validated AnimatedTheme curve is supported");
+    let duration_millis =
+        animated_theme_i64_property(&node, PROPERTY_ANIMATED_THEME_DURATION_MILLIS)
+            .expect("validated AnimatedTheme duration property is present") as u64;
+    let curve =
+        decode_animated_theme_curve(&node).expect("validated AnimatedTheme curve is supported");
 
     AnimatedTheme::new()
         .data(theme)
@@ -1832,7 +1782,7 @@ impl WidgetIrStageDiagnostics {
             document.string_count(),
             document.blob_count(),
         )
-            .expect("writing to String cannot fail");
+        .expect("writing to String cannot fail");
         writeln!(output, "[Widget IR: schema validation] accepted")
             .expect("writing to String cannot fail");
         writeln!(output, "[Widget IR: native materialization] ready")
@@ -1861,9 +1811,9 @@ fn write_node_diagnostics(
         .expect("writing to String cannot fail");
         for property in node.properties() {
             let resolved = match property.value() {
-                PropertyValue::StringRef(index) if resolve_payloads => {
-                    document.string(index).map(|value| format!(" string={value:?}"))
-                }
+                PropertyValue::StringRef(index) if resolve_payloads => document
+                    .string(index)
+                    .map(|value| format!(" string={value:?}")),
                 PropertyValue::BlobRef(index) if resolve_payloads => document
                     .blob(index)
                     .map(|value| format!(" blob_bytes={}", value.len())),
@@ -1910,11 +1860,8 @@ impl AimerWidgetFactory<'_> {
             PROPERTY_BUTTON_DECORATION,
         )
         .expect("validated Button decoration is decodable");
-        let mut button = bind_button_callbacks(
-            Button::new(),
-            node.callbacks(),
-            &self.dispatch_callback,
-        );
+        let mut button =
+            bind_button_callbacks(Button::new(), node.callbacks(), &self.dispatch_callback);
         if let Some(decoration) = decoration {
             button = button.decoration(decoration);
         }
@@ -2085,16 +2032,13 @@ fn validate_grid_value(
     node_index: u32,
     node: WidgetNodeView<'_>,
 ) -> Result<(), ModelError> {
-    let config = required_materialized_property::<GridPortableConfig>(
-        document,
-        &node,
-        PROPERTY_GRID_CONFIG,
-    )
-    .map_err(|_| ModelError::InvalidWidgetPropertyValue {
-        node: node_index,
-        widget_type: WIDGET_GRID,
-        property_id: PROPERTY_GRID_CONFIG,
-    })?;
+    let config =
+        required_materialized_property::<GridPortableConfig>(document, &node, PROPERTY_GRID_CONFIG)
+            .map_err(|_| ModelError::InvalidWidgetPropertyValue {
+                node: node_index,
+                widget_type: WIDGET_GRID,
+                property_id: PROPERTY_GRID_CONFIG,
+            })?;
     let count = node.children().len() as u32;
     let expected = config.items.len() as u32;
     if count != expected {
@@ -2179,8 +2123,7 @@ fn validate_animated_theme_value(
         widget_type: WIDGET_ANIMATED_THEME,
         property_id,
     };
-    let Some(PropertyValue::I64(type_id)) =
-        provider_property(&node, PROPERTY_ANIMATED_THEME_TYPE)
+    let Some(PropertyValue::I64(type_id)) = provider_property(&node, PROPERTY_ANIMATED_THEME_TYPE)
     else {
         return Err(invalid(PROPERTY_ANIMATED_THEME_TYPE));
     };
@@ -2194,8 +2137,7 @@ fn validate_animated_theme_value(
     else {
         return Err(invalid(PROPERTY_ANIMATED_THEME_VALUE));
     };
-    let Some(PropertyValue::I64(mode)) =
-        provider_property(&node, PROPERTY_ANIMATED_THEME_MODE)
+    let Some(PropertyValue::I64(mode)) = provider_property(&node, PROPERTY_ANIMATED_THEME_MODE)
     else {
         return Err(invalid(PROPERTY_ANIMATED_THEME_MODE));
     };
@@ -2244,17 +2186,11 @@ fn provider_i64_property(node: &WidgetNodeView<'_>, property_id: PropertyId) -> 
     }
 }
 
-fn animated_theme_i64_property(
-    node: &WidgetNodeView<'_>,
-    property_id: PropertyId,
-) -> Option<i64> {
+fn animated_theme_i64_property(node: &WidgetNodeView<'_>, property_id: PropertyId) -> Option<i64> {
     provider_i64_property(node, property_id)
 }
 
-fn animated_theme_f64_property(
-    node: &WidgetNodeView<'_>,
-    property_id: PropertyId,
-) -> Option<f64> {
+fn animated_theme_f64_property(node: &WidgetNodeView<'_>, property_id: PropertyId) -> Option<f64> {
     match provider_property(node, property_id) {
         Some(PropertyValue::F64(value)) => Some(value),
         _ => None,
@@ -2270,7 +2206,7 @@ fn decode_animated_theme_mode(value: i64) -> Option<ThemeMode> {
     }
 }
 
-fn decode_animated_theme_curve(node: &WidgetNodeView<'_>) -> Option<Curve> {
+fn decode_animated_theme_curve(node: &WidgetNodeView<'_>) -> Option<AnyCurve> {
     let tag = animated_theme_i64_property(node, PROPERTY_ANIMATED_THEME_CURVE)?;
     let controls = [
         animated_theme_f64_property(node, PROPERTY_ANIMATED_THEME_CURVE_X1),
@@ -2278,38 +2214,14 @@ fn decode_animated_theme_curve(node: &WidgetNodeView<'_>) -> Option<Curve> {
         animated_theme_f64_property(node, PROPERTY_ANIMATED_THEME_CURVE_X2),
         animated_theme_f64_property(node, PROPERTY_ANIMATED_THEME_CURVE_Y2),
     ];
-    match tag {
-        0 if controls.iter().all(Option::is_none) => Some(Curve::Linear),
-        1 if controls.iter().all(Option::is_none) => Some(Curve::EaseIn),
-        2 if controls.iter().all(Option::is_none) => Some(Curve::EaseOut),
-        3 if controls.iter().all(Option::is_none) => Some(Curve::EaseInOut),
-        4 => {
-            let [Some(x1), Some(y1), Some(x2), Some(y2)] = controls else {
-                return None;
-            };
-            let controls = [x1, y1, x2, y2];
-            if controls
-                .iter()
-                .any(|value| !value.is_finite() || value.abs() > f32::MAX as f64)
-            {
-                return None;
-            }
-            Some(Curve::CubicBezier(
-                x1 as f32, y1 as f32, x2 as f32, y2 as f32,
-            ))
-        }
-        5 if controls.iter().all(Option::is_none) => Some(Curve::Decelerate),
-        6 if controls.iter().all(Option::is_none) => Some(Curve::BounceOut),
-        7 if controls.iter().all(Option::is_none) => Some(Curve::BounceIn),
-        8 if controls.iter().all(Option::is_none) => Some(Curve::BounceInOut),
-        9 if controls.iter().all(Option::is_none) => Some(Curve::ElasticIn),
-        10 if controls.iter().all(Option::is_none) => Some(Curve::ElasticOut),
-        11 if controls.iter().all(Option::is_none) => Some(Curve::ElasticInOut),
-        12 if controls.iter().all(Option::is_none) => Some(Curve::FastOutSlowIn),
-        13 if controls.iter().all(Option::is_none) => Some(Curve::LinearOutSlowIn),
-        14 if controls.iter().all(Option::is_none) => Some(Curve::FastOutLinearIn),
-        _ => None,
-    }
+    // All four control points or none; the descriptor decides which tags take
+    // them and rejects non-finite ones.
+    let points = match controls {
+        [None, None, None, None] => None,
+        [Some(x1), Some(y1), Some(x2), Some(y2)] => Some([x1, y1, x2, y2]),
+        _ => return None,
+    };
+    AnyCurve::from_descriptor(tag, points)
 }
 
 fn unpack_provider_version(value: i64) -> Option<Version> {
@@ -2334,21 +2246,15 @@ fn build_sized_box(
     ctx: &BuildContext,
 ) -> AnyElement {
     let mut sized_box = SizedBox::new();
-    if let Some(width) = optional_materialized_property::<Dimension>(
-        document,
-        node,
-        PROPERTY_SIZED_BOX_WIDTH,
-    )
-    .expect("validated SizedBox width is decodable")
+    if let Some(width) =
+        optional_materialized_property::<Dimension>(document, node, PROPERTY_SIZED_BOX_WIDTH)
+            .expect("validated SizedBox width is decodable")
     {
         sized_box = sized_box.width(width);
     }
-    if let Some(height) = optional_materialized_property::<Dimension>(
-        document,
-        node,
-        PROPERTY_SIZED_BOX_HEIGHT,
-    )
-    .expect("validated SizedBox height is decodable")
+    if let Some(height) =
+        optional_materialized_property::<Dimension>(document, node, PROPERTY_SIZED_BOX_HEIGHT)
+            .expect("validated SizedBox height is decodable")
     {
         sized_box = sized_box.height(height);
     }
@@ -2504,7 +2410,11 @@ mod tests {
         assert!(registry.resolve(test_widget, SCHEMA_V1).is_some());
         assert!(registry.resolve(test_widget, SCHEMA_V1_1).is_some());
         assert!(registry.resolve(test_widget, Version::new(1, 2)).is_none());
-        assert!(registry.resolve(WidgetSchemaId::new(0xbeef), SCHEMA_V1).is_none());
+        assert!(
+            registry
+                .resolve(WidgetSchemaId::new(0xbeef), SCHEMA_V1)
+                .is_none()
+        );
     }
 
     #[test]
@@ -2523,14 +2433,17 @@ mod tests {
     #[test]
     fn portable_builtin_audit_includes_shipped_linked_schemas_but_not_test_fixtures() {
         let coverage = audit_portable_builtin_registry();
-        assert!(coverage
-            .entries
-            .iter()
-            .any(|entry| entry.canonical_name == "aimer.widget:aimer_text::RichText"));
-        assert!(coverage
-            .entries
-            .iter()
-            .all(|entry| !entry.canonical_name.starts_with("aimer.widget:aimer_quiver.tests.")));
+        assert!(
+            coverage
+                .entries
+                .iter()
+                .any(|entry| entry.canonical_name == "aimer.widget:aimer_text::RichText")
+        );
+        assert!(coverage.entries.iter().all(|entry| {
+            !entry
+                .canonical_name
+                .starts_with("aimer.widget:aimer_quiver.tests.")
+        }));
     }
 
     #[test]
@@ -2553,9 +2466,15 @@ mod tests {
     fn safe_derived_portable_widgets_are_classified_by_the_audit() {
         let coverage = audit_portable_builtin_registry();
         for (widget_type, canonical_name) in [
-            (WIDGET_SELECTION_AREA, "aimer.widget:aimer_text::SelectionArea"),
+            (
+                WIDGET_SELECTION_AREA,
+                "aimer.widget:aimer_text::SelectionArea",
+            ),
             (WIDGET_EXPANDED, "aimer.widget:aimer_flex::flex::Expanded"),
-            (WIDGET_POSITIONED, "aimer.widget:aimer_space::space::Positioned"),
+            (
+                WIDGET_POSITIONED,
+                "aimer.widget:aimer_space::space::Positioned",
+            ),
             (
                 WIDGET_ASPECT_RATIO,
                 "aimer.widget:aimer_container::single_child::AspectRatio",
@@ -2588,9 +2507,7 @@ mod tests {
             );
             assert_eq!(
                 entry.focused_round_trip_test,
-                Some(
-                    "safe_derived_portable_widgets_round_trip_through_linked_host_materializers"
-                ),
+                Some("safe_derived_portable_widgets_round_trip_through_linked_host_materializers"),
                 "{canonical_name}",
             );
         }
@@ -2612,14 +2529,12 @@ mod tests {
         let mut guest = PortableBuildContext::new(
             9,
             3,
-            PortableWidgetLimits::new(16, 16, 16, 16, 256, 8_192)
-                .with_max_blob_bytes(1_024),
+            PortableWidgetLimits::new(16, 16, 16, 16, 256, 8_192).with_max_blob_bytes(1_024),
             PortableLimits::new(16, 32, 256, 512, 8_192),
         )
         .unwrap();
-        let source = SourceFingerprint::new(
-            aimer_widget::portable::StableId128::from_bytes([29; 16]),
-        );
+        let source =
+            SourceFingerprint::new(aimer_widget::portable::StableId128::from_bytes([29; 16]));
         let root = SelectionArea::new()
             .selection_color(Color::Rgba(12, 34, 56, 78))
             .child(
@@ -2628,13 +2543,11 @@ mod tests {
                     .ratio_option(RatioOption::Height)
                     .child(
                         Opacity::new().opacity(0.625).child(
-                            FocusScope::new()
-                                .traps(false)
-                                .child(
-                                    Positioned::new()
-                                        .left(12.0)
-                                        .child(Expanded::new().flex(2.5).child(ZeroSizedBox::new())),
-                                ),
+                            FocusScope::new().traps(false).child(
+                                Positioned::new()
+                                    .left(12.0)
+                                    .child(Expanded::new().flex(2.5).child(ZeroSizedBox::new())),
+                            ),
                         ),
                     ),
             )
@@ -2650,8 +2563,7 @@ mod tests {
         let mut flex_guest = PortableBuildContext::new(
             9,
             3,
-            PortableWidgetLimits::new(16, 16, 16, 16, 256, 8_192)
-                .with_max_blob_bytes(1_024),
+            PortableWidgetLimits::new(16, 16, 16, 16, 256, 8_192).with_max_blob_bytes(1_024),
             PortableLimits::new(16, 32, 256, 512, 8_192),
         )
         .unwrap();
@@ -2660,9 +2572,7 @@ mod tests {
             .child(ZeroSizedBox::new())
             .to_portable_node(
                 &mut flex_guest,
-                SourceFingerprint::new(
-                    aimer_widget::portable::StableId128::from_bytes([30; 16]),
-                ),
+                SourceFingerprint::new(aimer_widget::portable::StableId128::from_bytes([30; 16])),
             )
             .unwrap();
         let flex_document = flex_guest.finish_document(flex_root).unwrap();
@@ -2695,9 +2605,8 @@ mod tests {
             PortableLimits::new(8, 16, 64, 128, 1_024),
         )
         .unwrap();
-        let source = SourceFingerprint::new(
-            aimer_widget::portable::StableId128::from_bytes([31; 16]),
-        );
+        let source =
+            SourceFingerprint::new(aimer_widget::portable::StableId128::from_bytes([31; 16]));
         let root = Stack::new()
             .add_child(ZeroSizedBox::new())
             .add_child(ZeroSizedBox::new())
@@ -2725,9 +2634,8 @@ mod tests {
             PortableLimits::new(8, 16, 64, 128, 1_024),
         )
         .unwrap();
-        let source = SourceFingerprint::new(
-            aimer_widget::portable::StableId128::from_bytes([34; 16]),
-        );
+        let source =
+            SourceFingerprint::new(aimer_widget::portable::StableId128::from_bytes([34; 16]));
         let root = SizedBox::new()
             .width(48)
             .height(24)
@@ -2736,13 +2644,9 @@ mod tests {
         let document = guest.finish_document(root).unwrap();
         let image = document.encode().unwrap();
 
-        let element = materialize_aimer_widget_tree(
-            &image,
-            document.model_limits(),
-            &host_context(),
-            |_| {},
-        )
-        .expect("SizedBox must materialize through the permanent host");
+        let element =
+            materialize_aimer_widget_tree(&image, document.model_limits(), &host_context(), |_| {})
+                .expect("SizedBox must materialize through the permanent host");
         let size = element.computed_size(&host_context());
 
         assert_eq!(size.width, 48.0);
@@ -2764,26 +2668,18 @@ mod tests {
             PortableLimits::new(8, 16, 64, 128, 1_024),
         )
         .unwrap();
-        let source = SourceFingerprint::new(
-            aimer_widget::portable::StableId128::from_bytes([35; 16]),
-        );
+        let source =
+            SourceFingerprint::new(aimer_widget::portable::StableId128::from_bytes([35; 16]));
         let root = Column::new()
-            .children([
-                SizedBox::new().height(24),
-                SizedBox::new().height(40),
-            ])
+            .children([SizedBox::new().height(24), SizedBox::new().height(40)])
             .to_portable_node(&mut guest, source)
             .unwrap();
         let document = guest.finish_document(root).unwrap();
         let image = document.encode().unwrap();
 
-        let element = materialize_aimer_widget_tree(
-            &image,
-            document.model_limits(),
-            &host_context(),
-            |_| {},
-        )
-        .expect("Column spacers must materialize through the permanent host");
+        let element =
+            materialize_aimer_widget_tree(&image, document.model_limits(), &host_context(), |_| {})
+                .expect("Column spacers must materialize through the permanent host");
         let size = element.computed_size(&host_context());
 
         assert_eq!(size.height, 64.0);
@@ -2840,19 +2736,13 @@ mod tests {
             PortableLimits::new(16, 32, 128, 256, 4_096),
         )
         .unwrap();
-        let source = SourceFingerprint::new(
-            aimer_widget::portable::StableId128::from_bytes([37; 16]),
-        );
+        let source =
+            SourceFingerprint::new(aimer_widget::portable::StableId128::from_bytes([37; 16]));
         let root = section().to_portable_node(&mut guest, source).unwrap();
         let document = guest.finish_document(root).unwrap();
         let image = document.encode().unwrap();
-        let hot = materialize_aimer_widget_tree(
-            &image,
-            document.model_limits(),
-            &context,
-            |_| {},
-        )
-        .expect("scrollable section must materialize through the permanent host");
+        let hot = materialize_aimer_widget_tree(&image, document.model_limits(), &context, |_| {})
+            .expect("scrollable section must materialize through the permanent host");
 
         assert_eq!(native.content_size(&context).height, 738.0);
         assert_eq!(hot.content_size(&context), native.content_size(&context));
@@ -2875,9 +2765,8 @@ mod tests {
             PortableLimits::new(8, 16, 64, 128, 4_096),
         )
         .unwrap();
-        let source = SourceFingerprint::new(
-            aimer_widget::portable::StableId128::from_bytes([32; 16]),
-        );
+        let source =
+            SourceFingerprint::new(aimer_widget::portable::StableId128::from_bytes([32; 16]));
         let root = Grid::new()
             .columns([GridTrack::Px(120.0)])
             .rows([GridTrack::Px(40.0)])
@@ -2909,9 +2798,8 @@ mod tests {
             PortableLimits::new(8, 16, 64, 128, 4_096),
         )
         .unwrap();
-        let source = SourceFingerprint::new(
-            aimer_widget::portable::StableId128::from_bytes([33; 16]),
-        );
+        let source =
+            SourceFingerprint::new(aimer_widget::portable::StableId128::from_bytes([33; 16]));
         let root = Scrollable::new()
             .axis(ScrollAxis::Horizontal)
             .vertical_scroll_bar(None)
@@ -2942,9 +2830,8 @@ mod tests {
             PortableLimits::new(8, 16, 64, 128, 1_024),
         )
         .unwrap();
-        let source = SourceFingerprint::new(
-            aimer_widget::portable::StableId128::from_bytes([35; 16]),
-        );
+        let source =
+            SourceFingerprint::new(aimer_widget::portable::StableId128::from_bytes([35; 16]));
         let root = ScrollBar::default()
             .to_portable_node(&mut guest, source)
             .unwrap();
@@ -2990,7 +2877,10 @@ mod tests {
             ),
             WidgetProperty::new(PROPERTY_ANIMATED_THEME_VALUE, PropertyValue::BlobRef(1)),
             WidgetProperty::new(PROPERTY_ANIMATED_THEME_MODE, PropertyValue::I64(2)),
-            WidgetProperty::new(PROPERTY_ANIMATED_THEME_DURATION_MILLIS, PropertyValue::I64(1)),
+            WidgetProperty::new(
+                PROPERTY_ANIMATED_THEME_DURATION_MILLIS,
+                PropertyValue::I64(1),
+            ),
             WidgetProperty::new(PROPERTY_ANIMATED_THEME_CURVE, PropertyValue::I64(0)),
         ];
         let error_properties = [WidgetProperty::new(
@@ -3076,10 +2966,7 @@ mod tests {
 
     #[test]
     fn native_dimensions_reject_negative_sized_box_dimensions() {
-        let property = WidgetProperty::new(
-            PROPERTY_SIZED_BOX_WIDTH,
-            PropertyValue::BlobRef(0),
-        );
+        let property = WidgetProperty::new(PROPERTY_SIZED_BOX_WIDTH, PropertyValue::BlobRef(0));
         let properties = [property];
         let nodes = [WidgetNode::new(WIDGET_SIZED_BOX, SCHEMA_V1).properties(&properties)];
         let negative_px = [1, 1, 0, 0, 128, 191];
@@ -3135,11 +3022,7 @@ mod tests {
     #[test]
     fn provider_validation_rejects_unknown_identity_and_malformed_theme_payload() {
         let cases = [
-            (
-                PropertyValue::I64(0),
-                vec![0; 24],
-                PROPERTY_PROVIDER_TYPE,
-            ),
+            (PropertyValue::I64(0), vec![0; 24], PROPERTY_PROVIDER_TYPE),
             (
                 PropertyValue::I64(ThemeData::portable_codec().schema().id().value() as i64),
                 vec![0; 23],
@@ -3214,7 +3097,7 @@ mod tests {
             assert_eq!(decode_animated_theme_mode(2), Some(ThemeMode::Dark));
             assert!(matches!(
                 curve,
-                Some(Curve::CubicBezier(x1, y1, x2, y2))
+                Some(curves::cubic_bezier(x1, y1, x2, y2))
                     if (x1 - 0.1).abs() < f32::EPSILON
                         && (y1 - 0.2).abs() < f32::EPSILON
                         && (x2 - 0.8).abs() < f32::EPSILON
@@ -3396,19 +3279,22 @@ mod tests {
 
     #[test]
     fn button_press_binding_remains_compatible() {
-        with_button_node(&[binding(EVENT_BUTTON_PRESS, PRESS_ID)], |_document, node| {
-            let dispatched = Rc::new(RefCell::new(Vec::new()));
-            let captured = Rc::clone(&dispatched);
-            let dispatch: Rc<dyn Fn(StableId128)> =
-                Rc::new(move |callback_id| captured.borrow_mut().push(callback_id));
-            let button = bind_button_callbacks(Button::new(), node.callbacks(), &dispatch);
+        with_button_node(
+            &[binding(EVENT_BUTTON_PRESS, PRESS_ID)],
+            |_document, node| {
+                let dispatched = Rc::new(RefCell::new(Vec::new()));
+                let captured = Rc::clone(&dispatched);
+                let dispatch: Rc<dyn Fn(StableId128)> =
+                    Rc::new(move |callback_id| captured.borrow_mut().push(callback_id));
+                let button = bind_button_callbacks(Button::new(), node.callbacks(), &dispatch);
 
-            assert_eq!(button.on_press.execute(()), Some(()));
-            assert_eq!(button.on_long_press.execute(()), None);
-            assert_eq!(button.on_double_press.execute(()), None);
-            assert_eq!(button.on_right_press.execute(()), None);
-            assert_eq!(*dispatched.borrow(), [PRESS_ID]);
-        });
+                assert_eq!(button.on_press.execute(()), Some(()));
+                assert_eq!(button.on_long_press.execute(()), None);
+                assert_eq!(button.on_double_press.execute(()), None);
+                assert_eq!(button.on_right_press.execute(()), None);
+                assert_eq!(*dispatched.borrow(), [PRESS_ID]);
+            },
+        );
     }
 
     #[test]
@@ -3430,11 +3316,8 @@ mod tests {
         let properties = [
             WidgetProperty::new(PROPERTY_TEXT_BUTTON_DISABLED, PropertyValue::Bool(false)),
             WidgetProperty::new(PROPERTY_TEXT_BUTTON_LABEL, PropertyValue::StringRef(0)),
-            WidgetProperty::new(
-                PROPERTY_TEXT_BUTTON_COLOR,
-                PropertyValue::Rgba(0x10203040),
-            )
-            .optional(),
+            WidgetProperty::new(PROPERTY_TEXT_BUTTON_COLOR, PropertyValue::Rgba(0x10203040))
+                .optional(),
             WidgetProperty::new(
                 PROPERTY_TEXT_BUTTON_HOVER_COLOR,
                 PropertyValue::Rgba(0x50607080),
@@ -3447,12 +3330,7 @@ mod tests {
             .optional(),
         ];
         let callbacks = [
-            CallbackBinding::new_async(
-                EVENT_TEXT_BUTTON_PRESS,
-                SCHEMA_V1,
-                SCHEMA_V1,
-                PRESS_ID,
-            ),
+            CallbackBinding::new_async(EVENT_TEXT_BUTTON_PRESS, SCHEMA_V1, SCHEMA_V1, PRESS_ID),
             CallbackBinding::new_async(
                 EVENT_TEXT_BUTTON_DOUBLE_PRESS,
                 SCHEMA_V1,
@@ -3514,9 +3392,8 @@ mod tests {
             PortableLimits::new(8, 16, 64, 128, 4_096),
         )
         .unwrap();
-        let source = SourceFingerprint::new(
-            aimer_widget::portable::StableId128::from_bytes([36; 16]),
-        );
+        let source =
+            SourceFingerprint::new(aimer_widget::portable::StableId128::from_bytes([36; 16]));
         let root = TextButton::new("Open")
             .style(style)
             .to_portable_node(&mut guest, source)
@@ -3527,10 +3404,14 @@ mod tests {
         let native = TextButton::new("Open")
             .style(style)
             .to_element(&host_context());
-        let hot = materialize_aimer_widget_tree(&image, document.model_limits(), &host_context(), |_| {})
-            .expect("TextButton must materialize through the permanent host");
+        let hot =
+            materialize_aimer_widget_tree(&image, document.model_limits(), &host_context(), |_| {})
+                .expect("TextButton must materialize through the permanent host");
 
-        assert_eq!(hot.computed_size(&host_context()), native.computed_size(&host_context()));
+        assert_eq!(
+            hot.computed_size(&host_context()),
+            native.computed_size(&host_context())
+        );
     }
 
     #[test]

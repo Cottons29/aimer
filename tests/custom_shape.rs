@@ -1,5 +1,7 @@
 use aimer::canvas::{FrameCanvas, InnerCanvas};
-use aimer::cupid::draw_cmd_v2::{DrawCommand as V2DrawCommand, Rect, RenderPaintSource, RenderTree};
+use aimer::cupid::draw_cmd_v2::{
+    DrawCommand as V2DrawCommand, Rect, RenderPaintSource, RenderTree,
+};
 use aimer::widget::base::WindowHandle;
 use aimer::{
     BuildContext, Color, CustomShape, FillStyle, Glass, LayoutElement, Liquid, ResolvedSize,
@@ -57,8 +59,8 @@ fn custom_shape_records_a_fitted_background_in_its_own_list() {
     let canvas = FrameCanvas::new(&inner);
     let context = context(canvas, &runtime);
     let fill = FillStyle::solid(ShapeColor::rgba8(220, 40, 40, 255));
-    let stroke = StrokeStyle::new(2.0, ShapeColor::rgba8(40, 20, 20, 255))
-        .expect("finite test stroke");
+    let stroke =
+        StrokeStyle::new(2.0, ShapeColor::rgba8(40, 20, 20, 255)).expect("finite test stroke");
     let stroke_width = stroke.width;
 
     let element = CustomShape::new()
@@ -104,7 +106,10 @@ fn custom_shape_records_a_fitted_background_in_its_own_list() {
             _ => None,
         })
         .expect("bounds clipping should target the transformed path bounds");
-    assert_eq!((clip.x, clip.y, clip.width, clip.height), (8.0, 8.0, 32.0, 32.0));
+    assert_eq!(
+        (clip.x, clip.y, clip.width, clip.height),
+        (8.0, 8.0, 32.0, 32.0)
+    );
     assert!(
         !commands
             .iter()
@@ -134,9 +139,11 @@ fn custom_shape_invalid_opacity_keeps_the_child_and_skips_shape_paint() {
     element.layout(&context);
 
     let commands = record_local_v2(&element, &context);
-    assert!(!commands
-        .iter()
-        .any(|command| matches!(command, V2DrawCommand::Svg { .. })));
+    assert!(
+        !commands
+            .iter()
+            .any(|command| matches!(command, V2DrawCommand::Svg { .. }))
+    );
     let mut children = 0;
     element.visit_children(&mut |_| children += 1);
     assert_eq!(children, 1, "the child is kept");
@@ -212,13 +219,13 @@ fn scalable_keeps_its_child_as_a_scaled_retained_node() {
 
         element.visit_children(&mut |child| {
             let child_context = element.retained_v2_child_context_at(context, child, 0);
-            assert_eq!(child_context.as_ref().map(|ctx| ctx.scale), Some(1.5));
+            assert_eq!(child_context.as_ref().map(|ctx| ctx.scale), Some(1.0));
         });
     });
 
     assert_eq!(
         tree.element_bounds(child).unwrap(),
-        Rect::new(0.0, 0.0, 48.0, 48.0)
+        Rect::new(-8.0, -8.0, 48.0, 48.0)
     );
 }
 

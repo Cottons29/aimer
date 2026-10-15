@@ -62,10 +62,22 @@ macro_rules! schema_id {
     };
 }
 
-schema_id!(WidgetSchemaId, "A stable identity for a portable widget schema.");
-schema_id!(PropertyId, "A stable identity for a property within a widget schema.");
-schema_id!(EventId, "A stable identity for an event exposed by a widget schema.");
-schema_id!(ValueTypeId, "A stable identity for a value type used by a schema.");
+schema_id!(
+    WidgetSchemaId,
+    "A stable identity for a portable widget schema."
+);
+schema_id!(
+    PropertyId,
+    "A stable identity for a property within a widget schema."
+);
+schema_id!(
+    EventId,
+    "A stable identity for an event exposed by a widget schema."
+);
+schema_id!(
+    ValueTypeId,
+    "A stable identity for a value type used by a schema."
+);
 
 /// Describes the canonical identity and supported version interval of a widget schema.
 ///
@@ -380,14 +392,7 @@ mod tests {
     #[test]
     fn same_canonical_name_with_different_ids_is_rejected() {
         let first = metadata(SCHEMA_ID, SCHEMA_NAME, 1, 0, 1, 0);
-        let second = metadata(
-            WidgetSchemaId::new(8),
-            SCHEMA_NAME,
-            2,
-            0,
-            2,
-            0,
-        );
+        let second = metadata(WidgetSchemaId::new(8), SCHEMA_NAME, 2, 0, 2, 0);
 
         assert!(matches!(
             validate_widget_schema_metadata(&[first, second]),

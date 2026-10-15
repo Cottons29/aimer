@@ -21,7 +21,10 @@ fn keyed_collection_retains_state_across_reorder_and_drops_removed_keys() {
         .replace_items([item(3, "three"), item(4, "four"), item(2, "two")])
         .unwrap();
 
-    assert_eq!(collection.keys().copied().collect::<Vec<_>>(), vec![3, 4, 2]);
+    assert_eq!(
+        collection.keys().copied().collect::<Vec<_>>(),
+        vec![3, 4, 2]
+    );
     assert_eq!(collection.state(&2), Some(&"focused"));
     assert_eq!(collection.state(&3), Some(&"expanded"));
     assert_eq!(collection.state(&1), None);
@@ -31,11 +34,15 @@ fn keyed_collection_retains_state_across_reorder_and_drops_removed_keys() {
 #[test]
 fn collection_rejects_duplicate_keys_without_partial_update() {
     let mut collection = aimer_data_view::CollectionModel::<u64, &'static str>::new();
-    collection.set_items([item(1, "one"), item(2, "two")]).unwrap();
+    collection
+        .set_items([item(1, "one"), item(2, "two")])
+        .unwrap();
 
-    assert!(collection
-        .replace_items([item(2, "changed"), item(2, "duplicate")])
-        .is_err());
+    assert!(
+        collection
+            .replace_items([item(2, "changed"), item(2, "duplicate")])
+            .is_err()
+    );
     assert_eq!(collection.keys().copied().collect::<Vec<_>>(), vec![1, 2]);
     assert_eq!(collection.item(&2).unwrap().value(), &"two");
 }
@@ -49,16 +56,24 @@ fn collection_slots_cover_empty_loading_error_and_bounded_windows() {
         .unwrap();
     let mut collection = aimer_data_view::CollectionModel::<u64, u64>::new();
 
-    assert!(matches!(collection.slot(&spec).unwrap(), CollectionSlot::Empty));
+    assert!(matches!(
+        collection.slot(&spec).unwrap(),
+        CollectionSlot::Empty
+    ));
     collection.begin_loading();
-    assert!(matches!(collection.slot(&spec).unwrap(), CollectionSlot::Loading));
+    assert!(matches!(
+        collection.slot(&spec).unwrap(),
+        CollectionSlot::Loading
+    ));
     collection.fail("network unavailable");
     match collection.slot(&spec).unwrap() {
         CollectionSlot::Error(message) => assert_eq!(message, "network unavailable"),
         other => panic!("unexpected collection slot: {other:?}"),
     }
 
-    collection.set_items((0..10_000).map(|id| CollectionItem::new(id, id))).unwrap();
+    collection
+        .set_items((0..10_000).map(|id| CollectionItem::new(id, id)))
+        .unwrap();
     let window = match collection.slot(&spec).unwrap() {
         CollectionSlot::Items(window) => window,
         other => panic!("unexpected collection slot: {other:?}"),
@@ -74,7 +89,9 @@ fn zero_extent_and_empty_windows_have_deterministic_boundaries() {
     assert!(aimer_data_view::WindowSpec::new(0.0, 0.0, 10.0).is_err());
     let spec = WindowSpec::new(10.0, 100.0, 0.0).unwrap();
     let mut collection = aimer_data_view::CollectionModel::<u64, u64>::new();
-    collection.set_items((0..3).map(|id| CollectionItem::new(id, id))).unwrap();
+    collection
+        .set_items((0..3).map(|id| CollectionItem::new(id, id)))
+        .unwrap();
     let window = collection.window(&spec).unwrap();
     assert!(window.is_empty());
     assert_eq!(window.range().start(), 3);
@@ -89,17 +106,37 @@ struct Person {
 }
 
 fn table() -> DataTable<u64, Person> {
-    let name = DataColumn::new("name", "Name")
-        .cell(|row: &Person| row.name.to_owned());
+    let name = DataColumn::new("name", "Name").cell(|row: &Person| row.name.to_owned());
     let score = DataColumn::new("score", "Score")
         .cell(|row: &Person| row.score.to_string())
         .sortable_by(|left: &Person, right: &Person| left.score.cmp(&right.score));
     let mut table = DataTable::new([name, score]).unwrap();
     table
         .set_rows([
-            TableRow::new(1, Person { id: 1, name: "Ada", score: 80 }),
-            TableRow::new(2, Person { id: 2, name: "Bea", score: 95 }),
-            TableRow::new(3, Person { id: 3, name: "Cid", score: 65 }),
+            TableRow::new(
+                1,
+                Person {
+                    id: 1,
+                    name: "Ada",
+                    score: 80,
+                },
+            ),
+            TableRow::new(
+                2,
+                Person {
+                    id: 2,
+                    name: "Bea",
+                    score: 95,
+                },
+            ),
+            TableRow::new(
+                3,
+                Person {
+                    id: 3,
+                    name: "Cid",
+                    score: 65,
+                },
+            ),
         ])
         .unwrap();
     table.refresh().unwrap();
@@ -109,7 +146,9 @@ fn table() -> DataTable<u64, Person> {
 #[test]
 fn data_table_sorts_filters_selects_and_windows_rows_by_key() {
     let mut table = table();
-    table.set_sort(Some(SortState::new("score", SortDirection::Descending))).unwrap();
+    table
+        .set_sort(Some(SortState::new("score", SortDirection::Descending)))
+        .unwrap();
     assert!(table.is_dirty());
     table.refresh().unwrap();
     assert_eq!(table.visible_keys(), vec![2, 1, 3]);
@@ -126,9 +165,30 @@ fn data_table_sorts_filters_selects_and_windows_rows_by_key() {
 
     table
         .set_rows([
-            TableRow::new(1, Person { id: 1, name: "Ada", score: 80 }),
-            TableRow::new(4, Person { id: 4, name: "Drew", score: 70 }),
-            TableRow::new(2, Person { id: 2, name: "Bea", score: 95 }),
+            TableRow::new(
+                1,
+                Person {
+                    id: 1,
+                    name: "Ada",
+                    score: 80,
+                },
+            ),
+            TableRow::new(
+                4,
+                Person {
+                    id: 4,
+                    name: "Drew",
+                    score: 70,
+                },
+            ),
+            TableRow::new(
+                2,
+                Person {
+                    id: 2,
+                    name: "Bea",
+                    score: 95,
+                },
+            ),
         ])
         .unwrap();
     table.refresh().unwrap();
@@ -146,12 +206,28 @@ fn data_table_sorts_filters_selects_and_windows_rows_by_key() {
 #[test]
 fn data_table_rejects_duplicate_rows_and_validates_column_widths() {
     let mut table = table();
-    assert!(table
-        .set_rows([
-            TableRow::new(1, Person { id: 1, name: "Ada", score: 80 }),
-            TableRow::new(1, Person { id: 1, name: "Again", score: 81 }),
-        ])
-        .is_err());
+    assert!(
+        table
+            .set_rows([
+                TableRow::new(
+                    1,
+                    Person {
+                        id: 1,
+                        name: "Ada",
+                        score: 80
+                    }
+                ),
+                TableRow::new(
+                    1,
+                    Person {
+                        id: 1,
+                        name: "Again",
+                        score: 81
+                    }
+                ),
+            ])
+            .is_err()
+    );
     assert_eq!(table.row_count(), 3);
 
     let width = ColumnWidth::fixed(120.0).unwrap();
@@ -171,15 +247,18 @@ fn tree_view_expands_traverses_loads_children_and_rejects_cycles() {
 
     tree.set_expanded(1, true).unwrap();
     tree.focus(1).unwrap();
-    assert_eq!(tree.handle_key(TreeKey::ArrowDown).unwrap(), TreeKeyResult::Focused(2));
-    assert_eq!(tree.handle_key(TreeKey::ArrowRight).unwrap(), TreeKeyResult::RequestChildren(2));
+    assert_eq!(
+        tree.handle_key(TreeKey::ArrowDown).unwrap(),
+        TreeKeyResult::Focused(2)
+    );
+    assert_eq!(
+        tree.handle_key(TreeKey::ArrowRight).unwrap(),
+        TreeKeyResult::RequestChildren(2)
+    );
     assert_eq!(tree.children_state(&2), Some(ChildLoadState::Loading));
 
-    tree.complete_children(
-        2,
-        [TreeNodeSpec::new(4, "Loaded child".into())],
-    )
-    .unwrap();
+    tree.complete_children(2, [TreeNodeSpec::new(4, "Loaded child".into())])
+        .unwrap();
     assert_eq!(tree.children_state(&2), Some(ChildLoadState::Loaded));
     assert_eq!(tree.visible_ids(), vec![1, 2, 4, 3]);
 
@@ -198,19 +277,29 @@ fn tree_keyboard_left_home_end_and_activation_are_deterministic() {
     tree.set_expanded(2, true).unwrap();
     tree.focus(3).unwrap();
 
-    assert_eq!(tree.handle_key(TreeKey::ArrowLeft).unwrap(), TreeKeyResult::Focused(2));
-    assert_eq!(tree.handle_key(TreeKey::Home).unwrap(), TreeKeyResult::Focused(1));
-    assert_eq!(tree.handle_key(TreeKey::End).unwrap(), TreeKeyResult::Focused(3));
-    assert_eq!(tree.handle_key(TreeKey::Enter).unwrap(), TreeKeyResult::Activated(3));
+    assert_eq!(
+        tree.handle_key(TreeKey::ArrowLeft).unwrap(),
+        TreeKeyResult::Focused(2)
+    );
+    assert_eq!(
+        tree.handle_key(TreeKey::Home).unwrap(),
+        TreeKeyResult::Focused(1)
+    );
+    assert_eq!(
+        tree.handle_key(TreeKey::End).unwrap(),
+        TreeKeyResult::Focused(3)
+    );
+    assert_eq!(
+        tree.handle_key(TreeKey::Enter).unwrap(),
+        TreeKeyResult::Activated(3)
+    );
 }
 
 #[test]
 fn sort_comparators_have_a_stable_original_order_for_equal_values() {
-    let mut table = DataTable::new([
-        DataColumn::new("value", "Value")
-            .cell(|row: &i32| row.to_string())
-            .sortable_by(|left: &i32, right: &i32| left.cmp(right)),
-    ])
+    let mut table = DataTable::new([DataColumn::new("value", "Value")
+        .cell(|row: &i32| row.to_string())
+        .sortable_by(|left: &i32, right: &i32| left.cmp(right))])
     .unwrap();
     table
         .set_rows([

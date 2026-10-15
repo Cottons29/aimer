@@ -1,10 +1,10 @@
 use std::time::Duration;
 
 use aimer::animation::{AnimInstant, Animated, AnimationController};
+use aimer::input::button::Button;
 use aimer::macros::widget;
 use aimer::style::*;
 use aimer::*;
-use aimer::input::button::Button;
 use uuid::Uuid;
 
 use crate::theme;
@@ -105,7 +105,7 @@ impl State<MyAnimatedList> for MyListState {
                                                                 let uuid = Uuid::new_v4().to_string();
                                                                 let controller = AnimationController::new(
                                                                     Duration::from_millis(1000),
-                                                                    Curve::EaseOut,
+                                                                    curves::EASE_OUT,
                                                                 );
                                                                 controller.forward();
                                                                 state.list.push(ListItem {

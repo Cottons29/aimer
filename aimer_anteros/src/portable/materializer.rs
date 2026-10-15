@@ -1,9 +1,7 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::{
-    ModelError, ModelLimits, WidgetDocumentView, WidgetNodeView, WidgetSchemaSupport,
-};
+use crate::{ModelError, ModelLimits, WidgetDocumentView, WidgetNodeView, WidgetSchemaSupport};
 
 /// Creates one host-owned node from a validated portable widget record.
 ///

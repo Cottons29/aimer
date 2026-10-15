@@ -2,10 +2,10 @@
 
 use std::cell::Cell;
 
+use aimer::input::TextEditingController;
+use aimer::input::input::{CaretContext, InputType, TextField};
 use aimer::style::*;
 use aimer::*;
-use aimer::input::input::{CaretContext, InputType, TextField};
-use aimer::input::TextEditingController;
 
 use crate::theme;
 
@@ -39,14 +39,15 @@ impl Default for CustomTextFieldCaretExample {
 impl Widget for CustomTextFieldCaretExample {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
         let theme = ThemeData::copied(ctx);
-        let text_style = TextStyle::new().font_size(16).color(theme.on_surface_color);
+        let text_style = TextStyle::new()
+            .font_size(16)
+            .color(theme.on_surface_color);
         let caret_color = theme.primary_color;
 
         Container::new()
             .color(theme.background_color)
             .padding(LayoutSpacing::all(Spacing::Px(32)))
-            .child(
-                Column::new().children(vec![
+            .child(Column::new().children(vec![
                     Text::new("Custom TextField caret")
                         .text_style(
                             TextStyle::new()
@@ -77,8 +78,7 @@ impl Widget for CustomTextFieldCaretExample {
                     Text::new("Focus the field to see the rounded caret blink with the app accent.")
                         .text_style(TextStyle::new().font_size(14).color(theme::muted_text(&theme)))
                         .boxed(),
-                ]),
-            )
+                ]))
             .to_element(ctx)
     }
 
@@ -129,13 +129,19 @@ struct ThemedCaretElement {
 impl ThemedCaretElement {
     #[inline]
     fn state(&self) -> (bool, bool) {
-        (self.context.is_visible(), self.context.is_composing())
+        (
+            self.context
+                .is_visible(),
+            self.context
+                .is_composing(),
+        )
     }
 
     #[inline]
     fn paint_color(&self, composing: bool) -> Color {
         if composing {
-            self.color.lighten(0.18)
+            self.color
+                .lighten(0.18)
         } else {
             self.color
         }
@@ -145,7 +151,9 @@ impl ThemedCaretElement {
 impl Drawable for ThemedCaretElement {
     #[inline]
     fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
-        ctx.scale.is_finite() && ctx.scale > 0.0
+        ctx.scale
+            .is_finite()
+            && ctx.scale > 0.0
     }
 
     #[inline]
@@ -155,13 +163,23 @@ impl Drawable for ThemedCaretElement {
 
     fn paint_local_v2(&self, ctx: &BuildContext) {
         let (visible, composing) = self.state();
-        self.painted.set(Some((visible, composing)));
+        self.painted
+            .set(Some((visible, composing)));
         let canvas = aimer::canvas::Canvas::of(ctx);
         let scale = ctx.scale;
-        let width = ctx.parent_size.width.max(2.0) / scale;
-        let height = ctx.parent_size.height / scale;
+        let width = ctx
+            .parent_size
+            .width
+            .max(2.0)
+            / scale;
+        let height = ctx
+            .parent_size
+            .height
+            / scale;
         if visible && height > 0.0 {
-            let rgba = self.paint_color(composing).as_u32();
+            let rgba = self
+                .paint_color(composing)
+                .as_u32();
             canvas.fill_rect_styled(
                 cupid::draw_cmd_v2::Rect::new(0.0, 0.0, width, height),
                 cupid::utilities::Color::rgba8(
@@ -179,7 +197,6 @@ impl Drawable for ThemedCaretElement {
         }
         canvas.finish();
     }
-
 }
 
 impl VisitorElement for ThemedCaretElement {

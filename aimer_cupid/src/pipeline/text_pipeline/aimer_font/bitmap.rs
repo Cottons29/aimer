@@ -34,8 +34,7 @@ fn sbix_bitmap_top(
         // readers replace it with -100 font units before adding the bitmap
         // height, which keeps the artwork just below the em-box top instead
         // of placing its top edge on the text baseline.
-        return image_height as f32
-            - 100.0 * f32::from(strike_ppem) / f32::from(units_per_em);
+        return image_height as f32 - 100.0 * f32::from(strike_ppem) / f32::from(units_per_em);
     }
     f32::from(origin_y)
 }
@@ -177,9 +176,7 @@ fn parse_sbix(
             return Err(malformed(SBIX_TAG));
         }
         let reader = Reader::new(table);
-        let ppem = reader
-            .u16(strike_offset)
-            .map_err(|_| malformed(SBIX_TAG))?;
+        let ppem = reader.u16(strike_offset).map_err(|_| malformed(SBIX_TAG))?;
         let offset_array = checked_add(strike_offset, 4)?;
         let offset_array_end = checked_add(offset_array, offsets_size)?;
         if ppem == 0 || offset_array_end > strike_end {
@@ -197,9 +194,7 @@ fn parse_sbix(
         let mut glyph_offsets = Vec::with_capacity(offset_count);
         for glyph in 0..offset_count {
             let offset = checked_add(offset_array, checked_mul(glyph, 4)?)?;
-            let value = reader
-                .u32(offset)
-                .map_err(|_| malformed(SBIX_TAG))?;
+            let value = reader.u32(offset).map_err(|_| malformed(SBIX_TAG))?;
             let value_usize = usize::try_from(value).map_err(|_| SfntError::ArithmeticOverflow)?;
             if value_usize > strike_data_len {
                 return Err(malformed(SBIX_TAG));
@@ -289,12 +284,7 @@ enum EmbeddedImageKind {
 }
 
 impl SbixStrike {
-    fn image<'a>(
-        &self,
-        table: &'a [u8],
-        glyph_id: u16,
-        depth: usize,
-    ) -> Option<SbixImage<'a>> {
+    fn image<'a>(&self, table: &'a [u8], glyph_id: u16, depth: usize) -> Option<SbixImage<'a>> {
         if depth > MAX_DUPE_DEPTH {
             return None;
         }
@@ -379,11 +369,7 @@ struct BitmapMetrics {
     bearing_y: i16,
 }
 
-fn parse_cbdt(
-    cblc: &[u8],
-    cbdt: &[u8],
-    num_glyphs: u16,
-) -> Result<Option<CbdtTable>, SfntError> {
+fn parse_cbdt(cblc: &[u8], cbdt: &[u8], num_glyphs: u16) -> Result<Option<CbdtTable>, SfntError> {
     let reader = Reader::new(cblc);
     let version = reader.u32(0).map_err(|_| malformed(CBLC_TAG))?;
     if version != 0x0002_0000 && version != 0x0003_0000 {
@@ -410,8 +396,12 @@ fn parse_cbdt(
         let base = checked_add(size_table_start, checked_mul(strike_index, 48)?)?;
         let array_offset = usize::try_from(reader.u32(base).map_err(|_| malformed(CBLC_TAG))?)
             .map_err(|_| SfntError::ArithmeticOverflow)?;
-        let array_size = usize::try_from(reader.u32(checked_add(base, 4)?).map_err(|_| malformed(CBLC_TAG))?)
-            .map_err(|_| SfntError::ArithmeticOverflow)?;
+        let array_size = usize::try_from(
+            reader
+                .u32(checked_add(base, 4)?)
+                .map_err(|_| malformed(CBLC_TAG))?,
+        )
+        .map_err(|_| SfntError::ArithmeticOverflow)?;
         let subtable_count = usize::try_from(
             reader
                 .u32(checked_add(base, 8)?)
@@ -458,9 +448,7 @@ fn parse_cbdt(
         let mut previous_last = None;
         for index in 0..subtable_count {
             let record = checked_add(array_offset, checked_mul(index, 8)?)?;
-            let first = reader
-                .u16(record)
-                .map_err(|_| malformed(CBLC_TAG))?;
+            let first = reader.u16(record).map_err(|_| malformed(CBLC_TAG))?;
             let last = reader
                 .u16(checked_add(record, 2)?)
                 .map_err(|_| malformed(CBLC_TAG))?;
@@ -489,14 +477,9 @@ fn parse_cbdt(
 
         let mut subtables = Vec::with_capacity(records.len());
         for (first, last, subtable_offset) in records {
-            if let Some(subtable) = parse_index_subtable(
-                cblc,
-                cbdt,
-                first,
-                last,
-                subtable_offset,
-                array_end,
-            )? {
+            if let Some(subtable) =
+                parse_index_subtable(cblc, cbdt, first, last, subtable_offset, array_end)?
+            {
                 subtables.push(subtable);
             }
         }
@@ -542,10 +525,7 @@ fn parse_index_subtable(
     if image_data_offset > cbdt.len() {
         return Err(malformed(CBLC_TAG));
     }
-    let count = checked_add(
-        usize::from(last_glyph) - usize::from(first_glyph),
-        1,
-    )?;
+    let count = checked_add(usize::from(last_glyph) - usize::from(first_glyph), 1)?;
 
     let entries = match index_format {
         1 => {
@@ -566,7 +546,11 @@ fn parse_index_subtable(
                 .map_err(|_| malformed(CBLC_TAG))?;
             ensure_range(cblc, offset, 20, table_end)?;
             let metrics = read_big_metrics(&reader, checked_add(offset, 12)?)?;
-            if image_size == 0 || usize::try_from(image_size).ok().is_none_or(|size| size > MAX_BITMAP_PAYLOAD) {
+            if image_size == 0
+                || usize::try_from(image_size)
+                    .ok()
+                    .is_none_or(|size| size > MAX_BITMAP_PAYLOAD)
+            {
                 return Err(malformed(CBLC_TAG));
             }
             CbdtEntries::Fixed {
@@ -609,7 +593,9 @@ fn parse_index_subtable(
                     .map_err(|_| malformed(CBLC_TAG))?;
                 if glyph_id < first_glyph
                     || glyph_id > last_glyph
-                    || glyph_ids.last().is_some_and(|previous| glyph_id <= *previous)
+                    || glyph_ids
+                        .last()
+                        .is_some_and(|previous| glyph_id <= *previous)
                 {
                     return Err(malformed(CBLC_TAG));
                 }
@@ -642,14 +628,21 @@ fn parse_index_subtable(
             )
             .map_err(|_| SfntError::ArithmeticOverflow)?;
             if image_size == 0
-                || usize::try_from(image_size).ok().is_none_or(|size| size > MAX_BITMAP_PAYLOAD)
+                || usize::try_from(image_size)
+                    .ok()
+                    .is_none_or(|size| size > MAX_BITMAP_PAYLOAD)
                 || glyph_count == 0
                 || glyph_count > MAX_SBIT_RECORDS
             {
                 return Err(malformed(CBLC_TAG));
             }
             let glyph_ids_offset = checked_add(offset, 24)?;
-            ensure_range(cblc, offset, checked_add(24, checked_mul(glyph_count, 2)?)?, table_end)?;
+            ensure_range(
+                cblc,
+                offset,
+                checked_add(24, checked_mul(glyph_count, 2)?)?,
+                table_end,
+            )?;
             let mut glyph_ids = Vec::with_capacity(glyph_count);
             for index in 0..glyph_count {
                 let glyph_id = reader
@@ -657,7 +650,9 @@ fn parse_index_subtable(
                     .map_err(|_| malformed(CBLC_TAG))?;
                 if glyph_id < first_glyph
                     || glyph_id > last_glyph
-                    || glyph_ids.last().is_some_and(|previous| glyph_id <= *previous)
+                    || glyph_ids
+                        .last()
+                        .is_some_and(|previous| glyph_id <= *previous)
                 {
                     return Err(malformed(CBLC_TAG));
                 }
@@ -736,13 +731,33 @@ fn read_u16_offsets(
 
 fn read_big_metrics(reader: &Reader<'_>, offset: usize) -> Result<BitmapMetrics, SfntError> {
     let height = u32::from(reader.u8(offset).map_err(|_| malformed(CBLC_TAG))?);
-    let width = u32::from(reader.u8(checked_add(offset, 1)?).map_err(|_| malformed(CBLC_TAG))?);
-    let bearing_x = i16::from(reader.i8(checked_add(offset, 2)?).map_err(|_| malformed(CBLC_TAG))?);
-    let bearing_y = i16::from(reader.i8(checked_add(offset, 3)?).map_err(|_| malformed(CBLC_TAG))?);
-    let _ = reader.u8(checked_add(offset, 4)?).map_err(|_| malformed(CBLC_TAG))?;
-    let _ = reader.i8(checked_add(offset, 5)?).map_err(|_| malformed(CBLC_TAG))?;
-    let _ = reader.i8(checked_add(offset, 6)?).map_err(|_| malformed(CBLC_TAG))?;
-    let _ = reader.u8(checked_add(offset, 7)?).map_err(|_| malformed(CBLC_TAG))?;
+    let width = u32::from(
+        reader
+            .u8(checked_add(offset, 1)?)
+            .map_err(|_| malformed(CBLC_TAG))?,
+    );
+    let bearing_x = i16::from(
+        reader
+            .i8(checked_add(offset, 2)?)
+            .map_err(|_| malformed(CBLC_TAG))?,
+    );
+    let bearing_y = i16::from(
+        reader
+            .i8(checked_add(offset, 3)?)
+            .map_err(|_| malformed(CBLC_TAG))?,
+    );
+    let _ = reader
+        .u8(checked_add(offset, 4)?)
+        .map_err(|_| malformed(CBLC_TAG))?;
+    let _ = reader
+        .i8(checked_add(offset, 5)?)
+        .map_err(|_| malformed(CBLC_TAG))?;
+    let _ = reader
+        .i8(checked_add(offset, 6)?)
+        .map_err(|_| malformed(CBLC_TAG))?;
+    let _ = reader
+        .u8(checked_add(offset, 7)?)
+        .map_err(|_| malformed(CBLC_TAG))?;
     if width == 0 || height == 0 {
         return Err(malformed(CBLC_TAG));
     }
@@ -770,8 +785,12 @@ impl CbdtTable {
             let Some((start, end, index_metrics)) = subtable.record(glyph_id) else {
                 continue;
             };
-            let start = subtable.image_data_offset.checked_add(usize::try_from(start).ok()?)?;
-            let end = subtable.image_data_offset.checked_add(usize::try_from(end).ok()?)?;
+            let start = subtable
+                .image_data_offset
+                .checked_add(usize::try_from(start).ok()?)?;
+            let end = subtable
+                .image_data_offset
+                .checked_add(usize::try_from(end).ok()?)?;
             let bytes = table.get(start..end)?;
             let (metrics, payload) = match subtable.image_format {
                 17 => (Some(read_small_metrics(bytes)?), bytes.get(5..)?),
@@ -828,7 +847,8 @@ impl CbdtIndexSubtable {
                     },
                     |glyph_ids| glyph_ids.binary_search(&glyph_id).ok(),
                 )?;
-                let start = u32::try_from(u64::from(*image_size) * u64::try_from(index).ok()?).ok()?;
+                let start =
+                    u32::try_from(u64::from(*image_size) * u64::try_from(index).ok()?).ok()?;
                 let end = start.checked_add(*image_size)?;
                 Some((start, end, Some(*metrics)))
             }
@@ -889,7 +909,9 @@ fn decode_image(kind: EmbeddedImageKind, bytes: &[u8]) -> Option<DecodedBitmap> 
         _ => {}
     }
 
-    let mut reader = ImageReader::new(Cursor::new(bytes)).with_guessed_format().ok()?;
+    let mut reader = ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?;
     let mut limits = Limits::default();
     limits.max_image_width = Some(MAX_BITMAP_DIMENSION);
     limits.max_image_height = Some(MAX_BITMAP_DIMENSION);
@@ -959,11 +981,7 @@ fn scaled_dimension(value: u32, scale: f32) -> Option<u32> {
     Some(scaled.ceil().max(1.0) as u32)
 }
 
-fn best_strike<T>(
-    strikes: &[T],
-    font_size: f32,
-    ppem: impl Fn(&T) -> u16,
-) -> Option<&T> {
+fn best_strike<T>(strikes: &[T], font_size: f32, ppem: impl Fn(&T) -> u16) -> Option<&T> {
     strikes.iter().min_by(|left, right| {
         let left_ppem = f32::from(ppem(left));
         let right_ppem = f32::from(ppem(right));
@@ -983,19 +1001,13 @@ fn validate_offsets(offsets: &[u32], max_offset: usize) -> Result<(), SfntError>
         usize::try_from(*offset)
             .ok()
             .is_none_or(|value| value > max_offset)
-    })
-    {
+    }) {
         return Err(malformed(CBLC_TAG));
     }
     Ok(())
 }
 
-fn ensure_range(
-    bytes: &[u8],
-    offset: usize,
-    size: usize,
-    limit: usize,
-) -> Result<(), SfntError> {
+fn ensure_range(bytes: &[u8], offset: usize, size: usize, limit: usize) -> Result<(), SfntError> {
     let end = checked_add(offset, size)?;
     if end > limit {
         return Err(malformed(CBLC_TAG));
@@ -1162,12 +1174,11 @@ mod tests {
 
     fn tiny_png() -> &'static [u8] {
         &[
-            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49,
-            0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06,
-            0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44,
-            0x41, 0x54, 0x78, 0x9c, 0x63, 0xf8, 0xcf, 0xc0, 0xf0, 0x1f, 0x00, 0x05, 0x00,
-            0x01, 0xff, 0x89, 0x99, 0x3d, 0x1d, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e,
-            0x44, 0xae, 0x42, 0x60, 0x82,
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
+            0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78,
+            0x9c, 0x63, 0xf8, 0xcf, 0xc0, 0xf0, 0x1f, 0x00, 0x05, 0x00, 0x01, 0xff, 0x89, 0x99,
+            0x3d, 0x1d, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
         ]
     }
 }

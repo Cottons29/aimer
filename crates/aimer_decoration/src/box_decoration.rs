@@ -2,9 +2,9 @@ pub(crate) mod border_radius;
 pub(crate) mod box_shadow;
 pub(crate) mod shapes;
 
-use std::cell::Cell;
 use aimer_attribute::position::Vec2d;
 use aimer_color::prelude::Color;
+use std::cell::Cell;
 
 use crate::border::{BoxBorder, BoxOutline};
 use crate::box_decoration::border_radius::BorderRadius;
@@ -32,6 +32,8 @@ impl From<BoxShadow> for Vec<BoxShadow> {
 }
 
 impl BoxDecoration {
+
+
     #[inline]
     pub fn new() -> Self {
         Self::default()
@@ -117,9 +119,16 @@ impl BoxDecoration {
             logical_height,
         );
 
+        // Only an explicit radius declares the box shape. Border, outline and
+        // shadow decorations delegate here with a default radius and must not
+        // square off a shape an earlier layer declared.
+        if self.border_radius != BorderRadius::default() {
+            canvas.set_corner_radii(radii);
+        }
+
         for shadow in &self.box_shadow {
             if !shadow.inset {
-                Self::record_shadow(canvas, shadow, rect, &radii, scale);
+                shadow.record_local_v2(canvas, rect, &radii, scale);
             }
         }
 
@@ -133,7 +142,8 @@ impl BoxDecoration {
             canvas.fill_rect_styled(
                 rect,
                 self.background_color
-                    .get().or(background)
+                    .get()
+                    .or(background)
                     .unwrap_or(Color::Transparent)
                     .into(),
                 radii,
@@ -141,8 +151,7 @@ impl BoxDecoration {
                 self.border
                     .effective_color(box_width, box_height, scale)
                     .into(),
-                [outline.1, outline.2, outline.3, outline.0]
-                    .map(|width| width / scale),
+                [outline.1, outline.2, outline.3, outline.0].map(|width| width / scale),
                 self.outline
                     .effective_color(box_width, box_height, scale)
                     .into(),
@@ -161,71 +170,36 @@ impl BoxDecoration {
 
         for shadow in &self.box_shadow {
             if shadow.inset {
-                Self::record_shadow(canvas, shadow, rect, &radii, scale);
+                shadow.record_local_v2(canvas, rect, &radii, scale);
             }
         }
     }
 
     /// Returns logical paint outsets for outlines and outer shadows.
     #[doc(hidden)]
-    pub fn local_v2_paint_outsets(
-        &self,
-        box_width: f32,
-        box_height: f32,
-        scale: f32,
-    ) -> [f32; 4] {
+    pub fn local_v2_paint_outsets(&self, box_width: f32, box_height: f32, scale: f32) -> [f32; 4] {
         if !scale.is_finite() || scale <= 0.0 {
             return [0.0; 4];
         }
         let outline = self.outline.strokes(box_width, box_height, scale);
-        let mut outsets = [outline.0 / scale, outline.1 / scale, outline.2 / scale, outline.3 / scale];
+        let mut outsets = [
+            outline.0 / scale,
+            outline.1 / scale,
+            outline.2 / scale,
+            outline.3 / scale,
+        ];
         for shadow in self.box_shadow.iter().filter(|shadow| !shadow.inset) {
-            let blur = shadow.blur.max(0.0) * 3.0 / scale;
-            let spread = shadow.spread.max(0.0) / scale;
-            let offset_x = shadow.offset_x / scale;
-            let offset_y = shadow.offset_y / scale;
-            outsets[0] = outsets[0].max((blur + spread - offset_x).max(0.0));
-            outsets[1] = outsets[1].max((blur + spread - offset_y).max(0.0));
-            outsets[2] = outsets[2].max((blur + spread + offset_x).max(0.0));
-            outsets[3] = outsets[3].max((blur + spread + offset_y).max(0.0));
+            let shadow_outsets = shadow.local_v2_paint_outsets(scale);
+            outsets[0] = outsets[0].max(shadow_outsets[0]);
+            outsets[1] = outsets[1].max(shadow_outsets[1]);
+            outsets[2] = outsets[2].max(shadow_outsets[2]);
+            outsets[3] = outsets[3].max(shadow_outsets[3]);
         }
         outsets
     }
-
-    fn record_shadow(
-        canvas: &aimer_canvas::Canvas,
-        shadow: &BoxShadow,
-        rect: aimer_cupid::utilities::Rect,
-        radii: &[f32; 4],
-        scale: f32,
-    ) {
-        if shadow.color == Color::Transparent {
-            return;
-        }
-        let blur = shadow.blur.max(0.0);
-        if blur == 0.0 && shadow.spread == 0.0 && shadow.offset_x == 0.0 && shadow.offset_y == 0.0 {
-            return;
-        }
-        let side = shadow.side.to_shader_params();
-        canvas.draw_shadow_rect(
-            rect,
-            shadow.color.into(),
-            [
-                shadow.offset_x / scale,
-                shadow.offset_y / scale,
-                blur / scale,
-                shadow.spread / scale,
-            ],
-            *radii,
-            shadow.inset,
-            [side.0, side.1, side.2],
-        );
-    }
 }
 
-
-impl BoxDecoration {
-}
+impl BoxDecoration {}
 
 #[cfg(test)]
 mod tests {
@@ -255,9 +229,8 @@ mod tests {
     /// now reports, and which change detection and theme interpolation rely on.
     #[test]
     fn decorations_written_differently_compare_equal() {
-        let named = BoxDecoration::new().background_color(Color::Basic(
-            aimer_color::prelude::Colors::Red,
-        ));
+        let named =
+            BoxDecoration::new().background_color(Color::Basic(aimer_color::prelude::Colors::Red));
         let hexadecimal = BoxDecoration::new().background_color(Color::Hex(0xFF0000));
 
         assert_eq!(named, hexadecimal);

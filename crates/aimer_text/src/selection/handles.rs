@@ -211,7 +211,10 @@ mod tests {
             grab.x < knob.circle_bounds().x,
             "a fingertip is wider than the dot it aims at"
         );
-        assert!(grab.y < knob.center_y - HANDLE_RADIUS, "and reaches above it");
+        assert!(
+            grab.y < knob.center_y - HANDLE_RADIUS,
+            "and reaches above it"
+        );
         assert!(
             grab.y + grab.height >= knob.caret.y + knob.caret.height,
             "down to the foot of the bar"
@@ -223,7 +226,10 @@ mod tests {
         ] {
             assert!(knob.contains(x, y), "every corner of it grabs the knob");
         }
-        assert!(!knob.contains(grab.x - 1.0, knob.center_y), "and nothing outside does");
+        assert!(
+            !knob.contains(grab.x - 1.0, knob.center_y),
+            "and nothing outside does"
+        );
     }
 
     #[test]
@@ -250,7 +256,10 @@ mod tests {
         let knob = HandleCircle::of(caret(20.0, 40.0), HandleSide::Start);
 
         assert!(knob.contains(21.0, 34.0), "on the knob");
-        assert!(knob.contains(21.0 + HANDLE_RADIUS + 4.0, 34.0), "just beside");
+        assert!(
+            knob.contains(21.0 + HANDLE_RADIUS + 4.0, 34.0),
+            "just beside"
+        );
         assert!(knob.contains(21.0, 50.0), "on the bar");
     }
 

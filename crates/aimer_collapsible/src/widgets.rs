@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use aimer_animation::{AnimInstant, AnimationController, Curve, RotationTransition};
+use aimer_animation::{AnimInstant, AnimationController, AnyCurve, Curve, RotationTransition, curves};
 use aimer_container::Container;
 use aimer_events::element::ElementEvent;
 use aimer_events::window::request_animation_frame;
@@ -14,8 +14,8 @@ use aimer_widget::InteractionBounds;
 use aimer_widget::base::{BuildContext, ResolvedSize, Vec2d};
 use aimer_widget::{
     AnyElement, AnyWidget, ChildBuilder, Drawable, Element, EventElement, EventResult,
-    EventTreeRole, LayoutElement, PortableWidget, Rebuildable, RequiredChild,
-    State, StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
+    EventTreeRole, LayoutElement, PortableWidget, Rebuildable, RequiredChild, State, StateUpdater,
+    StatefulElement, StatefulWidget, VisitorElement, Widget,
 };
 
 use crate::key_relay::KeyRelay;
@@ -53,7 +53,10 @@ fn chevron(theme: ThemeData, controller: AnimationController) -> AnyWidget {
 
 #[inline]
 fn animation_progress(value: f32) -> f32 {
-    value.is_finite().then_some(value.clamp(0.0, 1.0)).unwrap_or(0.0)
+    value
+        .is_finite()
+        .then_some(value.clamp(0.0, 1.0))
+        .unwrap_or(0.0)
 }
 
 #[inline]
@@ -131,11 +134,7 @@ impl AnimatedCollapseElement {
     }
 
     #[inline]
-    fn child_context<'a>(
-        &self,
-        ctx: &BuildContext<'a>,
-        natural: ResolvedSize,
-    ) -> BuildContext<'a> {
+    fn child_context<'a>(&self, ctx: &BuildContext<'a>, natural: ResolvedSize) -> BuildContext<'a> {
         let mut child_ctx = ctx.clone();
         child_ctx.parent_size = natural;
         child_ctx.box_constraint.min_width = 0.0;
@@ -207,7 +206,9 @@ impl Drawable for AnimatedCollapseElement {
     }
 
     #[inline]
-    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+    fn retained_v2_interaction_disagreement(
+        &self,
+    ) -> Option<aimer_widget::InteractionDisagreement> {
         self.bounds.disagreement("AnimatedCollapse")
     }
 
@@ -305,9 +306,9 @@ impl Drawable for AnimatedCollapseElement {
             height: collapsed_height(natural.height, progress),
         };
         self.update_bounds(ctx, size);
-        self.child.sync_paint_geometry(&self.child_context(ctx, natural));
+        self.child
+            .sync_paint_geometry(&self.child_context(ctx, natural));
     }
-
 }
 
 impl VisitorElement for AnimatedCollapseElement {
@@ -524,20 +525,20 @@ impl<W: Widget> PortableWidget for ListBody<W> {}
 /// ```
 /// use std::time::Duration;
 ///
-/// use aimer_animation::Curve;
+/// use aimer_animation::curves;
 /// use aimer_collapsible::{CollapsibleList, ListBody, ListHeader};
 /// use aimer_text::Text;
 ///
 /// let _list = CollapsibleList::new()
 ///     .animation_duration(Duration::from_millis(240))
-///     .animation_curve(Curve::EaseOut)
+///     .animation_curve(curves::EASE_OUT)
 ///     .header(ListHeader::new().child(Text::new("Tags")))
 ///     .body(ListBody::new().child(Text::new("Red")));
 /// ```
 pub struct CollapsibleList<H = RequiredChild, B = RequiredChild> {
     expanded: bool,
     duration: Duration,
-    curve: Curve,
+    curve: AnyCurve,
     header: H,
     body: B,
 }
@@ -549,7 +550,7 @@ impl CollapsibleList {
         Self {
             expanded: true,
             duration: Duration::from_millis(COLLAPSIBLE_ANIMATION_MILLIS),
-            curve: Curve::EaseInOut,
+            curve: curves::EASE_IN_OUT.into_any(),
             header: RequiredChild,
             body: RequiredChild,
         }
@@ -586,8 +587,8 @@ impl<H, B> CollapsibleList<H, B> {
 
     /// Sets the easing curve used by both the body reveal and chevron rotation.
     #[inline]
-    pub fn animation_curve(mut self, curve: Curve) -> Self {
-        self.curve = curve;
+    pub fn animation_curve(mut self, curve: impl Curve) -> Self {
+        self.curve = curve.into_any();
         self
     }
 
@@ -624,7 +625,7 @@ pub struct CollapsibleListState<H: Widget + 'static, B: Widget + 'static> {
     expanded: bool,
     body_mounted: bool,
     duration: Duration,
-    curve: Curve,
+    curve: AnyCurve,
     chevron_controller: AnimationController,
     body_controller: AnimationController,
     header: ChildBuilder,
@@ -674,12 +675,12 @@ impl<H: Widget + 'static, B: Widget + 'static> CollapsibleListState<H, B> {
     }
 
     #[cfg(test)]
-    pub(crate) fn chevron_curve(&self) -> Curve {
+    pub(crate) fn chevron_curve(&self) -> AnyCurve {
         self.chevron_controller.curve()
     }
 
     #[cfg(test)]
-    pub(crate) fn body_curve(&self) -> Curve {
+    pub(crate) fn body_curve(&self) -> AnyCurve {
         self.body_controller.curve()
     }
 }
@@ -688,11 +689,11 @@ impl<H: Widget + 'static, B: Widget + 'static> StatefulWidget for CollapsibleLis
     type State = CollapsibleListState<H, B>;
 
     fn create_state(self) -> Self::State {
-        let chevron_controller = AnimationController::new(self.duration, self.curve);
+        let chevron_controller = AnimationController::new(self.duration, self.curve.clone());
         if !self.expanded {
             chevron_controller.set_value(1.0);
         }
-        let body_controller = AnimationController::new(self.duration, self.curve);
+        let body_controller = AnimationController::new(self.duration, self.curve.clone());
         if self.expanded {
             body_controller.set_value(1.0);
         }
@@ -727,7 +728,7 @@ impl<H: Widget + 'static, B: Widget + 'static> Widget for CollapsibleList<H, B> 
 impl<H: Widget + 'static, B: Widget + 'static> PortableWidget for CollapsibleList<H, B> {}
 
 impl<H: Widget + 'static, B: Widget + 'static> State<CollapsibleList<H, B>>
-for CollapsibleListState<H, B>
+    for CollapsibleListState<H, B>
 {
     fn init_state(&mut self, updater: StateUpdater<Self>) {
         self.updater = updater;
@@ -739,9 +740,9 @@ for CollapsibleListState<H, B>
         self.duration = new.duration;
         self.curve = new.curve;
         self.chevron_controller.set_duration(self.duration);
-        self.chevron_controller.set_curve(self.curve);
+        self.chevron_controller.set_curve(self.curve.clone());
         self.body_controller.set_duration(self.duration);
-        self.body_controller.set_curve(self.curve);
+        self.body_controller.set_curve(self.curve.clone());
         self.header = new.header;
         self.body = new.body;
     }
@@ -751,12 +752,14 @@ for CollapsibleListState<H, B>
         let updater = self.updater;
         let header = Container::new()
             .padding(list_edge_padding())
-            .child(Row::new()
-                .vertical_alignment(BoxAlignment::Center)
-                .children([
-                    Expanded::new().child(self.header.clone()).boxed(),
-                    chevron(theme, self.chevron_controller.clone()),
-                ]))
+            .child(
+                Row::new()
+                    .vertical_alignment(BoxAlignment::Center)
+                    .children([
+                        Expanded::new().child(self.header.clone()).boxed(),
+                        chevron(theme, self.chevron_controller.clone()),
+                    ]),
+            )
             .boxed();
         // The toggle owns the whole header hit region, so an interactive
         // descendant cannot intercept its pointer or focus events.
@@ -782,7 +785,7 @@ for CollapsibleListState<H, B>
                         .padding(list_edge_padding())
                         .child(self.body.clone()),
                 )
-                    .boxed(),
+                .boxed(),
             );
         }
         Column::new().children(children)

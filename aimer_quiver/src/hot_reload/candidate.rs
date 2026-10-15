@@ -1,24 +1,22 @@
 use std::error::Error;
-use std::fs;
 use std::fmt;
+use std::fs;
 use std::path::Path;
 use std::rc::Rc;
 
 use aimer_anteros::{
-    AbiVersion, CallbackBindingError, CallbackBindingSnapshot, CapabilityRegistry, Generation,
-    GenerationId, GenerationLimits, GuestDiagnosticCategory, GuestInstance, ModelLimits,
-    ReloadSnapshot, ReloadStage, Runtime, RuntimeError, StateTransferCoordinator,
-    StateTransferError, StateTransferReport, StateTransferStage, Version, WidgetMaterializeError,
-    CALLBACK_EVENT_FORMAT_VERSION, CURRENT_ABI_VERSION, STATE_FORMAT_VERSION,
-    WIDGET_IR_FORMAT_VERSION,
+    AbiVersion, CALLBACK_EVENT_FORMAT_VERSION, CURRENT_ABI_VERSION, CallbackBindingError,
+    CallbackBindingSnapshot, CapabilityRegistry, Generation, GenerationId, GenerationLimits,
+    GuestDiagnosticCategory, GuestInstance, ModelLimits, ReloadSnapshot, ReloadStage, Runtime,
+    RuntimeError, STATE_FORMAT_VERSION, StateTransferCoordinator, StateTransferError,
+    StateTransferReport, StateTransferStage, Version, WIDGET_IR_FORMAT_VERSION,
+    WidgetMaterializeError,
 };
 use aimer_venus::LocalScheduler;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{AnyElement, ReconciliationPlanError, plan_element_reconciliation};
 
-use super::{
-    MissingNativeMaterializer, WidgetIrStageDiagnostics, materialize_aimer_widget_tree,
-};
+use super::{MissingNativeMaterializer, WidgetIrStageDiagnostics, materialize_aimer_widget_tree};
 
 /// Resource ceilings applied while preparing one reload candidate.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -178,13 +176,7 @@ impl<'a> ReloadCandidatePreparer<'a> {
         candidate
             .export_state(self.limits.model)
             .map_err(ReloadCandidatePreparationError::InitialState)?;
-        self.finish(
-            candidate,
-            generation_id,
-            None,
-            ctx,
-            dispatch_callback,
-        )
+        self.finish(candidate, generation_id, None, ctx, dispatch_callback)
     }
 
     fn instantiate(
@@ -224,7 +216,11 @@ impl<'a> ReloadCandidatePreparer<'a> {
     ) -> Result<ReloadSnapshot<GuestInstance, AnyElement>, ReloadCandidatePreparationError> {
         let window_size = ctx.window.inner_size();
         candidate
-            .set_window_metrics(window_size.width, window_size.height, ctx.window.scale_factor())
+            .set_window_metrics(
+                window_size.width,
+                window_size.height,
+                ctx.window.scale_factor(),
+            )
             .map_err(ReloadCandidatePreparationError::Build)?;
         let widget_image = candidate
             .build(self.limits.model)
@@ -236,11 +232,9 @@ impl<'a> ReloadCandidatePreparer<'a> {
                 actual: document.generation_id(),
             });
         }
-        let callbacks = CallbackBindingSnapshot::from_document(
-            &document,
-            self.limits.max_callback_bindings,
-        )
-        .map_err(ReloadCandidatePreparationError::Callbacks)?;
+        let callbacks =
+            CallbackBindingSnapshot::from_document(&document, self.limits.max_callback_bindings)
+                .map_err(ReloadCandidatePreparationError::Callbacks)?;
         let root = materialize_aimer_widget_tree(
             widget_image.as_bytes(),
             self.limits.model,
@@ -282,29 +276,51 @@ pub enum ManifestCompatibilityError {
         host: AbiVersion,
     },
     /// The guest declared an unsupported Widget IR format.
-    WidgetIr { declared: Version, supported: Version },
+    WidgetIr {
+        declared: Version,
+        supported: Version,
+    },
     /// The guest declared an unsupported callback-event format.
-    CallbackEvent { declared: Version, supported: Version },
+    CallbackEvent {
+        declared: Version,
+        supported: Version,
+    },
     /// The guest declared an unsupported state-bundle format.
-    State { declared: Version, supported: Version },
+    State {
+        declared: Version,
+        supported: Version,
+    },
 }
 
 impl fmt::Display for ManifestCompatibilityError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::CoreAbi { minimum, maximum, host } => write!(
+            Self::CoreAbi {
+                minimum,
+                maximum,
+                host,
+            } => write!(
                 formatter,
                 "guest core ABI range {minimum:?}..={maximum:?} does not include host {host:?}"
             ),
-            Self::WidgetIr { declared, supported } => write!(
+            Self::WidgetIr {
+                declared,
+                supported,
+            } => write!(
                 formatter,
                 "guest Widget IR format {declared:?} is not supported; host requires {supported:?}"
             ),
-            Self::CallbackEvent { declared, supported } => write!(
+            Self::CallbackEvent {
+                declared,
+                supported,
+            } => write!(
                 formatter,
                 "guest callback-event format {declared:?} is not supported; host requires {supported:?}"
             ),
-            Self::State { declared, supported } => write!(
+            Self::State {
+                declared,
+                supported,
+            } => write!(
                 formatter,
                 "guest state-bundle format {declared:?} is not supported; host requires {supported:?}"
             ),
@@ -318,7 +334,10 @@ impl Error for ManifestCompatibilityError {}
 #[derive(Debug)]
 pub enum ReloadCandidatePreparationError {
     /// Candidate identities must advance monotonically beyond the active one.
-    GenerationNotNewer { active: GenerationId, candidate: GenerationId },
+    GenerationNotNewer {
+        active: GenerationId,
+        candidate: GenerationId,
+    },
     /// Module validation, import linking, or instantiation failed.
     Instantiate(RuntimeError),
     /// Reading the canonical manifest failed after instantiation.
@@ -371,12 +390,20 @@ impl fmt::Display for ReloadCandidatePreparationError {
                 candidate.get(),
                 active.get()
             ),
-            Self::Instantiate(error) => write!(formatter, "candidate instantiation failed: {error}"),
+            Self::Instantiate(error) => {
+                write!(formatter, "candidate instantiation failed: {error}")
+            }
             Self::Manifest(error) => write!(formatter, "candidate manifest failed: {error}"),
-            Self::Initialize(error) => write!(formatter, "candidate initialization failed: {error}"),
+            Self::Initialize(error) => {
+                write!(formatter, "candidate initialization failed: {error}")
+            }
             Self::ManifestCompatibility(error) => error.fmt(formatter),
-            Self::StateTransfer(error) => write!(formatter, "candidate state transfer failed: {error}"),
-            Self::InitialState(error) => write!(formatter, "candidate default state failed: {error}"),
+            Self::StateTransfer(error) => {
+                write!(formatter, "candidate state transfer failed: {error}")
+            }
+            Self::InitialState(error) => {
+                write!(formatter, "candidate default state failed: {error}")
+            }
             Self::Build(error) => format_build_error(formatter, error),
             Self::WidgetGenerationMismatch { expected, actual } => write!(
                 formatter,
@@ -384,8 +411,12 @@ impl fmt::Display for ReloadCandidatePreparationError {
                 expected.get()
             ),
             Self::Callbacks(error) => write!(formatter, "candidate callbacks failed: {error}"),
-            Self::Materialize(error) => write!(formatter, "candidate materialization failed: {error}"),
-            Self::Reconciliation(error) => write!(formatter, "candidate reconciliation failed: {error}"),
+            Self::Materialize(error) => {
+                write!(formatter, "candidate materialization failed: {error}")
+            }
+            Self::Reconciliation(error) => {
+                write!(formatter, "candidate reconciliation failed: {error}")
+            }
         }
     }
 }
@@ -404,9 +435,15 @@ fn format_build_error(formatter: &mut fmt::Formatter<'_>, error: &RuntimeError) 
         .and_then(|message| message.split_once(": "))
         .unwrap_or(("build", diagnostic.message()));
     if let Some(widget) = diagnostic.widget() {
-        write!(formatter, "candidate build failed: Widget `{widget}` panicked during {phase}: {payload}")?;
+        write!(
+            formatter,
+            "candidate build failed: Widget `{widget}` panicked during {phase}: {payload}"
+        )?;
     } else {
-        write!(formatter, "candidate build failed: guest panicked during {phase}: {payload}")?;
+        write!(
+            formatter,
+            "candidate build failed: guest panicked during {phase}: {payload}"
+        )?;
     }
 
     let Some(location) = diagnostic.location() else {
@@ -471,8 +508,7 @@ fn validate_manifest(
     manifest: &aimer_anteros::ManifestView<'_>,
 ) -> Result<(), ManifestCompatibilityError> {
     if (CURRENT_ABI_VERSION.to_packed() as u64) < (manifest.minimum_abi().to_packed() as u64)
-        || (CURRENT_ABI_VERSION.to_packed() as u64)
-            > (manifest.maximum_abi().to_packed() as u64)
+        || (CURRENT_ABI_VERSION.to_packed() as u64) > (manifest.maximum_abi().to_packed() as u64)
     {
         return Err(ManifestCompatibilityError::CoreAbi {
             minimum: manifest.minimum_abi(),

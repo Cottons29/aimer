@@ -45,13 +45,7 @@ impl AnimatedOverlayContent {
             (timeline.progress(), timeline.is_active())
         };
         let size = self.child.computed_size(ctx);
-        animation_frame(
-            progress,
-            active,
-            self.animation,
-            self.scale_content,
-            size,
-        )
+        animation_frame(progress, active, &self.animation, self.scale_content, size)
     }
 }
 
@@ -102,7 +96,6 @@ impl Drawable for AnimatedOverlayContent {
             CompositorAnimationDecision::Live(frame)
         }
     }
-
 }
 
 impl LayoutElement for AnimatedOverlayContent {
@@ -137,7 +130,6 @@ impl LayoutElement for AnimatedOverlayContent {
     fn invalidate_layout(&self) {
         self.child.invalidate_layout();
     }
-
 }
 
 impl VisitorElement for AnimatedOverlayContent {
@@ -145,10 +137,7 @@ impl VisitorElement for AnimatedOverlayContent {
         visitor(self.child.as_ref());
     }
 
-    fn visit_retained_v2_children<'a>(
-        &'a self,
-        visitor: &mut dyn FnMut(usize, &'a dyn Element),
-    ) {
+    fn visit_retained_v2_children<'a>(&'a self, visitor: &mut dyn FnMut(usize, &'a dyn Element)) {
         visitor(0, self.child.as_ref());
     }
 
@@ -160,7 +149,7 @@ impl VisitorElement for AnimatedOverlayContent {
 fn animation_frame(
     progress: f32,
     active: bool,
-    animation: ModalAnimation,
+    animation: &ModalAnimation,
     scale_content: bool,
     size: ResolvedSize,
 ) -> CompositorAnimationFrame {
@@ -204,7 +193,7 @@ mod tests {
         let frame = animation_frame(
             0.0,
             true,
-            ModalAnimation::new().content_scale_from(0.8),
+            &ModalAnimation::new().content_scale_from(0.8),
             true,
             ResolvedSize {
                 width: 200.0,
@@ -234,7 +223,7 @@ mod tests {
         let frame = animation_frame(
             0.5,
             true,
-            ModalAnimation::new(),
+            &ModalAnimation::new(),
             false,
             ResolvedSize {
                 width: 200.0,
@@ -286,5 +275,4 @@ mod tests {
             "TestChild"
         }
     }
-
 }

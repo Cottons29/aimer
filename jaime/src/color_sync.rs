@@ -1,10 +1,10 @@
+use aimer::Dimension::Percent;
 use aimer::console::debug;
 use aimer::style::{LayoutSpacing, Spacing};
 use aimer::{
     AimerApp, AnyElement, AnyWidget, BuildContext, Color, Container, Row, SizedBox,
     StatelessWidget, Widget,
 };
-use aimer::Dimension::Percent;
 
 #[allow(unused)]
 pub struct ColorSync;
@@ -16,7 +16,8 @@ pub fn start_color_sync() {
 
 impl Widget for ColorSync {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
-        self.build(ctx).to_element(ctx)
+        self.build(ctx)
+            .to_element(ctx)
     }
 }
 

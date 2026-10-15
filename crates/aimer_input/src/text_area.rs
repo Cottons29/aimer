@@ -4,11 +4,11 @@ use std::sync::Arc;
 use aimer_macro::PortableWidget;
 use aimer_style::{BoxDecoration, LayoutSpacing, TextAlign, TextStyle};
 use aimer_widget::base::{BuildContext, Color, Colors};
+#[cfg(feature = "portable-guest")]
+use aimer_widget::portable::{PortableBuildContext, PortableBuildError, SourceFingerprint};
 use aimer_widget::{
     AnyElement, FocusNode, Key, State, StateUpdater, StatefulElement, StatefulWidget, Widget,
 };
-#[cfg(feature = "portable-guest")]
-use aimer_widget::portable::{PortableBuildContext, PortableBuildError, SourceFingerprint};
 
 use crate::TextEditingController;
 use crate::input_field::caret::CaretContext;
@@ -51,11 +51,8 @@ fn validate_portable_text_area(
     _ctx: &PortableBuildContext,
     source: SourceFingerprint,
 ) -> Result<(), PortableBuildError> {
-    let expected_min = u32::try_from(area.min_lines.max(1)).map_err(|_| {
-        PortableBuildError::InvalidPropertyValue {
-            rust_type: "usize",
-        }
-    })?;
+    let expected_min = u32::try_from(area.min_lines.max(1))
+        .map_err(|_| PortableBuildError::InvalidPropertyValue { rust_type: "usize" })?;
     if area.min_lines_wire != expected_min {
         return Err(PortableBuildError::UnsupportedProperty {
             widget: "TextArea",
@@ -66,11 +63,10 @@ fn validate_portable_text_area(
 
     let expected_max = match area.max_lines {
         None => None,
-        Some(value) => Some(u32::try_from(value).map_err(|_| {
-            PortableBuildError::InvalidPropertyValue {
-                rust_type: "usize",
-            }
-        })?),
+        Some(value) => Some(
+            u32::try_from(value)
+                .map_err(|_| PortableBuildError::InvalidPropertyValue { rust_type: "usize" })?,
+        ),
     };
     if area.max_lines_wire != expected_max {
         return Err(PortableBuildError::UnsupportedProperty {
@@ -196,9 +192,7 @@ impl TextArea {
     #[inline]
     pub fn max_lines(mut self, max_lines: impl Into<Option<usize>>) -> Self {
         let max_lines = max_lines.into();
-        self.max_lines_wire = max_lines.map(|value| {
-            u32::try_from(value).unwrap_or(u32::MAX)
-        });
+        self.max_lines_wire = max_lines.map(|value| u32::try_from(value).unwrap_or(u32::MAX));
         self.max_lines = max_lines;
         self
     }
@@ -472,8 +466,8 @@ mod tests {
     use aimer_widget::{AnyElement, Drawable, EventDispatcher, FocusNode, Key, Widget};
 
     use crate::input::{DefaultCaret, TextArea, TextEditingController};
-    use crate::input_field::raw_fields::{ExpandDirection, InputType};
     use crate::input_field::raw_fields::test_support::dummy_build_context;
+    use crate::input_field::raw_fields::{ExpandDirection, InputType};
 
     #[test]
     fn default_text_area_is_unbounded_multiline_without_expansion() {
@@ -563,29 +557,35 @@ mod tests {
         let start = Vec2d { x: 4.0, y: 12.0 };
         let end = Vec2d { x: 50.0, y: 12.0 };
 
-        assert!(dispatcher
-            .dispatch(
-                element.as_ref(),
-                start,
-                &ElementEvent::PointerDown(PointerInfo::mouse(start, PointerButton::Primary)),
-            )
-            .is_consumed());
+        assert!(
+            dispatcher
+                .dispatch(
+                    element.as_ref(),
+                    start,
+                    &ElementEvent::PointerDown(PointerInfo::mouse(start, PointerButton::Primary)),
+                )
+                .is_consumed()
+        );
         element.update(&ctx);
-        assert!(dispatcher
-            .dispatch(
-                element.as_ref(),
-                end,
-                &ElementEvent::PointerMove(PointerInfo::mouse(end, PointerButton::Primary)),
-            )
-            .is_consumed());
+        assert!(
+            dispatcher
+                .dispatch(
+                    element.as_ref(),
+                    end,
+                    &ElementEvent::PointerMove(PointerInfo::mouse(end, PointerButton::Primary)),
+                )
+                .is_consumed()
+        );
         element.update(&ctx);
-        assert!(dispatcher
-            .dispatch(
-                element.as_ref(),
-                end,
-                &ElementEvent::PointerUp(PointerInfo::mouse(end, PointerButton::Primary)),
-            )
-            .is_consumed());
+        assert!(
+            dispatcher
+                .dispatch(
+                    element.as_ref(),
+                    end,
+                    &ElementEvent::PointerUp(PointerInfo::mouse(end, PointerButton::Primary)),
+                )
+                .is_consumed()
+        );
 
         assert_eq!(controller.selection_graphemes(), (1, 9));
     }

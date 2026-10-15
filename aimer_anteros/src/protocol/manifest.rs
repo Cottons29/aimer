@@ -247,10 +247,7 @@ impl<'a> ManifestView<'a> {
 
     #[cfg(feature = "wasm-hot-reload")]
     #[inline]
-    pub(crate) const fn from_validated(
-        bytes: &'a [u8],
-        validated: ValidatedManifest,
-    ) -> Self {
+    pub(crate) const fn from_validated(bytes: &'a [u8], validated: ValidatedManifest) -> Self {
         Self {
             bytes,
             capability_count: validated.capability_count,

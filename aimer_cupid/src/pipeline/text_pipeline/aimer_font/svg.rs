@@ -130,8 +130,7 @@ fn parse_index(table: &[u8], metrics: FontMetrics) -> Result<Vec<SvgDocumentEntr
         return Err(SfntError::MalformedTable(SVG_TAG));
     }
 
-    let index_start = usize::try_from(reader.u32(2)?)
-        .map_err(|_| SfntError::ArithmeticOverflow)?;
+    let index_start = usize::try_from(reader.u32(2)?).map_err(|_| SfntError::ArithmeticOverflow)?;
     if index_start < SVG_HEADER_SIZE {
         return Err(SfntError::MalformedTable(SVG_TAG));
     }
@@ -195,9 +194,7 @@ fn parse_index(table: &[u8], metrics: FontMetrics) -> Result<Vec<SvgDocumentEntr
 }
 
 fn parse_document(bytes: &[u8], _units_per_em: u16) -> Option<SvgGlyph> {
-    if bytes.is_empty()
-        || bytes.len() > MAX_SVG_DOCUMENT_BYTES
-        || bytes.starts_with(&[0x1f, 0x8b])
+    if bytes.is_empty() || bytes.len() > MAX_SVG_DOCUMENT_BYTES || bytes.starts_with(&[0x1f, 0x8b])
     {
         return None;
     }
@@ -211,21 +208,39 @@ fn parse_document(bytes: &[u8], _units_per_em: u16) -> Option<SvgGlyph> {
         if node.stroke.is_some() {
             return None;
         }
-        let Some(fill) = node.fill.as_ref() else { continue };
+        let Some(fill) = node.fill.as_ref() else {
+            continue;
+        };
         let alpha = scaled_alpha(fill.color.a * node.opacity)?;
-        if alpha == 0 { continue; }
+        if alpha == 0 {
+            continue;
+        }
         let geometry = scene.geometry(node)?;
         let mut commands = Vec::with_capacity(geometry.commands.len());
-        let mut bounds = [f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY];
+        let mut bounds = [
+            f32::INFINITY,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::NEG_INFINITY,
+        ];
         for command in geometry.commands.iter().copied() {
             let command = map_command(command, node.transform)?;
             include_command_bounds(command, &mut bounds);
             commands.push(command);
             command_count = command_count.checked_add(1)?;
-            if command_count > MAX_SVG_COMMANDS { return None; }
+            if command_count > MAX_SVG_COMMANDS {
+                return None;
+            }
         }
-        if paths.len() >= MAX_SVG_PATHS { return None; }
-        if !bounds.iter().all(|value| value.is_finite()) || bounds[0] > bounds[2] || bounds[1] > bounds[3] { return None; }
+        if paths.len() >= MAX_SVG_PATHS {
+            return None;
+        }
+        if !bounds.iter().all(|value| value.is_finite())
+            || bounds[0] > bounds[2]
+            || bounds[1] > bounds[3]
+        {
+            return None;
+        }
         paths.push(SvgPath {
             commands: commands.into(),
             color: ColorRgba::new(
@@ -272,21 +287,84 @@ fn map_command(command: SvgPathCommand, transform: SvgTransform) -> Option<SvgPa
         (x.is_finite() && y.is_finite()).then_some((x, -y))
     };
     Some(match command {
-        SvgPathCommand::MoveTo { x, y } => { let (x,y)=point(x,y)?; SvgPathCommand::MoveTo{x,y} },
-        SvgPathCommand::LineTo { x, y } => { let (x,y)=point(x,y)?; SvgPathCommand::LineTo{x,y} },
-        SvgPathCommand::QuadraticTo { control_x, control_y, x, y } => { let (control_x,control_y)=point(control_x,control_y)?;let(x,y)=point(x,y)?;SvgPathCommand::QuadraticTo{control_x,control_y,x,y} },
-        SvgPathCommand::CubicTo { control1_x, control1_y, control2_x, control2_y, x, y } => { let(control1_x,control1_y)=point(control1_x,control1_y)?;let(control2_x,control2_y)=point(control2_x,control2_y)?;let(x,y)=point(x,y)?;SvgPathCommand::CubicTo{control1_x,control1_y,control2_x,control2_y,x,y} },
+        SvgPathCommand::MoveTo { x, y } => {
+            let (x, y) = point(x, y)?;
+            SvgPathCommand::MoveTo { x, y }
+        }
+        SvgPathCommand::LineTo { x, y } => {
+            let (x, y) = point(x, y)?;
+            SvgPathCommand::LineTo { x, y }
+        }
+        SvgPathCommand::QuadraticTo {
+            control_x,
+            control_y,
+            x,
+            y,
+        } => {
+            let (control_x, control_y) = point(control_x, control_y)?;
+            let (x, y) = point(x, y)?;
+            SvgPathCommand::QuadraticTo {
+                control_x,
+                control_y,
+                x,
+                y,
+            }
+        }
+        SvgPathCommand::CubicTo {
+            control1_x,
+            control1_y,
+            control2_x,
+            control2_y,
+            x,
+            y,
+        } => {
+            let (control1_x, control1_y) = point(control1_x, control1_y)?;
+            let (control2_x, control2_y) = point(control2_x, control2_y)?;
+            let (x, y) = point(x, y)?;
+            SvgPathCommand::CubicTo {
+                control1_x,
+                control1_y,
+                control2_x,
+                control2_y,
+                x,
+                y,
+            }
+        }
         SvgPathCommand::Close => SvgPathCommand::Close,
     })
 }
 
 fn include_command_bounds(command: SvgPathCommand, bounds: &mut [f32; 4]) {
-    let mut include = |x: f32, y: f32| { bounds[0]=bounds[0].min(x);bounds[1]=bounds[1].min(y);bounds[2]=bounds[2].max(x);bounds[3]=bounds[3].max(y); };
+    let mut include = |x: f32, y: f32| {
+        bounds[0] = bounds[0].min(x);
+        bounds[1] = bounds[1].min(y);
+        bounds[2] = bounds[2].max(x);
+        bounds[3] = bounds[3].max(y);
+    };
     match command {
-        SvgPathCommand::MoveTo{x,y}|SvgPathCommand::LineTo{x,y} => include(x,y),
-        SvgPathCommand::QuadraticTo{control_x,control_y,x,y} => {include(control_x,control_y);include(x,y);},
-        SvgPathCommand::CubicTo{control1_x,control1_y,control2_x,control2_y,x,y} => {include(control1_x,control1_y);include(control2_x,control2_y);include(x,y);},
-        SvgPathCommand::Close => {},
+        SvgPathCommand::MoveTo { x, y } | SvgPathCommand::LineTo { x, y } => include(x, y),
+        SvgPathCommand::QuadraticTo {
+            control_x,
+            control_y,
+            x,
+            y,
+        } => {
+            include(control_x, control_y);
+            include(x, y);
+        }
+        SvgPathCommand::CubicTo {
+            control1_x,
+            control1_y,
+            control2_x,
+            control2_y,
+            x,
+            y,
+        } => {
+            include(control1_x, control1_y);
+            include(control2_x, control2_y);
+            include(x, y);
+        }
+        SvgPathCommand::Close => {}
     }
 }
 
@@ -299,8 +377,8 @@ fn scaled_alpha(opacity: f32) -> Option<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_SVG_DOCUMENT_BYTES, parse_document, parse_index};
     use super::super::{FontMetrics, SfntError};
+    use super::{MAX_SVG_DOCUMENT_BYTES, parse_document, parse_index};
 
     fn metrics(num_glyphs: u16) -> FontMetrics {
         FontMetrics {
@@ -324,10 +402,8 @@ mod tests {
         let mut table = vec![0_u8; document_start + document.len()];
         table[2..6].copy_from_slice(&(index_start as u32).to_be_bytes());
         table[index_start..index_start + 2].copy_from_slice(&1_u16.to_be_bytes());
-        table[index_start + 2..index_start + 4]
-            .copy_from_slice(&start_glyph_id.to_be_bytes());
-        table[index_start + 4..index_start + 6]
-            .copy_from_slice(&start_glyph_id.to_be_bytes());
+        table[index_start + 2..index_start + 4].copy_from_slice(&start_glyph_id.to_be_bytes());
+        table[index_start + 4..index_start + 6].copy_from_slice(&start_glyph_id.to_be_bytes());
         table[index_start + 6..index_start + 10]
             .copy_from_slice(&(document_start as u32).to_be_bytes());
         table[index_start + 10..index_start + 14]
@@ -338,7 +414,10 @@ mod tests {
 
     #[test]
     fn parses_checked_svg_document_index() {
-        let table = svg_table(7, br#"<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0L10 0L10 -10Z"/></svg>"#);
+        let table = svg_table(
+            7,
+            br#"<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0L10 0L10 -10Z"/></svg>"#,
+        );
         let entries = parse_index(&table, metrics(8)).expect("SVG index should parse");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].start_glyph_id, 7);

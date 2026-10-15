@@ -11,48 +11,42 @@ mod resource;
 pub use commands::{Dx12CommandEncoder, Dx12RenderPass};
 #[doc(hidden)]
 pub use pipeline::{
-    Dx12BindGroup, Dx12BindGroupLayout, Dx12PipelineLayout, Dx12RenderPipeline,
-    Dx12ShaderModule,
+    Dx12BindGroup, Dx12BindGroupLayout, Dx12PipelineLayout, Dx12RenderPipeline, Dx12ShaderModule,
 };
 
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use windows::Win32::Graphics::Direct3D::{
-    D3D_FEATURE_LEVEL_11_0,
-};
+use windows::Win32::Foundation::HWND;
+use windows::Win32::Graphics::Direct3D::D3D_FEATURE_LEVEL_11_0;
 use windows::Win32::Graphics::Direct3D12::{
-    D3D12_COMMAND_QUEUE_DESC, D3D12_COMMAND_QUEUE_PRIORITY_NORMAL,
-    D3D12_COMMAND_LIST_TYPE_DIRECT, D3D12CreateDevice, D3D12_RESOURCE_DESC,
-    D3D12_RESOURCE_STATES, D3D12_HEAP_PROPERTIES,
-    D3D12_HEAP_FLAG_NONE, D3D12_FENCE_FLAG_NONE, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
-    D3D12_DESCRIPTOR_HEAP_TYPE_RTV, D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER,
-    D3D12_RENDER_TARGET_VIEW_DESC, D3D12_RENDER_TARGET_VIEW_DESC_0,
-    D3D12_RTV_DIMENSION_TEXTURE2D, D3D12_TEX2D_RTV,
-    ID3D12CommandQueue, ID3D12Device, ID3D12Fence, ID3D12Resource,
+    D3D12_COMMAND_LIST_TYPE_DIRECT, D3D12_COMMAND_QUEUE_DESC, D3D12_COMMAND_QUEUE_PRIORITY_NORMAL,
+    D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, D3D12_DESCRIPTOR_HEAP_TYPE_RTV,
+    D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER, D3D12_FENCE_FLAG_NONE, D3D12_HEAP_FLAG_NONE,
+    D3D12_HEAP_PROPERTIES, D3D12_RENDER_TARGET_VIEW_DESC, D3D12_RENDER_TARGET_VIEW_DESC_0,
+    D3D12_RESOURCE_DESC, D3D12_RESOURCE_STATES, D3D12_RTV_DIMENSION_TEXTURE2D, D3D12_TEX2D_RTV,
+    D3D12CreateDevice, ID3D12CommandQueue, ID3D12Device, ID3D12Fence, ID3D12Resource,
 };
+use windows::Win32::Graphics::Dxgi::Common::DXGI_ALPHA_MODE_IGNORE;
 use windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC;
 use windows::Win32::Graphics::Dxgi::{
-    CreateDXGIFactory2, DXGI_CREATE_FACTORY_FLAGS,
-    DXGI_SCALING_NONE, DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_CHAIN_FLAG,
-    DXGI_SWAP_EFFECT_FLIP_DISCARD, DXGI_USAGE_RENDER_TARGET_OUTPUT, IDXGIFactory2,
-    IDXGISwapChain3,
+    CreateDXGIFactory2, DXGI_CREATE_FACTORY_FLAGS, DXGI_SCALING_NONE, DXGI_SWAP_CHAIN_DESC1,
+    DXGI_SWAP_CHAIN_FLAG, DXGI_SWAP_EFFECT_FLIP_DISCARD, DXGI_USAGE_RENDER_TARGET_OUTPUT,
+    IDXGIFactory2, IDXGISwapChain3,
 };
-use windows::Win32::Foundation::HWND;
-use windows::Win32::Graphics::Dxgi::Common::DXGI_ALPHA_MODE_IGNORE;
 use windows::core::{IUnknown, Interface};
 
 use crate::backend::{
     AddressMode, BackendError, BindGroupEntry, BindGroupLayoutEntry, BufferDescriptor,
     BuiltinShader, CompareFunction, Extent3d, FilterMode, GpuBackend, GpuLimits, Origin3d,
-    RenderPassDescriptor, RenderPipelineDescriptor, SamplerDescriptor, TextureDescriptor,
-    TextureDimension, TextureUsage, TexelCopyBufferInfo, TexelCopyTextureInfo,
+    RenderPassDescriptor, RenderPipelineDescriptor, SamplerDescriptor, TexelCopyBufferInfo,
+    TexelCopyTextureInfo, TextureDescriptor, TextureDimension, TextureUsage,
     WriteTextureDescriptor,
 };
 
-pub use resource::{Dx12Buffer, Dx12Sampler, Dx12Texture, Dx12TextureFormat, Dx12TextureView};
 use resource::{DescriptorLease, DescriptorPool, create_texture_resource};
+pub use resource::{Dx12Buffer, Dx12Sampler, Dx12Texture, Dx12TextureFormat, Dx12TextureView};
 
 const RESOURCE_DESCRIPTOR_CAPACITY: u32 = 65_536;
 const SAMPLER_DESCRIPTOR_CAPACITY: u32 = 2_048;
@@ -129,9 +123,7 @@ impl Dx12Backend {
             NodeMask: 0,
         };
         let queue = unsafe { device.CreateCommandQueue::<ID3D12CommandQueue>(&queue_desc)? };
-        let fence = unsafe {
-            device.CreateFence::<ID3D12Fence>(0, D3D12_FENCE_FLAG_NONE)?
-        };
+        let fence = unsafe { device.CreateFence::<ID3D12Fence>(0, D3D12_FENCE_FLAG_NONE)? };
         let shared = BackendShared {
             resource_heap: DescriptorPool::new(
                 &device,
@@ -308,15 +300,16 @@ impl Dx12Surface {
         format: Dx12TextureFormat,
     ) -> Result<Self, windows::core::Error> {
         let swap_chain_format = format.swap_chain_storage();
-        let factory: IDXGIFactory2 = unsafe {
-            CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0))?
-        };
+        let factory: IDXGIFactory2 = unsafe { CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0))? };
         let desc = DXGI_SWAP_CHAIN_DESC1 {
             Width: width.max(1),
             Height: height.max(1),
             Format: swap_chain_format.dxgi(),
             Stereo: false.into(),
-            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            SampleDesc: DXGI_SAMPLE_DESC {
+                Count: 1,
+                Quality: 0,
+            },
             BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
             BufferCount: 3,
             // Keep the previous frame at native size during a resize instead
@@ -398,8 +391,8 @@ impl Dx12Surface {
         if width == 0 || height == 0 {
             return;
         }
-        self.pending_size = (width != self.width || height != self.height)
-            .then_some((width, height));
+        self.pending_size =
+            (width != self.width || height != self.height).then_some((width, height));
     }
 
     /// Acquires a frame, applying any queued resize once prior GPU work is done.
@@ -535,11 +528,19 @@ impl GpuBackend for Dx12Backend {
         match shader {
             BuiltinShader::Image => include_str!("../pipeline/shaders/dx12/image.hlsl").as_bytes(),
             BuiltinShader::Text => include_str!("../pipeline/shaders/dx12/text.hlsl").as_bytes(),
-            BuiltinShader::TextColor => include_str!("../pipeline/shaders/dx12/text_color.hlsl").as_bytes(),
-            BuiltinShader::TextDecoration => include_str!("../pipeline/shaders/dx12/text_decoration.hlsl").as_bytes(),
+            BuiltinShader::TextColor => {
+                include_str!("../pipeline/shaders/dx12/text_color.hlsl").as_bytes()
+            }
+            BuiltinShader::TextDecoration => {
+                include_str!("../pipeline/shaders/dx12/text_decoration.hlsl").as_bytes()
+            }
             BuiltinShader::Svg => include_str!("../pipeline/shaders/dx12/svg.hlsl").as_bytes(),
-            BuiltinShader::FrameComposite => include_str!("../pipeline/shaders/dx12/frame_composite.hlsl").as_bytes(),
-            BuiltinShader::Material => include_str!("../pipeline/shaders/dx12/material.hlsl").as_bytes(),
+            BuiltinShader::FrameComposite => {
+                include_str!("../pipeline/shaders/dx12/frame_composite.hlsl").as_bytes()
+            }
+            BuiltinShader::Material => {
+                include_str!("../pipeline/shaders/dx12/material.hlsl").as_bytes()
+            }
         }
     }
 
@@ -578,13 +579,20 @@ impl GpuBackend for Dx12Backend {
         )
     }
 
-    fn create_texture(
-        &self,
-        desc: &TextureDescriptor<Self::TextureFormat>,
-    ) -> Self::Texture {
-        assert_eq!(desc.dimension, TextureDimension::D2, "D3D12 Cupid textures currently require D2");
-        assert_eq!(desc.sample_count, 1, "multisampled D3D12 textures are not supported yet");
-        assert!(desc.size.0 > 0 && desc.size.1 > 0, "D3D12 texture dimensions must be nonzero");
+    fn create_texture(&self, desc: &TextureDescriptor<Self::TextureFormat>) -> Self::Texture {
+        assert_eq!(
+            desc.dimension,
+            TextureDimension::D2,
+            "D3D12 Cupid textures currently require D2"
+        );
+        assert_eq!(
+            desc.sample_count, 1,
+            "multisampled D3D12 textures are not supported yet"
+        );
+        assert!(
+            desc.size.0 > 0 && desc.size.1 > 0,
+            "D3D12 texture dimensions must be nonzero"
+        );
         create_texture_resource(
             &self.shared,
             desc.size,
@@ -624,10 +632,7 @@ impl GpuBackend for Dx12Backend {
         Dx12Sampler { descriptor: lease }
     }
 
-    fn create_bind_group_layout(
-        &self,
-        entries: &[BindGroupLayoutEntry],
-    ) -> Self::BindGroupLayout {
+    fn create_bind_group_layout(&self, entries: &[BindGroupLayoutEntry]) -> Self::BindGroupLayout {
         pipeline::bind_group_layout(entries)
     }
 
@@ -663,13 +668,18 @@ impl GpuBackend for Dx12Backend {
             return;
         }
         assert!(
-            offset.checked_add(data.len() as u64).is_some_and(|end| end <= buffer.size),
+            offset
+                .checked_add(data.len() as u64)
+                .is_some_and(|end| end <= buffer.size),
             "D3D12 buffer upload exceeds its allocation"
         );
         if buffer.upload_heap {
             unsafe {
                 let mut mapped = std::ptr::null_mut();
-                buffer.resource.Map(0, None, Some(&mut mapped)).expect("map D3D12 upload buffer");
+                buffer
+                    .resource
+                    .Map(0, None, Some(&mut mapped))
+                    .expect("map D3D12 upload buffer");
                 std::ptr::copy_nonoverlapping(
                     data.as_ptr(),
                     mapped.cast::<u8>().add(offset as usize),
@@ -694,7 +704,10 @@ impl GpuBackend for Dx12Backend {
 
     fn write_texture(&self, desc: &WriteTextureDescriptor<Self>) {
         assert_eq!(desc.aspect, crate::backend::TextureAspect::All);
-        if desc.extent.width == 0 || desc.extent.height == 0 || desc.extent.depth_or_array_layers == 0 {
+        if desc.extent.width == 0
+            || desc.extent.height == 0
+            || desc.extent.depth_or_array_layers == 0
+        {
             return;
         }
         assert!(desc.data.len() > desc.buffer_layout.offset as usize);
@@ -729,8 +742,13 @@ impl GpuBackend for Dx12Backend {
             for row in 0..desc.extent.height as usize {
                 let src = source_offset + layer * source_image_pitch + row * source_row_pitch;
                 let dst = layer * image_pitch as usize + row * row_pitch as usize;
-                let end = src.checked_add(copied_row_size).expect("D3D12 source row overflowed");
-                assert!(end <= desc.data.len(), "texture upload data does not contain all copied rows");
+                let end = src
+                    .checked_add(copied_row_size)
+                    .expect("D3D12 source row overflowed");
+                assert!(
+                    end <= desc.data.len(),
+                    "texture upload data does not contain all copied rows"
+                );
                 packed[dst..dst + copied_row_size].copy_from_slice(&desc.data[src..end]);
             }
         }
@@ -793,7 +811,10 @@ impl GpuBackend for Dx12Backend {
     }
 
     fn read_buffer(&self, buffer: &Self::Buffer, size: u64) -> Vec<u8> {
-        assert!(size <= buffer.size, "D3D12 readback exceeds its buffer allocation");
+        assert!(
+            size <= buffer.size,
+            "D3D12 readback exceeds its buffer allocation"
+        );
         assert!(buffer.usage.contains(&crate::backend::BufferUsage::MapRead));
         self.wait_for_gpu();
         let mut result = vec![0u8; size as usize];
@@ -803,7 +824,10 @@ impl GpuBackend for Dx12Backend {
                 End: size as usize,
             };
             let mut mapped = std::ptr::null_mut();
-            buffer.resource.Map(0, Some(&range), Some(&mut mapped)).expect("map D3D12 readback buffer");
+            buffer
+                .resource
+                .Map(0, Some(&range), Some(&mut mapped))
+                .expect("map D3D12 readback buffer");
             std::ptr::copy_nonoverlapping(mapped.cast::<u8>(), result.as_mut_ptr(), result.len());
             buffer.resource.Unmap(0, None);
         }
@@ -836,18 +860,36 @@ fn align_copy_row(bytes: usize) -> u32 {
 fn sampler_filter(desc: &SamplerDescriptor) -> windows::Win32::Graphics::Direct3D12::D3D12_FILTER {
     use windows::Win32::Graphics::Direct3D12::*;
     match (desc.min_filter, desc.mag_filter, desc.mipmap_filter) {
-        (FilterMode::Nearest, FilterMode::Nearest, FilterMode::Nearest) => D3D12_FILTER_MIN_MAG_MIP_POINT,
-        (FilterMode::Nearest, FilterMode::Nearest, FilterMode::Linear) => D3D12_FILTER_MIN_MAG_POINT_MIP_LINEAR,
-        (FilterMode::Nearest, FilterMode::Linear, FilterMode::Nearest) => D3D12_FILTER_MIN_POINT_MAG_LINEAR_MIP_POINT,
-        (FilterMode::Nearest, FilterMode::Linear, FilterMode::Linear) => D3D12_FILTER_MIN_POINT_MAG_MIP_LINEAR,
-        (FilterMode::Linear, FilterMode::Nearest, FilterMode::Nearest) => D3D12_FILTER_MIN_LINEAR_MAG_MIP_POINT,
-        (FilterMode::Linear, FilterMode::Nearest, FilterMode::Linear) => D3D12_FILTER_MIN_LINEAR_MAG_POINT_MIP_LINEAR,
-        (FilterMode::Linear, FilterMode::Linear, FilterMode::Nearest) => D3D12_FILTER_MIN_MAG_LINEAR_MIP_POINT,
-        (FilterMode::Linear, FilterMode::Linear, FilterMode::Linear) => D3D12_FILTER_MIN_MAG_MIP_LINEAR,
+        (FilterMode::Nearest, FilterMode::Nearest, FilterMode::Nearest) => {
+            D3D12_FILTER_MIN_MAG_MIP_POINT
+        }
+        (FilterMode::Nearest, FilterMode::Nearest, FilterMode::Linear) => {
+            D3D12_FILTER_MIN_MAG_POINT_MIP_LINEAR
+        }
+        (FilterMode::Nearest, FilterMode::Linear, FilterMode::Nearest) => {
+            D3D12_FILTER_MIN_POINT_MAG_LINEAR_MIP_POINT
+        }
+        (FilterMode::Nearest, FilterMode::Linear, FilterMode::Linear) => {
+            D3D12_FILTER_MIN_POINT_MAG_MIP_LINEAR
+        }
+        (FilterMode::Linear, FilterMode::Nearest, FilterMode::Nearest) => {
+            D3D12_FILTER_MIN_LINEAR_MAG_MIP_POINT
+        }
+        (FilterMode::Linear, FilterMode::Nearest, FilterMode::Linear) => {
+            D3D12_FILTER_MIN_LINEAR_MAG_POINT_MIP_LINEAR
+        }
+        (FilterMode::Linear, FilterMode::Linear, FilterMode::Nearest) => {
+            D3D12_FILTER_MIN_MAG_LINEAR_MIP_POINT
+        }
+        (FilterMode::Linear, FilterMode::Linear, FilterMode::Linear) => {
+            D3D12_FILTER_MIN_MAG_MIP_LINEAR
+        }
     }
 }
 
-fn sampler_address(mode: AddressMode) -> windows::Win32::Graphics::Direct3D12::D3D12_TEXTURE_ADDRESS_MODE {
+fn sampler_address(
+    mode: AddressMode,
+) -> windows::Win32::Graphics::Direct3D12::D3D12_TEXTURE_ADDRESS_MODE {
     use windows::Win32::Graphics::Direct3D12::*;
     match mode {
         AddressMode::ClampToEdge => D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
@@ -856,7 +898,9 @@ fn sampler_address(mode: AddressMode) -> windows::Win32::Graphics::Direct3D12::D
     }
 }
 
-fn sampler_compare(compare: CompareFunction) -> windows::Win32::Graphics::Direct3D12::D3D12_COMPARISON_FUNC {
+fn sampler_compare(
+    compare: CompareFunction,
+) -> windows::Win32::Graphics::Direct3D12::D3D12_COMPARISON_FUNC {
     use windows::Win32::Graphics::Direct3D12::*;
     match compare {
         CompareFunction::Never => D3D12_COMPARISON_FUNC_NEVER,

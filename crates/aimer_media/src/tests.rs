@@ -14,7 +14,13 @@ fn unsupported_media_has_a_typed_state_and_disposes_cleanly() {
     media.focus().unwrap();
 
     let error = media.load().unwrap_err();
-    assert!(matches!(error, MediaError::Unsupported { capability: MediaCapability::VideoPlayback, .. }));
+    assert!(matches!(
+        error,
+        MediaError::Unsupported {
+            capability: MediaCapability::VideoPlayback,
+            ..
+        }
+    ));
     assert!(matches!(media.state(), MediaState::Unsupported { .. }));
     assert!(media.is_focused());
 
@@ -53,7 +59,10 @@ fn capture_contract_preserves_cancel_denied_unavailable_and_limits() {
     let file = MediaFile::new("photo.png", "image/png", 8).unwrap();
     assert!(matches!(
         validate_capture(&request, &file),
-        CaptureOutcome::Rejected(CaptureRejection::SizeLimit { max_bytes: 4, actual_bytes: 8 })
+        CaptureOutcome::Rejected(CaptureRejection::SizeLimit {
+            max_bytes: 4,
+            actual_bytes: 8
+        })
     ));
 
     let wrong_type = MediaFile::new("movie.mp4", "video/mp4", 2).unwrap();
@@ -71,12 +80,18 @@ fn capture_contract_preserves_cancel_denied_unavailable_and_limits() {
     let adapter = UnsupportedCaptureAdapter::new("camera is not available on this target");
     assert!(matches!(
         adapter.pick(&request),
-        CaptureOutcome::Unsupported { capability: MediaCapability::FilePicker, .. }
+        CaptureOutcome::Unsupported {
+            capability: MediaCapability::FilePicker,
+            ..
+        }
     ));
 
     let camera = CaptureRequest::camera(["video/mp4"], 8);
     assert!(matches!(
         adapter.capture(&camera),
-        CaptureOutcome::Unsupported { capability: MediaCapability::Camera, .. }
+        CaptureOutcome::Unsupported {
+            capability: MediaCapability::Camera,
+            ..
+        }
     ));
 }

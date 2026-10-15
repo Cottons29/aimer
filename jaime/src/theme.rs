@@ -1,6 +1,6 @@
 use aimer::style::{
-    AnimatedTheme, BorderSlice, BorderStyle, BoxBorder, BoxDecoration, FontWeight,
-    Stroke, TextDecoration, TextStyle, ThemeData,
+    AnimatedTheme, BorderSlice, BorderStyle, BoxBorder, BoxDecoration, FontWeight, Stroke,
+    TextDecoration, TextStyle, ThemeData,
 };
 use aimer::{Color, Colors, MarkdownTheme, SpanStyle, Widget};
 
@@ -26,31 +26,41 @@ pub fn app_theme() -> ThemeData {
 /// launch functions use the same helper so an example remains runnable by
 /// itself without losing access to the shared theme.
 pub fn provide<W: Widget + 'static>(child: W) -> impl Widget {
-    AnimatedTheme::new().data(app_theme()).child(child)
+    AnimatedTheme::new()
+        .data(app_theme())
+        .child(child)
 }
 
 /// Derives the quieter text color from the active semantic foreground.
 #[inline]
 pub fn muted_text(theme: &ThemeData) -> Color {
-    theme.on_background_color.with_alpha(0.72)
+    theme
+        .on_background_color
+        .with_alpha(0.72)
 }
 
 /// Derives a separator color that remains visible without competing with text.
 #[inline]
 pub fn divider(theme: &ThemeData) -> Color {
-    theme.primary_color.with_alpha(0.32)
+    theme
+        .primary_color
+        .with_alpha(0.32)
 }
 
 /// Derives a slightly raised surface for nested controls and sample cards.
 #[inline]
 pub fn raised_surface(theme: &ThemeData) -> Color {
-    theme.surface_color.lighten(0.08)
+    theme
+        .surface_color
+        .lighten(0.08)
 }
 
 /// Derives a subdued surface for fields and secondary samples.
 #[inline]
 pub fn recessed_surface(theme: &ThemeData) -> Color {
-    theme.background_color.lighten(0.06)
+    theme
+        .background_color
+        .lighten(0.06)
 }
 
 /// Creates the normal decoration shared by Jaime's text inputs.
@@ -67,7 +77,12 @@ pub fn input_decoration(theme: &ThemeData) -> BoxDecoration {
 pub fn input_hover_decoration(theme: &ThemeData) -> BoxDecoration {
     BoxDecoration::new()
         .background_color(raised_surface(theme))
-        .border(input_border(theme.primary_color.with_alpha(0.64), Stroke::Px(1.0)))
+        .border(input_border(
+            theme
+                .primary_color
+                .with_alpha(0.64),
+            Stroke::Px(1.0),
+        ))
         .border_radius(10)
 }
 
@@ -83,7 +98,11 @@ pub fn input_focus_decoration(theme: &ThemeData) -> BoxDecoration {
 /// Converts a themed [`Color`] into the legacy cursor-color representation.
 #[inline]
 pub fn input_cursor_color(theme: &ThemeData) -> Colors {
-    Colors::Custom(theme.primary_color.as_u32())
+    Colors::Custom(
+        theme
+            .primary_color
+            .as_u32(),
+    )
 }
 
 fn input_border(color: Color, stroke: Stroke) -> BoxBorder {
@@ -106,12 +125,18 @@ pub fn markdown_theme() -> MarkdownTheme {
     markdown_defaults
         .body(body)
         .headings([
-            body.font_size(32).font_weight(FontWeight::Bolder),
-            body.font_size(28).font_weight(FontWeight::Bolder),
-            body.font_size(24).font_weight(FontWeight::Bolder),
-            body.font_size(20).font_weight(FontWeight::Bolder),
-            body.font_size(18).font_weight(FontWeight::Bolder),
-            body.font_size(16).font_weight(FontWeight::Bolder),
+            body.font_size(32)
+                .font_weight(FontWeight::Bolder),
+            body.font_size(28)
+                .font_weight(FontWeight::Bolder),
+            body.font_size(24)
+                .font_weight(FontWeight::Bolder),
+            body.font_size(20)
+                .font_weight(FontWeight::Bolder),
+            body.font_size(18)
+                .font_weight(FontWeight::Bolder),
+            body.font_size(16)
+                .font_weight(FontWeight::Bolder),
         ])
         .blockquote(body.color(muted_text(&theme)))
         .code_block(
@@ -130,16 +155,28 @@ pub fn markdown_theme() -> MarkdownTheme {
                 .color(theme.primary_color)
                 .text_decoration(TextDecoration::Underline),
         )
-        .link_hover_color(theme.primary_color.lighten(0.22))
+        .link_hover_color(
+            theme
+                .primary_color
+                .lighten(0.22),
+        )
         .code_background(recessed_surface(&theme))
         .quote_background(theme.surface_color)
         .rule_color(divider(&theme))
         .table_header_background(theme.surface_color)
         .table_cell_background(recessed_surface(&theme))
-        .keyword_color(theme.primary_color.lighten(0.10))
+        .keyword_color(
+            theme
+                .primary_color
+                .lighten(0.10),
+        )
         .string_color(theme.primary_color)
         .comment_color(muted_text(&theme))
-        .number_color(theme.primary_color.lighten(0.22))
+        .number_color(
+            theme
+                .primary_color
+                .lighten(0.22),
+        )
 }
 
 #[cfg(test)]
@@ -160,10 +197,30 @@ mod tests {
     fn derived_roles_keep_the_palette_tied_to_the_active_theme() {
         let theme = app_theme();
 
-        assert_eq!(divider(&theme), theme.primary_color.with_alpha(0.32));
-        assert_eq!(muted_text(&theme), theme.on_background_color.with_alpha(0.72));
-        assert_eq!(raised_surface(&theme), theme.surface_color.lighten(0.08));
-        assert_eq!(recessed_surface(&theme), theme.background_color.lighten(0.06));
+        assert_eq!(
+            divider(&theme),
+            theme
+                .primary_color
+                .with_alpha(0.32)
+        );
+        assert_eq!(
+            muted_text(&theme),
+            theme
+                .on_background_color
+                .with_alpha(0.72)
+        );
+        assert_eq!(
+            raised_surface(&theme),
+            theme
+                .surface_color
+                .lighten(0.08)
+        );
+        assert_eq!(
+            recessed_surface(&theme),
+            theme
+                .background_color
+                .lighten(0.06)
+        );
     }
 
     #[test]
@@ -173,11 +230,38 @@ mod tests {
         let hover = input_hover_decoration(&theme);
         let focus = input_focus_decoration(&theme);
 
-        assert_eq!(normal.background_color.get(), Some(recessed_surface(&theme)));
-        assert_eq!(normal.border.left.color, divider(&theme));
-        assert_eq!(hover.background_color.get(), Some(raised_surface(&theme)));
-        assert_eq!(focus.border.left.color, theme.primary_color);
-        assert_eq!(input_cursor_color(&theme).as_u32(), theme.primary_color.as_u32());
+        assert_eq!(
+            normal
+                .background_color
+                .get(),
+            Some(recessed_surface(&theme))
+        );
+        assert_eq!(
+            normal
+                .border
+                .left
+                .color,
+            divider(&theme)
+        );
+        assert_eq!(
+            hover
+                .background_color
+                .get(),
+            Some(raised_surface(&theme))
+        );
+        assert_eq!(
+            focus
+                .border
+                .left
+                .color,
+            theme.primary_color
+        );
+        assert_eq!(
+            input_cursor_color(&theme).as_u32(),
+            theme
+                .primary_color
+                .as_u32()
+        );
     }
 
     #[test]
@@ -189,7 +273,21 @@ mod tests {
         assert_eq!(markdown.body.color, theme.on_surface_color);
         assert_eq!(markdown.code_background, recessed_surface(&theme));
         assert_eq!(markdown.table_cell_background, recessed_surface(&theme));
-        assert_eq!(markdown.code_block.font_family, defaults.code_block.font_family);
-        assert_eq!(markdown.inline_code.font_family, defaults.inline_code.font_family);
+        assert_eq!(
+            markdown
+                .code_block
+                .font_family,
+            defaults
+                .code_block
+                .font_family
+        );
+        assert_eq!(
+            markdown
+                .inline_code
+                .font_family,
+            defaults
+                .inline_code
+                .font_family
+        );
     }
 }

@@ -1,4 +1,4 @@
-use super::{FontMetrics, SfntError, SfntFace, Tag, Reader, checked_add, checked_mul};
+use super::{FontMetrics, Reader, SfntError, SfntFace, Tag, checked_add, checked_mul};
 
 const MAX_POINTS: usize = 1 << 20;
 const MAX_COMPOSITE_COMPONENTS: usize = 1024;
@@ -108,8 +108,10 @@ impl<'a> SfntFace<'a> {
         let Some(loca) = self.table(*b"loca") else {
             return Err(malformed_loca());
         };
-        let variation = (!coordinates.iter().all(|coordinate| coordinate.abs() < f32::EPSILON))
-            .then_some(coordinates);
+        let variation = (!coordinates
+            .iter()
+            .all(|coordinate| coordinate.abs() < f32::EPSILON))
+        .then_some(coordinates);
         self.outline_with_tables(glyf, loca, metrics, glyph_id, variation)
     }
 
@@ -151,7 +153,9 @@ impl<'a> SfntFace<'a> {
 
 fn outline_metrics(face: &SfntFace<'_>) -> Result<FontMetrics, SfntError> {
     let head_tag = Tag::from_bytes(*b"head");
-    let head = face.table(*b"head").ok_or(SfntError::MissingTable(head_tag))?;
+    let head = face
+        .table(*b"head")
+        .ok_or(SfntError::MissingTable(head_tag))?;
     if head.len() < 54 {
         return Err(SfntError::MalformedTable(head_tag));
     }
@@ -163,7 +167,9 @@ fn outline_metrics(face: &SfntFace<'_>) -> Result<FontMetrics, SfntError> {
     }
 
     let maxp_tag = Tag::from_bytes(*b"maxp");
-    let maxp = face.table(*b"maxp").ok_or(SfntError::MissingTable(maxp_tag))?;
+    let maxp = face
+        .table(*b"maxp")
+        .ok_or(SfntError::MissingTable(maxp_tag))?;
     if maxp.len() < 6 {
         return Err(SfntError::MalformedTable(maxp_tag));
     }
@@ -315,10 +321,7 @@ fn glyph_range(
     Ok(Some((start, end)))
 }
 
-fn parse_loca(
-    loca: &[u8],
-    metrics: FontMetrics,
-) -> Result<Vec<usize>, SfntError> {
+fn parse_loca(loca: &[u8], metrics: FontMetrics) -> Result<Vec<usize>, SfntError> {
     let entry_count = usize::from(metrics.num_glyphs)
         .checked_add(1)
         .ok_or(SfntError::ArithmeticOverflow)?;
@@ -335,11 +338,7 @@ fn parse_loca(
     let reader = Reader::new(loca);
     let mut offsets = Vec::with_capacity(entry_count);
     for index in 0..entry_count {
-        offsets.push(loca_offset(
-            &reader,
-            index,
-            metrics.index_to_loc_format,
-        )?);
+        offsets.push(loca_offset(&reader, index, metrics.index_to_loc_format)?);
     }
     Ok(offsets)
 }
@@ -383,7 +382,8 @@ fn parse_simple_glyph(
     let mut end_points = Vec::with_capacity(contour_count);
     let mut previous = None;
     for index in 0..contour_count {
-        let point = usize::from(reader.u16(checked_add(end_points_offset, checked_mul(index, 2)?)?)?);
+        let point =
+            usize::from(reader.u16(checked_add(end_points_offset, checked_mul(index, 2)?)?)?);
         if previous.is_some_and(|value| point <= value) {
             return Err(malformed_glyf());
         }
@@ -414,11 +414,14 @@ fn parse_simple_glyph(
         flags.extend(std::iter::repeat_n(flag, repeat + 1));
     }
 
-    let mut points = vec![OutlinePoint {
-        x: 0.0,
-        y: 0.0,
-        on_curve: false,
-    }; point_count];
+    let mut points = vec![
+        OutlinePoint {
+            x: 0.0,
+            y: 0.0,
+            on_curve: false,
+        };
+        point_count
+    ];
     decode_axis_into(&reader, &mut cursor, &flags, 0x02, 0x10, &mut points, true)?;
     decode_axis_into(&reader, &mut cursor, &flags, 0x04, 0x20, &mut points, false)?;
     for (point, flag) in points.iter_mut().zip(flags) {
@@ -468,9 +471,7 @@ fn decode_axis_into(
         } else {
             0
         };
-        coordinate = coordinate
-            .checked_add(delta)
-            .ok_or_else(malformed_glyf)?;
+        coordinate = coordinate.checked_add(delta).ok_or_else(malformed_glyf)?;
         if coordinate < i32::from(i16::MIN) || coordinate > i32::from(i16::MAX) {
             return Err(malformed_glyf());
         }
@@ -531,8 +532,8 @@ fn parse_composite_glyph(
             (x, y)
         };
 
-        let scale_flags = flags
-            & (WE_HAVE_A_SCALE | WE_HAVE_AN_X_AND_Y_SCALE | WE_HAVE_A_TWO_BY_TWO);
+        let scale_flags =
+            flags & (WE_HAVE_A_SCALE | WE_HAVE_AN_X_AND_Y_SCALE | WE_HAVE_A_TWO_BY_TWO);
         if scale_flags.count_ones() > 1 {
             return Err(malformed_glyf());
         }

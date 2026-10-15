@@ -7,9 +7,7 @@ use unicode_linebreak::{BreakOpportunity, linebreaks};
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::glyph_metrics::GlyphMetrics;
-use super::glyph_rasterizer::{
-    GlyphKey, GlyphPreparationContext, GlyphRasterizer, ShapedRunGlyph,
-};
+use super::glyph_rasterizer::{GlyphKey, GlyphPreparationContext, GlyphRasterizer, ShapedRunGlyph};
 use crate::font::{FontFamily, FontStyle, FontWeight, TextLanguage};
 use crate::text_pipeline::unicode_script::Script;
 
@@ -472,7 +470,12 @@ impl ParagraphLayout {
             } else {
                 (cluster.end_y, cluster.start_y)
             };
-            (cluster.start_x, top.min(bottom), cluster.height.max(0.0), 0.0)
+            (
+                cluster.start_x,
+                top.min(bottom),
+                cluster.height.max(0.0),
+                0.0,
+            )
         } else if start {
             (cluster.start_x, cluster.y, 0.0, cluster.height)
         } else {
@@ -519,7 +522,9 @@ impl ParagraphLayout {
     fn vertical_selection_rects(&self, selection: std::ops::Range<usize>) -> Vec<SelectionRect> {
         let mut result = Vec::new();
         for cluster in &self.clusters {
-            if cluster.text_range.start >= selection.end || cluster.text_range.end <= selection.start {
+            if cluster.text_range.start >= selection.end
+                || cluster.text_range.end <= selection.start
+            {
                 continue;
             }
             let top = cluster.start_y.min(cluster.end_y);
@@ -544,10 +549,7 @@ impl ParagraphLayout {
         if self.lines.is_empty() {
             return None;
         }
-        let line_width = self
-            .lines
-            .first()
-            .map_or(0.0, |line| line_height(line));
+        let line_width = self.lines.first().map_or(0.0, |line| line_height(line));
         let mut nearest = 0;
         let mut nearest_distance = f32::INFINITY;
         for (index, line) in self.lines.iter().enumerate() {
@@ -893,7 +895,12 @@ impl TextInteractionLayout {
             } else {
                 (cluster.end_y, cluster.start_y)
             };
-            (cluster.start_x, top.min(bottom), cluster.height.max(0.0), 0.0)
+            (
+                cluster.start_x,
+                top.min(bottom),
+                cluster.height.max(0.0),
+                0.0,
+            )
         } else if start {
             (cluster.start_x, cluster.y, 0.0, cluster.height)
         } else {
@@ -940,7 +947,9 @@ impl TextInteractionLayout {
     fn vertical_selection_rects(&self, selection: std::ops::Range<usize>) -> Vec<SelectionRect> {
         let mut result = Vec::new();
         for cluster in &self.clusters {
-            if cluster.text_range.start >= selection.end || cluster.text_range.end <= selection.start {
+            if cluster.text_range.start >= selection.end
+                || cluster.text_range.end <= selection.start
+            {
                 continue;
             }
             let top = cluster.start_y.min(cluster.end_y);
@@ -967,8 +976,8 @@ impl TextInteractionLayout {
                 && (previous.width - rect.width).abs() < 0.001
                 && (previous.y + previous.height - rect.y).abs() < 0.01
             {
-                previous.height = (previous.y + previous.height).max(rect.y + rect.height)
-                    - previous.y;
+                previous.height =
+                    (previous.y + previous.height).max(rect.y + rect.height) - previous.y;
             } else {
                 merged.push(rect);
             }
@@ -1205,7 +1214,10 @@ fn starts_with_line_attached_ascii_punctuation(text: &str) -> bool {
     text.chars()
         .find(|codepoint| !codepoint.is_ascii_whitespace())
         .is_some_and(|codepoint| {
-            matches!(codepoint, ',' | '.' | ':' | ';' | '!' | '?' | ')' | ']' | '}')
+            matches!(
+                codepoint,
+                ',' | '.' | ':' | ';' | '!' | '?' | ')' | ']' | '}'
+            )
         })
 }
 
@@ -1288,9 +1300,7 @@ fn collect_shaping_runs<'a>(
             }
 
             let (_, last_cluster) = graphemes[grapheme_index - 1];
-            let end = range.start
-                + graphemes[grapheme_index - 1].0
-                + last_cluster.len();
+            let end = range.start + graphemes[grapheme_index - 1].0 + last_cluster.len();
             logical_runs.push(ShapingRun {
                 text: &text[start..end],
                 start,
@@ -1333,9 +1343,13 @@ fn layout_paragraph<F>(
 where
     F: FnMut(&str, usize, TextWritingMode) -> Vec<PositionedShapedGlyph>,
 {
-    layout_paragraph_inner(text, font_id, metrics, options, |segment, offset, _, _, writing_mode| {
-        shape(segment, offset, writing_mode)
-    })
+    layout_paragraph_inner(
+        text,
+        font_id,
+        metrics,
+        options,
+        |segment, offset, _, _, writing_mode| shape(segment, offset, writing_mode),
+    )
 }
 
 fn layout_paragraph_inner<F>(
@@ -1346,8 +1360,13 @@ fn layout_paragraph_inner<F>(
     mut shape: F,
 ) -> ParagraphLayout
 where
-    F: FnMut(&str, usize, unicode_bidi::Level, Option<Script>, TextWritingMode)
-        -> Vec<PositionedShapedGlyph>,
+    F: FnMut(
+        &str,
+        usize,
+        unicode_bidi::Level,
+        Option<Script>,
+        TextWritingMode,
+    ) -> Vec<PositionedShapedGlyph>,
 {
     if options.writing_mode.is_vertical() {
         return layout_paragraph_vertical_inner(text, font_id, metrics, options, &mut shape);
@@ -1363,10 +1382,7 @@ where
         .flat_map(|para| {
             let (levels, ranges) = bidi.visual_runs(para, para.range.clone());
             ranges.into_iter().map(move |range| {
-                let level = levels
-                    .get(range.start)
-                    .copied()
-                    .unwrap_or(para.level);
+                let level = levels.get(range.start).copied().unwrap_or(para.level);
                 (range, level)
             })
         })
@@ -1442,8 +1458,8 @@ where
 
         // Check whether a line break is allowed at the run boundary.
         let break_allowed = break_offsets.binary_search(&run_end).is_ok();
-        let keep_punctuation_with_previous = script.is_none()
-            && starts_with_line_attached_ascii_punctuation(run_text);
+        let keep_punctuation_with_previous =
+            script.is_none() && starts_with_line_attached_ascii_punctuation(run_text);
 
         if max_width > 0.0
             && line_width + run_width > max_width
@@ -1678,8 +1694,13 @@ fn layout_paragraph_vertical_inner<F>(
     shape: &mut F,
 ) -> ParagraphLayout
 where
-    F: FnMut(&str, usize, unicode_bidi::Level, Option<Script>, TextWritingMode)
-        -> Vec<PositionedShapedGlyph>,
+    F: FnMut(
+        &str,
+        usize,
+        unicode_bidi::Level,
+        Option<Script>,
+        TextWritingMode,
+    ) -> Vec<PositionedShapedGlyph>,
 {
     let bidi = BidiInfo::new(text, None);
     let visual_run_ranges: Vec<(std::ops::Range<usize>, unicode_bidi::Level)> = bidi
@@ -1688,10 +1709,7 @@ where
         .flat_map(|para| {
             let (levels, ranges) = bidi.visual_runs(para, para.range.clone());
             ranges.into_iter().map(move |range| {
-                let level = levels
-                    .get(range.start)
-                    .copied()
-                    .unwrap_or(para.level);
+                let level = levels.get(range.start).copied().unwrap_or(para.level);
                 (range, level)
             })
         })
@@ -2015,8 +2033,7 @@ fn shape_segment_with_aimer(
             writing_mode,
         );
     };
-    let Ok(Some(shaped)) =
-        state.shape_run_with_options(segment, None, writing_mode.is_vertical())
+    let Ok(Some(shaped)) = state.shape_run_with_options(segment, None, writing_mode.is_vertical())
     else {
         return fallback_shape_segment_with_writing_mode(
             segment,
@@ -2029,43 +2046,39 @@ fn shape_segment_with_aimer(
 
     let upem = f32::from(shaped.units_per_em);
     let scale = if upem > 0.0 { font_size / upem } else { 1.0 };
-    let mut cluster_starts: Vec<usize> = shaped
-        .glyphs
-        .iter()
-        .map(|glyph| glyph.cluster)
-        .collect();
+    let mut cluster_starts: Vec<usize> = shaped.glyphs.iter().map(|glyph| glyph.cluster).collect();
     cluster_starts.sort_unstable();
     cluster_starts.dedup();
 
     let mut result = Vec::with_capacity(shaped.glyphs.len());
     for glyph in &shaped.glyphs {
-            let cluster_start = glyph.cluster;
-            let cluster_end = cluster_starts
-                .iter()
-                .copied()
-                .find(|candidate| *candidate > cluster_start)
-                .unwrap_or(segment.len());
-            let cluster_end = if segment.is_char_boundary(cluster_end) {
-                cluster_end
-            } else {
-                segment.len()
-            };
-            let cluster = text_offset + cluster_start;
-            let text_range = text_offset + cluster_start..text_offset + cluster_end;
-            result.push(PositionedShapedGlyph {
-                font_id,
-                glyph_id: glyph.glyph_id,
-                cluster,
-                text_range,
-                x: 0.0,
-                y: 0.0,
-                x_offset: glyph.x_offset as f32 * scale,
-                y_offset: glyph.y_offset as f32 * scale,
-                advance: glyph.x_advance as f32 * scale,
-                y_advance: glyph.y_advance as f32 * scale,
-                font_size,
-                source: segment[cluster_start..cluster_end].to_string(),
-            });
+        let cluster_start = glyph.cluster;
+        let cluster_end = cluster_starts
+            .iter()
+            .copied()
+            .find(|candidate| *candidate > cluster_start)
+            .unwrap_or(segment.len());
+        let cluster_end = if segment.is_char_boundary(cluster_end) {
+            cluster_end
+        } else {
+            segment.len()
+        };
+        let cluster = text_offset + cluster_start;
+        let text_range = text_offset + cluster_start..text_offset + cluster_end;
+        result.push(PositionedShapedGlyph {
+            font_id,
+            glyph_id: glyph.glyph_id,
+            cluster,
+            text_range,
+            x: 0.0,
+            y: 0.0,
+            x_offset: glyph.x_offset as f32 * scale,
+            y_offset: glyph.y_offset as f32 * scale,
+            advance: glyph.x_advance as f32 * scale,
+            y_advance: glyph.y_advance as f32 * scale,
+            font_size,
+            source: segment[cluster_start..cluster_end].to_string(),
+        });
     }
     super::aimer_font::recycle_shaped_glyphs(shaped.glyphs);
     result
@@ -2196,10 +2209,7 @@ pub fn shape_text(rasterizer: &mut GlyphRasterizer, text: &str, font_size: f32) 
     )
 }
 
-fn simple_ltr_break_before<I>(
-    breaks: &mut std::iter::Peekable<I>,
-    offset: usize,
-) -> bool
+fn simple_ltr_break_before<I>(breaks: &mut std::iter::Peekable<I>, offset: usize) -> bool
 where
     I: Iterator<Item = (usize, BreakOpportunity)>,
 {
@@ -2265,9 +2275,11 @@ fn append_simple_ltr_line<I>(
     // The owned shaper emits an LTR glyph stream with non-decreasing cluster offsets.
     // Consume equal offsets as one ligature/cluster group so no sorted
     // cluster-start allocation is needed on this path.
-    debug_assert!(shaped_glyphs
-        .windows(2)
-        .all(|glyphs| glyphs[0].cluster <= glyphs[1].cluster));
+    debug_assert!(
+        shaped_glyphs
+            .windows(2)
+            .all(|glyphs| glyphs[0].cluster <= glyphs[1].cluster)
+    );
 
     let mut glyph_index = 0;
     let mut group_end = 0;
@@ -2429,7 +2441,8 @@ pub fn shape_text_styled_with_writing_mode(
     // the whole paragraph is announced before a single one is resolved.
     rasterizer.begin_script_run(text, language);
 
-    let (ascent, _descent, line_gap) = rasterizer.line_metrics_for_family(font_size, font_family, font_weight, font_style);
+    let (ascent, _descent, line_gap) =
+        rasterizer.line_metrics_for_family(font_size, font_family, font_weight, font_style);
     let line_height = ascent - _descent + line_gap;
 
     let primary_ascii_font = (writing_mode == TextWritingMode::HorizontalTb
@@ -2540,9 +2553,7 @@ pub fn shape_text_styled_with_writing_mode(
             }
 
             let run_plans = &scratch.cluster_plans[run_start_index..grapheme_index];
-            let run_end = run_plans
-                .last()
-                .map_or(cluster_start, |plan| plan.end);
+            let run_end = run_plans.last().map_or(cluster_start, |plan| plan.end);
             let run_text = &text[cluster_start..run_end];
             let cache_key = ShapeRunCacheKey {
                 hash: shape_run_cache_hash(run_text),
@@ -2550,19 +2561,15 @@ pub fn shape_text_styled_with_writing_mode(
                 font_id,
                 script: run_script,
             };
-            let cached_run = scratch
-                .shaped_run_cache
-                .iter()
-                .position(|entry| {
-                    entry.key == cache_key && &text[entry.start..entry.end] == run_text
-                });
+            let cached_run = scratch.shaped_run_cache.iter().position(|entry| {
+                entry.key == cache_key && &text[entry.start..entry.end] == run_text
+            });
             let shaped_glyphs = if let Some(cache_index) = cached_run {
-                rasterizer.reuse_shaped_run_from_slice(
-                    &scratch.shaped_run_cache[cache_index].glyphs,
-                )
+                rasterizer
+                    .reuse_shaped_run_from_slice(&scratch.shaped_run_cache[cache_index].glyphs)
             } else {
-                let shaped_glyphs =
-                    rasterizer.shape_run_with_font_id_reusing_with_options_and_script(
+                let shaped_glyphs = rasterizer
+                    .shape_run_with_font_id_reusing_with_options_and_script(
                         run_text,
                         font_size,
                         font_id,
@@ -2624,75 +2631,69 @@ pub fn shape_text_styled_with_writing_mode(
             }));
 
             let run_cluster_count = run_plans.len();
-            let mut source_cluster_cursor = if descending {
-                run_cluster_count - 1
-            } else {
-                0
-            };
+            let mut source_cluster_cursor = if descending { run_cluster_count - 1 } else { 0 };
             let mut glyph_index = 0;
             let mut group_end = 0;
             let mut previous_descending_cluster = None;
             let mut group_cluster_index = cluster_output_start;
             let mut group_text_end = run_end;
-            let mut append_glyph = |glyph_index: usize,
-                                    glyph: &ShapedRunGlyph,
-                                    metrics: GlyphMetrics| {
-                if glyph_index == group_end {
-                    if descending {
-                        while source_cluster_cursor > 0
-                            && run_plans[source_cluster_cursor].start - cluster_start
-                                > glyph.cluster
-                        {
-                            source_cluster_cursor -= 1;
+            let mut append_glyph =
+                |glyph_index: usize, glyph: &ShapedRunGlyph, metrics: GlyphMetrics| {
+                    if glyph_index == group_end {
+                        if descending {
+                            while source_cluster_cursor > 0
+                                && run_plans[source_cluster_cursor].start - cluster_start
+                                    > glyph.cluster
+                            {
+                                source_cluster_cursor -= 1;
+                            }
+                        } else {
+                            while source_cluster_cursor + 1 < run_cluster_count
+                                && run_plans[source_cluster_cursor + 1].start - cluster_start
+                                    <= glyph.cluster
+                            {
+                                source_cluster_cursor += 1;
+                            }
                         }
-                    } else {
-                        while source_cluster_cursor + 1 < run_cluster_count
-                            && run_plans[source_cluster_cursor + 1].start - cluster_start
-                                <= glyph.cluster
+                        group_cluster_index = cluster_output_start + source_cluster_cursor;
+                        group_end = glyph_index + 1;
+                        while group_end < shaped_glyphs.len()
+                            && shaped_glyphs[group_end].cluster == glyph.cluster
                         {
-                            source_cluster_cursor += 1;
+                            group_end += 1;
+                        }
+                        let relative_end = if descending {
+                            previous_descending_cluster.unwrap_or(run_end - cluster_start)
+                        } else {
+                            shaped_glyphs
+                                .get(group_end)
+                                .map_or(run_end - cluster_start, |next| next.cluster)
+                        };
+                        group_text_end = (cluster_start + relative_end).min(run_end);
+                        if descending {
+                            previous_descending_cluster = Some(glyph.cluster);
                         }
                     }
-                    group_cluster_index = cluster_output_start + source_cluster_cursor;
-                    group_end = glyph_index + 1;
-                    while group_end < shaped_glyphs.len()
-                        && shaped_glyphs[group_end].cluster == glyph.cluster
-                    {
-                        group_end += 1;
-                    }
-                    let relative_end = if descending {
-                        previous_descending_cluster
-                            .unwrap_or(run_end - cluster_start)
-                    } else {
-                        shaped_glyphs
-                            .get(group_end)
-                            .map_or(run_end - cluster_start, |next| next.cluster)
-                    };
-                    group_text_end = (cluster_start + relative_end).min(run_end);
-                    if descending {
-                        previous_descending_cluster = Some(glyph.cluster);
-                    }
-                }
 
-                let cluster = &mut clusters[group_cluster_index];
-                cluster.text_range.end = cluster.text_range.end.max(group_text_end);
-                cluster.width += if writing_mode.is_vertical() {
-                    (-glyph.y_advance).max(0.0)
-                } else {
-                    glyph.advance
+                    let cluster = &mut clusters[group_cluster_index];
+                    cluster.text_range.end = cluster.text_range.end.max(group_text_end);
+                    cluster.width += if writing_mode.is_vertical() {
+                        (-glyph.y_advance).max(0.0)
+                    } else {
+                        glyph.advance
+                    };
+                    cluster.glyphs.push(ShapedGlyph {
+                        key: glyph.glyph_key,
+                        advance: glyph.advance,
+                        y_advance: glyph.y_advance,
+                        x_offset: glyph.x_offset,
+                        y_offset: glyph.y_offset,
+                        width: metrics.width,
+                        height: metrics.height,
+                        offset_x: metrics.offset_x,
+                        offset_y: metrics.offset_y,
+                    });
                 };
-                cluster.glyphs.push(ShapedGlyph {
-                    key: glyph.glyph_key,
-                    advance: glyph.advance,
-                    y_advance: glyph.y_advance,
-                    x_offset: glyph.x_offset,
-                    y_offset: glyph.y_offset,
-                    width: metrics.width,
-                    height: metrics.height,
-                    offset_x: metrics.offset_x,
-                    offset_y: metrics.offset_y,
-                });
-            };
             if shaped_glyphs.len() == 1 {
                 let glyph = &shaped_glyphs[0];
                 let metrics = rasterizer.metrics_for_key(glyph.glyph_key, font_size);
@@ -2994,13 +2995,8 @@ pub fn layout_shaped_text_with_interaction_with_bounds(
     max_width: f32,
     max_height: f32,
 ) -> TextInteractionLayout {
-    let glyphs = layout_shaped_text_with_bounds(
-        shaped_text,
-        origin_x,
-        origin_y,
-        max_width,
-        max_height,
-    );
+    let glyphs =
+        layout_shaped_text_with_bounds(shaped_text, origin_x, origin_y, max_width, max_height);
     build_shaped_text_interaction(
         shaped_text,
         &glyphs,
@@ -3032,13 +3028,8 @@ pub(crate) fn layout_shaped_text_result_with_bounds(
     max_width: f32,
     max_height: f32,
 ) -> PositionedTextLayout {
-    let glyphs = layout_shaped_text_with_bounds(
-        shaped_text,
-        origin_x,
-        origin_y,
-        max_width,
-        max_height,
-    );
+    let glyphs =
+        layout_shaped_text_with_bounds(shaped_text, origin_x, origin_y, max_width, max_height);
     PositionedTextLayout {
         interaction: Some(build_shaped_text_interaction(
             shaped_text,
@@ -3412,15 +3403,21 @@ mod tests {
     fn test_layout(text: &str, max_width: f32) -> ParagraphLayout {
         let metrics = FontMetrics::new(8.0, -2.0, 2.0);
         let options = TextLayoutOptions::new(10.0, 0.0, 0.0, max_width);
-        layout_paragraph(text, 0, &metrics, &options, |segment, text_offset, writing_mode| {
-            fallback_shape_segment_with_writing_mode(
-                segment,
-                text_offset,
-                0,
-                options.font_size,
-                writing_mode,
-            )
-        })
+        layout_paragraph(
+            text,
+            0,
+            &metrics,
+            &options,
+            |segment, text_offset, writing_mode| {
+                fallback_shape_segment_with_writing_mode(
+                    segment,
+                    text_offset,
+                    0,
+                    options.font_size,
+                    writing_mode,
+                )
+            },
+        )
     }
 
     #[test]
@@ -3458,7 +3455,9 @@ mod tests {
             .collect();
         assert_eq!(ranges, vec![0..1, 1..2, 2..5]);
 
-        let caret = layout.caret_geometry(2).expect("cluster boundary has a caret");
+        let caret = layout
+            .caret_geometry(2)
+            .expect("cluster boundary has a caret");
         assert_eq!(caret.offset, 2);
         assert_eq!(caret.line_index, 0);
         assert_eq!(caret.x, 10.0);
@@ -3504,10 +3503,12 @@ mod tests {
         );
 
         assert!(layout.glyphs.iter().any(|glyph| glyph.text_range == (1..4)));
-        assert!(layout
-            .clusters
-            .iter()
-            .any(|cluster| cluster.text_range == (1..4)));
+        assert!(
+            layout
+                .clusters
+                .iter()
+                .any(|cluster| cluster.text_range == (1..4))
+        );
         assert!(layout.caret_geometry(2).is_none());
         assert!(layout.caret_geometry(4).is_some());
         assert!(layout.caret_geometry(5).is_some());
@@ -3620,8 +3621,8 @@ mod tests {
                 .map(|cluster| cluster.text.as_str())
                 .collect::<Vec<_>>(),
             vec![
-                "o", "f", "f", "i", "c", "e", " ", "A", "i", "m", "e", "r", "\n",
-                "f", "a", "s", "t", " ", "p", "a", "t", "h",
+                "o", "f", "f", "i", "c", "e", " ", "A", "i", "m", "e", "r", "\n", "f", "a", "s",
+                "t", " ", "p", "a", "t", "h",
             ]
         );
         assert!(
@@ -3765,7 +3766,8 @@ mod tests {
         // subscript consonant keeps its full size instead of tucking under the
         // base as a leg.
         let mut rasterizer = GlyphRasterizer::new();
-        for khmer in ["សួស្តី", "ស្រឡាញ់", "សួស្តី\u{200b}ពិភពលោក"] {
+        for khmer in ["សួស្តី", "ស្រឡាញ់", "សួស្តី\u{200b}ពិភពលោក"]
+        {
             let isolated = shape_text(&mut rasterizer, khmer, 32.0);
             let mixed = shape_text(&mut rasterizer, &format!("Khmer — {khmer} (Suosdei)"), 32.0);
 
@@ -3813,8 +3815,7 @@ mod tests {
                 .map(|glyph| glyph.key.glyph_id)
                 .collect::<Vec<_>>(),
             vec![
-                3620, 3906, 3620, 3847, 3895, 1866, 3611, 3894, 3612, 3611, 3665, 3701,
-                3589,
+                3620, 3906, 3620, 3847, 3895, 1866, 3611, 3894, 3612, 3611, 3665, 3701, 3589,
             ]
         );
 
@@ -3839,10 +3840,12 @@ mod tests {
             }
         }
 
-        assert!(visible_pixels > 1_000, "Khmer showcase must contain visible ink");
+        assert!(
+            visible_pixels > 1_000,
+            "Khmer showcase must contain visible ink"
+        );
         assert_eq!(
-            checksum,
-            11_027_706_440_622_539_205,
+            checksum, 11_027_706_440_622_539_205,
             "update the Khmer raster golden after an intentional change"
         );
     }
@@ -3980,7 +3983,10 @@ mod tests {
 
         assert_eq!(positioned.len(), 4);
         assert_eq!(
-            positioned.iter().map(|glyph| glyph.line_index).collect::<Vec<_>>(),
+            positioned
+                .iter()
+                .map(|glyph| glyph.line_index)
+                .collect::<Vec<_>>(),
             vec![0, 0, 1, 1]
         );
         assert_eq!(positioned[0].x, 16.0);
@@ -4058,13 +4064,13 @@ mod tests {
                 .collect(),
         };
 
-        let layout = layout_shaped_text_with_interaction_with_bounds(
-            &shaped, 0.0, 0.0, 32.0, 25.0,
-        );
+        let layout = layout_shaped_text_with_interaction_with_bounds(&shaped, 0.0, 0.0, 32.0, 25.0);
 
         assert_eq!(layout.writing_mode, TextWritingMode::VerticalRl);
         assert_eq!(layout.lines.len(), 2);
-        let caret = layout.caret_geometry(2).expect("column boundary has a caret");
+        let caret = layout
+            .caret_geometry(2)
+            .expect("column boundary has a caret");
         assert_eq!(caret.x, 0.0);
         assert_eq!(caret.y, 0.0);
         assert_eq!(caret.width, 16.0);
@@ -4132,7 +4138,9 @@ mod tests {
         let mut rasterizer = GlyphRasterizer::new();
         assert!(
             rasterizer
-                .register_font_bytes(include_bytes!("../../../fonts/NotoSansJP-VariableFont_wght.ttf").to_vec())
+                .register_font_bytes(
+                    include_bytes!("../../../fonts/NotoSansJP-VariableFont_wght.ttf").to_vec()
+                )
                 .is_some(),
             "the deterministic CJK fixture must be readable"
         );

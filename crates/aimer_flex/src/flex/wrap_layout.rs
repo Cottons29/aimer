@@ -589,7 +589,10 @@ mod wrap_tests {
                         justify,
                     ));
                     checksum = black_box(
-                        checksum + layout.size.width + layout.size.height + layout.offsets.len() as f32,
+                        checksum
+                            + layout.size.width
+                            + layout.size.height
+                            + layout.offsets.len() as f32,
                     );
                 }
 
@@ -605,7 +608,10 @@ mod wrap_tests {
                         justify,
                     ));
                     checksum = black_box(
-                        checksum + layout.size.width + layout.size.height + layout.offsets.len() as f32,
+                        checksum
+                            + layout.size.width
+                            + layout.size.height
+                            + layout.offsets.len() as f32,
                     );
                 }
                 samples.push(start.elapsed().as_secs_f64() * 1e6 / MEASURED as f64);

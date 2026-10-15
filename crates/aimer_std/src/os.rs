@@ -12,7 +12,6 @@ pub enum IOSVariant {
     IPad,
 }
 
-
 /// Representation of the current operating system.
 ///
 /// Note: IOS has a different variant for iPhone and iPad.
@@ -59,9 +58,9 @@ impl Os {
 impl IOSVariant {
     #[cfg(target_os = "ios")]
     fn is_ipad() -> bool {
+        use objc2::MainThreadMarker;
         use objc2::rc::Retained;
         use objc2_ui_kit::{UIDevice, UIUserInterfaceIdiom};
-        use objc2::MainThreadMarker;
 
         let mtm = MainThreadMarker::new().expect("must be called on the main thread");
 

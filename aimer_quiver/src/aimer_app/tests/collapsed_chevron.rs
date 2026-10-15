@@ -34,10 +34,21 @@ impl Widget for Section {
                         };
                         aimer_collapsible::CollapsibleList::new()
                             .animation_millis(120)
-                            .header(aimer_collapsible::ListHeader::new().child(aimer_text::Text::new(title.clone())))
-                            .body(aimer_collapsible::ListBody::new().child(
-                                Column::new().children((0..rows).map(|_| SizedBox::new().height(Dimension::Px(30.0)).boxed()).collect::<Vec<_>>()),
-                            ))
+                            .header(
+                                aimer_collapsible::ListHeader::new()
+                                    .child(aimer_text::Text::new(title.clone())),
+                            )
+                            .body(
+                                aimer_collapsible::ListBody::new().child(
+                                    Column::new().children(
+                                        (0..rows)
+                                            .map(|_| {
+                                                SizedBox::new().height(Dimension::Px(30.0)).boxed()
+                                            })
+                                            .collect::<Vec<_>>(),
+                                    ),
+                                ),
+                            )
                             .boxed()
                     })
                     .to_element(ctx)
@@ -65,7 +76,11 @@ impl StatefulWidget for Screen {
     type State = ScreenState;
 
     fn create_state(self) -> ScreenState {
-        ScreenState { rebuilds: 0, animate: false, updater: self.updater }
+        ScreenState {
+            rebuilds: 0,
+            animate: false,
+            updater: self.updater,
+        }
     }
 }
 
@@ -84,11 +99,13 @@ impl State<Screen> for ScreenState {
         aimer_animation::ImplicitAnimatedBuilder::new(
             if self.animate { 1.0f32 } else { 0.0 },
             Duration::from_millis(300),
-            aimer_animation::Curve::EaseInOut,
+            aimer_animation::curves::EASE_IN_OUT,
             move |value| {
                 let title = title.clone();
                 aimer_container::Container::new()
-                    .padding(aimer_style::LayoutSpacing::all(((*value * 4.0) as i32).max(0)))
+                    .padding(aimer_style::LayoutSpacing::all(
+                        ((*value * 4.0) as i32).max(0),
+                    ))
                     .child(Column::new().children(vec![
                         aimer_flex::Expanded::new()
                             .child(Column::new().children(vec![
@@ -105,7 +122,9 @@ impl State<Screen> for ScreenState {
 
 impl Widget for Screen {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
-        StatefulElement::new_with_name(self, ctx, "ChevronScreen", None).0.boxed()
+        StatefulElement::new_with_name(self, ctx, "ChevronScreen", None)
+            .0
+            .boxed()
     }
 }
 
@@ -121,7 +140,11 @@ fn run_for<W: Widget + 'static>(app: &mut HeadlessAimerApp<W>, millis: u64) {
 
 /// The turn the chevron is drawn at, as the compositor holds it.
 fn chevron_turn<W: Widget + 'static>(app: &HeadlessAimerApp<W>) -> Option<f32> {
-    fn walk<W: Widget + 'static>(app: &HeadlessAimerApp<W>, element: &dyn Element, out: &mut Option<f32>) {
+    fn walk<W: Widget + 'static>(
+        app: &HeadlessAimerApp<W>,
+        element: &dyn Element,
+        out: &mut Option<f32>,
+    ) {
         if element.debug_name() == "RotationTransitionElement"
             && let Some(node) = app.app.render_node_for_element(element.id())
             && let Ok((matrix, _)) = app.app.render_tree().compositor_animation(node)
@@ -132,17 +155,24 @@ fn chevron_turn<W: Widget + 'static>(app: &HeadlessAimerApp<W>) -> Option<f32> {
         element.visit_children(&mut |child| walk(app, child, out));
     }
     let mut out = None;
-    walk(app, app.app.widget_root.as_ref().unwrap().as_ref(), &mut out);
+    walk(
+        app,
+        app.app.widget_root.as_ref().unwrap().as_ref(),
+        &mut out,
+    );
     out
 }
 
 fn click_at<W: Widget + 'static>(app: &mut HeadlessAimerApp<W>, x: f64, y: f64) {
     app.send_window_event(WindowEvent::CursorMoved {
-        device_id: DeviceId::dummy(), position: PhysicalPosition::new(x, y),
+        device_id: DeviceId::dummy(),
+        position: PhysicalPosition::new(x, y),
     });
     for state in [ElementState::Pressed, ElementState::Released] {
         app.send_window_event(WindowEvent::MouseInput {
-            device_id: DeviceId::dummy(), state, button: MouseButton::Left,
+            device_id: DeviceId::dummy(),
+            state,
+            button: MouseButton::Left,
         });
         app.pump_frames(1);
     }
@@ -150,23 +180,39 @@ fn click_at<W: Widget + 'static>(app: &mut HeadlessAimerApp<W>, x: f64, y: f64) 
 
 #[test]
 fn a_collapsed_list_keeps_its_chevron_turned_when_the_screen_rebuilds() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     let updater = Rc::new(RefCell::new(None));
     let mut app = AimerApp::start_headless_with(
-        Screen { updater: updater.clone() },
-        HeadlessOptions { size: PhysicalSize::new(300, 400), scale_factor: 1.0 },
+        Screen {
+            updater: updater.clone(),
+        },
+        HeadlessOptions {
+            size: PhysicalSize::new(300, 400),
+            scale_factor: 1.0,
+        },
     );
     app.pump_frames(3);
     let open = chevron_turn(&app).expect("the chevron is on screen");
-    assert!(open.abs() < 0.01, "an expanded list shows the chevron un-turned, got {open}");
+    assert!(
+        open.abs() < 0.01,
+        "an expanded list shows the chevron un-turned, got {open}"
+    );
 
     click_at(&mut app, 40.0, 56.0);
     run_for(&mut app, 400);
     let collapsed = chevron_turn(&app).expect("the chevron is still on screen");
-    assert!((collapsed + 0.25).abs() < 0.01, "a collapsed list shows the chevron turned a quarter, got {collapsed}");
+    assert!(
+        (collapsed + 0.25).abs() < 0.01,
+        "a collapsed list shows the chevron turned a quarter, got {collapsed}"
+    );
 
     for _ in 0..3 {
-        updater.borrow().expect("initialised").set_state(|state| state.rebuilds += 1);
+        updater
+            .borrow()
+            .expect("initialised")
+            .set_state(|state| state.rebuilds += 1);
         run_for(&mut app, 120);
         let after = chevron_turn(&app).expect("the chevron is still on screen");
         assert!(
@@ -191,20 +237,33 @@ fn chevron_id<W: Widget + 'static>(app: &HeadlessAimerApp<W>) -> Option<u64> {
 
 #[test]
 fn a_panel_that_animates_around_a_collapsed_list_keeps_the_chevron_turned_on_every_frame() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     let updater = Rc::new(RefCell::new(None));
     let mut app = AimerApp::start_headless_with(
-        Screen { updater: updater.clone() },
-        HeadlessOptions { size: PhysicalSize::new(300, 400), scale_factor: 1.0 },
+        Screen {
+            updater: updater.clone(),
+        },
+        HeadlessOptions {
+            size: PhysicalSize::new(300, 400),
+            scale_factor: 1.0,
+        },
     );
     app.pump_frames(3);
     click_at(&mut app, 40.0, 56.0);
     run_for(&mut app, 400);
     let settled = chevron_turn(&app).expect("the chevron is on screen");
-    assert!((settled + 0.25).abs() < 0.01, "a collapsed list shows the chevron turned, got {settled}");
+    assert!(
+        (settled + 0.25).abs() < 0.01,
+        "a collapsed list shows the chevron turned, got {settled}"
+    );
     let id_before = chevron_id(&app);
 
-    updater.borrow().expect("initialised").set_state(|state| state.animate = true);
+    updater
+        .borrow()
+        .expect("initialised")
+        .set_state(|state| state.animate = true);
     let mut wrong = Vec::new();
     let mut ids = std::collections::BTreeSet::new();
     let end = std::time::Instant::now() + Duration::from_millis(500);
@@ -218,6 +277,15 @@ fn a_panel_that_animates_around_a_collapsed_list_keeps_the_chevron_turned_on_eve
         }
         ids.extend(chevron_id(&app));
     }
-    assert_eq!(ids.len(), 1, "the chevron's element was replaced {} times: {ids:?} (before: {id_before:?})", ids.len());
-    assert!(wrong.is_empty(), "the collapsed chevron was drawn at {} wrong angles during the panel's animation: {wrong:?}", wrong.len());
+    assert_eq!(
+        ids.len(),
+        1,
+        "the chevron's element was replaced {} times: {ids:?} (before: {id_before:?})",
+        ids.len()
+    );
+    assert!(
+        wrong.is_empty(),
+        "the collapsed chevron was drawn at {} wrong angles during the panel's animation: {wrong:?}",
+        wrong.len()
+    );
 }

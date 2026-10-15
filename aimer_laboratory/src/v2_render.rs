@@ -4,12 +4,11 @@ use std::cell::{Cell, RefCell};
 
 use aimer_rubick::Shared;
 
-pub use aimer_cupid::draw_cmd_v2::{
-    CurrentBuildContext, DrawCommand, DrawCommandList, DrawList,
-    DrawListSnapshot, Rect, RenderFrame, RenderItem, RenderNodeId, RenderOp,
-    RenderTree, RenderTreeError,
-};
 pub use aimer_canvas::Canvas;
+pub use aimer_cupid::draw_cmd_v2::{
+    CurrentBuildContext, DrawCommand, DrawCommandList, DrawList, DrawListSnapshot, Rect,
+    RenderFrame, RenderItem, RenderNodeId, RenderOp, RenderTree, RenderTreeError,
+};
 
 /// Errors from the lab-only layout and event simulation layer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -17,13 +16,19 @@ pub enum V2RenderError {
     /// A core render-tree operation failed.
     RenderTree(RenderTreeError),
     /// The supplied child is not a direct child of the layout node.
-    InvalidLayoutChild { parent: RenderNodeId, child: RenderNodeId },
+    InvalidLayoutChild {
+        parent: RenderNodeId,
+        child: RenderNodeId,
+    },
     /// The number of child sizes did not match the multi-child layout.
     WrongLayoutChildCount { expected: usize, actual: usize },
     /// A stateful paint node is not a child of the supplied multi-child layout.
     ElementNotInLayout { element: RenderNodeId },
     /// A stateful paint node was paired with a layout node for another child.
-    WrongLayoutTarget { element: RenderNodeId, layout_child: RenderNodeId },
+    WrongLayoutTarget {
+        element: RenderNodeId,
+        layout_child: RenderNodeId,
+    },
 }
 
 impl From<RenderTreeError> for V2RenderError {
@@ -73,7 +78,11 @@ impl LayoutElement {
         if tree.parent_of(child)? != Some(parent) {
             return Err(V2RenderError::InvalidLayoutChild { parent, child });
         }
-        Ok(Self { tree, parent, child })
+        Ok(Self {
+            tree,
+            parent,
+            child,
+        })
     }
 
     /// Returns the layout owner's render-tree parent.
@@ -121,9 +130,7 @@ impl MultiChildLayoutElement {
         origin: (f32, f32),
         gap: f32,
     ) -> Result<Self, V2RenderError> {
-        if !rect_is_valid(Rect::new(origin.0, origin.1, 0.0, 0.0))
-            || !gap.is_finite()
-            || gap < 0.0
+        if !rect_is_valid(Rect::new(origin.0, origin.1, 0.0, 0.0)) || !gap.is_finite() || gap < 0.0
         {
             return Err(V2RenderError::RenderTree(RenderTreeError::InvalidBounds));
         }
@@ -156,10 +163,7 @@ impl MultiChildLayoutElement {
     }
 
     /// Places every child using its `(width, height)` in local coordinates.
-    pub fn layout_row(
-        &self,
-        child_sizes: &[(f32, f32)],
-    ) -> Result<Vec<Rect>, V2RenderError> {
+    pub fn layout_row(&self, child_sizes: &[(f32, f32)]) -> Result<Vec<Rect>, V2RenderError> {
         if child_sizes.len() != self.children.len() {
             return Err(V2RenderError::WrongLayoutChildCount {
                 expected: self.children.len(),
@@ -232,10 +236,7 @@ impl ChildSizedEventElement {
     }
 
     /// Dispatches to the listener when the pointer falls inside the child box.
-    pub fn dispatch_pointer_down(
-        &mut self,
-        position: (f32, f32),
-    ) -> Result<bool, V2RenderError> {
+    pub fn dispatch_pointer_down(&mut self, position: (f32, f32)) -> Result<bool, V2RenderError> {
         if !rect_contains(self.bounds()?, position.0, position.1) {
             return Ok(false);
         }
@@ -277,10 +278,7 @@ impl<S: 'static> StatefulRenderElement<S> {
     }
 
     /// Mutates this element's state and replaces only its local draw list.
-    pub fn update(
-        &self,
-        update: impl FnOnce(&mut S),
-    ) -> Result<u64, V2RenderError> {
+    pub fn update(&self, update: impl FnOnce(&mut S)) -> Result<u64, V2RenderError> {
         update(&mut self.state.borrow_mut());
         self.tree.invalidate_paint(self.element)?;
         self.record()
@@ -374,27 +372,22 @@ impl CounterSimulation {
         record_fill(&tree, container_2, 680.0, 550.0, [27, 146, 126, 255])?;
         record_fill(&tree, container_3, 430.0, 340.0, [89, 10, 210, 255])?;
 
-        let counter_text = StatefulRenderElement::new(
-            tree.clone(),
-            counter_text,
-            9,
-            |count, canvas| {
+        let counter_text =
+            StatefulRenderElement::new(tree.clone(), counter_text, 9, |count, canvas| {
                 canvas.draw_text(
                     format!("Count: {count}"),
                     [0.0, 32.0],
                     28.0,
                     [255, 255, 255, 255],
                 );
-            },
-        )?;
+            })?;
         record_text(&tree, counter_suffix, " items", [255, 255, 255, 255])?;
         let event_hits = Shared::new(Cell::new(0));
         let event_hits_listener = event_hits.clone();
-        let counter_event = ChildSizedEventElement::new(
-            tree.clone(),
-            counter_text.element_id(),
-            move |_| event_hits_listener.set(event_hits_listener.get() + 1),
-        )?;
+        let counter_event =
+            ChildSizedEventElement::new(tree.clone(), counter_text.element_id(), move |_| {
+                event_hits_listener.set(event_hits_listener.get() + 1)
+            })?;
 
         // Treat construction as the initial frame so the next update measures
         // only the stateful leaf's damage.

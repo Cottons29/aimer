@@ -24,6 +24,8 @@ pub enum MaterialKind {
     BackdropFilter = 2,
     /// Magnifies the captured backdrop with optional rounded-edge refraction.
     Magnification = 3,
+    /// A directional analytic highlight with no backdrop sampling.
+    LightEdge = 4,
 }
 
 /// Reduced-motion policy carried by a material packet.
@@ -103,6 +105,7 @@ pub struct MaterialDrawRequest {
     /// Bounded dynamic distortion strength.
     pub distortion_strength: f32,
     /// Bounded edge-lighting strength.
+    /// For [`MaterialKind::LightEdge`], opposing reflection relative to the primary highlight.
     pub edge_lighting: f32,
     /// Bounded specular-highlight strength.
     pub specular_highlight: f32,
@@ -129,6 +132,8 @@ pub struct MaterialDrawRequest {
     pub magnification_style: MagnificationStyle,
     /// Additional Magnification bulge strength in `0..=1`.
     pub bulge_strength: f32,
+    /// LightEdge light direction in degrees clockwise from screen-right.
+    pub light_angle: f32,
     /// Sampling quality in `1..=4`.
     pub quality: u8,
     /// Motion policy for dynamic fields.
@@ -137,9 +142,9 @@ pub struct MaterialDrawRequest {
 
 impl MaterialDrawRequest {
     /// Packet schema version.
-    pub const VERSION: u8 = 2;
+    pub const VERSION: u8 = 3;
     /// Exact byte length of [`Self::encode`].
-    pub const PACKET_LEN: usize = 252;
+    pub const PACKET_LEN: usize = 256;
     /// Maximum blur accepted by the bridge.
     pub const MAX_BLUR_RADIUS: f32 = 96.0;
     /// Maximum shadow blur accepted by the bridge.
@@ -180,12 +185,29 @@ impl MaterialDrawRequest {
             interaction: 0.0,
             blob_amount: 0.0,
             blob_seed: 0.5,
-            magnification: if kind == MaterialKind::Magnification { 1.5 } else { 0.45 },
+            magnification: if kind == MaterialKind::Magnification {
+                1.5
+            } else {
+                0.45
+            },
             tip_pull: 0.0,
             chromatic_aberration: 0.3,
-            bevel_radius: if kind == MaterialKind::Magnification { 16.0 } else { 28.0 },
-            magnification_style: if kind == MaterialKind::Magnification { MagnificationStyle::DEFAULT } else { MagnificationStyle::NONE },
-            bulge_strength: if kind == MaterialKind::Magnification { 0.25 } else { 0.0 },
+            bevel_radius: if kind == MaterialKind::Magnification {
+                16.0
+            } else {
+                28.0
+            },
+            magnification_style: if kind == MaterialKind::Magnification {
+                MagnificationStyle::DEFAULT
+            } else {
+                MagnificationStyle::NONE
+            },
+            bulge_strength: if kind == MaterialKind::Magnification {
+                0.25
+            } else {
+                0.0
+            },
+            light_angle: 225.0,
             quality: 2,
             motion_policy: MaterialMotionPolicy::Full,
         }
@@ -193,11 +215,7 @@ impl MaterialDrawRequest {
 
     /// Creates a request from a local canvas position and size.
     #[inline]
-    pub fn from_layout(
-        kind: MaterialKind,
-        pos: Vec2d,
-        size: ResolvedSize,
-    ) -> Self {
+    pub fn from_layout(kind: MaterialKind, pos: Vec2d, size: ResolvedSize) -> Self {
         Self::new(kind, [pos.x, pos.y, size.width, size.height])
     }
 
@@ -206,7 +224,9 @@ impl MaterialDrawRequest {
     pub fn normalized(mut self) -> Self {
         self.bounds = normalize_rect(self.bounds);
         self.transform = normalize_transform(self.transform);
-        self.clip = self.clip.map(|clip| MaterialClip::new(clip.rect, clip.corner_radii));
+        self.clip = self
+            .clip
+            .map(|clip| MaterialClip::new(clip.rect, clip.corner_radii));
         self.tint = normalize_color(self.tint);
         self.opacity = normalize(self.opacity, 0.72, 0.0, 1.0);
         self.blur_radius = normalize(self.blur_radius, 16.0, 0.0, Self::MAX_BLUR_RADIUS);
@@ -222,12 +242,7 @@ impl MaterialDrawRequest {
         self.distortion_strength = normalize(self.distortion_strength, 0.18, 0.0, 1.0);
         self.edge_lighting = normalize(self.edge_lighting, 0.35, 0.0, 1.0);
         self.specular_highlight = normalize(self.specular_highlight, 0.28, 0.0, 1.0);
-        self.animation_speed = normalize(
-            self.animation_speed,
-            0.5,
-            0.0,
-            Self::MAX_ANIMATION_SPEED,
-        );
+        self.animation_speed = normalize(self.animation_speed, 0.5, 0.0, Self::MAX_ANIMATION_SPEED);
         self.animation_time = normalize(
             self.animation_time,
             0.0,
@@ -239,17 +254,32 @@ impl MaterialDrawRequest {
         self.blob_seed = normalize(self.blob_seed, 0.5, 0.0, 1.0);
         self.magnification = if self.kind == MaterialKind::Magnification {
             normalize(self.magnification, 1.5, 1.0, 8.0)
-        } else { normalize(self.magnification, 0.45, 0.0, 1.0) };
+        } else {
+            normalize(self.magnification, 0.45, 0.0, 1.0)
+        };
         self.tip_pull = normalize(self.tip_pull, 0.0, 0.0, 1.0);
         self.chromatic_aberration = normalize(self.chromatic_aberration, 0.3, 0.0, 1.0);
-        self.bevel_radius = normalize(self.bevel_radius,
-            if self.kind == MaterialKind::Magnification { 16.0 } else { 28.0 }, 0.0, 512.0);
+        self.bevel_radius = normalize(
+            self.bevel_radius,
+            if self.kind == MaterialKind::Magnification {
+                16.0
+            } else {
+                28.0
+            },
+            0.0,
+            512.0,
+        );
         if self.kind == MaterialKind::Magnification {
             self.bulge_strength = normalize(self.bulge_strength, 0.25, 0.0, 1.0);
         } else {
             self.magnification_style = MagnificationStyle::NONE;
             self.bulge_strength = 0.0;
         }
+        self.light_angle = if self.light_angle.is_finite() {
+            self.light_angle.rem_euclid(360.0)
+        } else {
+            225.0
+        };
         self.quality = self.quality.clamp(1, 4);
         if self.motion_policy == MaterialMotionPolicy::Reduced {
             self.distortion_strength = 0.0;
@@ -306,6 +336,7 @@ impl MaterialDrawRequest {
         push_f32(&mut bytes, request.bevel_radius);
         bytes.extend_from_slice(&request.magnification_style.bits().to_le_bytes());
         push_f32(&mut bytes, request.bulge_strength);
+        push_f32(&mut bytes, request.light_angle);
         debug_assert_eq!(bytes.len(), Self::PACKET_LEN);
         bytes
     }
@@ -396,9 +427,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn light_edge_packet_carries_normalized_angle_and_controls() {
+        let mut request = MaterialDrawRequest::new(MaterialKind::LightEdge, [1.0, 2.0, 80.0, 40.0]);
+        request.light_angle = -135.0;
+        request.border_color = [0.25, 0.5, 1.0, 0.5];
+        request.border_width = 4.0;
+        request.specular_highlight = 0.75;
+        request.edge_lighting = 0.65;
+        let encoded = request.encode();
+        assert_eq!(encoded.len(), 256);
+        assert_eq!(encoded[4], 3);
+        let decoded = aimer_cupid::material::MaterialRequest::decode(&encoded).unwrap();
+        assert_eq!(decoded.kind, aimer_cupid::material::MaterialKind::LightEdge);
+        assert_eq!(decoded.light_angle, 225.0);
+        assert_eq!(decoded.border_color, [0.25, 0.5, 1.0, 0.5]);
+        assert_eq!(decoded.border_width, 4.0);
+        assert_eq!(decoded.specular_highlight, 0.75);
+        assert_eq!(decoded.edge_lighting, 0.65);
+        request.light_angle = f32::NAN;
+        assert_eq!(request.normalized().light_angle, 225.0);
+    }
+
+    #[test]
     fn request_normalization_removes_non_finite_and_out_of_range_values() {
-        let request = MaterialDrawRequest::new(MaterialKind::Liquid, [0.0, 0.0, 20.0, 10.0])
-            .normalized();
+        let request =
+            MaterialDrawRequest::new(MaterialKind::Liquid, [0.0, 0.0, 20.0, 10.0]).normalized();
         let mut invalid = request;
         invalid.opacity = f32::NAN;
         invalid.blur_radius = f32::INFINITY;

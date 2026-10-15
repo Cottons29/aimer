@@ -25,7 +25,10 @@ pub struct DateRangePolicy {
 impl DateRangePolicy {
     /// Creates a range policy with explicit same-day and reverse-order rules.
     pub const fn new(allow_same_day: bool, reverse_order: RangeOrderPolicy) -> Self {
-        Self { allow_same_day, reverse_order }
+        Self {
+            allow_same_day,
+            reverse_order,
+        }
     }
 
     /// Creates the usual inclusive range policy: same-day ranges are valid and
@@ -76,7 +79,10 @@ impl DateSelection {
     pub const fn empty(mode: DateSelectionMode) -> Self {
         match mode {
             DateSelectionMode::Single => Self::Single(None),
-            DateSelectionMode::Range(_) => Self::Range { start: None, end: None },
+            DateSelectionMode::Range(_) => Self::Range {
+                start: None,
+                end: None,
+            },
         }
     }
 
@@ -85,8 +91,14 @@ impl DateSelection {
         match self {
             Self::Single(Some(selected)) => selected == date,
             Self::Single(None) => false,
-            Self::Range { start: Some(start), end: Some(end) } => date >= start && date <= end,
-            Self::Range { start: Some(start), end: None } => date == start,
+            Self::Range {
+                start: Some(start),
+                end: Some(end),
+            } => date >= start && date <= end,
+            Self::Range {
+                start: Some(start),
+                end: None,
+            } => date == start,
             Self::Range { start: None, .. } => false,
         }
     }
@@ -111,9 +123,10 @@ impl DateSelection {
     #[inline]
     pub fn is_range_interior(self, date: Date) -> bool {
         match self {
-            Self::Range { start: Some(start), end: Some(end) } => {
-                date > start && date < end
-            }
+            Self::Range {
+                start: Some(start),
+                end: Some(end),
+            } => date > start && date < end,
             Self::Single(_) | Self::Range { .. } => false,
         }
     }
@@ -124,7 +137,10 @@ impl DateSelection {
         match self {
             Self::Single(Some(_)) => true,
             Self::Single(None) => false,
-            Self::Range { start: Some(_), end: Some(_) } => true,
+            Self::Range {
+                start: Some(_),
+                end: Some(_),
+            } => true,
             Self::Range { .. } => false,
         }
     }
@@ -403,7 +419,8 @@ impl Calendar {
         let Some(candidate) = candidate else {
             return false;
         };
-        let Some(candidate) = self.enabled_navigation_target(candidate, navigation, direction) else {
+        let Some(candidate) = self.enabled_navigation_target(candidate, navigation, direction)
+        else {
             return false;
         };
         self.focused = candidate;
@@ -529,29 +546,55 @@ impl Calendar {
 
         let next = match (self.mode, self.selection) {
             (DateSelectionMode::Single, _) => DateSelection::Single(Some(date)),
-            (DateSelectionMode::Range(_), DateSelection::Range { start: None, end: _ }) => {
-                DateSelection::Range { start: Some(date), end: None }
-            }
+            (
+                DateSelectionMode::Range(_),
+                DateSelection::Range {
+                    start: None,
+                    end: _,
+                },
+            ) => DateSelection::Range {
+                start: Some(date),
+                end: None,
+            },
             (
                 DateSelectionMode::Range(policy),
-                DateSelection::Range { start: Some(start), end: None },
+                DateSelection::Range {
+                    start: Some(start),
+                    end: None,
+                },
             ) if date == start && !policy.allow_same_day() => {
                 return Err(CalendarError::SameDayRangeNotAllowed(date));
             }
             (
                 DateSelectionMode::Range(_),
-                DateSelection::Range { start: Some(start), end: None },
-            ) if date >= start => DateSelection::Range { start: Some(start), end: Some(date) },
+                DateSelection::Range {
+                    start: Some(start),
+                    end: None,
+                },
+            ) if date >= start => DateSelection::Range {
+                start: Some(start),
+                end: Some(date),
+            },
             (
                 DateSelectionMode::Range(policy),
-                DateSelection::Range { start: Some(start), end: None },
+                DateSelection::Range {
+                    start: Some(start),
+                    end: None,
+                },
             ) => match policy.reverse_order() {
-                RangeOrderPolicy::Swap => DateSelection::Range { start: Some(date), end: Some(start) },
-                RangeOrderPolicy::Restart => DateSelection::Range { start: Some(date), end: None },
+                RangeOrderPolicy::Swap => DateSelection::Range {
+                    start: Some(date),
+                    end: Some(start),
+                },
+                RangeOrderPolicy::Restart => DateSelection::Range {
+                    start: Some(date),
+                    end: None,
+                },
             },
-            (DateSelectionMode::Range(_), DateSelection::Range { .. }) => {
-                DateSelection::Range { start: Some(date), end: None }
-            }
+            (DateSelectionMode::Range(_), DateSelection::Range { .. }) => DateSelection::Range {
+                start: Some(date),
+                end: None,
+            },
             _ => unreachable!("selection shape is always aligned with the mode"),
         };
 

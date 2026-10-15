@@ -3,11 +3,11 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::rc::Rc;
 
-use aimer_venus::{LocalScheduler, TaskId, TaskScope};
 use crate::{
     AsyncCallbackEventKind, AsyncCallbackEventView, AsyncTaskId, CallbackEvent, CallbackEventView,
     EventId, GenerationId, ModelError, ModelLimits, StableId128, Version, WidgetDocumentView,
 };
+use aimer_venus::{LocalScheduler, TaskId, TaskScope};
 
 /// A failure while preparing or resolving callback bindings for one generation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -54,7 +54,10 @@ impl fmt::Display for CallbackBindingError {
         match self {
             Self::EventDocument(error) => write!(formatter, "invalid callback event: {error}"),
             Self::BindingLimitExceeded { count, limit } => {
-                write!(formatter, "callback binding count {count} exceeds limit {limit}")
+                write!(
+                    formatter,
+                    "callback binding count {count} exceeds limit {limit}"
+                )
             }
             Self::DuplicateCallbackId { callback_id } => write!(
                 formatter,
@@ -230,7 +233,9 @@ pub enum AsyncCallbackError {
 impl fmt::Display for AsyncCallbackError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::EventDocument(error) => write!(formatter, "invalid async callback event: {error}"),
+            Self::EventDocument(error) => {
+                write!(formatter, "invalid async callback event: {error}")
+            }
             Self::GenerationMismatch { expected, actual } => write!(
                 formatter,
                 "async callback event targets generation {} instead of {}",
@@ -251,7 +256,9 @@ impl fmt::Display for AsyncCallbackError {
             Self::TaskLimitExceeded { limit } => {
                 write!(formatter, "async task limit {limit} is exhausted")
             }
-            Self::TaskIdentityExhausted => formatter.write_str("async task identities are exhausted"),
+            Self::TaskIdentityExhausted => {
+                formatter.write_str("async task identities are exhausted")
+            }
             Self::UnknownTask { task_id } => {
                 write!(formatter, "async task {} is not active", task_id.get())
             }
@@ -417,7 +424,9 @@ impl fmt::Display for GenerationResourceError {
             Self::LimitExceeded { kind, limit } => {
                 write!(formatter, "{kind:?} resource limit {limit} is exhausted")
             }
-            Self::HandleExhausted => formatter.write_str("generation resource handles are exhausted"),
+            Self::HandleExhausted => {
+                formatter.write_str("generation resource handles are exhausted")
+            }
         }
     }
 }
@@ -650,9 +659,10 @@ impl<G> Generation<G> {
                 generation_id: self.id,
             });
         }
-        let binding = self.callbacks.find(callback_id).ok_or(
-            CallbackBindingError::UnknownCallback { callback_id },
-        )?;
+        let binding = self
+            .callbacks
+            .find(callback_id)
+            .ok_or(CallbackBindingError::UnknownCallback { callback_id })?;
         let mut event = CallbackEvent::new(
             self.id.get(),
             event_sequence,
@@ -713,9 +723,10 @@ impl<G> Generation<G> {
             });
         }
         let callback_id = event.callback_id();
-        let binding = self.callbacks.find(callback_id).ok_or(
-            CallbackBindingError::UnknownCallback { callback_id },
-        )?;
+        let binding = self
+            .callbacks
+            .find(callback_id)
+            .ok_or(CallbackBindingError::UnknownCallback { callback_id })?;
         if event.widget_key() != binding.widget_key {
             return Err(CallbackBindingError::WidgetKeyMismatch {
                 callback_id,
@@ -801,9 +812,7 @@ impl<G> Generation<G> {
             .max_in_flight_tasks
             .min(self.async_limits.max_retained_resources);
         if self.async_tasks.len() >= maximum as usize {
-            return Err(AsyncCallbackError::TaskLimitExceeded {
-                limit: maximum,
-            });
+            return Err(AsyncCallbackError::TaskLimitExceeded { limit: maximum });
         }
         let task_id = AsyncTaskId::new(self.next_async_task_id);
         self.next_async_task_id = self
@@ -816,10 +825,7 @@ impl<G> Generation<G> {
     }
 
     /// Cancels one live host-owned async task without consuming an event slot.
-    pub fn cancel_async_task(
-        &mut self,
-        task_id: AsyncTaskId,
-    ) -> Result<(), AsyncCallbackError> {
+    pub fn cancel_async_task(&mut self, task_id: AsyncTaskId) -> Result<(), AsyncCallbackError> {
         if !self.active.get() {
             return Err(AsyncCallbackError::RetiredGeneration);
         }

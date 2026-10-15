@@ -45,7 +45,11 @@ fn frames_of_one_notch(delta: f64) -> (Vec<usize>, f32) {
 fn a_drawn_frame_delivers_at_most_one_scroll_step() {
     let (per_frame, _) = frames_of_one_notch(-400.0);
 
-    assert!(per_frame.len() > 2, "the notch was delivered in {} frames", per_frame.len());
+    assert!(
+        per_frame.len() > 2,
+        "the notch was delivered in {} frames",
+        per_frame.len()
+    );
     assert!(
         per_frame.iter().all(|delivered| *delivered <= 1),
         "events delivered per frame: {per_frame:?}"

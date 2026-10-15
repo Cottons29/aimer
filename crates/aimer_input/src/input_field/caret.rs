@@ -2,7 +2,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
 
-use aimer_animation::{AnimInstant, AnimationController, Curve};
+use aimer_animation::{AnimInstant, AnimationController, curves};
 use aimer_canvas::Canvas;
 use aimer_cupid::draw_cmd_v2::Rect;
 use aimer_widget::base::{BuildContext, Color};
@@ -264,12 +264,11 @@ impl State<DefaultCaretWidget> for DefaultCaretState {
     fn init_state(&mut self, updater: StateUpdater<Self>) {
         self.updater = updater;
         let updater = self.updater;
-        self.context
-            .set_repaint_callback(Rc::new(move || {
-                updater.set_state(|state| {
-                    state.revision = state.revision.wrapping_add(1);
-                });
-            }));
+        self.context.set_repaint_callback(Rc::new(move || {
+            updater.set_state(|state| {
+                state.revision = state.revision.wrapping_add(1);
+            });
+        }));
     }
 
     fn adopt_config_from(&mut self, new: Self) {
@@ -309,7 +308,6 @@ struct DefaultCaretElement {
 }
 
 impl Drawable for DefaultCaretElement {
-
     fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
         ctx.scale.is_finite()
             && ctx.scale > 0.0
@@ -413,7 +411,7 @@ impl CaretBlink {
     /// immediately wrapping cycle.
     #[inline]
     pub fn with_period(period: Duration) -> Self {
-        let controller = AnimationController::new(period, Curve::Linear);
+        let controller = AnimationController::new(period, curves::LINEAR);
         controller.set_repeat(true);
         controller.forward_from_first_tick();
         Self {
@@ -454,9 +452,8 @@ impl CaretBlink {
     /// unarmed so isolated raw-field users can retain their frame-driven path.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn schedule_next_toggle(&self, scope: aimer_venus::ScopeId) {
-        let delay = Duration::from_nanos(
-            (self.period().as_nanos() / 2).min(u64::MAX as u128) as u64,
-        );
+        let delay =
+            Duration::from_nanos((self.period().as_nanos() / 2).min(u64::MAX as u128) as u64);
         if delay.is_zero() || self.wake.scheduled.replace(true) {
             return;
         }
@@ -626,7 +623,10 @@ mod tests {
         fn assert_widget<W: Widget>(_: W) {}
 
         let context = CaretContext::new(CaretBlink::new());
-        assert_widget(DefaultCaret::new(context, aimer_widget::base::Colors::default()));
+        assert_widget(DefaultCaret::new(
+            context,
+            aimer_widget::base::Colors::default(),
+        ));
     }
 }
 

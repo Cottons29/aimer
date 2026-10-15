@@ -1,0 +1,15 @@
+[package]
+name = "aimer_lucide"
+version = "0.1.0"
+edition = "2024"
+description = "Embedded Lucide icons for Aimer SVG widgets"
+
+[dependencies]
+aimer_svg.workspace = true
+aimer_cupid.workspace = true
+
+[build-dependencies]
+aimer_cupid.workspace = true
+
+[lints]
+workspace = true

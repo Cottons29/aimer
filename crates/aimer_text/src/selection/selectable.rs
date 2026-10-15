@@ -6,13 +6,13 @@ use aimer_attribute::{Bounds, Vec2d};
 use aimer_widget::InteractionBounds;
 use aimer_widget::base::{BuildContext, Color, WindowHandle};
 
+use crate::TextSource;
 use crate::selection::session::{SelectionSession, SelectionSlot};
 use crate::selection::{SelectionRegion, TextHitRegion, text_offset_at};
-use crate::TextSource;
 
+use crate::TextAccessibilitySnapshot;
 use aimer_cupid::text_layout::{TextInteractionLayout, TextWritingMode};
 use aimer_cupid::utilities::Mat3;
-use crate::TextAccessibilitySnapshot;
 
 /// The geometry side of a selection participant.
 ///
@@ -283,19 +283,13 @@ impl TextGeometry {
                     let right = cluster.start_x + cluster.height * 0.5;
                     let top = cluster.start_y.min(cluster.end_y);
                     let bottom = cluster.start_y.max(cluster.end_y);
-                    local_x >= left
-                        && local_x <= right
-                        && local_y >= top
-                        && local_y <= bottom
+                    local_x >= left && local_x <= right && local_y >= top && local_y <= bottom
                 } else {
                     let left = cluster.start_x.min(cluster.end_x);
                     let right = cluster.start_x.max(cluster.end_x);
                     let top = cluster.y;
                     let bottom = cluster.y + cluster.height;
-                    local_x >= left
-                        && local_x <= right
-                        && local_y >= top
-                        && local_y <= bottom
+                    local_x >= left && local_x <= right && local_y >= top && local_y <= bottom
                 }
             });
         }
@@ -320,9 +314,14 @@ impl Selectable for TextGeometry {
     #[inline]
     fn painted_bounds(&self) -> Option<Bounds> {
         let (shift_x, shift_y) = self.shift();
-        self.bounds
-            .canvas_bounds()
-            .map(|bounds| Bounds::new(bounds.x + shift_x, bounds.y + shift_y, bounds.width, bounds.height))
+        self.bounds.canvas_bounds().map(|bounds| {
+            Bounds::new(
+                bounds.x + shift_x,
+                bounds.y + shift_y,
+                bounds.width,
+                bounds.height,
+            )
+        })
     }
 
     #[inline]
@@ -342,7 +341,12 @@ impl Selectable for TextGeometry {
     fn caret_rect(&self, offset: usize) -> Option<Bounds> {
         let (shift_x, shift_y) = self.shift();
         self.caret_rect_painted(offset).map(|caret| {
-            Bounds::new(caret.x + shift_x, caret.y + shift_y, caret.width, caret.height)
+            Bounds::new(
+                caret.x + shift_x,
+                caret.y + shift_y,
+                caret.width,
+                caret.height,
+            )
         })
     }
 }
@@ -397,13 +401,7 @@ fn valid_device_scale(scale: f32) -> f32 {
     }
 }
 
-fn transformed_rect_bounds(
-    transform: &Mat3,
-    x: f32,
-    y: f32,
-    width: f32,
-    height: f32,
-) -> Bounds {
+fn transformed_rect_bounds(transform: &Mat3, x: f32, y: f32, width: f32, height: f32) -> Bounds {
     let points = [
         transform.transform_point(x, y),
         transform.transform_point(x + width, y),
@@ -472,7 +470,7 @@ pub(crate) fn selection_coordinator(ctx: &BuildContext) -> Rc<SelectionCoordinat
     ctx.insert_state(SelectionCoordinator::default());
     ctx.get_state::<SelectionCoordinator>()
         .expect("selection coordinator was just inserted")
-} 
+}
 
 /// Everything a selectable text keeps alive to take part in a selection.
 ///
@@ -631,9 +629,13 @@ mod tests {
         assert!(geometry.contains_point(24.0, 104.0), "where it was painted");
 
         // The content scrolls 30px up.
-        tree.set_bounds(node, Rect::new(20.0, 70.0, 10.0, 20.0)).unwrap();
+        tree.set_bounds(node, Rect::new(20.0, 70.0, 10.0, 20.0))
+            .unwrap();
 
-        assert!(!geometry.contains_point(24.0, 104.0), "the old place no longer hits");
+        assert!(
+            !geometry.contains_point(24.0, 104.0),
+            "the old place no longer hits"
+        );
         assert!(geometry.contains_point(24.0, 74.0));
         assert!(geometry.hits_glyph(24.0, 74.0));
         assert_eq!(Selectable::offset_at(&geometry, 24.0, 74.0), Some(0));

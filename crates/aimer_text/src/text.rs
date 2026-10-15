@@ -7,9 +7,7 @@ use aimer_macro::PortableWidget;
 use aimer_style::{LineHeight, TextAlign, TextOverflow, TextShadow, TextStyle, TextTransform};
 use aimer_widget::base::BuildContext;
 #[cfg(feature = "portable-guest")]
-use aimer_widget::portable::{
-    PortableBuildContext, PortableBuildError, SourceFingerprint,
-};
+use aimer_widget::portable::{PortableBuildContext, PortableBuildError, SourceFingerprint};
 use aimer_widget::{AnyElement, Element, LayoutCache, Widget};
 
 use crate::selection::selectable::SelectionScope;
@@ -196,19 +194,18 @@ fn materialize_portable_text(
     children: Vec<aimer_widget::AnyWidget>,
 ) -> Result<aimer_widget::AnyWidget, aimer_widget::portable::PortableMaterializeError> {
     if !children.is_empty() {
-        return Err(aimer_widget::portable::PortableMaterializeError::InvalidChildCount {
-            expected: 0,
-            actual: children.len(),
-        });
+        return Err(
+            aimer_widget::portable::PortableMaterializeError::InvalidChildCount {
+                expected: 0,
+                actual: children.len(),
+            },
+        );
     }
     let property = aimer_widget::portable::__anteros::PropertyId::from_canonical_name(
         "aimer.property:aimer_text::Text:text",
     );
-    let text: TextSource = aimer_widget::portable::required_materialized_property(
-        document,
-        &node,
-        property,
-    )?;
+    let text: TextSource =
+        aimer_widget::portable::required_materialized_property(document, &node, property)?;
     let alignment_property = aimer_widget::portable::__anteros::PropertyId::from_canonical_name(
         "aimer.property:aimer_text::Text:text_align",
     );
@@ -295,23 +292,25 @@ mod tests {
     use std::cell::Cell;
     use std::rc::Rc;
 
-    use aimer_attribute::{ResolvedSize, Vec2d};
-    use aimer_canvas::{FrameCanvas, InnerCanvas};
-    use aimer_cupid::draw_cmd_v2::{DrawCommand, Rect, RenderPaintSource, RenderTree};
-    use aimer_style::{LineHeight, TextAlign, TextStyle, TextTransform};
     #[cfg(feature = "portable-guest")]
     use aimer_anteros::{
         PROPERTY_TEXT_ALIGN, PROPERTY_TEXT_CONTENT, PROPERTY_TEXT_INDENT,
         PROPERTY_TEXT_LINE_HEIGHT, PROPERTY_TEXT_STYLE, PropertyValue, Version, WIDGET_TEXT,
         WidgetDocumentView, WidgetProperty,
     };
+    use aimer_attribute::{ResolvedSize, Vec2d};
+    use aimer_canvas::{FrameCanvas, InnerCanvas};
     #[cfg(feature = "portable-guest")]
     use aimer_color::prelude::Colors;
+    use aimer_cupid::draw_cmd_v2::{DrawCommand, Rect, RenderPaintSource, RenderTree};
     #[cfg(feature = "portable-guest")]
     use aimer_style::{
         FontFamily, FontStyle, FontWeight, TextAlign, TextDecoration, TextDecorationLine,
         TextDecorationStyle, TextOverflow,
     };
+    use aimer_style::{LineHeight, TextAlign, TextStyle, TextTransform};
+    #[cfg(feature = "portable-guest")]
+    use aimer_widget::PortableWidget;
     use aimer_widget::base::{BuildContext, WindowHandle};
     #[cfg(feature = "portable-guest")]
     use aimer_widget::portable::{
@@ -319,8 +318,6 @@ mod tests {
         PortableWidgetResource, SourceFingerprint, StableId128,
     };
     use aimer_widget::{Drawable, LayoutCache, LayoutElement, Rebuildable, Widget};
-    #[cfg(feature = "portable-guest")]
-    use aimer_widget::PortableWidget;
 
     use super::{RawTextWidget, Text};
     use crate::selection::selectable::{SelectionCoordinator, SelectionScope};
@@ -347,7 +344,10 @@ mod tests {
         assert_eq!(text.text_indent, -8.0);
     }
 
-    fn context<'a>(canvas: FrameCanvas<'a>, runtime: &'a tokio::runtime::Runtime) -> BuildContext<'a> {
+    fn context<'a>(
+        canvas: FrameCanvas<'a>,
+        runtime: &'a tokio::runtime::Runtime,
+    ) -> BuildContext<'a> {
         context_with_scale(canvas, runtime, 1.0)
     }
 
@@ -385,21 +385,13 @@ mod tests {
 
     #[cfg(feature = "portable-guest")]
     fn portable_context(limits: PortableWidgetLimits) -> PortableBuildContext {
-        PortableBuildContext::new(
-            7,
-            11,
-            limits,
-            PortableLimits::new(4, 8, 64, 128, 1_024),
-        )
-        .unwrap()
+        PortableBuildContext::new(7, 11, limits, PortableLimits::new(4, 8, 64, 128, 1_024)).unwrap()
     }
 
     #[cfg(feature = "portable-guest")]
     fn assert_exact_portable_text(text: Text, expected: &str) {
         let mut ctx = portable_context(portable_limits());
-        let node = text
-            .to_portable_node(&mut ctx, portable_source(1))
-            .unwrap();
+        let node = text.to_portable_node(&mut ctx, portable_source(1)).unwrap();
         assert_eq!(node.index(), 0);
         let document = ctx.finish_document(node).unwrap();
         let bytes = document.encode().unwrap();
@@ -426,12 +418,12 @@ mod tests {
     #[cfg(feature = "portable-guest")]
     fn assert_limit(error: PortableBuildError, resource: PortableWidgetResource) {
         match error {
-            PortableBuildError::LimitExceeded { resource: actual, .. } => {
+            PortableBuildError::LimitExceeded {
+                resource: actual, ..
+            } => {
                 assert_eq!(actual, resource)
             }
-            PortableBuildError::PropertyEncoding { cause, .. } => {
-                assert_limit(*cause, resource)
-            }
+            PortableBuildError::PropertyEncoding { cause, .. } => assert_limit(*cause, resource),
             other => panic!("expected {resource:?} limit, got {other:?}"),
         }
     }
@@ -516,12 +508,16 @@ mod tests {
             property.property_id() == PROPERTY_TEXT_INDENT
                 && property.value() == PropertyValue::F64(-8.0)
         }));
-        assert!(!properties
-            .iter()
-            .any(|property| property.property_id() == PROPERTY_TEXT_STYLE));
-        assert!(!properties
-            .iter()
-            .any(|property| property.property_id() == PROPERTY_TEXT_ALIGN));
+        assert!(
+            !properties
+                .iter()
+                .any(|property| property.property_id() == PROPERTY_TEXT_STYLE)
+        );
+        assert!(
+            !properties
+                .iter()
+                .any(|property| property.property_id() == PROPERTY_TEXT_ALIGN)
+        );
         super::materialize_portable_text(&view, node, Vec::new()).unwrap();
     }
 
@@ -567,7 +563,9 @@ mod tests {
     #[test]
     fn text_outside_a_region_stays_on_the_non_selectable_fast_path() {
         let inner = InnerCanvas::new();
-        let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
         let ctx = context(FrameCanvas::new(&inner), &runtime);
 
         let element = Text::new("plain").to_element(&ctx);
@@ -578,7 +576,9 @@ mod tests {
     #[test]
     fn plain_text_records_a_local_v2_run_and_repaints_without_dirtifying_its_sibling() {
         let inner = InnerCanvas::new();
-        let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
         let ctx = context_with_scale(FrameCanvas::new(&inner), &runtime, 2.0);
         let scale = ctx.scale;
         let raw_text = |text| RawTextWidget {
@@ -654,7 +654,9 @@ mod tests {
     #[test]
     fn text_inside_a_region_becomes_selectable() {
         let inner = InnerCanvas::new();
-        let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
         let ctx = context(FrameCanvas::new(&inner), &runtime);
         let session = SelectionSession::new(
             ctx.window.clone(),
@@ -674,7 +676,9 @@ mod tests {
     #[test]
     fn toggling_a_region_around_a_text_swaps_the_element_without_panicking() {
         let inner = InnerCanvas::new();
-        let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
         let ctx = context(FrameCanvas::new(&inner), &runtime);
         let session = SelectionSession::new(
             ctx.window.clone(),

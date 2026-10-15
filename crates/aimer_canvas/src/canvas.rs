@@ -1,11 +1,10 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_color::prelude::Color;
 pub use aimer_cupid::canvas::TextMetrics;
-pub use aimer_cupid::utilities::Mat3;
 pub use aimer_cupid::draw_cmd::{
     RETAINED_LAYER_MAX_BYTES, RETAINED_LAYER_MAX_DIMENSION, RETAINED_LAYER_MAX_TILES_PER_FRAME,
     RETAINED_LAYER_TILE_SIZE, RetainedDrawList, RetainedLayerContent, RetainedLayerPadding,
@@ -13,9 +12,10 @@ pub use aimer_cupid::draw_cmd::{
 };
 pub use aimer_cupid::font::TextLanguage;
 pub use aimer_cupid::font::{FontFamily, FontStyle};
-pub use aimer_cupid::text_pipeline::text_layout::TextInteractionLayout;
 pub use aimer_cupid::text_pipeline::TextOverflowMode;
 pub use aimer_cupid::text_pipeline::text_layout::TextHorizontalAlign;
+pub use aimer_cupid::text_pipeline::text_layout::TextInteractionLayout;
+pub use aimer_cupid::utilities::Mat3;
 
 use crate::material::MaterialDrawRequest;
 mod native_impl;
@@ -184,7 +184,6 @@ impl<'a> FrameCanvas<'a> {
     pub fn fork_for_recording(&self) -> InnerCanvas {
         self.inner.fork_for_recording()
     }
-
 }
 
 impl<'a> FrameCanvas<'a> {
@@ -427,7 +426,6 @@ impl<'a> FrameCanvas<'a> {
     pub fn get_transform(&self) -> Mat3 {
         CanvasRendering::get_transform(self.inner)
     }
-
 }
 
 /// A short-lived recorder for one element's v2 retained draw list.
@@ -440,6 +438,8 @@ impl<'a> FrameCanvas<'a> {
 pub struct Canvas {
     writer: Option<aimer_cupid::draw_cmd_v2::DrawListWriter>,
     commands: RefCell<Vec<aimer_cupid::draw_cmd_v2::DrawCommand>>,
+    background: Cell<Color>,
+    corner_radii: Cell<Option<[f32; 4]>>,
 }
 
 /// Resolves the active element-local command list used by [`Canvas::of`].
@@ -447,6 +447,13 @@ pub struct Canvas {
 pub trait CanvasContext {
     /// Returns the retained paint context active for this framework context.
     fn current_canvas_context(&self) -> aimer_cupid::draw_cmd_v2::CurrentBuildContext;
+
+    /// Returns the declared solid surface behind this recorder, if known.
+    #[doc(hidden)]
+    #[inline]
+    fn paint_background(&self) -> Color {
+        Color::Transparent
+    }
 }
 
 impl CanvasContext for aimer_cupid::draw_cmd_v2::CurrentBuildContext {
@@ -464,6 +471,7 @@ impl Canvas {
     /// Panics if the context has no active element-local recorder or if its
     /// retained list cannot be opened.
     pub fn of(context: &impl CanvasContext) -> Self {
+        let background = context.paint_background();
         let context = context.current_canvas_context();
         let writer = context.begin_recording().unwrap_or_else(|error| {
             panic!("Canvas::of could not open the active element list: {error:?}")
@@ -471,7 +479,54 @@ impl Canvas {
         Self {
             writer: Some(writer),
             commands: RefCell::new(Vec::new()),
+            background: Cell::new(background),
+            corner_radii: Cell::new(None),
         }
+    }
+
+    /// Returns the declared solid background underneath subsequent decoration layers.
+    /// Transparent means that no solid background is known.
+    #[inline]
+    pub fn background_color(&self) -> Color {
+        self.background.get()
+    }
+
+    /// Updates surface metadata after a decoration paints its background.
+    /// Does not record any drawing commands or sample backdrop pixels.
+    #[doc(hidden)]
+    #[inline]
+    pub fn add_background_color(&self, color: Option<Color>) {
+        self.background
+            .set(crate::composite_background(color, self.background.get()));
+    }
+
+    /// Returns the corner radii declared for the decorated box so far.
+    ///
+    /// Radii are logical pixels in top-left, top-right, bottom-right,
+    /// bottom-left order. A decoration that follows a shape declaration, such
+    /// as `BorderRadius`, adopts it; the default is square corners. Use
+    /// [`Self::declared_corner_radii`] to tell a declared square from none.
+    #[inline]
+    pub fn corner_radii(&self) -> [f32; 4] {
+        self.corner_radii.get().unwrap_or([0.0; 4])
+    }
+
+    /// Returns the declared corner radii, or `None` if no layer declared a shape.
+    ///
+    /// A declared `[0.0; 4]` is a deliberate square and differs from `None`,
+    /// which lets a widget apply its own default shape.
+    #[inline]
+    pub fn declared_corner_radii(&self) -> Option<[f32; 4]> {
+        self.corner_radii.get()
+    }
+
+    /// Declares the outer corner radii of the decorated box for later layers.
+    ///
+    /// The nearest declaration wins. Does not record any drawing commands.
+    /// Values are stored as given; consumers sanitize them for their own use.
+    #[inline]
+    pub fn set_corner_radii(&self, radii: [f32; 4]) {
+        self.corner_radii.set(Some(radii));
     }
 
     /// Adds a simple rectangle to this element's local paint list.
@@ -515,7 +570,8 @@ impl Canvas {
         outline_width: [f32; 4],
         outline_color: aimer_cupid::utilities::Color,
     ) {
-        self.commands.borrow_mut()
+        self.commands
+            .borrow_mut()
             .push(aimer_cupid::draw_cmd_v2::DrawCommand::FillRect {
                 rect,
                 color,
@@ -591,7 +647,8 @@ impl Canvas {
         shadow: Option<aimer_cupid::text_pipeline::TextShadowRequest>,
         draw_glyphs: bool,
     ) {
-        self.commands.borrow_mut()
+        self.commands
+            .borrow_mut()
             .push(aimer_cupid::draw_cmd_v2::DrawCommand::DrawText {
                 position,
                 text: text.into(),
@@ -620,7 +677,8 @@ impl Canvas {
         bounds_height: Option<f32>,
         overflow: aimer_cupid::text_pipeline::TextOverflowMode,
     ) {
-        self.commands.borrow_mut()
+        self.commands
+            .borrow_mut()
             .push(aimer_cupid::draw_cmd_v2::DrawCommand::DrawRichText {
                 position,
                 spans,
@@ -641,20 +699,22 @@ impl Canvas {
         thickness: f32,
         period: f32,
     ) {
-        self.commands.borrow_mut()
-            .push(aimer_cupid::draw_cmd_v2::DrawCommand::DrawTextDecoration {
+        self.commands.borrow_mut().push(
+            aimer_cupid::draw_cmd_v2::DrawCommand::DrawTextDecoration {
                 rect,
                 color,
                 style,
                 thickness,
                 period,
-            });
+            },
+        );
     }
 
     /// Adds a draw of an image resource that has already been uploaded.
     #[inline]
     pub fn draw_image(&self, rect: aimer_cupid::utilities::Rect, texture_id: u32) {
-        self.commands.borrow_mut()
+        self.commands
+            .borrow_mut()
             .push(aimer_cupid::draw_cmd_v2::DrawCommand::DrawImage { rect, texture_id });
     }
 
@@ -665,9 +725,9 @@ impl Canvas {
         rect: aimer_cupid::utilities::Rect,
         resource: std::sync::Arc<aimer_cupid::draw_cmd_v2::ImageResource>,
     ) {
-        self.commands.borrow_mut().push(
-            aimer_cupid::draw_cmd_v2::DrawCommand::DrawImageWithResource { rect, resource },
-        );
+        self.commands
+            .borrow_mut()
+            .push(aimer_cupid::draw_cmd_v2::DrawCommand::DrawImageWithResource { rect, resource });
     }
 
     /// Adds a draw of an SVG scene.
@@ -677,11 +737,13 @@ impl Canvas {
         destination: aimer_cupid::utilities::Rect,
         overrides: std::sync::Arc<[aimer_cupid::svg::SvgNodeStyleOverride]>,
     ) {
-        self.commands.borrow_mut().push(aimer_cupid::draw_cmd_v2::DrawCommand::Svg {
-            scene,
-            destination,
-            overrides,
-        });
+        self.commands
+            .borrow_mut()
+            .push(aimer_cupid::draw_cmd_v2::DrawCommand::Svg {
+                scene,
+                destination,
+                overrides,
+            });
     }
 
     /// Adds a custom-pipeline request to this element's retained command list.
@@ -716,7 +778,8 @@ impl Canvas {
         inset: bool,
         side_params: [f32; 3],
     ) {
-        self.commands.borrow_mut()
+        self.commands
+            .borrow_mut()
             .push(aimer_cupid::draw_cmd_v2::DrawCommand::DrawShadowRect {
                 rect,
                 shadow_color,
@@ -736,62 +799,75 @@ impl Canvas {
     /// Begins a clip scope for subsequent commands in this element.
     #[inline]
     pub fn push_clip(&self, rect: aimer_cupid::utilities::Rect, border_radius: [f32; 4]) {
-        self.commands.borrow_mut()
-            .push(aimer_cupid::draw_cmd_v2::DrawCommand::PushClip { rect, border_radius });
+        self.commands
+            .borrow_mut()
+            .push(aimer_cupid::draw_cmd_v2::DrawCommand::PushClip {
+                rect,
+                border_radius,
+            });
     }
 
     /// Ends the most recent element-local clip scope.
     #[inline]
     pub fn pop_clip(&self) {
-        self.commands.borrow_mut().push(aimer_cupid::draw_cmd_v2::DrawCommand::PopClip);
+        self.commands
+            .borrow_mut()
+            .push(aimer_cupid::draw_cmd_v2::DrawCommand::PopClip);
     }
 
     /// Begins a transform scope for subsequent commands in this element.
     #[inline]
     pub fn push_transform(&self, matrix: aimer_cupid::utilities::Mat3) {
-        self.commands.borrow_mut()
+        self.commands
+            .borrow_mut()
             .push(aimer_cupid::draw_cmd_v2::DrawCommand::PushTransform { matrix });
     }
 
     /// Ends the most recent element-local transform scope.
     #[inline]
     pub fn pop_transform(&self) {
-        self.commands.borrow_mut()
+        self.commands
+            .borrow_mut()
             .push(aimer_cupid::draw_cmd_v2::DrawCommand::PopTransform);
     }
 
     /// Sets alpha for subsequent local commands until `restore_alpha`.
     #[inline]
     pub fn set_alpha(&self, alpha: f32) {
-        self.commands.borrow_mut()
+        self.commands
+            .borrow_mut()
             .push(aimer_cupid::draw_cmd_v2::DrawCommand::SetAlpha { alpha });
     }
 
     /// Restores default alpha for subsequent local commands.
     #[inline]
     pub fn restore_alpha(&self) {
-        self.commands.borrow_mut()
+        self.commands
+            .borrow_mut()
             .push(aimer_cupid::draw_cmd_v2::DrawCommand::RestoreAlpha);
     }
 
     /// Sets italic styling for subsequent plain text commands.
     #[inline]
     pub fn set_italic(&self, italic: bool) {
-        self.commands.borrow_mut()
+        self.commands
+            .borrow_mut()
             .push(aimer_cupid::draw_cmd_v2::DrawCommand::SetItalic { italic });
     }
 
     /// Sets the language hint for subsequent text commands.
     #[inline]
     pub fn set_text_language(&self, language: Option<aimer_cupid::font::TextLanguage>) {
-        self.commands.borrow_mut()
+        self.commands
+            .borrow_mut()
             .push(aimer_cupid::draw_cmd_v2::DrawCommand::SetTextLanguage { language });
     }
 
     /// Sets the current local transform.
     #[inline]
     pub fn set_transform(&self, matrix: aimer_cupid::utilities::Mat3) {
-        self.commands.borrow_mut()
+        self.commands
+            .borrow_mut()
             .push(aimer_cupid::draw_cmd_v2::DrawCommand::SetTransform { matrix });
     }
 
@@ -817,9 +893,7 @@ impl Canvas {
             .expect("Canvas recording was already finished")
     }
 
-    fn commit_pending(
-        &mut self,
-    ) -> Option<Result<u64, aimer_cupid::draw_cmd_v2::RenderTreeError>> {
+    fn commit_pending(&mut self) -> Option<Result<u64, aimer_cupid::draw_cmd_v2::RenderTreeError>> {
         let writer = self.writer.take()?;
         let commands = std::mem::take(self.commands.get_mut());
         Some(writer.commit(commands))

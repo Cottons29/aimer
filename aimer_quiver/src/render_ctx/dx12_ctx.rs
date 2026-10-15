@@ -45,27 +45,41 @@ pub mod render_ctx {
 
     impl SurfaceSize {
         fn new(size: PhysicalSize<u32>, max_dimension: u32) -> Self {
-            Self { size: Self::clamp(size, max_dimension), max_dimension }
+            Self {
+                size: Self::clamp(size, max_dimension),
+                max_dimension,
+            }
         }
 
         fn clamp(size: PhysicalSize<u32>, max_dimension: u32) -> PhysicalSize<u32> {
-            PhysicalSize::new(size.width.min(max_dimension), size.height.min(max_dimension))
+            PhysicalSize::new(
+                size.width.min(max_dimension),
+                size.height.min(max_dimension),
+            )
         }
 
         fn resize(&mut self, size: PhysicalSize<u32>) -> bool {
-            if size.width == 0 || size.height == 0 { return false; }
+            if size.width == 0 || size.height == 0 {
+                return false;
+            }
             let size = Self::clamp(size, self.max_dimension);
             let changed = self.size != size;
             self.size = size;
             changed
         }
 
-        fn width(&self) -> u32 { self.size.width }
-        fn height(&self) -> u32 { self.size.height }
+        fn width(&self) -> u32 {
+            self.size.width
+        }
+        fn height(&self) -> u32 {
+            self.size.height
+        }
     }
 
     impl Default for Dx12Api {
-        fn default() -> Self { Self::new(AntiAlias::default()) }
+        fn default() -> Self {
+            Self::new(AntiAlias::default())
+        }
     }
 
     impl Dx12Api {
@@ -95,7 +109,9 @@ pub mod render_ctx {
 
         /// Direct3D 12 frames are rendered inline on the event-loop thread.
         #[inline]
-        pub fn is_offloaded(&self) -> bool { false }
+        pub fn is_offloaded(&self) -> bool {
+            false
+        }
 
         /// Creates a hardware D3D12 device, attaches a DXGI swap chain, and
         /// initializes Cupid's generic renderer on the window thread.
@@ -107,12 +123,16 @@ pub mod render_ctx {
             }
             let startup_started = Instant::now();
             let backend_started = Instant::now();
-            let backend = Dx12Backend::new().expect("create the system Direct3D 12 device and queue");
+            let backend =
+                Dx12Backend::new().expect("create the system Direct3D 12 device and queue");
             info!(
                 "DX12 startup stage: device, command queue, and descriptor heaps {:.2} ms",
                 backend_started.elapsed().as_secs_f64() * 1000.0
             );
-            let raw_handle = window.window_handle().expect("get the Windows window handle").as_raw();
+            let raw_handle = window
+                .window_handle()
+                .expect("get the Windows window handle")
+                .as_raw();
             let RawWindowHandle::Win32(win32_handle) = raw_handle else {
                 panic!("winit returned a non-Win32 window handle on Windows");
             };
@@ -158,16 +178,23 @@ pub mod render_ctx {
         /// The swap chain applies the latest requested size when its previous
         /// GPU work has completed, so this event handler never waits for the GPU.
         pub fn resize(&mut self, size: PhysicalSize<u32>) {
-            if size.width == 0 || size.height == 0 { return; }
+            if size.width == 0 || size.height == 0 {
+                return;
+            }
             let changed = self.surface_size.resize(size);
-            if changed { self.resource_generation = self.resource_generation.wrapping_add(1); }
+            if changed {
+                self.resource_generation = self.resource_generation.wrapping_add(1);
+            }
             if let Some(surface) = &mut self.surface {
                 surface.request_resize(self.surface_size.width(), self.surface_size.height());
             }
         }
 
         /// Records and presents a full-damage frame.
-        pub fn render_frame(&mut self, draw_fn: impl FnOnce(&CupidCanvas, u32, u32)) -> PresentOutcome {
+        pub fn render_frame(
+            &mut self,
+            draw_fn: impl FnOnce(&CupidCanvas, u32, u32),
+        ) -> PresentOutcome {
             self.render_frame_packet(|canvas, width, height| {
                 draw_fn(canvas, width, height);
                 (1.0, DamageSet::full(width, height))
@@ -209,7 +236,10 @@ pub mod render_ctx {
         }
 
         /// Records a frame without acquiring a swap-chain buffer.
-        pub fn build_frame(&mut self, draw_fn: impl FnOnce(&CupidCanvas, u32, u32)) -> Option<Frame> {
+        pub fn build_frame(
+            &mut self,
+            draw_fn: impl FnOnce(&CupidCanvas, u32, u32),
+        ) -> Option<Frame> {
             self.build_frame_packet(|canvas, width, height| {
                 draw_fn(canvas, width, height);
                 (1.0, DamageSet::full(width, height))
@@ -222,15 +252,20 @@ pub mod render_ctx {
             &mut self,
             draw_fn: impl FnOnce(&CupidCanvas, u32, u32) -> (f32, DamageSet),
         ) -> Option<FramePacket> {
-            if !self.is_ready() { return None; }
+            if !self.is_ready() {
+                return None;
+            }
             let canvas = self.canvas.as_ref()?;
             let (width, height) = (self.surface_size.width(), self.surface_size.height());
             let build = PhaseTimer::start();
             canvas.begin_frame();
             let (scale, damage) = draw_fn(canvas, width, height);
             let render_plan = canvas.take_retained_render_plan();
-            let damage = if damage.target_size() == (width, height) { damage }
-                         else { DamageSet::full(width, height) };
+            let damage = if damage.target_size() == (width, height) {
+                damage
+            } else {
+                DamageSet::full(width, height)
+            };
             let draw_list = canvas.take_draw_list();
             let frame = Frame::new(draw_list, width, height);
             let metadata = FrameRenderMetadata::new(
@@ -282,7 +317,9 @@ pub mod render_ctx {
         }
 
         pub(crate) fn worker_max_dimension(&self) -> u32 {
-            self.backend.as_ref().map_or(u32::MAX, |backend| backend.limits().max_texture_dimension_2d)
+            self.backend.as_ref().map_or(u32::MAX, |backend| {
+                backend.limits().max_texture_dimension_2d
+            })
         }
 
         pub(crate) fn present_worker_packet(&mut self, packet: &FramePacket) -> bool {
@@ -300,7 +337,9 @@ pub mod render_ctx {
                 self.backend.as_ref(),
                 self.surface.as_mut(),
                 self.renderer.as_mut(),
-            ) else { return false; };
+            ) else {
+                return false;
+            };
             let frame = packet.frame();
             let startup_timing = self.startup_started.is_some();
             let acquire_started = startup_timing.then(Instant::now);
@@ -319,7 +358,9 @@ pub mod render_ctx {
                 Err(error) => panic!("resize the DXGI swap chain: {error}"),
             };
             let (width, height) = drawable.size();
-            if width == 0 || height == 0 { return false; }
+            if width == 0 || height == 0 {
+                return false;
+            }
             let encode = PhaseTimer::start();
             let encode_started = startup_timing.then(Instant::now);
             if (width, height) == (frame.width, frame.height) {

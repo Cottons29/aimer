@@ -1,5 +1,5 @@
-pub(crate) mod frame_upload;
 pub(crate) mod frame_composite;
+pub(crate) mod frame_upload;
 pub mod image_pipeline;
 pub mod material;
 pub mod rect_pipeline;

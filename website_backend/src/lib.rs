@@ -33,12 +33,10 @@ mod tests {
 
     #[test]
     fn reads_cors_origins_from_variables() {
-        let config = Config::from_vars([
-            (
-                "SERVER_CORS".to_owned(),
-                "https://aimers.dev,http://localhost:3000".to_owned(),
-            ),
-        ])
+        let config = Config::from_vars([(
+            "SERVER_CORS".to_owned(),
+            "https://aimers.dev,http://localhost:3000".to_owned(),
+        )])
         .unwrap();
 
         assert_eq!(
@@ -49,7 +47,8 @@ mod tests {
 
     #[test]
     fn trims_origins_and_ignores_blank_entries() {
-        let config = Config::from_origins(" https://aimers.dev , , http://localhost:3000 ").unwrap();
+        let config =
+            Config::from_origins(" https://aimers.dev , , http://localhost:3000 ").unwrap();
 
         assert_eq!(
             config.cors_origins(),
@@ -73,7 +72,9 @@ mod tests {
 
     #[test]
     fn rejects_an_invalid_cors_origin() {
-        let error = Config::from_origins("bad\u{7f}origin").unwrap_err().to_string();
+        let error = Config::from_origins("bad\u{7f}origin")
+            .unwrap_err()
+            .to_string();
 
         assert!(error.contains("CORS origin"), "unexpected error: {error}");
     }

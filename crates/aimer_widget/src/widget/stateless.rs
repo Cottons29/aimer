@@ -257,10 +257,10 @@ impl StatelessElement {
 
         {
             let old_child = unsafe { &*self.child.0.get() };
-            crate::widget::stateful::carry_child_state(old_child.as_ref(), new_child.as_ref(), ctx);
-            crate::components::element::reconcile_generated_tree(
+            crate::components::element::reconcile_carried_tree(
                 old_child.as_ref(),
                 new_child.as_ref(),
+                ctx,
             );
         }
 

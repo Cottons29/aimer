@@ -80,9 +80,7 @@ impl ContextMenuShape {
     /// ```
     #[inline]
     pub fn placement(self, gap: f32) -> PlacementSpec {
-        let spec = PlacementSpec::new()
-            .gap(gap)
-            .overflow(OverflowPolicy::Flip);
+        let spec = PlacementSpec::new().gap(gap).overflow(OverflowPolicy::Flip);
         match self {
             Self::Pill => spec.side(FloatingSide::Top).align(FloatingAlign::Center),
             Self::List => spec.side(FloatingSide::Bottom).align(FloatingAlign::Start),

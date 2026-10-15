@@ -2,8 +2,8 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use super::color::{ColorLayer, ColorRgba};
 use super::cff::{CffGlyphOutline, CffPathCommand};
+use super::color::{ColorLayer, ColorRgba};
 use super::outline::{GlyphOutline, OutlinePoint};
 use super::svg::{SvgGlyph, SvgPath};
 use super::{FontMetrics, SfntError, SfntFace};
@@ -16,8 +16,10 @@ mod coverage;
 mod color_tests;
 
 pub(crate) use coverage::RasterScratch;
-use coverage::{CoverageFillRule, EdgeRows, build_coverage_bitmap,
-    build_coverage_bitmap_with_fill_rule, edge_rows};
+use coverage::{
+    CoverageFillRule, EdgeRows, build_coverage_bitmap, build_coverage_bitmap_with_fill_rule,
+    edge_rows,
+};
 
 const CURVE_FLATTEN_TOLERANCE: f32 = 0.125;
 const MAX_CURVE_DEPTH: u8 = 10;
@@ -273,8 +275,7 @@ where
         font_size,
         cache,
         |key, visit| {
-            let (coordinates, coordinate_count) =
-                face.coordinates_for_weight_instance(key.weight);
+            let (coordinates, coordinate_count) = face.coordinates_for_weight_instance(key.weight);
             visit(&coordinates[..coordinate_count]);
         },
         emit,
@@ -296,10 +297,7 @@ pub(crate) fn rasterize_face_glyphs_into_with_coordinates<F, C>(
 ) -> bool
 where
     F: FnMut(crate::text_pipeline::glyph_rasterizer::GlyphKey, RasterizedGlyph),
-    C: FnMut(
-        crate::text_pipeline::glyph_rasterizer::GlyphKey,
-        &mut dyn FnMut(&[f32]),
-    ),
+    C: FnMut(crate::text_pipeline::glyph_rasterizer::GlyphKey, &mut dyn FnMut(&[f32])),
 {
     let has_metric_variations = face.has_horizontal_metric_variations();
     let advances = if has_metric_variations {
@@ -339,10 +337,9 @@ where
                 else {
                     return;
                 };
-                let Ok(deltas) = face.horizontal_metric_deltas_at_coordinates(
-                    key.glyph_id,
-                    coordinates,
-                ) else {
+                let Ok(deltas) =
+                    face.horizontal_metric_deltas_at_coordinates(key.glyph_id, coordinates)
+                else {
                     return;
                 };
                 (
@@ -386,9 +383,7 @@ pub(crate) fn rasterize_face_glyph(
     cache: &mut GlyphRasterCache,
 ) -> Option<RasterizedGlyph> {
     let scale = font_size / f32::from(metrics.units_per_em);
-    let base_advance = face
-        .glyph_advance_with_metrics(glyph_id, *metrics)
-        .ok()??;
+    let base_advance = face.glyph_advance_with_metrics(glyph_id, *metrics).ok()??;
     let (coordinates, coordinate_count) = face.coordinates_for_weight_instance(weight);
     let coordinates = &coordinates[..coordinate_count];
     let deltas = face
@@ -551,11 +546,7 @@ fn cached_outline_path(
             return path.clone();
         }
 
-        let path = match face.outline_with_metrics_at_coordinates(
-            glyph_id,
-            *metrics,
-            coordinates,
-        ) {
+        let path = match face.outline_with_metrics_at_coordinates(glyph_id, *metrics, coordinates) {
             Ok(Some(outline)) => Ok(Some(Arc::new(from_true_type_outline(&outline)))),
             Ok(None) => face
                 .cff_outline(glyph_id)
@@ -731,15 +722,7 @@ fn rasterize_svg_glyph(
 
     for path in glyph.paths.iter() {
         let outline = svg_outline_path(path);
-        let edges = flatten_path_edges(
-            &outline,
-            scale,
-            phase_x,
-            phase_y,
-            0.0,
-            left,
-            bottom,
-        )?;
+        let edges = flatten_path_edges(&outline, scale, phase_x, phase_y, 0.0, left, bottom)?;
         if edges.is_empty() {
             continue;
         }
@@ -759,11 +742,8 @@ fn rasterize_svg_glyph(
             SvgFillRule::NonZero => CoverageFillRule::NonZero,
             SvgFillRule::EvenOdd => CoverageFillRule::EvenOdd,
         };
-        let coverage = build_coverage_bitmap_with_fill_rule(
-            &flattened,
-            &mut cache.scratch,
-            fill_rule,
-        )?;
+        let coverage =
+            build_coverage_bitmap_with_fill_rule(&flattened, &mut cache.scratch, fill_rule)?;
         composite_color_layer(&mut bitmap, &coverage, path.color);
     }
 
@@ -826,7 +806,9 @@ fn svg_outline_path(path: &SvgPath) -> OutlinePath {
 
 fn composite_color_layer(bitmap: &mut [u8], coverage: &[u8], color: ColorRgba) {
     aimer_simd::kernels::composite_rgba8(
-        bitmap, coverage, [color.red, color.green, color.blue, color.alpha],
+        bitmap,
+        coverage,
+        [color.red, color.green, color.blue, color.alpha],
     );
 }
 
@@ -1026,7 +1008,9 @@ fn flattened_path(
     let [path_min_x, min_y, path_max_x, max_y] = path.bounds;
     let min_x = path_min_x + translate_x;
     let max_x = path_max_x + translate_x;
-    if ![min_x, min_y, max_x, max_y, scale].iter().all(|value| value.is_finite())
+    if ![min_x, min_y, max_x, max_y, scale]
+        .iter()
+        .all(|value| value.is_finite())
         || min_x > max_x
         || min_y > max_y
     {
@@ -1047,15 +1031,7 @@ fn flattened_path(
 
     let width_usize = usize::try_from(width).ok()?;
     let height_usize = usize::try_from(height).ok()?;
-    let edges = flatten_path_edges(
-        path,
-        scale,
-        phase_x,
-        phase_y,
-        translate_x,
-        left,
-        bottom,
-    )?;
+    let edges = flatten_path_edges(path, scale, phase_x, phase_y, translate_x, left, bottom)?;
     let row_edges = edge_rows(&edges, height_usize)?;
     Some(FlattenedGlyph {
         left,
@@ -1324,8 +1300,8 @@ fn flatten_cubic_edges(
     contour_points: &mut usize,
     flattened_points: &mut usize,
 ) -> Option<()> {
-    let flatness = point_line_distance(control_1, start, end)
-        .max(point_line_distance(control_2, start, end));
+    let flatness =
+        point_line_distance(control_1, start, end).max(point_line_distance(control_2, start, end));
     if depth >= MAX_CURVE_DEPTH || flatness <= tolerance {
         return push_edge(edges, start, end, contour_points, flattened_points);
     }
@@ -1391,9 +1367,11 @@ fn same_point(first: Point, second: Point) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{OutlinePath, PathCommand, Point, RasterScratch, flatten_path_edges,
-        flattened_path, rasterize_flattened_path, composite_color_layer};
     use super::super::color::ColorRgba;
+    use super::{
+        OutlinePath, PathCommand, Point, RasterScratch, composite_color_layer, flatten_path_edges,
+        flattened_path, rasterize_flattened_path,
+    };
 
     #[test]
     fn color_layers_are_composited_in_source_over_order_as_straight_rgba() {
@@ -1455,11 +1433,14 @@ mod tests {
             .map(|edge| [edge.start.x, edge.start.y, edge.end.x, edge.end.y])
             .collect::<Vec<_>>();
 
-        assert_eq!(points, vec![
-            [0.0, 0.0, 4.0, 0.0],
-            [4.0, 0.0, 4.0, 4.0],
-            [4.0, 4.0, 0.0, 4.0],
-            [0.0, 4.0, 0.0, 0.0],
-        ]);
+        assert_eq!(
+            points,
+            vec![
+                [0.0, 0.0, 4.0, 0.0],
+                [4.0, 0.0, 4.0, 4.0],
+                [4.0, 4.0, 0.0, 4.0],
+                [0.0, 4.0, 0.0, 0.0],
+            ]
+        );
     }
 }

@@ -6,8 +6,8 @@ use aimer_widget::{AnyElement, PortableWidget, Widget};
 
 use super::clock::Clock;
 use super::overlay::{
-    Announcer, Announcement, DismissReason, OverlayHost, OverlayId, OverlayKind,
-    OverlayRequest, PlacementSpec, Rect,
+    Announcement, Announcer, DismissReason, OverlayHost, OverlayId, OverlayKind, OverlayRequest,
+    PlacementSpec, Rect,
 };
 
 /// Policy controlling whether a tooltip may be opened by touch.
@@ -406,7 +406,10 @@ mod tests {
 
         assert!(matches!(controller.pump(&mut host), TooltipEvent::Pending));
         clock.advance(Duration::from_millis(400));
-        assert!(matches!(controller.pump(&mut host), TooltipEvent::Presented(_)));
+        assert!(matches!(
+            controller.pump(&mut host),
+            TooltipEvent::Presented(_)
+        ));
     }
 
     #[derive(Default)]

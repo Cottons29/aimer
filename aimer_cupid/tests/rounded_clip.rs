@@ -20,9 +20,15 @@ struct Fixture {
 fn fixture(card_radius: [f32; 4]) -> Fixture {
     let tree = RenderTree::new();
     let root = tree.add_root(Rect::new(0.0, 0.0, 100.0, 100.0)).unwrap();
-    let card = tree.add_child(root, Rect::new(10.0, 10.0, 80.0, 80.0)).unwrap();
-    let inherits = tree.add_child(card, Rect::new(5.0, 5.0, 20.0, 20.0)).unwrap();
-    let square = tree.add_child(card, Rect::new(30.0, 5.0, 20.0, 20.0)).unwrap();
+    let card = tree
+        .add_child(root, Rect::new(10.0, 10.0, 80.0, 80.0))
+        .unwrap();
+    let inherits = tree
+        .add_child(card, Rect::new(5.0, 5.0, 20.0, 20.0))
+        .unwrap();
+    let square = tree
+        .add_child(card, Rect::new(30.0, 5.0, 20.0, 20.0))
+        .unwrap();
     let fixture = Fixture {
         tree,
         root,
@@ -40,9 +46,21 @@ impl Fixture {
             .sync_structure_with_clip_radii(
                 &[
                     RenderNodeSpec::new(Some(self.root), None, Rect::new(0.0, 0.0, 100.0, 100.0)),
-                    RenderNodeSpec::new(Some(self.card), Some(0), Rect::new(10.0, 10.0, 80.0, 80.0)),
-                    RenderNodeSpec::new(Some(self.inherits), Some(1), Rect::new(5.0, 5.0, 20.0, 20.0)),
-                    RenderNodeSpec::new(Some(self.square), Some(1), Rect::new(30.0, 5.0, 20.0, 20.0)),
+                    RenderNodeSpec::new(
+                        Some(self.card),
+                        Some(0),
+                        Rect::new(10.0, 10.0, 80.0, 80.0),
+                    ),
+                    RenderNodeSpec::new(
+                        Some(self.inherits),
+                        Some(1),
+                        Rect::new(5.0, 5.0, 20.0, 20.0),
+                    ),
+                    RenderNodeSpec::new(
+                        Some(self.square),
+                        Some(1),
+                        Rect::new(30.0, 5.0, 20.0, 20.0),
+                    ),
                 ],
                 &[
                     None,
@@ -107,18 +125,20 @@ fn changing_only_the_radius_damages_the_clipped_subtree() {
 #[test]
 fn radii_must_align_with_the_node_list() {
     let fixture = fixture([8.0; 4]);
-    assert!(fixture
-        .tree
-        .sync_structure_with_clip_radii(
-            &[RenderNodeSpec::new(
-                Some(fixture.root),
-                None,
-                Rect::new(0.0, 0.0, 100.0, 100.0)
-            )],
-            &[None],
-            &[],
-        )
-        .is_err());
+    assert!(
+        fixture
+            .tree
+            .sync_structure_with_clip_radii(
+                &[RenderNodeSpec::new(
+                    Some(fixture.root),
+                    None,
+                    Rect::new(0.0, 0.0, 100.0, 100.0)
+                )],
+                &[None],
+                &[],
+            )
+            .is_err()
+    );
 }
 
 #[test]
@@ -129,7 +149,11 @@ fn invalid_radii_are_rejected() {
         None,
         Rect::new(0.0, 0.0, 100.0, 100.0),
     )];
-    for radius in [[-1.0, 0.0, 0.0, 0.0], [f32::NAN, 0.0, 0.0, 0.0], [0.0, f32::INFINITY, 0.0, 0.0]] {
+    for radius in [
+        [-1.0, 0.0, 0.0, 0.0],
+        [f32::NAN, 0.0, 0.0, 0.0],
+        [0.0, f32::INFINITY, 0.0, 0.0],
+    ] {
         assert!(
             fixture
                 .tree

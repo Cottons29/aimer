@@ -7,15 +7,15 @@ use wasmi::{
 };
 use wasmparser::{ExternalKind, Parser, Payload, TypeRef};
 
-use crate::{
-    AbiResult, AbiStatus, AsyncCallbackEventView, CallbackEventView, CapabilityBindings,
-    CapabilityCall, CapabilityError, CapabilityRegistry, CapabilityTransport,
-    CURRENT_ABI_VERSION, GuestDiagnostic, ManifestView, ModelLimits, StableId128, StateBundleView,
-    WidgetDocumentView, MAX_GUEST_DIAGNOSTIC_BYTES,
-};
 use crate::manifest::ValidatedManifest;
 use crate::state::ValidatedStateBundle;
 use crate::widget_ir::ValidatedWidgetDocument;
+use crate::{
+    AbiResult, AbiStatus, AsyncCallbackEventView, CURRENT_ABI_VERSION, CallbackEventView,
+    CapabilityBindings, CapabilityCall, CapabilityError, CapabilityRegistry, CapabilityTransport,
+    GuestDiagnostic, MAX_GUEST_DIAGNOSTIC_BYTES, ManifestView, ModelLimits, StableId128,
+    StateBundleView, WidgetDocumentView,
+};
 
 const OUTPUT_ALIGNMENT: i32 = 1;
 const WASM_PAGE_BYTES: usize = 64 * 1_024;
@@ -375,10 +375,10 @@ fn capability_call(
     let result = (|| {
         let abi_major = u32::try_from(abi_major).map_err(|_| CapabilityError::InvalidRequest)?;
         let method_id = u32::try_from(method_id).map_err(|_| CapabilityError::InvalidRequest)?;
-        let request_length = u32::try_from(request_length)
-            .map_err(|_| CapabilityError::InvalidRequest)?;
-        let output_capacity = u32::try_from(output_capacity)
-            .map_err(|_| CapabilityError::InvalidRequest)?;
+        let request_length =
+            u32::try_from(request_length).map_err(|_| CapabilityError::InvalidRequest)?;
+        let output_capacity =
+            u32::try_from(output_capacity).map_err(|_| CapabilityError::InvalidRequest)?;
         let memory = caller
             .get_export("memory")
             .and_then(|export| export.into_memory())
@@ -508,9 +508,7 @@ impl Runtime {
         let manifest = guest.manifest(limits)?;
         let bindings = registry
             .negotiate_generation(&manifest.view(), generation_id)
-            .map_err(|error| {
-                RuntimeError::new(RuntimeErrorKind::CapabilityNegotiation, error)
-            })?;
+            .map_err(|error| RuntimeError::new(RuntimeErrorKind::CapabilityNegotiation, error))?;
         guest.store.data_mut().capabilities = Some(bindings);
         guest.initialize_generation(generation_id)?;
         Ok(guest)
@@ -528,11 +526,7 @@ impl Runtime {
         let mut store = self.new_store()?;
         let mut linker = Linker::new(&self.engine);
         linker
-            .func_wrap(
-                "aimer",
-                "capability_call",
-                capability_call,
-            )
+            .func_wrap("aimer", "capability_call", capability_call)
             .map_err(|error| RuntimeError::new(RuntimeErrorKind::Module, error))?;
         let instance = linker
             .instantiate_and_start(&mut store, &module)
@@ -548,9 +542,7 @@ impl Runtime {
         if version != CURRENT_ABI_VERSION {
             return Err(RuntimeError::detail(
                 RuntimeErrorKind::AbiVersion,
-                format!(
-                    "guest ABI {version} is incompatible with host ABI {CURRENT_ABI_VERSION}"
-                ),
+                format!("guest ABI {version} is incompatible with host ABI {CURRENT_ABI_VERSION}"),
             ));
         }
 
@@ -567,11 +559,7 @@ impl Runtime {
     /// The module is validated, instantiated without host imports, and invoked
     /// in a fresh store. The call receives exactly the configured fuel budget.
     /// No JIT compiler or executable-memory allocation is used by this API.
-    pub fn invoke_i32(
-        &self,
-        module_bytes: &[u8],
-        export_name: &str,
-    ) -> Result<i32, RuntimeError> {
+    pub fn invoke_i32(&self, module_bytes: &[u8], export_name: &str) -> Result<i32, RuntimeError> {
         self.validate_module_size(module_bytes)?;
         let module = Module::new(&self.engine, module_bytes)
             .map_err(|error| RuntimeError::new(RuntimeErrorKind::Module, error))?;
@@ -618,9 +606,7 @@ impl Runtime {
         if version != CURRENT_ABI_VERSION {
             return Err(RuntimeError::detail(
                 RuntimeErrorKind::AbiVersion,
-                format!(
-                    "guest ABI {version} is incompatible with host ABI {CURRENT_ABI_VERSION}"
-                ),
+                format!("guest ABI {version} is incompatible with host ABI {CURRENT_ABI_VERSION}"),
             ));
         }
 
@@ -674,15 +660,16 @@ impl Runtime {
             ));
         }
         let pointer = allocation.value();
-        let output = validate_memory_range(exports.memory, &store, pointer, required).and_then(|()| {
-            self.build_into_allocated_region(
-                &exports,
-                &mut store,
-                pointer,
-                required,
-                required_i32,
-            )
-        });
+        let output =
+            validate_memory_range(exports.memory, &store, pointer, required).and_then(|()| {
+                self.build_into_allocated_region(
+                    &exports,
+                    &mut store,
+                    pointer,
+                    required,
+                    required_i32,
+                )
+            });
         let deallocation = self.deallocate(
             &exports,
             &mut store,
@@ -843,9 +830,10 @@ impl Runtime {
         let pointer = allocation.value();
         let valid = validate_memory_range(exports.memory, &*store, pointer, required).is_ok();
         if !valid {
-            let _ = exports
-                .dealloc
-                .call(&mut *store, (pointer as i32, required_i32, OUTPUT_ALIGNMENT));
+            let _ = exports.dealloc.call(
+                &mut *store,
+                (pointer as i32, required_i32, OUTPUT_ALIGNMENT),
+            );
             return None;
         }
         self.reset_fuel(store).ok()?;
@@ -858,20 +846,24 @@ impl Runtime {
                 return None;
             }
             let mut bytes = vec![0_u8; required as usize];
-            exports.memory.read(&*store, pointer as usize, &mut bytes).ok()?;
+            exports
+                .memory
+                .read(&*store, pointer as usize, &mut bytes)
+                .ok()?;
             Some(bytes)
         });
         self.reset_fuel(store).ok()?;
         let deallocation = exports
             .dealloc
-            .call(&mut *store, (pointer as i32, required_i32, OUTPUT_ALIGNMENT))
+            .call(
+                &mut *store,
+                (pointer as i32, required_i32, OUTPUT_ALIGNMENT),
+            )
             .ok();
         if deallocation != Some(AbiStatus::Ok as i32) {
             return None;
         }
-        bytes.and_then(|bytes| {
-            GuestDiagnostic::decode(&bytes, MAX_GUEST_DIAGNOSTIC_BYTES).ok()
-        })
+        bytes.and_then(|bytes| GuestDiagnostic::decode(&bytes, MAX_GUEST_DIAGNOSTIC_BYTES).ok())
     }
 }
 
@@ -936,7 +928,10 @@ impl GuestInstance {
         }
         self.reset_fuel()?;
         let status = set_window_metrics
-            .call(&mut self.store, (width, height, scale_factor.to_bits() as i64))
+            .call(
+                &mut self.store,
+                (width, height, scale_factor.to_bits() as i64),
+            )
             .map_err(RuntimeError::execution)?;
         if status != AbiStatus::Ok as i32 {
             let status = AbiStatus::try_from(status as u32).map_err(|error| {
@@ -1111,9 +1106,7 @@ impl GuestInstance {
         let required_i32 = i32::try_from(required).map_err(|_| {
             RuntimeError::detail(
                 RuntimeErrorKind::OutputLimit,
-                format!(
-                    "aimer_manifest length {required} cannot be represented by the guest ABI"
-                ),
+                format!("aimer_manifest length {required} cannot be represented by the guest ABI"),
             )
         })?;
         let pointer = self.allocate(required_i32, "manifest output")?;
@@ -1121,9 +1114,7 @@ impl GuestInstance {
             .read_manifest_into(pointer, required, required_i32)
             .and_then(|bytes| {
                 let validated = ManifestView::decode(&bytes, limits)
-                    .map_err(|error| {
-                        RuntimeError::new(RuntimeErrorKind::ManifestDocument, error)
-                    })?
+                    .map_err(|error| RuntimeError::new(RuntimeErrorKind::ManifestDocument, error))?
                     .into_validated();
                 Ok(ManifestImage { bytes, validated })
             });
@@ -1245,10 +1236,7 @@ impl GuestInstance {
     /// Older guests without the optional export are treated as idle. A newer
     /// guest may return one complete Widget IR image; that image is validated
     /// before it can reach native materialization.
-    pub fn poll_async(
-        &mut self,
-        limits: ModelLimits,
-    ) -> Result<Option<WidgetImage>, RuntimeError> {
+    pub fn poll_async(&mut self, limits: ModelLimits) -> Result<Option<WidgetImage>, RuntimeError> {
         self.ensure_active_generation()?;
         let Some(poll_async) = self.exports.poll_async else {
             return Ok(None);
@@ -1290,33 +1278,31 @@ impl GuestInstance {
             )
         })?;
         let pointer = self.allocate(required_i32, "async poll output")?;
-        let output = self
-            .reset_fuel()
-            .and_then(|()| {
-                let result = poll_async
-                    .call(&mut self.store, (pointer as i32, required_i32))
-                    .map_err(RuntimeError::execution)?;
-                let result = decode_abi_result(result)?;
-                if result.status() != AbiStatus::Ok || result.value() != required {
-                    return Err(RuntimeError::guest_status(
-                        format!(
-                            "aimer_poll_async retry returned {:?} with length {}, expected {required}",
-                            result.status(),
-                            result.value()
-                        ),
-                        self.read_diagnostic(),
-                    ));
-                }
-                let mut bytes = vec![0_u8; required as usize];
-                self.exports
-                    .memory
-                    .read(&self.store, pointer as usize, &mut bytes)
-                    .map_err(|error| RuntimeError::new(RuntimeErrorKind::GuestMemory, error))?;
-                let validated = WidgetDocumentView::decode(&bytes, limits)
-                    .map_err(|error| RuntimeError::new(RuntimeErrorKind::WidgetDocument, error))?
-                    .into_validated();
-                Ok(Some(WidgetImage { bytes, validated }))
-            });
+        let output = self.reset_fuel().and_then(|()| {
+            let result = poll_async
+                .call(&mut self.store, (pointer as i32, required_i32))
+                .map_err(RuntimeError::execution)?;
+            let result = decode_abi_result(result)?;
+            if result.status() != AbiStatus::Ok || result.value() != required {
+                return Err(RuntimeError::guest_status(
+                    format!(
+                        "aimer_poll_async retry returned {:?} with length {}, expected {required}",
+                        result.status(),
+                        result.value()
+                    ),
+                    self.read_diagnostic(),
+                ));
+            }
+            let mut bytes = vec![0_u8; required as usize];
+            self.exports
+                .memory
+                .read(&self.store, pointer as usize, &mut bytes)
+                .map_err(|error| RuntimeError::new(RuntimeErrorKind::GuestMemory, error))?;
+            let validated = WidgetDocumentView::decode(&bytes, limits)
+                .map_err(|error| RuntimeError::new(RuntimeErrorKind::WidgetDocument, error))?
+                .into_validated();
+            Ok(Some(WidgetImage { bytes, validated }))
+        });
         let deallocation = self.deallocate(pointer, required_i32);
         match (output, deallocation) {
             (Err(error), _) => Err(error),
@@ -1598,7 +1584,8 @@ impl GuestInstance {
                 "combined state migration allocation length overflowed",
             )
         })?;
-        let allocation_pointer = self.allocate(allocation_len, "state migration input and output")?;
+        let allocation_pointer =
+            self.allocate(allocation_len, "state migration input and output")?;
         let output_pointer = allocation_pointer
             .checked_add(state_len as u32)
             .ok_or_else(|| {
@@ -1883,12 +1870,9 @@ impl GuestInstance {
             ));
         }
         let pointer = allocation.value();
-        if let Err(error) = validate_memory_range(
-            self.exports.memory,
-            &self.store,
-            pointer,
-            length as u32,
-        ) {
+        if let Err(error) =
+            validate_memory_range(self.exports.memory, &self.store, pointer, length as u32)
+        {
             let _ = self.deallocate(pointer, length);
             return Err(error);
         }
@@ -1900,10 +1884,7 @@ impl GuestInstance {
         let status = self
             .exports
             .dealloc
-            .call(
-                &mut self.store,
-                (pointer as i32, length, OUTPUT_ALIGNMENT),
-            )
+            .call(&mut self.store, (pointer as i32, length, OUTPUT_ALIGNMENT))
             .map_err(RuntimeError::execution)?;
         if status != AbiStatus::Ok as i32 {
             return Err(RuntimeError::detail(
@@ -1934,7 +1915,9 @@ impl GuestInstance {
             return None;
         }
         let required_i32 = i32::try_from(required).ok()?;
-        let pointer = self.allocate(required_i32, "guest diagnostic output").ok()?;
+        let pointer = self
+            .allocate(required_i32, "guest diagnostic output")
+            .ok()?;
         self.reset_fuel().ok()?;
         let result = self
             .exports
@@ -1958,9 +1941,7 @@ impl GuestInstance {
         if deallocation.is_err() {
             return None;
         }
-        bytes.and_then(|bytes| {
-            GuestDiagnostic::decode(&bytes, MAX_GUEST_DIAGNOSTIC_BYTES).ok()
-        })
+        bytes.and_then(|bytes| GuestDiagnostic::decode(&bytes, MAX_GUEST_DIAGNOSTIC_BYTES).ok())
     }
 
     #[inline]
@@ -2149,11 +2130,7 @@ fn validate_memory_range<T>(
     checked_guest_range(pointer, length, memory.data_size(store)).map(|_| ())
 }
 
-fn checked_guest_range(
-    pointer: u32,
-    length: u32,
-    memory_size: usize,
-) -> Result<u32, RuntimeError> {
+fn checked_guest_range(pointer: u32, length: u32, memory_size: usize) -> Result<u32, RuntimeError> {
     let end = pointer.checked_add(length).ok_or_else(|| {
         RuntimeError::detail(
             RuntimeErrorKind::GuestMemory,
@@ -2222,14 +2199,12 @@ fn validate_persistent_module_shape(
                 }
             }
             Payload::MemorySection(memories) => {
-                memory_count = memory_count
-                    .checked_add(memories.count())
-                    .ok_or_else(|| {
-                        RuntimeError::detail(
-                            RuntimeErrorKind::Module,
-                            "guest memory declaration count overflowed",
-                        )
-                    })?;
+                memory_count = memory_count.checked_add(memories.count()).ok_or_else(|| {
+                    RuntimeError::detail(
+                        RuntimeErrorKind::Module,
+                        "guest memory declaration count overflowed",
+                    )
+                })?;
             }
             Payload::ExportSection(exports) => {
                 for export in exports {
@@ -2247,7 +2222,10 @@ fn validate_persistent_module_shape(
                     if PERSISTENT_EXPORTS[index].1 != export.kind {
                         return Err(RuntimeError::detail(
                             RuntimeErrorKind::Export,
-                            format!("guest export `{}` has the wrong WebAssembly kind", export.name),
+                            format!(
+                                "guest export `{}` has the wrong WebAssembly kind",
+                                export.name
+                            ),
                         ));
                     }
                     if seen_exports[index] {
@@ -2278,7 +2256,7 @@ fn validate_persistent_module_shape(
         .iter()
         .zip(seen_exports)
         .find(|((name, _), seen)| {
-                *name != "aimer_initialize"
+            *name != "aimer_initialize"
                 && *name != "aimer_set_window_metrics"
                 && *name != "aimer_diagnostic"
                 && *name != "aimer_migrate_state"

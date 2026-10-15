@@ -7,8 +7,8 @@ use aimer_widget::{
 
 use crate::events::{emit_change, is_activation_key};
 use crate::{
-    Checkbox, CheckboxValue, CheckboxVisualBuilder, CheckboxVisualState, ChangeCallback, Key, Radio,
-    Switch,
+    ChangeCallback, Checkbox, CheckboxValue, CheckboxVisualBuilder, CheckboxVisualState, Key,
+    Radio, Switch,
 };
 
 use super::chrome::{control_shell, indicator, labeled_row, tokens, wrap_interactive};

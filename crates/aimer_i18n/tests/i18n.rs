@@ -1,8 +1,8 @@
 use aimer_i18n::{
-    CivilDate, DateFormatStyle, DateTimeFormatOptions, Direction, DirectionPolicy,
-    Locale, MessageDomain, MissingTranslationPolicy, NavigationIntent, NumberFormatOptions,
+    CivilDate, DateFormatStyle, DateTimeFormatOptions, Direction, DirectionPolicy, Locale,
+    MessageDomain, MissingTranslationPolicy, NavigationIntent, NumberFormatOptions,
     PhysicalNavigation, PluralCategory, SelectCategory, TimeFormatStyle, TranslationCatalog,
-    TranslationLookup, Translator, UtcOffset, format_datetime, format_date, format_number,
+    TranslationLookup, Translator, UtcOffset, format_date, format_datetime, format_number,
     plural_category,
 };
 
@@ -68,9 +68,18 @@ fn plural_and_select_lookup_cover_categories_and_fallback() {
     );
     let translator = Translator::from_catalog(locale("en"), catalog);
 
-    assert_eq!(translator.plural(&locale("en-US"), "cart.items", 0), "0 items");
-    assert_eq!(translator.plural(&locale("en-US"), "cart.items", 1), "1 item");
-    assert_eq!(translator.plural(&locale("en-US"), "cart.items", 2), "2 items");
+    assert_eq!(
+        translator.plural(&locale("en-US"), "cart.items", 0),
+        "0 items"
+    );
+    assert_eq!(
+        translator.plural(&locale("en-US"), "cart.items", 1),
+        "1 item"
+    );
+    assert_eq!(
+        translator.plural(&locale("en-US"), "cart.items", 2),
+        "2 items"
+    );
     assert_eq!(
         translator.select(&locale("en-US"), "invite", SelectCategory::new("female")),
         "They joined"
@@ -138,16 +147,26 @@ fn date_and_time_formatting_uses_the_supplied_fixed_offset() {
         "2024-01-02"
     );
 
-    let options = DateTimeFormatOptions::new(DateFormatStyle::Iso, TimeFormatStyle::Long)
-        .with_offset(true);
+    let options =
+        DateTimeFormatOptions::new(DateFormatStyle::Iso, TimeFormatStyle::Long).with_offset(true);
     assert_eq!(
-        format_datetime(&locale("en-GB"), 0, UtcOffset::minutes(150).unwrap(), options)
-            .unwrap(),
+        format_datetime(
+            &locale("en-GB"),
+            0,
+            UtcOffset::minutes(150).unwrap(),
+            options
+        )
+        .unwrap(),
         "1970-01-01T02:30:00+02:30"
     );
     assert_eq!(
-        format_datetime(&locale("en-GB"), 0, UtcOffset::minutes(-300).unwrap(), options)
-            .unwrap(),
+        format_datetime(
+            &locale("en-GB"),
+            0,
+            UtcOffset::minutes(-300).unwrap(),
+            options
+        )
+        .unwrap(),
         "1969-12-31T19:00:00-05:00"
     );
 }

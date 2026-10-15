@@ -2,20 +2,25 @@ mod document;
 mod error;
 mod selector;
 mod source;
+mod static_svg;
 mod style;
 mod widget;
 
+#[cfg(test)]
+mod static_svg_tests;
+
 pub use aimer_cupid::svg::{
     SvgAspectAlign, SvgAspectMode, SvgBlendMode, SvgClipPath, SvgColor, SvgColorMatrix,
-    SvgCompositeOperator, SvgFillRule, SvgFilter, SvgFilterInput, SvgFilterPrimitive,
-    SvgFitError, SvgFitPolicy, SvgGradient, SvgGradientStop, SvgGradientUnits, SvgMask,
-    SvgMaskType, SvgNodeId, SvgPaint, SvgPattern, SvgPreserveAspectRatio, SvgResourceGraph,
-    SvgResourceUnits, SvgSpreadMethod, SvgTransform, SvgViewBox,
+    SvgCompositeOperator, SvgFillRule, SvgFilter, SvgFilterInput, SvgFilterPrimitive, SvgFitError,
+    SvgFitPolicy, SvgGradient, SvgGradientStop, SvgGradientUnits, SvgMask, SvgMaskType, SvgNodeId,
+    SvgPaint, SvgPattern, SvgPreserveAspectRatio, SvgResourceGraph, SvgResourceUnits,
+    SvgSpreadMethod, SvgTransform, SvgViewBox,
 };
 pub use document::{SvgDiagnostic, SvgDocument, SvgLimits, SvgNodePaint, SvgPath};
 pub use error::SvgError;
 pub use selector::SvgSelector;
 pub use source::{SvgLoadState, SvgLoader, SvgSource};
+pub use static_svg::StaticSvg;
 pub use style::SvgStyle;
 pub use widget::{RawSvg, Svg, SvgAsset, SvgCallback, SvgHit, SvgNodeMetadata};
 
@@ -26,8 +31,8 @@ mod tests {
 
     use aimer_attribute::Bounds;
     use aimer_cupid::svg::{
-        SvgAspectAlign, SvgAspectMode, SvgColor, SvgElementKind, SvgGradient, SvgPaint,
-        SvgNodeStyleOverride, SvgPathCommand, SvgPreserveAspectRatio, SvgSpreadMethod,
+        SvgAspectAlign, SvgAspectMode, SvgColor, SvgElementKind, SvgGradient, SvgNodeStyleOverride,
+        SvgPaint, SvgPathCommand, SvgPreserveAspectRatio, SvgSpreadMethod,
     };
     use aimer_widget::Widget;
     use aimer_widget::portable::PortableNativeWidget;
@@ -128,10 +133,7 @@ mod tests {
         assert_eq!(color("circle"), SvgColor::rgba8(255, 255, 0, 255));
         assert_eq!(color("ordered"), SvgColor::rgba8(0, 0, 255, 255));
         assert_eq!(color("important"), SvgColor::rgba8(255, 0, 0, 255));
-        assert_eq!(
-            color("inline-important"),
-            SvgColor::rgba8(0, 0, 255, 255)
-        );
+        assert_eq!(color("inline-important"), SvgColor::rgba8(0, 0, 255, 255));
         assert_eq!(color("presentation"), SvgColor::rgba8(255, 0, 0, 255));
         assert_eq!(color("group-child"), SvgColor::rgba8(17, 34, 51, 255));
         assert_eq!(color("root-inherited"), SvgColor::rgba8(17, 34, 51, 255));
@@ -216,7 +218,12 @@ mod tests {
 
         let gradient = br#"<svg width="10" height="10" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="g"/></defs><path d="M0 0h10v10z" fill="url(#g)"/></svg>"#;
         let document = SvgDocument::from_svg(gradient).unwrap();
-        assert!(document.diagnostics().iter().all(|diagnostic| diagnostic.feature != "gradient"));
+        assert!(
+            document
+                .diagnostics()
+                .iter()
+                .all(|diagnostic| diagnostic.feature != "gradient")
+        );
     }
 
     #[test]
@@ -236,10 +243,12 @@ mod tests {
             Some(aimer_cupid::svg::SvgFilterPrimitive::GaussianBlur { deviation, .. })
                 if *deviation == [2.0, 2.0]
         ));
-        assert!(document
-            .diagnostics()
-            .iter()
-            .any(|diagnostic| diagnostic.feature == "filter"));
+        assert!(
+            document
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.feature == "filter")
+        );
     }
 
     #[test]
@@ -260,10 +269,12 @@ mod tests {
         assert!(!document.diagnostics().iter().any(|diagnostic| {
             diagnostic.feature == "unsupported-element" && diagnostic.message.contains("use")
         }));
-        assert!(!document
-            .diagnostics()
-            .iter()
-            .any(|diagnostic| diagnostic.feature == "clip-path"));
+        assert!(
+            !document
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.feature == "clip-path")
+        );
         assert_eq!(document.resources().clip_path("b").unwrap().nodes.len(), 1);
     }
 
@@ -517,9 +528,7 @@ mod tests {
     #[test]
     fn rejects_invalid_viewbox_and_preserve_aspect_ratio_before_rendering() {
         assert!(matches!(
-            SvgDocument::from_svg(
-                br#"<svg viewBox="0 0 0 10"><path d="M0 0h1v1z"/></svg>"#
-            ),
+            SvgDocument::from_svg(br#"<svg viewBox="0 0 0 10"><path d="M0 0h1v1z"/></svg>"#),
             Err(SvgError::InvalidViewBox(_))
         ));
         assert!(matches!(
@@ -545,12 +554,17 @@ mod tests {
         assert_eq!(document.gradients().len(), 1);
         assert!(matches!(
             document.gradients()[0],
-            SvgGradient::Linear { spread: SvgSpreadMethod::Reflect, .. }
+            SvgGradient::Linear {
+                spread: SvgSpreadMethod::Reflect,
+                ..
+            }
         ));
-        assert!(document
-            .diagnostics()
-            .iter()
-            .any(|diagnostic| diagnostic.feature == "dashed-stroke"));
+        assert!(
+            document
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.feature == "dashed-stroke")
+        );
     }
 
     #[test]
@@ -571,7 +585,10 @@ mod tests {
             .iter()
             .find(|override_| override_.node_id == child)
             .unwrap();
-        assert_eq!(child_override.fill, Some(Some(SvgColor::rgba8(255, 0, 0, 255))));
+        assert_eq!(
+            child_override.fill,
+            Some(Some(SvgColor::rgba8(255, 0, 0, 255)))
+        );
         assert_eq!(child_override.opacity, Some(0.5));
     }
 
@@ -593,21 +610,11 @@ mod tests {
         }];
         let bounds = Bounds::new(0.0, 0.0, 100.0, 100.0);
 
-        assert!(widget::hit_test_scene(
-            document.scene(),
-            bounds,
-            50.0,
-            50.0,
-            &overrides,
-        )
-        .is_some());
-        assert!(widget::hit_test_scene(
-            document.scene(),
-            bounds,
-            50.0,
-            10.0,
-            &overrides,
-        )
-        .is_none());
+        assert!(
+            widget::hit_test_scene(document.scene(), bounds, 50.0, 50.0, &overrides,).is_some()
+        );
+        assert!(
+            widget::hit_test_scene(document.scene(), bounds, 50.0, 10.0, &overrides,).is_none()
+        );
     }
 }

@@ -119,7 +119,6 @@ pub const LINK_STATUS: GLenum = 0x8B82;
 pub const INFO_LOG_LENGTH: GLenum = 0x8B84;
 pub const INVALID_INDEX: GLuint = 0xFFFF_FFFF;
 
-
 pub const TRIANGLES: GLenum = 0x0004;
 pub const TRIANGLE_STRIP: GLenum = 0x0005;
 pub const LINES: GLenum = 0x0001;
@@ -220,20 +219,75 @@ pub struct GlFns {
     pub active_texture: unsafe extern "system" fn(GLenum),
     pub tex_parameter_i: unsafe extern "system" fn(GLenum, GLenum, GLint),
     pub pixel_store_i: unsafe extern "system" fn(GLenum, GLint),
-    pub tex_image_1d: unsafe extern "system" fn(GLenum, GLint, GLint, GLsizei, GLint, GLenum, GLenum, *const c_void),
-    pub tex_image_2d: unsafe extern "system" fn(GLenum, GLint, GLint, GLsizei, GLsizei, GLint, GLenum, GLenum, *const c_void),
-    pub tex_image_3d: unsafe extern "system" fn(GLenum, GLint, GLint, GLsizei, GLsizei, GLsizei, GLint, GLenum, GLenum, *const c_void),
-    pub tex_image_2d_multisample: unsafe extern "system" fn(GLenum, GLsizei, GLenum, GLsizei, GLsizei, GLboolean),
-    pub tex_sub_image_1d: unsafe extern "system" fn(GLenum, GLint, GLint, GLsizei, GLenum, GLenum, *const c_void),
-    pub tex_sub_image_2d: unsafe extern "system" fn(GLenum, GLint, GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, *const c_void),
-    pub tex_sub_image_3d: unsafe extern "system" fn(GLenum, GLint, GLint, GLint, GLint, GLsizei, GLsizei, GLsizei, GLenum, GLenum, *const c_void),
+    pub tex_image_1d: unsafe extern "system" fn(
+        GLenum,
+        GLint,
+        GLint,
+        GLsizei,
+        GLint,
+        GLenum,
+        GLenum,
+        *const c_void,
+    ),
+    pub tex_image_2d: unsafe extern "system" fn(
+        GLenum,
+        GLint,
+        GLint,
+        GLsizei,
+        GLsizei,
+        GLint,
+        GLenum,
+        GLenum,
+        *const c_void,
+    ),
+    pub tex_image_3d: unsafe extern "system" fn(
+        GLenum,
+        GLint,
+        GLint,
+        GLsizei,
+        GLsizei,
+        GLsizei,
+        GLint,
+        GLenum,
+        GLenum,
+        *const c_void,
+    ),
+    pub tex_image_2d_multisample:
+        unsafe extern "system" fn(GLenum, GLsizei, GLenum, GLsizei, GLsizei, GLboolean),
+    pub tex_sub_image_1d:
+        unsafe extern "system" fn(GLenum, GLint, GLint, GLsizei, GLenum, GLenum, *const c_void),
+    pub tex_sub_image_2d: unsafe extern "system" fn(
+        GLenum,
+        GLint,
+        GLint,
+        GLint,
+        GLsizei,
+        GLsizei,
+        GLenum,
+        GLenum,
+        *const c_void,
+    ),
+    pub tex_sub_image_3d: unsafe extern "system" fn(
+        GLenum,
+        GLint,
+        GLint,
+        GLint,
+        GLint,
+        GLsizei,
+        GLsizei,
+        GLsizei,
+        GLenum,
+        GLenum,
+        *const c_void,
+    ),
     pub gen_samplers: unsafe extern "system" fn(GLsizei, *mut GLuint),
     pub delete_samplers: unsafe extern "system" fn(GLsizei, *const GLuint),
     pub bind_sampler: unsafe extern "system" fn(GLuint, GLuint),
     pub sampler_parameter_i: unsafe extern "system" fn(GLuint, GLenum, GLint),
     pub sampler_parameter_f: unsafe extern "system" fn(GLuint, GLenum, GLfloat),
     pub create_shader: unsafe extern "system" fn(GLenum) -> GLuint,
-    pub shader_source: unsafe extern "system" fn(GLuint, GLsizei, *const *const GLchar, *const GLint),
+    pub shader_source:
+        unsafe extern "system" fn(GLuint, GLsizei, *const *const GLchar, *const GLint),
     pub compile_shader: unsafe extern "system" fn(GLuint),
     pub get_shader_i: unsafe extern "system" fn(GLuint, GLenum, *mut GLint),
     pub get_shader_info_log: unsafe extern "system" fn(GLuint, GLsizei, *mut GLsizei, *mut GLchar),
@@ -253,11 +307,14 @@ pub struct GlFns {
     pub delete_vertex_arrays: unsafe extern "system" fn(GLsizei, *const GLuint),
     pub bind_vertex_array: unsafe extern "system" fn(GLuint),
     pub enable_vertex_attrib_array: unsafe extern "system" fn(GLuint),
-    pub vertex_attrib_pointer: unsafe extern "system" fn(GLuint, GLint, GLenum, GLboolean, GLsizei, *const c_void),
-    pub vertex_attrib_i_pointer: unsafe extern "system" fn(GLuint, GLint, GLenum, GLsizei, *const c_void),
+    pub vertex_attrib_pointer:
+        unsafe extern "system" fn(GLuint, GLint, GLenum, GLboolean, GLsizei, *const c_void),
+    pub vertex_attrib_i_pointer:
+        unsafe extern "system" fn(GLuint, GLint, GLenum, GLsizei, *const c_void),
     pub vertex_attrib_divisor: unsafe extern "system" fn(GLuint, GLuint),
     pub draw_arrays_instanced: unsafe extern "system" fn(GLenum, GLint, GLsizei, GLsizei),
-    pub draw_elements_instanced_base_vertex: unsafe extern "system" fn(GLenum, GLsizei, GLenum, *const c_void, GLsizei, GLint),
+    pub draw_elements_instanced_base_vertex:
+        unsafe extern "system" fn(GLenum, GLsizei, GLenum, *const c_void, GLsizei, GLint),
     pub gen_framebuffers: unsafe extern "system" fn(GLsizei, *mut GLuint),
     pub delete_framebuffers: unsafe extern "system" fn(GLsizei, *const GLuint),
     pub bind_framebuffer: unsafe extern "system" fn(GLenum, GLuint),
@@ -266,8 +323,20 @@ pub struct GlFns {
     pub check_framebuffer_status: unsafe extern "system" fn(GLenum) -> GLenum,
     pub draw_buffers: unsafe extern "system" fn(GLsizei, *const GLenum),
     pub read_buffer: unsafe extern "system" fn(GLenum),
-    pub blit_framebuffer: unsafe extern "system" fn(GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLbitfield, GLenum),
-    pub read_pixels: unsafe extern "system" fn(GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, *mut c_void),
+    pub blit_framebuffer: unsafe extern "system" fn(
+        GLint,
+        GLint,
+        GLint,
+        GLint,
+        GLint,
+        GLint,
+        GLint,
+        GLint,
+        GLbitfield,
+        GLenum,
+    ),
+    pub read_pixels:
+        unsafe extern "system" fn(GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, *mut c_void),
     pub flush: unsafe extern "system" fn(),
 }
 
@@ -275,7 +344,8 @@ impl GlFns {
     pub(super) unsafe fn load(resolver: &LoadFunction<'_>) -> Result<Self, String> {
         macro_rules! gl {
             ($name:literal, $signature:ty) => {{
-                let name = unsafe { CStr::from_bytes_with_nul_unchecked(concat!($name, "\0").as_bytes()) };
+                let name =
+                    unsafe { CStr::from_bytes_with_nul_unchecked(concat!($name, "\0").as_bytes()) };
                 let address = resolver(name);
                 if address.is_null() {
                     return Err(format!("OpenGL function {} is unavailable", $name));
@@ -284,91 +354,353 @@ impl GlFns {
             }};
         }
         Ok(Self {
-            get_string: gl!("glGetString", unsafe extern "system" fn(GLenum) -> *const GLubyte),
-            get_integerv: gl!("glGetIntegerv", unsafe extern "system" fn(GLenum, *mut GLint)),
+            get_string: gl!(
+                "glGetString",
+                unsafe extern "system" fn(GLenum) -> *const GLubyte
+            ),
+            get_integerv: gl!(
+                "glGetIntegerv",
+                unsafe extern "system" fn(GLenum, *mut GLint)
+            ),
             get_error: gl!("glGetError", unsafe extern "system" fn() -> GLenum),
             enable: gl!("glEnable", unsafe extern "system" fn(GLenum)),
             disable: gl!("glDisable", unsafe extern "system" fn(GLenum)),
-            viewport: gl!("glViewport", unsafe extern "system" fn(GLint, GLint, GLsizei, GLsizei)),
-            scissor: gl!("glScissor", unsafe extern "system" fn(GLint, GLint, GLsizei, GLsizei)),
-            clear_color: gl!("glClearColor", unsafe extern "system" fn(GLfloat, GLfloat, GLfloat, GLfloat)),
+            viewport: gl!(
+                "glViewport",
+                unsafe extern "system" fn(GLint, GLint, GLsizei, GLsizei)
+            ),
+            scissor: gl!(
+                "glScissor",
+                unsafe extern "system" fn(GLint, GLint, GLsizei, GLsizei)
+            ),
+            clear_color: gl!(
+                "glClearColor",
+                unsafe extern "system" fn(GLfloat, GLfloat, GLfloat, GLfloat)
+            ),
             clear: gl!("glClear", unsafe extern "system" fn(GLbitfield)),
-            clear_buffer_fv: gl!("glClearBufferfv", unsafe extern "system" fn(GLenum, GLint, *const GLfloat)),
-            clear_buffer_iv: gl!("glClearBufferiv", unsafe extern "system" fn(GLenum, GLint, *const GLint)),
-            color_mask_i: gl!("glColorMaski", unsafe extern "system" fn(GLuint, GLboolean, GLboolean, GLboolean, GLboolean)),
+            clear_buffer_fv: gl!(
+                "glClearBufferfv",
+                unsafe extern "system" fn(GLenum, GLint, *const GLfloat)
+            ),
+            clear_buffer_iv: gl!(
+                "glClearBufferiv",
+                unsafe extern "system" fn(GLenum, GLint, *const GLint)
+            ),
+            color_mask_i: gl!(
+                "glColorMaski",
+                unsafe extern "system" fn(GLuint, GLboolean, GLboolean, GLboolean, GLboolean)
+            ),
             depth_mask: gl!("glDepthMask", unsafe extern "system" fn(GLboolean)),
             depth_func: gl!("glDepthFunc", unsafe extern "system" fn(GLenum)),
-            stencil_func_separate: gl!("glStencilFuncSeparate", unsafe extern "system" fn(GLenum, GLenum, GLint, GLuint)),
-            stencil_op_separate: gl!("glStencilOpSeparate", unsafe extern "system" fn(GLenum, GLenum, GLenum, GLenum)),
-            stencil_mask_separate: gl!("glStencilMaskSeparate", unsafe extern "system" fn(GLenum, GLuint)),
-            blend_func_separate: gl!("glBlendFuncSeparate", unsafe extern "system" fn(GLenum, GLenum, GLenum, GLenum)),
-            blend_equation_separate: gl!("glBlendEquationSeparate", unsafe extern "system" fn(GLenum, GLenum)),
-            blend_color: gl!("glBlendColor", unsafe extern "system" fn(GLfloat, GLfloat, GLfloat, GLfloat)),
+            stencil_func_separate: gl!(
+                "glStencilFuncSeparate",
+                unsafe extern "system" fn(GLenum, GLenum, GLint, GLuint)
+            ),
+            stencil_op_separate: gl!(
+                "glStencilOpSeparate",
+                unsafe extern "system" fn(GLenum, GLenum, GLenum, GLenum)
+            ),
+            stencil_mask_separate: gl!(
+                "glStencilMaskSeparate",
+                unsafe extern "system" fn(GLenum, GLuint)
+            ),
+            blend_func_separate: gl!(
+                "glBlendFuncSeparate",
+                unsafe extern "system" fn(GLenum, GLenum, GLenum, GLenum)
+            ),
+            blend_equation_separate: gl!(
+                "glBlendEquationSeparate",
+                unsafe extern "system" fn(GLenum, GLenum)
+            ),
+            blend_color: gl!(
+                "glBlendColor",
+                unsafe extern "system" fn(GLfloat, GLfloat, GLfloat, GLfloat)
+            ),
             cull_face: gl!("glCullFace", unsafe extern "system" fn(GLenum)),
             front_face: gl!("glFrontFace", unsafe extern "system" fn(GLenum)),
             polygon_mode: gl!("glPolygonMode", unsafe extern "system" fn(GLenum, GLenum)),
-            polygon_offset: gl!("glPolygonOffset", unsafe extern "system" fn(GLfloat, GLfloat)),
-            gen_buffers: gl!("glGenBuffers", unsafe extern "system" fn(GLsizei, *mut GLuint)),
-            delete_buffers: gl!("glDeleteBuffers", unsafe extern "system" fn(GLsizei, *const GLuint)),
+            polygon_offset: gl!(
+                "glPolygonOffset",
+                unsafe extern "system" fn(GLfloat, GLfloat)
+            ),
+            gen_buffers: gl!(
+                "glGenBuffers",
+                unsafe extern "system" fn(GLsizei, *mut GLuint)
+            ),
+            delete_buffers: gl!(
+                "glDeleteBuffers",
+                unsafe extern "system" fn(GLsizei, *const GLuint)
+            ),
             bind_buffer: gl!("glBindBuffer", unsafe extern "system" fn(GLenum, GLuint)),
-            buffer_data: gl!("glBufferData", unsafe extern "system" fn(GLenum, GLsizeiptr, *const c_void, GLenum)),
-            buffer_sub_data: gl!("glBufferSubData", unsafe extern "system" fn(GLenum, GLintptr, GLsizeiptr, *const c_void)),
-            get_buffer_sub_data: gl!("glGetBufferSubData", unsafe extern "system" fn(GLenum, GLintptr, GLsizeiptr, *mut c_void)),
-            bind_buffer_range: gl!("glBindBufferRange", unsafe extern "system" fn(GLenum, GLuint, GLuint, GLintptr, GLsizeiptr)),
-            gen_textures: gl!("glGenTextures", unsafe extern "system" fn(GLsizei, *mut GLuint)),
-            delete_textures: gl!("glDeleteTextures", unsafe extern "system" fn(GLsizei, *const GLuint)),
+            buffer_data: gl!(
+                "glBufferData",
+                unsafe extern "system" fn(GLenum, GLsizeiptr, *const c_void, GLenum)
+            ),
+            buffer_sub_data: gl!(
+                "glBufferSubData",
+                unsafe extern "system" fn(GLenum, GLintptr, GLsizeiptr, *const c_void)
+            ),
+            get_buffer_sub_data: gl!(
+                "glGetBufferSubData",
+                unsafe extern "system" fn(GLenum, GLintptr, GLsizeiptr, *mut c_void)
+            ),
+            bind_buffer_range: gl!(
+                "glBindBufferRange",
+                unsafe extern "system" fn(GLenum, GLuint, GLuint, GLintptr, GLsizeiptr)
+            ),
+            gen_textures: gl!(
+                "glGenTextures",
+                unsafe extern "system" fn(GLsizei, *mut GLuint)
+            ),
+            delete_textures: gl!(
+                "glDeleteTextures",
+                unsafe extern "system" fn(GLsizei, *const GLuint)
+            ),
             bind_texture: gl!("glBindTexture", unsafe extern "system" fn(GLenum, GLuint)),
             active_texture: gl!("glActiveTexture", unsafe extern "system" fn(GLenum)),
-            tex_parameter_i: gl!("glTexParameteri", unsafe extern "system" fn(GLenum, GLenum, GLint)),
+            tex_parameter_i: gl!(
+                "glTexParameteri",
+                unsafe extern "system" fn(GLenum, GLenum, GLint)
+            ),
             pixel_store_i: gl!("glPixelStorei", unsafe extern "system" fn(GLenum, GLint)),
-            tex_image_1d: gl!("glTexImage1D", unsafe extern "system" fn(GLenum, GLint, GLint, GLsizei, GLint, GLenum, GLenum, *const c_void)),
-            tex_image_2d: gl!("glTexImage2D", unsafe extern "system" fn(GLenum, GLint, GLint, GLsizei, GLsizei, GLint, GLenum, GLenum, *const c_void)),
-            tex_image_3d: gl!("glTexImage3D", unsafe extern "system" fn(GLenum, GLint, GLint, GLsizei, GLsizei, GLsizei, GLint, GLenum, GLenum, *const c_void)),
-            tex_image_2d_multisample: gl!("glTexImage2DMultisample", unsafe extern "system" fn(GLenum, GLsizei, GLenum, GLsizei, GLsizei, GLboolean)),
-            tex_sub_image_1d: gl!("glTexSubImage1D", unsafe extern "system" fn(GLenum, GLint, GLint, GLsizei, GLenum, GLenum, *const c_void)),
-            tex_sub_image_2d: gl!("glTexSubImage2D", unsafe extern "system" fn(GLenum, GLint, GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, *const c_void)),
-            tex_sub_image_3d: gl!("glTexSubImage3D", unsafe extern "system" fn(GLenum, GLint, GLint, GLint, GLint, GLsizei, GLsizei, GLsizei, GLenum, GLenum, *const c_void)),
-            gen_samplers: gl!("glGenSamplers", unsafe extern "system" fn(GLsizei, *mut GLuint)),
-            delete_samplers: gl!("glDeleteSamplers", unsafe extern "system" fn(GLsizei, *const GLuint)),
+            tex_image_1d: gl!(
+                "glTexImage1D",
+                unsafe extern "system" fn(
+                    GLenum,
+                    GLint,
+                    GLint,
+                    GLsizei,
+                    GLint,
+                    GLenum,
+                    GLenum,
+                    *const c_void,
+                )
+            ),
+            tex_image_2d: gl!(
+                "glTexImage2D",
+                unsafe extern "system" fn(
+                    GLenum,
+                    GLint,
+                    GLint,
+                    GLsizei,
+                    GLsizei,
+                    GLint,
+                    GLenum,
+                    GLenum,
+                    *const c_void,
+                )
+            ),
+            tex_image_3d: gl!(
+                "glTexImage3D",
+                unsafe extern "system" fn(
+                    GLenum,
+                    GLint,
+                    GLint,
+                    GLsizei,
+                    GLsizei,
+                    GLsizei,
+                    GLint,
+                    GLenum,
+                    GLenum,
+                    *const c_void,
+                )
+            ),
+            tex_image_2d_multisample: gl!(
+                "glTexImage2DMultisample",
+                unsafe extern "system" fn(GLenum, GLsizei, GLenum, GLsizei, GLsizei, GLboolean)
+            ),
+            tex_sub_image_1d: gl!(
+                "glTexSubImage1D",
+                unsafe extern "system" fn(
+                    GLenum,
+                    GLint,
+                    GLint,
+                    GLsizei,
+                    GLenum,
+                    GLenum,
+                    *const c_void,
+                )
+            ),
+            tex_sub_image_2d: gl!(
+                "glTexSubImage2D",
+                unsafe extern "system" fn(
+                    GLenum,
+                    GLint,
+                    GLint,
+                    GLint,
+                    GLsizei,
+                    GLsizei,
+                    GLenum,
+                    GLenum,
+                    *const c_void,
+                )
+            ),
+            tex_sub_image_3d: gl!(
+                "glTexSubImage3D",
+                unsafe extern "system" fn(
+                    GLenum,
+                    GLint,
+                    GLint,
+                    GLint,
+                    GLint,
+                    GLsizei,
+                    GLsizei,
+                    GLsizei,
+                    GLenum,
+                    GLenum,
+                    *const c_void,
+                )
+            ),
+            gen_samplers: gl!(
+                "glGenSamplers",
+                unsafe extern "system" fn(GLsizei, *mut GLuint)
+            ),
+            delete_samplers: gl!(
+                "glDeleteSamplers",
+                unsafe extern "system" fn(GLsizei, *const GLuint)
+            ),
             bind_sampler: gl!("glBindSampler", unsafe extern "system" fn(GLuint, GLuint)),
-            sampler_parameter_i: gl!("glSamplerParameteri", unsafe extern "system" fn(GLuint, GLenum, GLint)),
-            sampler_parameter_f: gl!("glSamplerParameterf", unsafe extern "system" fn(GLuint, GLenum, GLfloat)),
-            create_shader: gl!("glCreateShader", unsafe extern "system" fn(GLenum) -> GLuint),
-            shader_source: gl!("glShaderSource", unsafe extern "system" fn(GLuint, GLsizei, *const *const GLchar, *const GLint)),
+            sampler_parameter_i: gl!(
+                "glSamplerParameteri",
+                unsafe extern "system" fn(GLuint, GLenum, GLint)
+            ),
+            sampler_parameter_f: gl!(
+                "glSamplerParameterf",
+                unsafe extern "system" fn(GLuint, GLenum, GLfloat)
+            ),
+            create_shader: gl!(
+                "glCreateShader",
+                unsafe extern "system" fn(GLenum) -> GLuint
+            ),
+            shader_source: gl!(
+                "glShaderSource",
+                unsafe extern "system" fn(GLuint, GLsizei, *const *const GLchar, *const GLint)
+            ),
             compile_shader: gl!("glCompileShader", unsafe extern "system" fn(GLuint)),
-            get_shader_i: gl!("glGetShaderiv", unsafe extern "system" fn(GLuint, GLenum, *mut GLint)),
-            get_shader_info_log: gl!("glGetShaderInfoLog", unsafe extern "system" fn(GLuint, GLsizei, *mut GLsizei, *mut GLchar)),
+            get_shader_i: gl!(
+                "glGetShaderiv",
+                unsafe extern "system" fn(GLuint, GLenum, *mut GLint)
+            ),
+            get_shader_info_log: gl!(
+                "glGetShaderInfoLog",
+                unsafe extern "system" fn(GLuint, GLsizei, *mut GLsizei, *mut GLchar)
+            ),
             delete_shader: gl!("glDeleteShader", unsafe extern "system" fn(GLuint)),
             create_program: gl!("glCreateProgram", unsafe extern "system" fn() -> GLuint),
             attach_shader: gl!("glAttachShader", unsafe extern "system" fn(GLuint, GLuint)),
             link_program: gl!("glLinkProgram", unsafe extern "system" fn(GLuint)),
-            get_program_i: gl!("glGetProgramiv", unsafe extern "system" fn(GLuint, GLenum, *mut GLint)),
-            get_program_info_log: gl!("glGetProgramInfoLog", unsafe extern "system" fn(GLuint, GLsizei, *mut GLsizei, *mut GLchar)),
+            get_program_i: gl!(
+                "glGetProgramiv",
+                unsafe extern "system" fn(GLuint, GLenum, *mut GLint)
+            ),
+            get_program_info_log: gl!(
+                "glGetProgramInfoLog",
+                unsafe extern "system" fn(GLuint, GLsizei, *mut GLsizei, *mut GLchar)
+            ),
             delete_program: gl!("glDeleteProgram", unsafe extern "system" fn(GLuint)),
             use_program: gl!("glUseProgram", unsafe extern "system" fn(GLuint)),
-            get_uniform_location: gl!("glGetUniformLocation", unsafe extern "system" fn(GLuint, *const GLchar) -> GLint),
+            get_uniform_location: gl!(
+                "glGetUniformLocation",
+                unsafe extern "system" fn(GLuint, *const GLchar) -> GLint
+            ),
             uniform_1i: gl!("glUniform1i", unsafe extern "system" fn(GLint, GLint)),
-            get_uniform_block_index: gl!("glGetUniformBlockIndex", unsafe extern "system" fn(GLuint, *const GLchar) -> GLuint),
-            uniform_block_binding: gl!("glUniformBlockBinding", unsafe extern "system" fn(GLuint, GLuint, GLuint)),
-            gen_vertex_arrays: gl!("glGenVertexArrays", unsafe extern "system" fn(GLsizei, *mut GLuint)),
-            delete_vertex_arrays: gl!("glDeleteVertexArrays", unsafe extern "system" fn(GLsizei, *const GLuint)),
+            get_uniform_block_index: gl!(
+                "glGetUniformBlockIndex",
+                unsafe extern "system" fn(GLuint, *const GLchar) -> GLuint
+            ),
+            uniform_block_binding: gl!(
+                "glUniformBlockBinding",
+                unsafe extern "system" fn(GLuint, GLuint, GLuint)
+            ),
+            gen_vertex_arrays: gl!(
+                "glGenVertexArrays",
+                unsafe extern "system" fn(GLsizei, *mut GLuint)
+            ),
+            delete_vertex_arrays: gl!(
+                "glDeleteVertexArrays",
+                unsafe extern "system" fn(GLsizei, *const GLuint)
+            ),
             bind_vertex_array: gl!("glBindVertexArray", unsafe extern "system" fn(GLuint)),
-            enable_vertex_attrib_array: gl!("glEnableVertexAttribArray", unsafe extern "system" fn(GLuint)),
-            vertex_attrib_pointer: gl!("glVertexAttribPointer", unsafe extern "system" fn(GLuint, GLint, GLenum, GLboolean, GLsizei, *const c_void)),
-            vertex_attrib_i_pointer: gl!("glVertexAttribIPointer", unsafe extern "system" fn(GLuint, GLint, GLenum, GLsizei, *const c_void)),
-            vertex_attrib_divisor: gl!("glVertexAttribDivisor", unsafe extern "system" fn(GLuint, GLuint)),
-            draw_arrays_instanced: gl!("glDrawArraysInstanced", unsafe extern "system" fn(GLenum, GLint, GLsizei, GLsizei)),
-            draw_elements_instanced_base_vertex: gl!("glDrawElementsInstancedBaseVertex", unsafe extern "system" fn(GLenum, GLsizei, GLenum, *const c_void, GLsizei, GLint)),
-            gen_framebuffers: gl!("glGenFramebuffers", unsafe extern "system" fn(GLsizei, *mut GLuint)),
-            delete_framebuffers: gl!("glDeleteFramebuffers", unsafe extern "system" fn(GLsizei, *const GLuint)),
-            bind_framebuffer: gl!("glBindFramebuffer", unsafe extern "system" fn(GLenum, GLuint)),
-            framebuffer_texture: gl!("glFramebufferTexture", unsafe extern "system" fn(GLenum, GLenum, GLuint, GLint)),
-            framebuffer_texture_layer: gl!("glFramebufferTextureLayer", unsafe extern "system" fn(GLenum, GLenum, GLuint, GLint, GLint)),
-            check_framebuffer_status: gl!("glCheckFramebufferStatus", unsafe extern "system" fn(GLenum) -> GLenum),
-            draw_buffers: gl!("glDrawBuffers", unsafe extern "system" fn(GLsizei, *const GLenum)),
+            enable_vertex_attrib_array: gl!(
+                "glEnableVertexAttribArray",
+                unsafe extern "system" fn(GLuint)
+            ),
+            vertex_attrib_pointer: gl!(
+                "glVertexAttribPointer",
+                unsafe extern "system" fn(GLuint, GLint, GLenum, GLboolean, GLsizei, *const c_void)
+            ),
+            vertex_attrib_i_pointer: gl!(
+                "glVertexAttribIPointer",
+                unsafe extern "system" fn(GLuint, GLint, GLenum, GLsizei, *const c_void)
+            ),
+            vertex_attrib_divisor: gl!(
+                "glVertexAttribDivisor",
+                unsafe extern "system" fn(GLuint, GLuint)
+            ),
+            draw_arrays_instanced: gl!(
+                "glDrawArraysInstanced",
+                unsafe extern "system" fn(GLenum, GLint, GLsizei, GLsizei)
+            ),
+            draw_elements_instanced_base_vertex: gl!(
+                "glDrawElementsInstancedBaseVertex",
+                unsafe extern "system" fn(GLenum, GLsizei, GLenum, *const c_void, GLsizei, GLint)
+            ),
+            gen_framebuffers: gl!(
+                "glGenFramebuffers",
+                unsafe extern "system" fn(GLsizei, *mut GLuint)
+            ),
+            delete_framebuffers: gl!(
+                "glDeleteFramebuffers",
+                unsafe extern "system" fn(GLsizei, *const GLuint)
+            ),
+            bind_framebuffer: gl!(
+                "glBindFramebuffer",
+                unsafe extern "system" fn(GLenum, GLuint)
+            ),
+            framebuffer_texture: gl!(
+                "glFramebufferTexture",
+                unsafe extern "system" fn(GLenum, GLenum, GLuint, GLint)
+            ),
+            framebuffer_texture_layer: gl!(
+                "glFramebufferTextureLayer",
+                unsafe extern "system" fn(GLenum, GLenum, GLuint, GLint, GLint)
+            ),
+            check_framebuffer_status: gl!(
+                "glCheckFramebufferStatus",
+                unsafe extern "system" fn(GLenum) -> GLenum
+            ),
+            draw_buffers: gl!(
+                "glDrawBuffers",
+                unsafe extern "system" fn(GLsizei, *const GLenum)
+            ),
             read_buffer: gl!("glReadBuffer", unsafe extern "system" fn(GLenum)),
-            blit_framebuffer: gl!("glBlitFramebuffer", unsafe extern "system" fn(GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLbitfield, GLenum)),
-            read_pixels: gl!("glReadPixels", unsafe extern "system" fn(GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, *mut c_void)),
+            blit_framebuffer: gl!(
+                "glBlitFramebuffer",
+                unsafe extern "system" fn(
+                    GLint,
+                    GLint,
+                    GLint,
+                    GLint,
+                    GLint,
+                    GLint,
+                    GLint,
+                    GLint,
+                    GLbitfield,
+                    GLenum,
+                )
+            ),
+            read_pixels: gl!(
+                "glReadPixels",
+                unsafe extern "system" fn(
+                    GLint,
+                    GLint,
+                    GLsizei,
+                    GLsizei,
+                    GLenum,
+                    GLenum,
+                    *mut c_void,
+                )
+            ),
             flush: gl!("glFlush", unsafe extern "system" fn()),
         })
     }

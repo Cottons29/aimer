@@ -19,8 +19,16 @@ impl Widget for Layout {
         let rows: Vec<aimer_widget::AnyWidget> = (0..ROWS)
             .map(|_| {
                 Button::new()
-                    .hover_decoration(aimer_style::BoxDecoration::new().border_radius(8).background_color(Color::Rgb(200, 100, 80)))
-                    .decoration(aimer_style::BoxDecoration::new().border_radius(8).background_color(Color::Transparent))
+                    .hover_decoration(
+                        aimer_style::BoxDecoration::new()
+                            .border_radius(8)
+                            .background_color(Color::Rgb(200, 100, 80)),
+                    )
+                    .decoration(
+                        aimer_style::BoxDecoration::new()
+                            .border_radius(8)
+                            .background_color(Color::Transparent),
+                    )
                     .on_press(|| {})
                     .child(SizedBox::new().height(Dimension::Px(35.0)))
                     .boxed()
@@ -42,10 +50,19 @@ impl Widget for Layout {
                         aimer_container::Container::new()
                             .width(Dimension::Px(WIDTH))
                             .padding(aimer_style::LayoutSpacing::horizontal(12.into()))
-                            .child(Scrollable::new().child(Column::new().gaps(aimer_style::LayoutSpacing::all(4)).children(rows))),
+                            .child(
+                                Scrollable::new().child(
+                                    Column::new()
+                                        .gaps(aimer_style::LayoutSpacing::all(4))
+                                        .children(rows),
+                                ),
+                            ),
                     )
                     .boxed(),
-                SizedBox::new().width(Dimension::Px(300.0)).height(Dimension::Px(400.0)).boxed(),
+                SizedBox::new()
+                    .width(Dimension::Px(300.0))
+                    .height(Dimension::Px(400.0))
+                    .boxed(),
             ])
             .to_element(ctx)
     }
@@ -54,7 +71,12 @@ impl Widget for Layout {
 impl aimer_widget::PortableWidget for Layout {}
 
 fn hover_fills<W: Widget + 'static>(app: &HeadlessAimerApp<W>) -> usize {
-    fn walk<W: Widget + 'static>(app: &HeadlessAimerApp<W>, element: &dyn Element, hover: &str, out: &mut usize) {
+    fn walk<W: Widget + 'static>(
+        app: &HeadlessAimerApp<W>,
+        element: &dyn Element,
+        hover: &str,
+        out: &mut usize,
+    ) {
         if let Some(node) = app.app.render_node_for_element(element.id())
             && let Ok(snapshot) = app.app.render_tree().draw_list_snapshot(node)
         {
@@ -70,13 +92,19 @@ fn hover_fills<W: Widget + 'static>(app: &HeadlessAimerApp<W>) -> usize {
     }
     let hover: aimer_cupid::utilities::Color = Color::Rgb(200, 100, 80).into();
     let mut out = 0;
-    walk(app, app.app.widget_root.as_ref().unwrap().as_ref(), &format!("{hover:?}"), &mut out);
+    walk(
+        app,
+        app.app.widget_root.as_ref().unwrap().as_ref(),
+        &format!("{hover:?}"),
+        &mut out,
+    );
     out
 }
 
 fn move_to<W: Widget + 'static>(app: &mut HeadlessAimerApp<W>, x: f64, y: f64) {
     app.send_window_event(WindowEvent::CursorMoved {
-        device_id: DeviceId::dummy(), position: PhysicalPosition::new(x, y),
+        device_id: DeviceId::dummy(),
+        position: PhysicalPosition::new(x, y),
     });
     app.pump_frames(2);
 }
@@ -84,7 +112,10 @@ fn move_to<W: Widget + 'static>(app: &mut HeadlessAimerApp<W>, x: f64, y: f64) {
 fn run(exit_path: &[(f64, f64)]) -> usize {
     let mut app = AimerApp::start_headless_with(
         Layout,
-        HeadlessOptions { size: PhysicalSize::new(600, 400), scale_factor: 1.0 },
+        HeadlessOptions {
+            size: PhysicalSize::new(600, 400),
+            scale_factor: 1.0,
+        },
     );
     move_to(&mut app, 500.0, 200.0);
     app.pump_frames(3);
@@ -104,21 +135,43 @@ fn run(exit_path: &[(f64, f64)]) -> usize {
 
 #[test]
 fn rows_are_not_left_hovered_after_sliding_into_the_grab_band() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    let left = run(&[(200.0, 300.0), (240.0, 300.0), (246.0, 300.0), (252.0, 300.0), (258.0, 300.0), (400.0, 300.0)]);
-    assert_eq!(left, 0, "rows are still painted hovered after the pointer crossed the grab band into the pane");
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let left = run(&[
+        (200.0, 300.0),
+        (240.0, 300.0),
+        (246.0, 300.0),
+        (252.0, 300.0),
+        (258.0, 300.0),
+        (400.0, 300.0),
+    ]);
+    assert_eq!(
+        left, 0,
+        "rows are still painted hovered after the pointer crossed the grab band into the pane"
+    );
 }
 
 #[test]
 fn rows_are_not_left_hovered_after_stopping_in_the_grab_band() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     let left = run(&[(200.0, 300.0), (240.0, 300.0), (246.0, 300.0)]);
-    assert_eq!(left, 0, "rows are still painted hovered while the pointer rests in the grab band");
+    assert_eq!(
+        left, 0,
+        "rows are still painted hovered while the pointer rests in the grab band"
+    );
 }
 
 #[test]
 fn rows_are_not_left_hovered_after_leaving_the_panel_far_away() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     let left = run(&[(500.0, 300.0)]);
-    assert_eq!(left, 0, "rows are still painted hovered after the pointer left the panel");
+    assert_eq!(
+        left, 0,
+        "rows are still painted hovered after the pointer left the panel"
+    );
 }

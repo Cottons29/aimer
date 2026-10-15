@@ -115,9 +115,11 @@ impl SvgGradient {
                 transform,
                 stops,
                 ..
-            } => [*x1, *y1, *x2, *y2].into_iter().all(f32::is_finite)
-                && transform.is_finite()
-                && stops.iter().all(|stop| stop.is_finite()),
+            } => {
+                [*x1, *y1, *x2, *y2].into_iter().all(f32::is_finite)
+                    && transform.is_finite()
+                    && stops.iter().all(|stop| stop.is_finite())
+            }
             Self::Radial {
                 cx,
                 cy,
@@ -128,11 +130,13 @@ impl SvgGradient {
                 transform,
                 stops,
                 ..
-            } => [*cx, *cy, *radius, *fx, *fy, *focal_radius]
-                .into_iter()
-                .all(f32::is_finite)
-                && transform.is_finite()
-                && stops.iter().all(|stop| stop.is_finite()),
+            } => {
+                [*cx, *cy, *radius, *fx, *fy, *focal_radius]
+                    .into_iter()
+                    .all(f32::is_finite)
+                    && transform.is_finite()
+                    && stops.iter().all(|stop| stop.is_finite())
+            }
         }
     }
 
@@ -147,9 +151,12 @@ impl SvgGradient {
     /// Returns the normalized spread-adjusted gradient coordinate at a point.
     pub fn position_at(&self, x: f32, y: f32, bounds: [f32; 4]) -> Option<f32> {
         let (transform, units) = match self {
-            Self::Linear { transform, units, .. } | Self::Radial { transform, units, .. } => {
-                (*transform, *units)
+            Self::Linear {
+                transform, units, ..
             }
+            | Self::Radial {
+                transform, units, ..
+            } => (*transform, *units),
         };
         let (mut x, mut y) = match units {
             SvgGradientUnits::UserSpaceOnUse => (x, y),
@@ -251,8 +258,7 @@ fn radial_position(
     let center_delta = [cx - fx, cy - fy];
     let point_delta = [x - fx, y - fy];
     let radius_delta = radius - focal_radius;
-    let a = center_delta[0] * center_delta[0]
-        + center_delta[1] * center_delta[1]
+    let a = center_delta[0] * center_delta[0] + center_delta[1] * center_delta[1]
         - radius_delta * radius_delta;
     let b = -2.0
         * (point_delta[0] * center_delta[0]

@@ -7,9 +7,9 @@ use aimer_widget::base::BuildContext;
 use aimer_widget::{AnyElement, Widget};
 
 use super::{
-    Calendar, CalendarNavigation, ColorChannel, Date, DateTime, DateTimePicker,
-    DateTimePickerPolicy, DateSelection, TimeOfDay, TimeZonePolicy, CALENDAR_HEADER,
-    CALENDAR_WEEKDAYS, PICKER_FIELD_HEIGHT, PICKER_FOOTER_HEIGHT,
+    CALENDAR_HEADER, CALENDAR_WEEKDAYS, Calendar, CalendarNavigation, ColorChannel, Date,
+    DateSelection, DateTime, DateTimePicker, DateTimePickerPolicy, PICKER_FIELD_HEIGHT,
+    PICKER_FOOTER_HEIGHT, TimeOfDay, TimeZonePolicy,
 };
 use crate::Rgba;
 use crate::TimePicker;
@@ -119,7 +119,10 @@ pub(super) fn calendar_date_at(
     }
     let column = (local_x / cell_width).floor() as usize;
     let row = ((local_y - cells_top) / cell_height).floor() as usize;
-    calendar.cells().get(row * 7 + column).map(|cell| cell.date())
+    calendar
+        .cells()
+        .get(row * 7 + column)
+        .map(|cell| cell.date())
 }
 
 pub(super) fn selection_label(selection: DateSelection) -> String {
@@ -152,7 +155,12 @@ pub(super) fn format_datetime(value: DateTime) -> String {
 
 pub(super) fn format_time(time: TimeOfDay, use_24_hours: bool) -> String {
     if use_24_hours {
-        format!("{:02}:{:02}:{:02}", time.hour(), time.minute(), time.second())
+        format!(
+            "{:02}:{:02}:{:02}",
+            time.hour(),
+            time.minute(),
+            time.second()
+        )
     } else {
         format!(
             "{:02}:{:02}:{:02} {}",
@@ -170,5 +178,11 @@ fn hour12(hour: u8) -> u8 {
 }
 
 pub(super) fn format_rgba(value: Rgba) -> String {
-    format!("#{:02X}{:02X}{:02X}{:02X}", value.red(), value.green(), value.blue(), value.alpha())
+    format!(
+        "#{:02X}{:02X}{:02X}{:02X}",
+        value.red(),
+        value.green(),
+        value.blue(),
+        value.alpha()
+    )
 }

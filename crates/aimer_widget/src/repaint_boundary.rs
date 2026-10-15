@@ -230,6 +230,14 @@ impl EventElement for RepaintBoundaryTarget {
     fn has_overlapping_hit_targets(&self) -> bool {
         self.child.has_overlapping_hit_targets()
     }
+
+    fn occludes_pointer_at(&self, pos: Vec2d) -> bool {
+        self.child.occludes_pointer_at(pos)
+    }
+
+    fn occlusion_children_at<'a>(&'a self, pos: Vec2d, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        self.child.occlusion_children_at(pos, visitor);
+    }
 }
 
 impl LayoutElement for RepaintBoundaryTarget {

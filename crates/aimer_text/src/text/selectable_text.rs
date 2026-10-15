@@ -1,8 +1,8 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use aimer_attribute::ResolvedSize;
 use aimer_attribute::Bounds;
+use aimer_attribute::ResolvedSize;
 use aimer_events::element::ElementEvent;
 use aimer_events::pointer::{PointerButton, PointerSource};
 use aimer_style::{LineHeight, TextAlign, TextStyle};
@@ -13,14 +13,12 @@ use aimer_widget::{
 };
 
 use crate::paragraph::{Paragraph, PreparedLayout, geometry};
-use crate::selection::TextHitRegion;
 use crate::selection::SelectionPoint;
+use crate::selection::TextHitRegion;
 use crate::selection::cursor::HoverCursor;
 use crate::selection::selectable::{Selectable, SelectionBinding, TextGeometry};
 use crate::selection::session::{SelectionSession, SelectionSlot};
-use crate::selection::touch_hold::{
-    TouchHold, TouchHoldGate, enter_hold, press_touch,
-};
+use crate::selection::touch_hold::{TouchHold, TouchHoldGate, enter_hold, press_touch};
 use crate::selection::ui;
 use crate::text_span::ResolvedTextSpan;
 
@@ -205,7 +203,9 @@ impl Drawable for RawSelectableText {
     }
 
     #[inline]
-    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+    fn retained_v2_interaction_disagreement(
+        &self,
+    ) -> Option<aimer_widget::InteractionDisagreement> {
         self.geometry().bounds.disagreement("RawSelectableText")
     }
 
@@ -234,7 +234,10 @@ impl Drawable for RawSelectableText {
         let outsets = self
             .paragraph
             .retained_v2_paint_outsets(&data.layout, data.scale);
-        outsets.iter().any(|outset| *outset > 0.0).then_some(outsets)
+        outsets
+            .iter()
+            .any(|outset| *outset > 0.0)
+            .then_some(outsets)
     }
 
     fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
@@ -265,13 +268,12 @@ impl Drawable for RawSelectableText {
                 [0.0; 4],
             );
         }
-        self.paragraph
-            .record_retained_v2_backgrounds(
-                &canvas,
-                &data.layout,
-                data.scale,
-                origin_offset,
-            );
+        self.paragraph.record_retained_v2_backgrounds(
+            &canvas,
+            &data.layout,
+            data.scale,
+            origin_offset,
+        );
         let (red, green, blue, alpha) = self.selection_color.to_rgba();
         if let Some(layout) = data.layout.aimer_interaction.as_ref() {
             for rect in layout.selection_rects(selected_range.clone()) {
@@ -286,11 +288,9 @@ impl Drawable for RawSelectableText {
                 );
             }
         } else {
-            for rect in geometry::selection_runs(
-                &data.layout,
-                selected_range.clone(),
-                ctx.visible_rect,
-            ) {
+            for rect in
+                geometry::selection_runs(&data.layout, selected_range.clone(), ctx.visible_rect)
+            {
                 canvas.fill_rect(
                     aimer_cupid::utilities::Rect::new(
                         rect.x / data.scale + origin_offset.x,
@@ -400,9 +400,9 @@ impl EventElement for RawSelectableText {
         let over_glyphs = event
             .pointer()
             .is_some_and(|info| geometry.hits_glyph(info.x(), info.y()));
-        let cursor_claimed = self
-            .hover_cursor
-            .apply(geometry.window(), event, true, false, over_glyphs);
+        let cursor_claimed =
+            self.hover_cursor
+                .apply(geometry.window(), event, true, false, over_glyphs);
 
         match event {
             ElementEvent::PointerDown(info) => {

@@ -9,6 +9,7 @@ use aimer_attribute::BoxConstraint;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_canvas::{CanvasContext, FrameCanvas};
+use aimer_color::prelude::Color;
 use aimer_cupid::draw_cmd_v2::CurrentBuildContext;
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::Handle;
@@ -107,6 +108,7 @@ pub struct BuildContextSnapshot {
     cursor_pos: Vec2d,
     box_constraint: BoxConstraint,
     visible_rect: Option<(f32, f32, f32, f32)>,
+    paint_background: Color,
     window: WindowHandle,
     async_handle: Handle,
     inherited_states: InheritedStates,
@@ -128,6 +130,7 @@ impl BuildContextSnapshot {
             cursor_pos: self.cursor_pos,
             box_constraint: self.box_constraint,
             visible_rect: self.visible_rect,
+            paint_background: self.paint_background,
             window: self.window.clone(),
             async_handle: self.async_handle.clone(),
             inherited_states: Rc::new(RefCell::new(self.inherited_states.clone())),
@@ -147,6 +150,9 @@ pub struct BuildContext<'a> {
     pub cursor_pos: Vec2d,
     pub box_constraint: BoxConstraint,
     pub visible_rect: Option<(f32, f32, f32, f32)>, // (x, y, width, height)
+    /// Declared solid surface behind this element; transparent means unknown.
+    #[doc(hidden)]
+    pub paint_background: Color,
     pub window: WindowHandle,
     #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
     pub async_handle: Handle,
@@ -156,6 +162,9 @@ pub struct BuildContext<'a> {
 }
 
 impl<'a> CanvasContext for BuildContext<'a> {
+    #[inline]
+    fn paint_background(&self) -> Color { self.paint_background }
+
     fn current_canvas_context(&self) -> CurrentBuildContext {
         self.get_state::<CurrentLocalV2PaintContext>()
             .map(|context| context.0.clone())
@@ -217,6 +226,24 @@ struct CurrentBuildConsumer(Rc<BuildConsumer>);
 #[derive(Clone)]
 struct CurrentLocalV2PaintContext(CurrentBuildContext);
 
+/// A retained render node that can report where it currently is.
+///
+/// It stays valid after the frame that produced it, so a registry can hold one
+/// and answer "where is this element now?" when a navigation starts, however
+/// the page has scrolled since.
+#[derive(Clone)]
+pub struct RetainedNodeHandle(CurrentBuildContext);
+
+impl RetainedNodeHandle {
+    /// Returns the node's `(x, y, width, height)` in logical pixels from the
+    /// window's top-left corner, or `None` once the node has left the tree.
+    pub fn world_bounds(&self) -> Option<(f32, f32, f32, f32)> {
+        self.0
+            .world_bounds()
+            .map(|rect| (rect.x, rect.y, rect.width, rect.height))
+    }
+}
+
 struct StateScopeGuard {
     states: Rc<RefCell<InheritedStates>>,
     type_id: TypeId,
@@ -267,6 +294,7 @@ impl<'a> BuildContext<'a> {
             cursor_pos,
             box_constraint: BoxConstraint::default(),
             visible_rect: None,
+            paint_background: Color::Transparent,
             window,
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
             async_handle,
@@ -377,6 +405,7 @@ impl<'a> BuildContext<'a> {
             cursor_pos: Vec2d::default(),
             box_constraint: BoxConstraint::default(),
             visible_rect: None,
+            paint_background: Color::Transparent,
             window,
             #[cfg(not(target_arch = "wasm32"))]
             async_handle: BuildAsyncHandle::unavailable(),
@@ -451,6 +480,7 @@ impl<'a> BuildContext<'a> {
             cursor_pos: self.cursor_pos,
             box_constraint: self.box_constraint,
             visible_rect: self.visible_rect,
+            paint_background: self.paint_background,
             window: self.window.clone(),
             async_handle: self.async_handle.clone(),
             inherited_states: self.inherited_states.borrow().clone(),
@@ -483,6 +513,42 @@ impl<'a> BuildContext<'a> {
                     .0
                     .set_child_presentation_at(child_index, transform, opacity)
             })
+    }
+
+    /// Updates one direct retained child's own clip and corner radii during
+    /// local v2 state synchronization.
+    ///
+    /// `clip` is `(x, y, width, height)` local to the child, so it scales with
+    /// the child's presentation transform. Unchanged values record no damage.
+    #[doc(hidden)]
+    pub fn set_local_v2_child_clip_at(
+        &self,
+        child_index: usize,
+        clip: Option<(f32, f32, f32, f32)>,
+        radius: [f32; 4],
+    ) -> bool {
+        let clip = clip.map(|(x, y, width, height)| aimer_cupid::draw_cmd_v2::Rect::new(x, y, width, height));
+        self.get_state::<CurrentLocalV2PaintContext>()
+            .is_some_and(|context| context.0.set_child_clip_at(child_index, clip, radius))
+    }
+
+    /// Returns a handle to the render node being synchronized, from which its
+    /// on-screen bounds can be read later.
+    ///
+    /// Only available during local v2 state synchronization of an element that
+    /// paints locally.
+    #[doc(hidden)]
+    pub fn local_v2_node_handle(&self) -> Option<RetainedNodeHandle> {
+        self.get_state::<CurrentLocalV2PaintContext>()
+            .map(|context| RetainedNodeHandle(context.0.clone()))
+    }
+
+    /// Allows the current render node to escape all ancestor widget clips.
+    /// Descendant-owned clips remain local to those descendants.
+    #[doc(hidden)]
+    pub fn set_local_v2_clip_escape(&self, enabled: bool) -> bool {
+        self.get_state::<CurrentLocalV2PaintContext>()
+            .is_some_and(|context| context.0.set_clip_escape(enabled))
     }
 
     #[doc(hidden)]
@@ -693,6 +759,18 @@ mod tests {
             #[cfg(not(target_arch = "wasm32"))]
             dummy_async_handle(),
         )
+    }
+
+    #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
+    #[test]
+    fn paint_background_survives_cloning_and_animation_context_snapshots() {
+        let mut ctx = context();
+        assert_eq!(ctx.paint_background, Color::Transparent);
+        ctx.paint_background = Color::WHITE;
+        assert_eq!(ctx.clone().paint_background, Color::WHITE);
+        let snapshot = ctx.snapshot();
+        ctx.paint_background = Color::BLACK;
+        assert_eq!(snapshot.restore(ctx.canvas.clone()).paint_background, Color::WHITE);
     }
 
     #[cfg(feature = "portable-guest")]

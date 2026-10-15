@@ -492,6 +492,31 @@ pub trait EventElement: VisitorElement {
     fn has_overlapping_hit_targets(&self) -> bool {
         false
     }
+
+    /// Returns whether this element hides everything painted behind it at
+    /// `pos` from the pointer.
+    ///
+    /// `pos` is already known to lie within the element's bounds. A layered
+    /// parent such as a `Stack` asks this of the layers above a point, through
+    /// [`crate::pointer_occluded_at`], to decide whether the layers below it may
+    /// still see the pointer there. An element that paints a background over its
+    /// box answers `true`. The default is `false`, which leaves a pointer free to
+    /// reach whatever is behind.
+    #[inline]
+    fn occludes_pointer_at(&self, _pos: Vec2d) -> bool {
+        false
+    }
+
+    /// Visits the children that [`crate::pointer_occluded_at`] searches for an
+    /// occluder at `pos`.
+    ///
+    /// The default is the hit-test view, so a spatially indexed container keeps
+    /// the search as narrow as its routing. An element that routes its child by
+    /// hand and so hides it from that view should visit the child here.
+    #[inline]
+    fn occlusion_children_at<'a>(&'a self, pos: Vec2d, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        self.hit_test_children_at(pos, visitor);
+    }
 }
 
 #[cfg(test)]

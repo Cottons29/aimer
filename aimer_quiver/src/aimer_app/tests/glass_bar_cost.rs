@@ -31,7 +31,12 @@ impl StatefulWidget for Scene {
     type State = SceneState;
 
     fn create_state(self) -> SceneState {
-        SceneState { rows: self.rows, glass: self.glass, hovered: false, updater: self.updater }
+        SceneState {
+            rows: self.rows,
+            glass: self.glass,
+            hovered: false,
+            updater: self.updater,
+        }
     }
 }
 
@@ -59,29 +64,45 @@ impl State<Scene> for SceneState {
         let glass = self.glass;
         let rows: Vec<aimer_widget::AnyWidget> = (0..self.rows).map(|_| deep_row()).collect();
         aimer_space::Stack::new().children(vec![
-            aimer_space::Positioned::new().layer(3).top(0).box_child(aimer_animation::ImplicitAnimatedBuilder::new(
-                opacity,
-                Duration::from_millis(220),
-                aimer_animation::Curve::EaseInOut,
-                move |_opacity| {
-                    if glass {
-                        Glass::new().child(SizedBox::new().width(Dimension::Px(200.0)).height(Dimension::Px(30.0))).boxed()
-                    } else {
-                        aimer_container::Container::new()
-                            .color(Color::Rgb(60, 40, 40))
-                            .child(SizedBox::new().width(Dimension::Px(200.0)).height(Dimension::Px(30.0)))
-                            .boxed()
-                    }
-                },
-            )),
-            Scrollable::new().child(Column::new().children(rows)).boxed(),
+            aimer_space::Positioned::new().layer(3).top(0).box_child(
+                aimer_animation::ImplicitAnimatedBuilder::new(
+                    opacity,
+                    Duration::from_millis(220),
+                    aimer_animation::curves::EASE_IN_OUT,
+                    move |_opacity| {
+                        if glass {
+                            Glass::new()
+                                .child(
+                                    SizedBox::new()
+                                        .width(Dimension::Px(200.0))
+                                        .height(Dimension::Px(30.0)),
+                                )
+                                .boxed()
+                        } else {
+                            aimer_container::Container::new()
+                                .color(Color::Rgb(60, 40, 40))
+                                .child(
+                                    SizedBox::new()
+                                        .width(Dimension::Px(200.0))
+                                        .height(Dimension::Px(30.0)),
+                                )
+                                .boxed()
+                        }
+                    },
+                ),
+            ),
+            Scrollable::new()
+                .child(Column::new().children(rows))
+                .boxed(),
         ])
     }
 }
 
 impl Widget for Scene {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
-        StatefulElement::new_with_name(self, ctx, "GlassBarScene", None).0.boxed()
+        StatefulElement::new_with_name(self, ctx, "GlassBarScene", None)
+            .0
+            .boxed()
     }
 }
 
@@ -92,11 +113,21 @@ impl aimer_widget::PortableWidget for Scene {}
 fn fade_frames(rows: usize, glass: bool) -> (Vec<u64>, u64) {
     let updater = Rc::new(RefCell::new(None));
     let mut app = AimerApp::start_headless_with(
-        Scene { rows, glass, updater: updater.clone() },
-        HeadlessOptions { size: PhysicalSize::new(200, 300), scale_factor: 1.0 },
+        Scene {
+            rows,
+            glass,
+            updater: updater.clone(),
+        },
+        HeadlessOptions {
+            size: PhysicalSize::new(200, 300),
+            scale_factor: 1.0,
+        },
     );
     app.pump_frames(4);
-    updater.borrow().expect("initialised").set_state(|state| state.hovered = true);
+    updater
+        .borrow()
+        .expect("initialised")
+        .set_state(|state| state.hovered = true);
     let full_before = app.app.render_tree.sync_counts.full;
     let mut visits = Vec::new();
     for _ in 0..14 {
@@ -110,14 +141,22 @@ fn fade_frames(rows: usize, glass: bool) -> (Vec<u64>, u64) {
 
 #[test]
 fn a_fading_bar_does_not_walk_the_page_under_it() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     for glass in [false, true] {
         let (few, _) = fade_frames(20, glass);
         let (many, _) = fade_frames(200, glass);
         // The first frames of an animation legitimately index the tree. After
         // that a frame descends the path to the animation and nothing else, so
         // a page ten times as long costs the same.
-        let settled = |frames: &[u64]| frames[6..frames.len() - 3].iter().copied().max().unwrap_or(0);
+        let settled = |frames: &[u64]| {
+            frames[6..frames.len() - 3]
+                .iter()
+                .copied()
+                .max()
+                .unwrap_or(0)
+        };
         assert!(
             settled(&many) <= settled(&few) + 4,
             "glass={glass}: a frame of the fade descended {} elements over 200 rows and {} over 20; per frame: {many:?} / {few:?}",

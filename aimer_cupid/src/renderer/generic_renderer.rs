@@ -1,3 +1,7 @@
+#[path = "generic_renderer/material_detection.rs"]
+mod material_detection;
+use material_detection::{draw_list_uses_material, render_plan_uses_material};
+
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -11,24 +15,26 @@ use crate::backend::{
     GpuBackend, LoadOp, Operations, RenderPassColorAttachment, RenderPassDescriptor, StoreOp,
 };
 use crate::compositor::{CompositorScene, CompositorStats, RetainedSceneTree};
-use crate::custom_pipeline::{CustomPipelineGeneric, CustomPipelineSlotGeneric, RenderContextGeneric};
+use crate::custom_pipeline::{
+    CustomPipelineGeneric, CustomPipelineSlotGeneric, RenderContextGeneric,
+};
 use crate::damage_region::DamageRect;
 use crate::draw_cmd::{DrawCommand, DrawList, RetainedLayerContent};
 use crate::frame::{
     FramePacket, FrameRenderMetadata, RetainedRenderOperationKind, RetainedRenderPlan,
     RetainedV2Item,
 };
+use crate::persistent_target::{
+    PersistentTargetGeneric, PersistentTargetKey, TargetEnsureResult, TargetValidity,
+};
 use crate::pipeline::frame_composite::FrameCompositePipeline;
 use crate::pipeline::image_pipeline::{ImageInstance, ImagePipeline};
-use crate::pipeline::material::{MaterialPipeline, MATERIAL_PIPELINE_NAME};
+use crate::pipeline::material::{MATERIAL_PIPELINE_NAME, MaterialPipeline};
 use crate::pipeline::rect_pipeline::{RectInstance, RectPipeline};
 use crate::pipeline::svg_pipeline::SvgPipeline;
 use crate::pipeline::text_pipeline::{
     RichTextSpan, TextDecorationDraw, TextDrawRequest, TextOverflowMode, TextPipelineV2,
     text_layout::{TextHorizontalAlign, TextWritingMode},
-};
-use crate::persistent_target::{
-    PersistentTargetGeneric, PersistentTargetKey, TargetEnsureResult, TargetValidity,
 };
 use crate::utilities::{Mat3, Rect, Rgba8, TextureId};
 
@@ -140,13 +146,28 @@ pub struct Renderer<B: GpuBackend = crate::backend::DefaultGpuBackend> {
 }
 
 enum ResolvedCommand<B: GpuBackend> {
-    Rect { instance: RectInstance, clear: bool },
-    Image { texture_id: TextureId, instance: ImageInstance },
-    RetainedLayer { bind_group: B::BindGroup, instance: ImageInstance },
+    Rect {
+        instance: RectInstance,
+        clear: bool,
+    },
+    Image {
+        texture_id: TextureId,
+        instance: ImageInstance,
+    },
+    RetainedLayer {
+        bind_group: B::BindGroup,
+        instance: ImageInstance,
+    },
     Text(usize),
-    TextDecoration { start: usize, end: usize },
+    TextDecoration {
+        start: usize,
+        end: usize,
+    },
     Svg(usize),
-    Custom { pipeline_index: usize, command_index: Option<usize> },
+    Custom {
+        pipeline_index: usize,
+        command_index: Option<usize>,
+    },
 }
 
 struct RetainedLayerGeneric<B: GpuBackend> {
@@ -176,7 +197,6 @@ struct MultisampleTargetGeneric<B: GpuBackend> {
     format: B::TextureFormat,
     bytes: u64,
 }
-
 
 struct OpacityGroupTargetGeneric<B: GpuBackend> {
     target: PersistentTargetGeneric<B>,
@@ -251,10 +271,10 @@ impl<B: GpuBackend> Renderer<B> {
         initialize_all: bool,
     ) -> Self {
         let rect_pipeline = RectPipeline::<B>::new(backend, format, antialiasing);
-        let image_pipeline = initialize_all
-            .then(|| ImagePipeline::<B>::new(backend, format, antialiasing));
-        let text_pipeline = initialize_all
-            .then(|| TextPipelineV2::<B>::new(backend, format, antialiasing));
+        let image_pipeline =
+            initialize_all.then(|| ImagePipeline::<B>::new(backend, format, antialiasing));
+        let text_pipeline =
+            initialize_all.then(|| TextPipelineV2::<B>::new(backend, format, antialiasing));
         let svg_pipeline =
             initialize_all.then(|| SvgPipeline::<B>::new(backend, format, antialiasing));
         let frame_composite_pipeline =
@@ -373,8 +393,7 @@ impl<B: GpuBackend> Renderer<B> {
 
     /// Prepares a common ASCII set at each requested font size.
     pub fn warm_glyph_set(&mut self, backend: &B, font_sizes: &[f32]) {
-        const COMMON_GLYPH_SET: &str =
-            " 0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
+        const COMMON_GLYPH_SET: &str = " 0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
         for &font_size in font_sizes {
             self.warm_text(backend, COMMON_GLYPH_SET, font_size, 0.0);
         }
@@ -420,13 +439,7 @@ impl<B: GpuBackend> Renderer<B> {
     }
 
     /// Uploads RGBA8 image data and returns the texture id used by draw commands.
-    pub fn upload_image(
-        &mut self,
-        backend: &B,
-        width: u32,
-        height: u32,
-        data: &[u8],
-    ) -> TextureId {
+    pub fn upload_image(&mut self, backend: &B, width: u32, height: u32, data: &[u8]) -> TextureId {
         self.image_pipeline
             .as_mut()
             .expect("image uploads require the image pipeline")
@@ -508,22 +521,16 @@ impl<B: GpuBackend> Renderer<B> {
         self.prepare_retained_layers(backend, draw_list, is_srgb);
         dx12_stage_finish!(retained_started, "retained layer preparation");
 
-        let retained_plan = render_plan.is_some_and(|plan| {
-            render_plan_uses_material(plan, width, height)
-        });
+        let retained_plan =
+            render_plan.is_some_and(|plan| render_plan_uses_material(plan, width, height));
         if source_texture.is_none() && (draw_list_uses_material(draw_list) || retained_plan) {
-            let key = PersistentTargetKey::new(
-                width,
-                height,
-                1.0,
-                0,
-                0,
-                0,
-                TargetValidity::Valid,
-            );
+            let key = PersistentTargetKey::new(width, height, 1.0, 0, 0, 0, TargetValidity::Valid);
             let material_target_started = dx12_stage_start!(startup_timing);
             let result = self.material_target.ensure(backend, self.format, key);
-            if matches!(result, TargetEnsureResult::Created | TargetEnsureResult::Recreated) {
+            if matches!(
+                result,
+                TargetEnsureResult::Created | TargetEnsureResult::Recreated
+            ) {
                 let target_view = self
                     .material_target
                     .view()
@@ -594,7 +601,10 @@ impl<B: GpuBackend> Renderer<B> {
         }
 
         let (render_view, resolve_target) = if self.antialiasing.uses_multisampling() {
-            (self.ensure_multisample_target(backend, width, height), Some(view))
+            (
+                self.ensure_multisample_target(backend, width, height),
+                Some(view),
+            )
         } else {
             (view.clone(), None)
         };
@@ -648,7 +658,12 @@ impl<B: GpuBackend> Renderer<B> {
         dx12_stage_finish!(reclaim_started, "retained layer reclamation");
     }
 
-    fn ensure_multisample_target(&mut self, backend: &B, width: u32, height: u32) -> B::TextureView {
+    fn ensure_multisample_target(
+        &mut self,
+        backend: &B,
+        width: u32,
+        height: u32,
+    ) -> B::TextureView {
         let sample_count = self.antialiasing.sample_count();
         let recreate = self.multisample_target.as_ref().is_none_or(|target| {
             target.width != width
@@ -773,16 +788,7 @@ impl<B: GpuBackend> Renderer<B> {
         metadata: &FrameRenderMetadata,
     ) {
         self.render_with_metadata(
-            backend,
-            view,
-            None,
-            width,
-            height,
-            is_srgb,
-            draw_list,
-            metadata,
-            None,
-            None,
+            backend, view, None, width, height, is_srgb, draw_list, metadata, None, None,
         );
     }
 
@@ -822,18 +828,19 @@ impl<B: GpuBackend> Renderer<B> {
             metadata.resource_generation(),
             TargetValidity::Valid,
         );
-        let (scene_diff, reused_nodes) = if let Some(scene) = scene.filter(|scene| scene.is_recorded()) {
-            if self.scene_history_key != Some(history_key) {
+        let (scene_diff, reused_nodes) =
+            if let Some(scene) = scene.filter(|scene| scene.is_recorded()) {
+                if self.scene_history_key != Some(history_key) {
+                    self.scene_tree.clear();
+                }
+                let commit = self.scene_tree.commit(scene);
+                let reused_nodes = commit.reused_nodes();
+                (Some(commit.into_diff()), reused_nodes)
+            } else {
                 self.scene_tree.clear();
-            }
-            let commit = self.scene_tree.commit(scene);
-            let reused_nodes = commit.reused_nodes();
-            (Some(commit.into_diff()), reused_nodes)
-        } else {
-            self.scene_tree.clear();
-            self.scene_history_key = None;
-            (None, 0)
-        };
+                self.scene_history_key = None;
+                (None, 0)
+            };
 
         let mut damage = metadata.damage().clone();
         let mut scene_changes = 0;
@@ -881,9 +888,8 @@ impl<B: GpuBackend> Renderer<B> {
             ..CompositorStats::default()
         };
 
-        let retained_plan_has_custom_pipeline = render_plan.is_some_and(|plan| {
-            render_plan_uses_custom_pipeline(plan, width, height)
-        });
+        let retained_plan_has_custom_pipeline =
+            render_plan.is_some_and(|plan| render_plan_uses_custom_pipeline(plan, width, height));
         let persistent_contract = source_texture.is_none()
             && !self.antialiasing.uses_multisampling()
             && !draw_list_uses_custom_pipeline(draw_list)
@@ -929,7 +935,10 @@ impl<B: GpuBackend> Renderer<B> {
             );
             return;
         }
-        if matches!(result, TargetEnsureResult::Created | TargetEnsureResult::Recreated) {
+        if matches!(
+            result,
+            TargetEnsureResult::Created | TargetEnsureResult::Recreated
+        ) {
             let target_view = self
                 .scene_target
                 .view()
@@ -941,7 +950,12 @@ impl<B: GpuBackend> Renderer<B> {
                     .create_bind_group(backend, target_view),
             );
         }
-        if matches!(result, TargetEnsureResult::Created | TargetEnsureResult::Recreated | TargetEnsureResult::ReusedInvalid) {
+        if matches!(
+            result,
+            TargetEnsureResult::Created
+                | TargetEnsureResult::Recreated
+                | TargetEnsureResult::ReusedInvalid
+        ) {
             damage.mark_full();
             self.compositor_stats.full_repaint = true;
             self.compositor_stats.damage_regions = damage.regions().len();
@@ -958,7 +972,12 @@ impl<B: GpuBackend> Renderer<B> {
                 self.clear_render_target(backend, &target_view, None, [0.0; 4]);
             } else if !damage.is_empty() {
                 let clear_texture = self.ensure_damage_clear_texture(backend, width, height);
-                self.clear_damage_regions(backend, &clear_texture, &target_texture, damage.regions());
+                self.clear_damage_regions(
+                    backend,
+                    &clear_texture,
+                    &target_texture,
+                    damage.regions(),
+                );
             }
             for region in damage.regions() {
                 if region.width == 0 || region.height == 0 {
@@ -1221,7 +1240,10 @@ impl<B: GpuBackend> Renderer<B> {
                     let group = groups
                         .pop()
                         .expect("validated opacity groups have matching begin operations");
-                    assert_eq!(group.element, element, "opacity group end matches its begin");
+                    assert_eq!(
+                        group.element, element,
+                        "opacity group end matches its begin"
+                    );
                     let Some(composite_region) =
                         opacity_group_region(region, &groups, group.bounds)
                     else {
@@ -1307,16 +1329,14 @@ impl<B: GpuBackend> Renderer<B> {
             || (root_view.clone(), root_resolve_target.cloned()),
             |group| (group.render_view.clone(), group.resolve_target.clone()),
         );
-        let (target_width, target_height, target_offset) = groups.last().map_or(
-            (width, height, (0, 0)),
-            |group| {
+        let (target_width, target_height, target_offset) =
+            groups.last().map_or((width, height, (0, 0)), |group| {
                 (
                     group.bounds.width,
                     group.bounds.height,
                     (group.bounds.x, group.bounds.y),
                 )
-            },
-        );
+            });
         let local_scissor = DamageRect::new(
             scissor.x - target_offset.0,
             scissor.y - target_offset.1,
@@ -1359,15 +1379,22 @@ impl<B: GpuBackend> Renderer<B> {
     ) -> ActiveOpacityGroup<B> {
         let width = bounds.width;
         let height = bounds.height;
-        assert!(width != 0 && height != 0, "opacity groups have nonempty bounds");
+        assert!(
+            width != 0 && height != 0,
+            "opacity groups have nonempty bounds"
+        );
         while self.opacity_group_targets.len() <= depth {
-            self.opacity_group_targets.push(OpacityGroupTargetGeneric::default());
+            self.opacity_group_targets
+                .push(OpacityGroupTargetGeneric::default());
         }
         let group_target = &mut self.opacity_group_targets[depth];
         let result = group_target
             .target
             .ensure(backend, self.format, key.with_size(width, height));
-        if matches!(result, TargetEnsureResult::Created | TargetEnsureResult::Recreated) {
+        if matches!(
+            result,
+            TargetEnsureResult::Created | TargetEnsureResult::Recreated
+        ) {
             group_target.multisample_target = None;
             let target_view = group_target
                 .target
@@ -1388,12 +1415,15 @@ impl<B: GpuBackend> Renderer<B> {
 
         let (render_view, resolve_target) = if self.antialiasing.uses_multisampling() {
             let sample_count = self.antialiasing.sample_count();
-            let recreate = group_target.multisample_target.as_ref().is_none_or(|target| {
-                target.width != width
-                    || target.height != height
-                    || target.sample_count != sample_count
-                    || target.format != self.format
-            });
+            let recreate = group_target
+                .multisample_target
+                .as_ref()
+                .is_none_or(|target| {
+                    target.width != width
+                        || target.height != height
+                        || target.sample_count != sample_count
+                        || target.format != self.format
+                });
             if recreate {
                 let texture = backend.create_texture(&crate::backend::TextureDescriptor {
                     label: Some("cupid opacity group multisample target".to_string()),
@@ -1404,10 +1434,8 @@ impl<B: GpuBackend> Renderer<B> {
                     format: self.format,
                     usage: vec![crate::backend::TextureUsage::RenderAttachment],
                 });
-                let view = backend.create_texture_view(
-                    &texture,
-                    "cupid opacity group multisample target view",
-                );
+                let view = backend
+                    .create_texture_view(&texture, "cupid opacity group multisample target view");
                 group_target.multisample_target = Some(MultisampleTargetGeneric {
                     _texture: texture,
                     view,
@@ -1508,11 +1536,7 @@ impl<B: GpuBackend> Renderer<B> {
         backend.submit(encoder);
     }
 
-    fn take_v2_command_list(
-        &mut self,
-        item: &RetainedV2Item,
-        scale: f32,
-    ) -> CachedV2CommandList {
+    fn take_v2_command_list(&mut self, item: &RetainedV2Item, scale: f32) -> CachedV2CommandList {
         let element = item.element.get();
         let scale_bits = scale.to_bits();
         let origin_bits = (item.origin.0.to_bits(), item.origin.1.to_bits());
@@ -1712,7 +1736,10 @@ impl<B: GpuBackend> Renderer<B> {
                     &self.decoration_requests,
                 );
         }
-        dx12_stage_finish!(text_started, "text shaping, glyph rasterization, and upload");
+        dx12_stage_finish!(
+            text_started,
+            "text shaping, glyph rasterization, and upload"
+        );
 
         let svg_started = dx12_stage_start!(startup_timing);
         if let Some(svg_pipeline) = self.svg_pipeline.as_mut() {
@@ -1778,15 +1805,15 @@ impl<B: GpuBackend> Renderer<B> {
                 scissor,
             );
             first_pass = false;
-            if let (Some(source_texture), Some(slot)) = (
-                source_texture,
-                self.custom_pipelines.get(pipeline_index),
-            ) {
+            if let (Some(source_texture), Some(slot)) =
+                (source_texture, self.custom_pipelines.get(pipeline_index))
+            {
                 slot.pipeline.capture_backdrop_command(
                     command_index,
                     backend,
                     &mut encoder,
                     source_texture,
+                    target_offset,
                     width,
                     height,
                 );
@@ -1914,7 +1941,10 @@ impl<B: GpuBackend> Renderer<B> {
                         rect_pipeline.push(*instance);
                     }
                 }
-                ResolvedCommand::Image { texture_id, instance } => {
+                ResolvedCommand::Image {
+                    texture_id,
+                    instance,
+                } => {
                     rect_pipeline.flush(pass);
                     if current_texture_id.is_some_and(|current| current != *texture_id) {
                         flush_image_batch(
@@ -1928,7 +1958,10 @@ impl<B: GpuBackend> Renderer<B> {
                     current_texture_id = Some(*texture_id);
                     image_batch.push(*instance);
                 }
-                ResolvedCommand::RetainedLayer { bind_group, instance } => {
+                ResolvedCommand::RetainedLayer {
+                    bind_group,
+                    instance,
+                } => {
                     rect_pipeline.flush(pass);
                     flush_image_batch(
                         backend,
@@ -1941,11 +1974,11 @@ impl<B: GpuBackend> Renderer<B> {
                         .as_mut()
                         .expect("retained layers require the image pipeline")
                         .draw_external_batch(
-                        backend,
-                        pass,
-                        bind_group,
-                        std::slice::from_ref(instance),
-                    );
+                            backend,
+                            pass,
+                            bind_group,
+                            std::slice::from_ref(instance),
+                        );
                 }
                 ResolvedCommand::Text(text_index) => {
                     rect_pipeline.flush(pass);
@@ -2043,8 +2076,7 @@ impl<B: GpuBackend> Renderer<B> {
         let mut current_italic = false;
         let mut current_language = None;
         let mut alpha_state = AlphaState::new();
-        let target_translation =
-            target_relative_transform(Mat3::identity(), target_offset);
+        let target_translation = target_relative_transform(Mat3::identity(), target_offset);
         let fallback_slices = [draw_list.commands()];
         let command_slices = command_slices.unwrap_or(&fallback_slices);
         for command in command_slices.iter().flat_map(|commands| commands.iter()) {
@@ -2062,24 +2094,20 @@ impl<B: GpuBackend> Renderer<B> {
                     }
                     alpha_state.restore();
                 }
-                DrawCommand::PushClip { rect, border_radius } => {
+                DrawCommand::PushClip {
+                    rect,
+                    border_radius,
+                } => {
                     let (x1, y1) = current_transform.transform_point(rect.x, rect.y);
                     let (x2, y2) = current_transform
                         .transform_point(rect.x + rect.width, rect.y + rect.height);
                     let (sx, _) = current_scales;
-                    let next = Rect::new(
-                        x1.min(x2),
-                        y1.min(y2),
-                        (x2 - x1).abs(),
-                        (y2 - y1).abs(),
-                    );
+                    let next = Rect::new(x1.min(x2), y1.min(y2), (x2 - x1).abs(), (y2 - y1).abs());
                     let effective = self.clip_stack.last().map_or(next, |parent| {
                         let left = next.x.max(parent.rect.x);
                         let top = next.y.max(parent.rect.y);
-                        let right = (next.x + next.width)
-                            .min(parent.rect.x + parent.rect.width);
-                        let bottom = (next.y + next.height)
-                            .min(parent.rect.y + parent.rect.height);
+                        let right = (next.x + next.width).min(parent.rect.x + parent.rect.width);
+                        let bottom = (next.y + next.height).min(parent.rect.y + parent.rect.height);
                         Rect::new(left, top, (right - left).max(0.0), (bottom - top).max(0.0))
                     });
                     let mut radii = *border_radius;
@@ -2174,12 +2202,10 @@ impl<B: GpuBackend> Renderer<B> {
                             color.to_array(),
                             alpha_state.current(),
                         )),
-                        bounds_width: bounds_width.unwrap_or(
-                            frame_size.0 as f32 - target_offset.0 as f32 - x,
-                        ),
-                        bounds_height: bounds_height.unwrap_or(
-                            frame_size.1 as f32 - target_offset.1 as f32 - y,
-                        ),
+                        bounds_width: bounds_width
+                            .unwrap_or(frame_size.0 as f32 - target_offset.0 as f32 - x),
+                        bounds_height: bounds_height
+                            .unwrap_or(frame_size.1 as f32 - target_offset.1 as f32 - y),
                         overflow: *overflow,
                         horizontal_align: *horizontal_align,
                         writing_mode: TextWritingMode::HorizontalTb,
@@ -2223,12 +2249,10 @@ impl<B: GpuBackend> Renderer<B> {
                             color.to_array(),
                             alpha_state.current(),
                         )),
-                        bounds_width: bounds_width.unwrap_or(
-                            frame_size.0 as f32 - target_offset.0 as f32 - x,
-                        ),
-                        bounds_height: bounds_height.unwrap_or(
-                            frame_size.1 as f32 - target_offset.1 as f32 - y,
-                        ),
+                        bounds_width: bounds_width
+                            .unwrap_or(frame_size.0 as f32 - target_offset.0 as f32 - x),
+                        bounds_height: bounds_height
+                            .unwrap_or(frame_size.1 as f32 - target_offset.1 as f32 - y),
                         overflow: *overflow,
                         horizontal_align: TextHorizontalAlign::Left,
                         writing_mode: TextWritingMode::HorizontalTb,
@@ -2394,13 +2418,7 @@ impl<B: GpuBackend> Renderer<B> {
                     self.image_pipeline
                         .as_mut()
                         .expect("image uploads require the image pipeline")
-                        .upload_if_absent(
-                        backend,
-                        *texture_id,
-                        *width,
-                        *height,
-                        bytes,
-                    );
+                        .upload_if_absent(backend, *texture_id, *width, *height, bytes);
                 }
                 DrawCommand::LoadImageWithId {
                     texture_id,
@@ -2411,13 +2429,7 @@ impl<B: GpuBackend> Renderer<B> {
                     .image_pipeline
                     .as_mut()
                     .expect("image uploads require the image pipeline")
-                    .upload_image_with_id(
-                        backend,
-                        *texture_id,
-                        *width,
-                        *height,
-                        bytes,
-                    ),
+                    .upload_image_with_id(backend, *texture_id, *width, *height, bytes),
                 DrawCommand::RemoveTexture { texture_id } => {
                     self.textures_to_remove.push(*texture_id);
                 }
@@ -2430,10 +2442,12 @@ impl<B: GpuBackend> Renderer<B> {
                     side_params,
                 } => {
                     let (sx, sy) = current_scales;
-                    let expand_x = shadow_params[2] + shadow_params[3].abs() + shadow_params[0].abs();
-                    let expand_y = shadow_params[2] + shadow_params[3].abs() + shadow_params[1].abs();
-                    let (x1, y1) = current_transform
-                        .transform_point(rect.x - expand_x, rect.y - expand_y);
+                    let expand_x =
+                        shadow_params[2] + shadow_params[3].abs() + shadow_params[0].abs();
+                    let expand_y =
+                        shadow_params[2] + shadow_params[3].abs() + shadow_params[1].abs();
+                    let (x1, y1) =
+                        current_transform.transform_point(rect.x - expand_x, rect.y - expand_y);
                     let (x2, y2) = current_transform.transform_point(
                         rect.x + rect.width + expand_x,
                         rect.y + rect.height + expand_y,
@@ -2480,11 +2494,8 @@ impl<B: GpuBackend> Renderer<B> {
                         && !self.material_pipeline_initialized
                     {
                         let material_pipeline_started = dx12_stage_start!(startup_timing);
-                        let mut pipeline = MaterialPipeline::<B>::new(
-                            backend,
-                            self.format,
-                            self.antialiasing,
-                        );
+                        let mut pipeline =
+                            MaterialPipeline::<B>::new(backend, self.format, self.antialiasing);
                         pipeline.begin_frame();
                         self.custom_pipelines
                             .insert(0, CustomPipelineSlotGeneric::new(pipeline));
@@ -2504,7 +2515,9 @@ impl<B: GpuBackend> Renderer<B> {
                     let command_index = if pipeline_name == MATERIAL_PIPELINE_NAME {
                         let request = data
                             .downcast_ref::<Vec<u8>>()
-                            .and_then(|bytes| crate::pipeline::material::MaterialRequest::decode(bytes).ok())
+                            .and_then(|bytes| {
+                                crate::pipeline::material::MaterialRequest::decode(bytes).ok()
+                            })
                             .map(|request| {
                                 resolve_material_request(
                                     request,
@@ -2600,8 +2613,10 @@ impl<B: GpuBackend> Renderer<B> {
         else {
             return RetainedLayerPreparation::Skipped;
         };
-        let entry = self.retained_layers.entry(layer_id).or_insert_with(|| {
-            RetainedLayerGeneric {
+        let entry = self
+            .retained_layers
+            .entry(layer_id)
+            .or_insert_with(|| RetainedLayerGeneric {
                 content: content.clone(),
                 target: PersistentTargetGeneric::default(),
                 bind_group: None,
@@ -2610,8 +2625,7 @@ impl<B: GpuBackend> Renderer<B> {
                 bytes: width as u64 * height as u64 * 4,
                 last_used_frame: self.frame_index,
                 is_srgb,
-            }
-        });
+            });
         if entry.width != width || entry.height != height || entry.is_srgb != is_srgb {
             entry.width = width;
             entry.height = height;
@@ -2624,9 +2638,13 @@ impl<B: GpuBackend> Renderer<B> {
             entry.target.invalidate();
         }
         entry.last_used_frame = self.frame_index;
-        let key = PersistentTargetKey::new(width, height, 1.0, layer_id, 0, 0, TargetValidity::Valid);
+        let key =
+            PersistentTargetKey::new(width, height, 1.0, layer_id, 0, 0, TargetValidity::Valid);
         let result = entry.target.ensure(backend, self.format, key);
-        if matches!(result, TargetEnsureResult::Created | TargetEnsureResult::Recreated) {
+        if matches!(
+            result,
+            TargetEnsureResult::Created | TargetEnsureResult::Recreated
+        ) {
             if let Some(target_view) = entry.target.view() {
                 entry.bind_group = Some(
                     self.image_pipeline
@@ -2686,7 +2704,8 @@ impl<B: GpuBackend> Renderer<B> {
         candidates.sort_unstable_by_key(|(_, last_used, _)| *last_used);
         for (id, last_used, bytes) in candidates {
             let idle = self.frame_index.saturating_sub(last_used);
-            if idle < RETAINED_LAYER_IDLE_FRAMES && total_bytes <= RETAINED_LAYER_CACHE_BUDGET_BYTES {
+            if idle < RETAINED_LAYER_IDLE_FRAMES && total_bytes <= RETAINED_LAYER_CACHE_BUDGET_BYTES
+            {
                 break;
             }
             if self.retained_layers.remove(&id).is_some() {
@@ -2757,12 +2776,6 @@ fn flush_image_batch<'pass, B: GpuBackend>(
     }
 }
 
-fn draw_list_uses_material(draw_list: &DrawList) -> bool {
-    draw_list.commands().iter().any(|command| {
-        matches!(command, DrawCommand::Custom { pipeline_name, .. } if pipeline_name == MATERIAL_PIPELINE_NAME)
-    })
-}
-
 fn draw_list_uses_custom_pipeline(draw_list: &DrawList) -> bool {
     draw_list
         .commands()
@@ -2773,28 +2786,11 @@ fn draw_list_uses_custom_pipeline(draw_list: &DrawList) -> bool {
 fn render_plan_uses_custom_pipeline(plan: &RetainedRenderPlan, width: u32, height: u32) -> bool {
     plan.operations_for_region(crate::damage_region::DamageRect::new(0, 0, width, height))
         .any(|operation| match &operation.kind {
-            crate::frame::RetainedRenderOperationKind::LocalV2(item) => item.commands.iter().any(
-                |command| {
+            crate::frame::RetainedRenderOperationKind::LocalV2(item) => {
+                item.commands.iter().any(|command| {
                     matches!(command, crate::draw_cmd_v2::DrawCommand::DrawCustom { .. })
-                },
-            ),
-            crate::frame::RetainedRenderOperationKind::OpacityGroupBegin { .. }
-            | crate::frame::RetainedRenderOperationKind::OpacityGroupEnd { .. } => false,
-        })
-}
-
-fn render_plan_uses_material(plan: &RetainedRenderPlan, width: u32, height: u32) -> bool {
-    plan.operations_for_region(crate::damage_region::DamageRect::new(0, 0, width, height))
-        .any(|operation| match &operation.kind {
-            crate::frame::RetainedRenderOperationKind::LocalV2(item) => item.commands.iter().any(
-                |command| {
-                    matches!(
-                        command,
-                        crate::draw_cmd_v2::DrawCommand::DrawCustom { pipeline_name, .. }
-                            if pipeline_name.as_ref() == MATERIAL_PIPELINE_NAME
-                    )
-                },
-            ),
+                })
+            }
             crate::frame::RetainedRenderOperationKind::OpacityGroupBegin { .. }
             | crate::frame::RetainedRenderOperationKind::OpacityGroupEnd { .. } => false,
         })
@@ -2802,6 +2798,10 @@ fn render_plan_uses_material(plan: &RetainedRenderPlan, width: u32, height: u32)
 
 /// Compatibility name for the backend-generic [`Renderer`].
 pub type RendererImpl<B = crate::backend::DefaultGpuBackend> = Renderer<B>;
+
+#[cfg(test)]
+#[path = "generic_renderer/material_detection_tests.rs"]
+mod material_detection_tests;
 
 #[cfg(test)]
 mod tests {

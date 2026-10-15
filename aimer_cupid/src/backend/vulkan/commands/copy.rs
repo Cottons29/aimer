@@ -1,7 +1,7 @@
 use ash::vk;
 
 use crate::backend::{
-    Extent3d, TextureAspect, TextureUsage, TexelCopyBufferInfo, TexelCopyTextureInfo,
+    Extent3d, TexelCopyBufferInfo, TexelCopyTextureInfo, TextureAspect, TextureUsage,
 };
 
 use super::{VulkanBackend, VulkanCommandEncoder};
@@ -14,9 +14,19 @@ pub fn copy_buffer_to_texture(
 ) {
     let texel_size = texel_size(dst.texture.0.format) as u32;
     let bytes_per_row = src.layout.bytes_per_row.unwrap_or(0);
-    assert!(bytes_per_row == 0 || bytes_per_row % texel_size == 0, "Vulkan texture row stride must contain whole texels");
-    assert!(src.layout.offset % 4 == 0, "Vulkan buffer-to-image offset must be four-byte aligned");
-    let buffer_row_length = if bytes_per_row == 0 { 0 } else { bytes_per_row / texel_size };
+    assert!(
+        bytes_per_row == 0 || bytes_per_row % texel_size == 0,
+        "Vulkan texture row stride must contain whole texels"
+    );
+    assert!(
+        src.layout.offset % 4 == 0,
+        "Vulkan buffer-to-image offset must be four-byte aligned"
+    );
+    let buffer_row_length = if bytes_per_row == 0 {
+        0
+    } else {
+        bytes_per_row / texel_size
+    };
     let image_height = src.layout.rows_per_image.unwrap_or(0);
     let is_3d = dst.texture.0.dimension == crate::backend::TextureDimension::D3;
     let region = vk::BufferImageCopy::default()
@@ -27,7 +37,11 @@ pub fn copy_buffer_to_texture(
             aspect_mask: texture_aspect(dst.texture.0.format, dst.aspect),
             mip_level: dst.mip_level,
             base_array_layer: if is_3d { 0 } else { dst.origin.z },
-            layer_count: if is_3d { 1 } else { extent.depth_or_array_layers },
+            layer_count: if is_3d {
+                1
+            } else {
+                extent.depth_or_array_layers
+            },
         })
         .image_offset(vk::Offset3D {
             x: dst.origin.x as i32,
@@ -37,7 +51,11 @@ pub fn copy_buffer_to_texture(
         .image_extent(vk::Extent3D {
             width: extent.width,
             height: extent.height,
-            depth: if is_3d { extent.depth_or_array_layers } else { 1 },
+            depth: if is_3d {
+                extent.depth_or_array_layers
+            } else {
+                1
+            },
         });
     encoder.image_barrier(dst.texture, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
     encoder.buffer_barrier(
@@ -81,7 +99,11 @@ pub fn copy_texture_to_texture(
             aspect_mask: texture_aspect(src.texture.0.format, src.aspect),
             mip_level: src.mip_level,
             base_array_layer: if source_is_3d { 0 } else { src.origin.z },
-            layer_count: if source_is_3d { 1 } else { extent.depth_or_array_layers },
+            layer_count: if source_is_3d {
+                1
+            } else {
+                extent.depth_or_array_layers
+            },
         })
         .src_offset(vk::Offset3D {
             x: src.origin.x as i32,
@@ -92,17 +114,29 @@ pub fn copy_texture_to_texture(
             aspect_mask: texture_aspect(dst.texture.0.format, dst.aspect),
             mip_level: dst.mip_level,
             base_array_layer: if destination_is_3d { 0 } else { dst.origin.z },
-            layer_count: if destination_is_3d { 1 } else { extent.depth_or_array_layers },
+            layer_count: if destination_is_3d {
+                1
+            } else {
+                extent.depth_or_array_layers
+            },
         })
         .dst_offset(vk::Offset3D {
             x: dst.origin.x as i32,
             y: dst.origin.y as i32,
-            z: if destination_is_3d { dst.origin.z as i32 } else { 0 },
+            z: if destination_is_3d {
+                dst.origin.z as i32
+            } else {
+                0
+            },
         })
         .extent(vk::Extent3D {
             width: extent.width,
             height: extent.height,
-            depth: if source_is_3d || destination_is_3d { extent.depth_or_array_layers } else { 1 },
+            depth: if source_is_3d || destination_is_3d {
+                extent.depth_or_array_layers
+            } else {
+                1
+            },
         });
     encoder.image_barrier(src.texture, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
     encoder.image_barrier(dst.texture, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
@@ -128,18 +162,32 @@ pub fn copy_texture_to_buffer(
 ) {
     let texel_size = texel_size(src.texture.0.format) as u32;
     let bytes_per_row = dst.layout.bytes_per_row.unwrap_or(0);
-    assert!(bytes_per_row == 0 || bytes_per_row % texel_size == 0, "Vulkan texture row stride must contain whole texels");
-    assert!(dst.layout.offset % 4 == 0, "Vulkan image-to-buffer offset must be four-byte aligned");
+    assert!(
+        bytes_per_row == 0 || bytes_per_row % texel_size == 0,
+        "Vulkan texture row stride must contain whole texels"
+    );
+    assert!(
+        dst.layout.offset % 4 == 0,
+        "Vulkan image-to-buffer offset must be four-byte aligned"
+    );
     let is_3d = src.texture.0.dimension == crate::backend::TextureDimension::D3;
     let region = vk::BufferImageCopy::default()
         .buffer_offset(dst.layout.offset)
-        .buffer_row_length(if bytes_per_row == 0 { 0 } else { bytes_per_row / texel_size })
+        .buffer_row_length(if bytes_per_row == 0 {
+            0
+        } else {
+            bytes_per_row / texel_size
+        })
         .buffer_image_height(dst.layout.rows_per_image.unwrap_or(0))
         .image_subresource(vk::ImageSubresourceLayers {
             aspect_mask: texture_aspect(src.texture.0.format, src.aspect),
             mip_level: src.mip_level,
             base_array_layer: if is_3d { 0 } else { src.origin.z },
-            layer_count: if is_3d { 1 } else { extent.depth_or_array_layers },
+            layer_count: if is_3d {
+                1
+            } else {
+                extent.depth_or_array_layers
+            },
         })
         .image_offset(vk::Offset3D {
             x: src.origin.x as i32,
@@ -149,7 +197,11 @@ pub fn copy_texture_to_buffer(
         .image_extent(vk::Extent3D {
             width: extent.width,
             height: extent.height,
-            depth: if is_3d { extent.depth_or_array_layers } else { 1 },
+            depth: if is_3d {
+                extent.depth_or_array_layers
+            } else {
+                1
+            },
         });
     encoder.image_barrier(src.texture, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
     unsafe {

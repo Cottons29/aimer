@@ -3,8 +3,8 @@
 
 use super::*;
 use crate::aimer_app::{
-    complete_frame_ready_request, promote_pending_scroll_frame_request, try_begin_frame_ready_request,
-    FrameRequestKind,
+    FrameRequestKind, complete_frame_ready_request, promote_pending_scroll_frame_request,
+    try_begin_frame_ready_request,
 };
 
 const ALL: [FrameRequestKind; 3] = [
@@ -39,19 +39,40 @@ fn merging_keeps_the_strongest_reason() {
 #[test]
 fn requests_queued_while_one_is_pending_merge_into_it() {
     let pending = AtomicU8::new(0);
-    assert!(try_begin_frame_ready_request(&pending, FrameRequestKind::ScrollOnly));
-    assert!(!try_begin_frame_ready_request(&pending, FrameRequestKind::ScrollPhysics));
-    assert_eq!(complete_frame_ready_request(&pending), FrameRequestKind::ScrollPhysics);
+    assert!(try_begin_frame_ready_request(
+        &pending,
+        FrameRequestKind::ScrollOnly
+    ));
+    assert!(!try_begin_frame_ready_request(
+        &pending,
+        FrameRequestKind::ScrollPhysics
+    ));
+    assert_eq!(
+        complete_frame_ready_request(&pending),
+        FrameRequestKind::ScrollPhysics
+    );
 
-    assert!(try_begin_frame_ready_request(&pending, FrameRequestKind::ScrollPhysics));
-    assert!(!try_begin_frame_ready_request(&pending, FrameRequestKind::Full));
-    assert_eq!(complete_frame_ready_request(&pending), FrameRequestKind::Full);
+    assert!(try_begin_frame_ready_request(
+        &pending,
+        FrameRequestKind::ScrollPhysics
+    ));
+    assert!(!try_begin_frame_ready_request(
+        &pending,
+        FrameRequestKind::Full
+    ));
+    assert_eq!(
+        complete_frame_ready_request(&pending),
+        FrameRequestKind::Full
+    );
 }
 
 #[test]
 fn promoting_the_pending_request_makes_a_physics_request_full_too() {
     let pending_before = crate::aimer_app::FRAME_READY_PENDING.swap(0, Ordering::SeqCst);
-    for kind in [FrameRequestKind::ScrollOnly, FrameRequestKind::ScrollPhysics] {
+    for kind in [
+        FrameRequestKind::ScrollOnly,
+        FrameRequestKind::ScrollPhysics,
+    ] {
         crate::aimer_app::FRAME_READY_PENDING.store(kind.encode(), Ordering::SeqCst);
         promote_pending_scroll_frame_request();
         assert_eq!(
@@ -71,15 +92,19 @@ fn a_quiet_scroll_only_frame_is_skipped_but_a_physics_frame_never_is() {
     }
     let preparation = app.app.begin_frame();
 
-    assert!(app
-        .app
-        .should_skip_scroll_frame(FrameRequestKind::ScrollOnly, &preparation, false));
-    assert!(!app
-        .app
-        .should_skip_scroll_frame(FrameRequestKind::ScrollPhysics, &preparation, false));
-    assert!(!app
-        .app
-        .should_skip_scroll_frame(FrameRequestKind::Full, &preparation, false));
+    assert!(
+        app.app
+            .should_skip_scroll_frame(FrameRequestKind::ScrollOnly, &preparation, false)
+    );
+    assert!(!app.app.should_skip_scroll_frame(
+        FrameRequestKind::ScrollPhysics,
+        &preparation,
+        false
+    ));
+    assert!(
+        !app.app
+            .should_skip_scroll_frame(FrameRequestKind::Full, &preparation, false)
+    );
 }
 
 #[test]

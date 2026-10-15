@@ -986,7 +986,7 @@ child through the frame's outlet:
 
 ```rust
 fn transitioned_page(key: &'static str, child: AnyWidget) -> AnyWidget {
-    AnimatedSwitcher::new(ROUTE_TRANSITION_DURATION, Curve::FastOutSlowIn, child)
+    AnimatedSwitcher::new(ROUTE_TRANSITION_DURATION, curves::FAST_OUT_SLOW_IN, child)
         .child_key(key)
         .key(ROUTE_SWITCHER_KEY)
         .boxed()
@@ -1685,7 +1685,7 @@ layout transition explicitly, for example:
 ```rust
 AnimatedLayout::new()
     .duration(Duration::from_millis(250))
-    .curve(Curve::EaseInOut)
+    .curve(curves::EASE_IN_OUT)
     .child(
         Row::new()
             .gaps(LayoutSpacing::all(12))

@@ -4,17 +4,18 @@
 //! their children
 
 pub mod align;
+mod hug;
 pub mod positioned;
 pub mod stack;
 
 #[cfg(all(test, feature = "portable-guest"))]
 mod portable_layout_tests {
     use aimer_widget::base::BuildContext;
+    use aimer_widget::portable::__anteros::{Version, WIDGET_SIZED_BOX, WidgetDocumentView};
     use aimer_widget::portable::{
         PortableBuildContext, PortableLimits, PortableNativeWidget, PortableWidgetLimits,
         PortableWidgetSchema, SourceFingerprint, StableId128,
     };
-    use aimer_widget::portable::__anteros::{Version, WIDGET_SIZED_BOX, WidgetDocumentView};
     use aimer_widget::{AnyElement, ErrorWidget, PortableWidget, Widget};
 
     use super::align::{Align, Alignment};
@@ -34,16 +35,11 @@ mod portable_layout_tests {
             self,
             ctx: &mut PortableBuildContext,
             source: SourceFingerprint,
-        ) -> Result<aimer_widget::portable::PortableNodeId, aimer_widget::portable::PortableBuildError>
-        {
-            ctx.push_node(
-                WIDGET_SIZED_BOX,
-                Version::new(1, 0),
-                None,
-                source,
-                &[],
-                &[],
-            )
+        ) -> Result<
+            aimer_widget::portable::PortableNodeId,
+            aimer_widget::portable::PortableBuildError,
+        > {
+            ctx.push_node(WIDGET_SIZED_BOX, Version::new(1, 0), None, source, &[], &[])
         }
     }
 
@@ -97,7 +93,9 @@ mod portable_layout_tests {
         let node = view.node(root.index()).unwrap();
         assert_eq!(
             node.widget_type(),
-            <Positioned<Leaf> as PortableWidgetSchema>::SCHEMA.widget().id()
+            <Positioned<Leaf> as PortableWidgetSchema>::SCHEMA
+                .widget()
+                .id()
         );
         assert_eq!(node.properties().count(), 2);
         assert_eq!(node.children().count(), 1);
@@ -113,12 +111,18 @@ mod portable_layout_tests {
     #[test]
     fn stack_lowers_erased_collection_children() {
         let mut ctx = context();
-        let root = Stack::new().add_child(Leaf).to_portable_node(&mut ctx, source()).unwrap();
+        let root = Stack::new()
+            .add_child(Leaf)
+            .to_portable_node(&mut ctx, source())
+            .unwrap();
         let document = ctx.finish_document(root).unwrap();
         let bytes = document.encode().unwrap();
         let view = WidgetDocumentView::decode(&bytes, document.model_limits()).unwrap();
         let node = view.node(root.index()).unwrap();
-        assert_eq!(node.widget_type(), <Stack as PortableWidgetSchema>::SCHEMA.widget().id());
+        assert_eq!(
+            node.widget_type(),
+            <Stack as PortableWidgetSchema>::SCHEMA.widget().id()
+        );
         assert_eq!(node.properties().count(), 0);
         assert_eq!(node.children().count(), 1);
     }

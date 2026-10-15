@@ -2,11 +2,10 @@ use std::time::Duration;
 
 use crate::components::animation_button::{AnimatedPlatformButtonList, PLATFORMS};
 use crate::utils::{app_padding, is_mobile, mobile_title};
-use aimer::animation::{AnimatedSwitcher, Curve};
+use aimer::animation::{AnimatedSwitcher, curves};
 use aimer::native::haptic::{HapticPattern, Haptics};
 use aimer::style::{FontWeight, TextDecoration, TextStyle, Theme, ThemeData};
 use aimer::*;
-
 
 #[widget(Stateful)]
 pub struct SameLookingSection {
@@ -48,7 +47,7 @@ fn platform_image(index: usize) -> &'static str {
 fn platform_image_switcher(index: usize) -> AnimatedSwitcher<AssetImage> {
     AnimatedSwitcher::new(
         Duration::from_millis(350),
-        Curve::FastOutSlowIn,
+        curves::FAST_OUT_SLOW_IN,
         AssetImage::new(platform_image(index)),
     )
     .child_key(PLATFORMS[index % PLATFORMS.len()])

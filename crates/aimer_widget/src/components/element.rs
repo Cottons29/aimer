@@ -41,7 +41,7 @@ mod scoped_rebuild;
 #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
 mod animation_only;
 #[cfg(any(target_arch = "wasm32", feature = "portable-guest"))]
-#[path = "animation_only_stub.rs"]
+#[path = "element/animation_only_stub.rs"]
 mod animation_only;
 mod compositor_applied;
 mod node;
@@ -71,8 +71,10 @@ pub use scoped_rebuild::{
     unscoped_element_tree_generation,
 };
 use scoped_rebuild::{note_scoped_rebuild, note_unscoped_tree_change};
+pub(crate) use scoped_rebuild::rename_scoped_rebuilds_since;
 use node::ElementNode;
 pub use retained_window::{
+    may_escape_ancestor_clips,
     VisibleWindow, may_skip_settled_offscreen, retained_element_settled, retained_visible_window,
     retained_visible_window_of_current, set_scroll_only_frame, set_settled_offscreen_skip,
 };
@@ -1735,6 +1737,20 @@ pub(crate) fn reconcile_element_identities(old: &dyn Element, new: &dyn Element)
 pub(crate) fn reconcile_generated_tree(old: &dyn Element, new: &dyn Element) {
     crate::reconciliation_plan::plan_element_reconciliation(old, new)
         .commit_generated_tree()
+        .expect("fresh reconciliation plan must remain valid until commit");
+}
+
+/// Carries live state from `old` into the freshly built `new`, then reconciles
+/// the two as [`reconcile_generated_tree`] does.
+///
+/// The state carry reconciles nested pairs of its own. They are logged before
+/// `new` takes over the identities of `old`, so the log is corrected when it
+/// does.
+pub(crate) fn reconcile_carried_tree(old: &dyn Element, new: &dyn Element, ctx: &BuildContext) {
+    let carried_from = scoped_rebuild_cursor();
+    crate::widget::stateful::carry_child_state(old, new, ctx);
+    crate::reconciliation_plan::plan_element_reconciliation(old, new)
+        .commit_carried_tree(carried_from)
         .expect("fresh reconciliation plan must remain valid until commit");
 }
 

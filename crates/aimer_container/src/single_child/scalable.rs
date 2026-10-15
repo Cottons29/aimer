@@ -1,16 +1,18 @@
+use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_macro::{EventElement, Rebuildable};
 use aimer_widget::base::BuildContext;
 #[cfg(feature = "portable-guest")]
 use aimer_widget::portable::{PortableBuildContext, PortableBuildError, SourceFingerprint};
 use aimer_widget::{
-    AnyElement, AnyWidget, Drawable, Element, LayoutElement, RequiredChild, VisitorElement,
-    Widget,
+    AnyElement, AnyWidget, Drawable, Element, LayoutElement, RequiredChild, VisitorElement, Widget,
 };
 
-/// Applies a positive scale multiplier to a single child's build context.
+/// Scales a child's rendering without changing its layout size.
 ///
-/// The multiplier affects the child's drawing and resolved layout dimensions.
+/// The child keeps its unscaled layout constraints and space among siblings.
+/// Rendering scales about the center of the child's bounds and escapes all
+/// ancestor widget clips, including padding, rounded containers and viewports.
 /// Finish the builder with [`Scalable::child`] or [`Scalable::box_child`].
 #[derive(aimer_macro::PortableWidget)]
 #[portable_widget(
@@ -36,7 +38,7 @@ impl Scalable {
         }
     }
 
-    /// Sets the positive scale multiplier applied to the child.
+    /// Sets the positive render scale multiplier applied to the child.
     ///
     /// Native construction normalizes non-finite and non-positive values to
     /// `1.0`; portable lowering rejects them explicitly.
@@ -112,16 +114,45 @@ struct RawScalable {
 
 impl RawScalable {
     #[inline]
+    fn scale_offset(&self, ctx: &BuildContext) -> Vec2d {
+        if self.scale == 1.0 {
+            return Default::default();
+        }
+        let size = self.child.computed_size(ctx);
+        let position = self.child.pos().unwrap_or_default();
+        let factor = 1.0 - self.scale;
+        Vec2d {
+            x: (position.x + size.width * 0.5) * factor,
+            y: (position.y + size.height * 0.5) * factor,
+        }
+    }
+
+    #[inline]
     fn child_context<'a>(&self, ctx: &BuildContext<'a>) -> BuildContext<'a> {
         let mut child_ctx = ctx.clone();
-        child_ctx.scale *= self.scale;
+        // An ancestor's visible window must not cull the pixels whose clip the
+        // retained node escapes. A viewport inside this child sets its own window.
+        child_ctx.visible_rect = None;
         child_ctx
+    }
+
+    fn sync_child_geometry(&self, ctx: &BuildContext, offset: Vec2d) {
+        ctx.canvas.save();
+        ctx.canvas.translate(offset);
+        ctx.canvas.scale(self.scale, self.scale);
+        self.child.sync_paint_geometry(&self.child_context(ctx));
+        ctx.canvas.restore();
     }
 }
 
 impl Drawable for RawScalable {
     fn update(&self, ctx: &BuildContext) {
+        let offset = self.scale_offset(ctx);
+        ctx.canvas.save();
+        ctx.canvas.translate(offset);
+        ctx.canvas.scale(self.scale, self.scale);
         self.child.update(&self.child_context(ctx));
+        ctx.canvas.restore();
     }
 
     fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
@@ -137,16 +168,30 @@ impl Drawable for RawScalable {
     }
 
     fn sync_local_v2_state(&self, ctx: &BuildContext) -> bool {
-        self.sync_paint_geometry(ctx);
-        ctx.set_local_v2_child_presentation_at(
+        let offset = self.scale_offset(ctx);
+        let position = self.child.pos().unwrap_or_default();
+        let [left, top, _, _] = self.child.retained_v2_paint_outsets(ctx)
+            .filter(|outsets| outsets.iter().all(|outset| outset.is_finite() && *outset >= 0.0))
+            .unwrap_or([0.0; 4]);
+        let factor = 1.0 - self.scale;
+        let mut transform = aimer_cupid::utilities::Mat3::scale(self.scale, self.scale);
+        // The retained child's origin includes its position and paint outsets;
+        // keep the pivot on the layout bounds, independent of shadow extents.
+        transform.cols[2][0] = (offset.x - position.x * factor) / ctx.scale + left * factor;
+        transform.cols[2][1] = (offset.y - position.y * factor) / ctx.scale + top * factor;
+        if !transform.cols[2][0].is_finite() || !transform.cols[2][1].is_finite() {
+            return false;
+        }
+        self.sync_child_geometry(ctx, offset);
+        ctx.set_local_v2_clip_escape(true) && ctx.set_local_v2_child_presentation_at(
             0,
-            aimer_cupid::utilities::Mat3::scale(self.scale, self.scale),
+            transform,
             1.0,
         )
     }
 
     fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
-        self.child.update(&self.child_context(ctx));
+        self.update(ctx);
     }
 
     fn retained_v2_child_context_at<'a>(
@@ -176,7 +221,7 @@ impl Drawable for RawScalable {
             .retained_v2_bounds(&child_ctx)
             .unwrap_or_else(|| child.content_size(&child_ctx));
         let position = child.pos().unwrap_or_default();
-        let scale = ctx.scale * self.scale;
+        let scale = ctx.scale;
         Some((
             aimer_cupid::draw_cmd_v2::Rect::new(
                 position.x / scale,
@@ -190,9 +235,8 @@ impl Drawable for RawScalable {
 
     #[inline]
     fn sync_paint_geometry(&self, ctx: &BuildContext) {
-        self.child.sync_paint_geometry(&self.child_context(ctx));
+        self.sync_child_geometry(ctx, self.scale_offset(ctx));
     }
-
 }
 
 impl LayoutElement for RawScalable {
@@ -202,11 +246,11 @@ impl LayoutElement for RawScalable {
     }
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.child.computed_size(&self.child_context(ctx))
+        self.child.computed_size(ctx)
     }
 
     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.child.content_size(&self.child_context(ctx))
+        self.child.content_size(ctx)
     }
 
     fn layer(&self) -> u32 {
@@ -223,6 +267,9 @@ impl VisitorElement for RawScalable {
         "Scalable"
     }
 }
+
+#[cfg(test)]
+mod tests;
 
 #[cfg(all(test, feature = "portable-guest"))]
 mod portable_tests {
@@ -252,13 +299,7 @@ mod portable_tests {
     }
 
     fn context(limits: PortableWidgetLimits) -> PortableBuildContext {
-        PortableBuildContext::new(
-            3,
-            1,
-            limits,
-            PortableLimits::new(8, 16, 64, 128, 1_024),
-        )
-        .unwrap()
+        PortableBuildContext::new(3, 1, limits, PortableLimits::new(8, 16, 64, 128, 1_024)).unwrap()
     }
 
     struct ScaleProbe(Rc<Cell<f32>>);
@@ -314,9 +355,7 @@ mod portable_tests {
         assert_eq!(node.children().collect::<Vec<_>>(), vec![0]);
         assert_eq!(
             node.properties().collect::<Vec<_>>(),
-            vec![
-                WidgetProperty::new(scale_property, PropertyValue::F64(1.75)).optional()
-            ],
+            vec![WidgetProperty::new(scale_property, PropertyValue::F64(1.75)).optional()],
         );
     }
 
@@ -350,7 +389,7 @@ mod portable_tests {
     }
 
     #[test]
-    fn scalable_native_materialization_applies_the_scale() {
+    fn scalable_native_materialization_preserves_layout_scale() {
         let observed = Rc::new(Cell::new(0.0));
         let context = BuildContext::portable();
         let element = Scalable::new()
@@ -360,6 +399,6 @@ mod portable_tests {
 
         element.update(&context);
 
-        assert_eq!(observed.get(), 1.5);
+        assert_eq!(observed.get(), 1.0);
     }
 }

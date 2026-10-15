@@ -119,7 +119,8 @@ impl DamageSet {
         }
 
         self.regions.push(merged);
-        self.regions.sort_unstable_by_key(|region| (region.y, region.x));
+        self.regions
+            .sort_unstable_by_key(|region| (region.y, region.x));
 
         if self.regions.len() > MAX_DAMAGE_REGIONS
             || self.covered_area() >= half_area(self.target_width, self.target_height)

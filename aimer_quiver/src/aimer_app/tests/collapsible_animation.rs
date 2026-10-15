@@ -64,25 +64,40 @@ fn assert_animates(heights: &[f32], from: f32, to: f32) {
         "must visit intermediate heights, saw {heights:?}"
     );
     assert!(
-        heights.windows(2).all(|pair| (pair[1] - pair[0]) * (to - from) >= 0.0),
+        heights
+            .windows(2)
+            .all(|pair| (pair[1] - pair[0]) * (to - from) >= 0.0),
         "heights must move monotonically from {from} to {to}, saw {heights:?}"
     );
-    assert_eq!(*heights.last().unwrap(), to, "settles on the target, saw {heights:?}");
+    assert_eq!(
+        *heights.last().unwrap(),
+        to,
+        "settles on the target, saw {heights:?}"
+    );
 }
 
 #[test]
 fn collapsing_and_expanding_pass_through_intermediate_body_heights() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     let list = CollapsibleList::new()
         .animation_millis(200)
         .header(ListHeader::new().child(SizedBox::new().width(100.0).height(24.0)))
         .body(ListBody::new().child(SizedBox::new().width(100.0).height(BODY_HEIGHT)));
-    let mut app = AimerApp::start_headless_with(list, HeadlessOptions {
-        size: PhysicalSize::new(300, 400), scale_factor: 1.0,
-    });
+    let mut app = AimerApp::start_headless_with(
+        list,
+        HeadlessOptions {
+            size: PhysicalSize::new(300, 400),
+            scale_factor: 1.0,
+        },
+    );
     app.pump_frames(3);
     let full = body_height(&app).expect("expanded body is mounted");
-    assert!(full >= BODY_HEIGHT, "expanded body is full height, got {full}");
+    assert!(
+        full >= BODY_HEIGHT,
+        "expanded body is full height, got {full}"
+    );
 
     assert_animates(&tap_and_record(&mut app), full, 0.0);
     assert_animates(&tap_and_record(&mut app), 0.0, full);

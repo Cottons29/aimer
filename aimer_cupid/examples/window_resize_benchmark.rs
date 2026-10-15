@@ -3,20 +3,22 @@
 
 #[cfg(all(target_os = "macos", feature = "native"))]
 fn main() {
-    use std::time::Instant;
-    use aimer_cupid::backend::*;
     use aimer_cupid::backend::metal::MetalBackend;
+    use aimer_cupid::backend::*;
     use aimer_cupid::damage_region::DamageSet;
     use aimer_cupid::draw_cmd::DrawList;
     use aimer_cupid::frame::{Frame, FramePacket, FrameRenderMetadata};
     use aimer_cupid::renderer::RendererImpl;
     use objc2_metal::MTLPixelFormat;
+    use std::time::Instant;
 
     let backend = MetalBackend::new().expect("benchmark requires a Metal device");
     let format = MTLPixelFormat::RGBA8Unorm;
     let mut renderer = RendererImpl::new(&backend, format);
     let fence = backend.create_buffer(&BufferDescriptor {
-        label: None, size: 4, usage: vec![BufferUsage::MapRead],
+        label: None,
+        size: 4,
+        usage: vec![BufferUsage::MapRead],
     });
     let mut times = Vec::new();
     for index in 0..65 {
@@ -41,12 +43,18 @@ fn main() {
         let elapsed = start.elapsed().as_secs_f64() * 1000.0;
         // Limit in-flight work without including GPU completion in CPU time.
         backend.read_buffer(&fence, 0);
-        if index != 0 { times.push(elapsed); }
+        if index != 0 {
+            times.push(elapsed);
+        }
     }
     times.sort_by(f64::total_cmp);
-    println!("frames={} mean={:.3}ms median={:.3}ms p95={:.3}ms", times.len(),
+    println!(
+        "frames={} mean={:.3}ms median={:.3}ms p95={:.3}ms",
+        times.len(),
         times.iter().sum::<f64>() / times.len() as f64,
-        times[times.len() / 2], times[(times.len() * 95 / 100).min(times.len() - 1)]);
+        times[times.len() / 2],
+        times[(times.len() * 95 / 100).min(times.len() - 1)]
+    );
 }
 
 #[cfg(not(all(target_os = "macos", feature = "native")))]

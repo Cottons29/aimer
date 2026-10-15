@@ -61,7 +61,12 @@ pub(crate) const PREPARATION_CHUNK: usize = 8;
 /// only the origin can rule it out, and text that turns out to be visible is
 /// never postponed.
 pub(crate) fn request_is_on_screen(rect: [f32; 4], clip: [f32; 4], surface: (f32, f32)) -> bool {
-    let rect = [rect[0], rect[1], known_extent(rect[2]), known_extent(rect[3])];
+    let rect = [
+        rect[0],
+        rect[1],
+        known_extent(rect[2]),
+        known_extent(rect[3]),
+    ];
 
     if !rects_intersect(rect, [0.0, 0.0, surface.0, surface.1]) {
         return false;
@@ -221,7 +226,11 @@ mod tests {
             [10.0, 50.0, 100.0, 0.0],
             [10.0, 50.0, -1.0, 20.0],
         ] {
-            assert!(request_is_on_screen(rect, [0.0, 0.0, 400.0, 600.0], SURFACE));
+            assert!(request_is_on_screen(
+                rect,
+                [0.0, 0.0, 400.0, 600.0],
+                SURFACE
+            ));
         }
     }
 

@@ -14,10 +14,10 @@ use std::cell::{Cell, RefCell};
 use std::marker::PhantomData;
 use std::rc::Rc;
 
-use aimer_widget::InteractionBounds;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
+use aimer_widget::InteractionBounds;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
     AnyElement, AnyWidget, Drawable, Element, EventElement, EventResult, EventTreeRole,
@@ -462,7 +462,9 @@ impl<T: 'static> Drawable for RawDragTarget<T> {
     }
 
     #[inline]
-    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+    fn retained_v2_interaction_disagreement(
+        &self,
+    ) -> Option<aimer_widget::InteractionDisagreement> {
         self.bounds.disagreement("DragTarget")
     }
 
@@ -481,7 +483,6 @@ impl<T: 'static> Drawable for RawDragTarget<T> {
             .save(ctx.scale, abs_x, abs_y, size.width, size.height);
         self.child.sync_paint_geometry(ctx);
     }
-
 }
 
 impl<T: 'static> Rebuildable for RawDragTarget<T> {}
@@ -529,7 +530,10 @@ mod tests {
 
         let first = left.clone();
         enter_hover(1, Rc::new(move || first.borrow_mut().push(1)));
-        assert!(left.borrow().is_empty(), "the first target has not been left");
+        assert!(
+            left.borrow().is_empty(),
+            "the first target has not been left"
+        );
 
         let second = left.clone();
         enter_hover(2, Rc::new(move || second.borrow_mut().push(2)));

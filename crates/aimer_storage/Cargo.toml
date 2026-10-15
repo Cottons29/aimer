@@ -4,6 +4,29 @@ version = "0.1.0"
 edition = "2024"
 resolver = "3"
 
-[dependencies]
-crossbeam.workspace = true
-futures-util.workspace = true
+# Native disk I/O leaves the UI thread through Venus's offload pool, so the
+# crate carries no threads or channels of its own. The browser has no pool to
+# offload onto; IndexedDB is already asynchronous there.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+aimer_venus.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys.workspace = true
+wasm-bindgen.workspace = true
+web-sys = { workspace = true, features = [
+    "DomException",
+    "Event",
+    "IdbDatabase",
+    "IdbFactory",
+    "IdbKeyRange",
+    "IdbObjectStore",
+    "IdbOpenDbRequest",
+    "IdbRequest",
+    "IdbTransaction",
+    "IdbTransactionMode",
+] }
+
+# Browser tests: `scripts/web_tests.sh` runs them in headless Chrome.
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-futures.workspace = true
+wasm-bindgen-test.workspace = true

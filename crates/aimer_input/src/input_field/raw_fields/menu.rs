@@ -54,10 +54,7 @@ impl RawTextField {
         }
 
         let (shape, anchor) = match origin {
-            MenuOrigin::Click(pos) => (
-                ContextMenuShape::List,
-                Bounds::new(pos.x, pos.y, 0.0, 0.0),
-            ),
+            MenuOrigin::Click(pos) => (ContextMenuShape::List, Bounds::new(pos.x, pos.y, 0.0, 0.0)),
             MenuOrigin::Hold => match self.cached_bounds.get_bounds() {
                 Some(bounds) => (ContextMenuShape::Pill, bounds),
                 None => return,
@@ -180,7 +177,6 @@ impl RawTextField {
         self.pending_click.set(Some(pos));
         self.click_count.set(2);
     }
-
 }
 
 #[cfg(test)]
@@ -243,7 +239,12 @@ mod tests {
     #[test]
     fn a_finger_that_rests_raises_the_pill() {
         let field = field("hello world");
-        let _ = field.on_event(&press(PointerSource::Touch, PointerButton::Primary, 20.0, 16.0));
+        let _ = field.on_event(&press(
+            PointerSource::Touch,
+            PointerButton::Primary,
+            20.0,
+            16.0,
+        ));
         advance(&field, LONG_PRESS_DURATION);
 
         assert!(
@@ -260,7 +261,12 @@ mod tests {
     #[test]
     fn a_finger_that_taps_raises_nothing() {
         let field = field("hello world");
-        let _ = field.on_event(&press(PointerSource::Touch, PointerButton::Primary, 20.0, 16.0));
+        let _ = field.on_event(&press(
+            PointerSource::Touch,
+            PointerButton::Primary,
+            20.0,
+            16.0,
+        ));
         advance(&field, Duration::from_millis(60));
 
         let _ = field.on_event(&release(PointerSource::Touch, 20.0, 16.0));
@@ -272,7 +278,12 @@ mod tests {
     #[test]
     fn a_finger_that_drags_raises_nothing() {
         let field = field("hello world");
-        let _ = field.on_event(&press(PointerSource::Touch, PointerButton::Primary, 20.0, 16.0));
+        let _ = field.on_event(&press(
+            PointerSource::Touch,
+            PointerButton::Primary,
+            20.0,
+            16.0,
+        ));
         let _ = field.on_event(&ElementEvent::PointerMove(PointerInfo::new(
             Vec2d { x: 180.0, y: 16.0 },
             PointerSource::Touch,
@@ -306,7 +317,10 @@ mod tests {
         assert!(field.menu_is_open());
         assert_eq!(field.menu_shape.get(), Some(ContextMenuShape::List));
         assert_eq!(
-            field.menu_origin.get().map(|origin| matches!(origin, MenuOrigin::Click(_))),
+            field
+                .menu_origin
+                .get()
+                .map(|origin| matches!(origin, MenuOrigin::Click(_))),
             Some(true),
             "opened at the click"
         );
@@ -419,7 +433,12 @@ mod tests {
     #[test]
     fn a_cancelled_gesture_forgets_the_press_that_would_raise_a_menu() {
         let field = field("hello world");
-        let _ = field.on_event(&press(PointerSource::Touch, PointerButton::Primary, 20.0, 16.0));
+        let _ = field.on_event(&press(
+            PointerSource::Touch,
+            PointerButton::Primary,
+            20.0,
+            16.0,
+        ));
 
         let _ = field.on_event(&ElementEvent::Cancel);
         advance(&field, LONG_PRESS_DURATION);

@@ -1,0 +1,30 @@
+{
+  "$schema": "../icon.schema.json",
+  "contributors": [
+    "danielbayley",
+    "jguddas",
+    "karsa-mistmere"
+  ],
+  "use-cases": [],
+  "tags": [
+    "tv",
+    "computer",
+    "screen",
+    "display",
+    "desktop",
+    "external display",
+    "screen sharing",
+    "video",
+    "movie",
+    "film",
+    "stop",
+    "shutdown",
+    "virtual machine",
+    "vm"
+  ],
+  "categories": [
+    "connectivity",
+    "devices",
+    "multimedia"
+  ]
+}

@@ -24,7 +24,11 @@ pub mod wgpu;
 
 // Native backend modules are selected from the target, not individual Cargo
 // backend features. Linux and Android compile both APIs for init-time fallback.
-#[cfg(all(feature = "native", not(feature = "wgpu"), any(target_os = "macos", target_os = "ios")))]
+#[cfg(all(
+    feature = "native",
+    not(feature = "wgpu"),
+    any(target_os = "macos", target_os = "ios")
+))]
 pub mod metal;
 
 #[cfg(all(feature = "native", not(feature = "wgpu"), target_os = "windows"))]
@@ -52,13 +56,21 @@ pub mod webgpu;
 #[cfg(feature = "wgpu")]
 pub type DefaultGpuBackend = wgpu::WgpuBackend;
 
-#[cfg(all(not(feature = "wgpu"), feature = "native", any(target_os = "macos", target_os = "ios")))]
+#[cfg(all(
+    not(feature = "wgpu"),
+    feature = "native",
+    any(target_os = "macos", target_os = "ios")
+))]
 pub type DefaultGpuBackend = metal::MetalBackend;
 
 #[cfg(all(not(feature = "wgpu"), feature = "native", target_os = "windows"))]
 pub type DefaultGpuBackend = dx12::Dx12Backend;
 
-#[cfg(all(not(feature = "wgpu"), feature = "native", any(target_os = "linux", target_os = "android")))]
+#[cfg(all(
+    not(feature = "wgpu"),
+    feature = "native",
+    any(target_os = "linux", target_os = "android")
+))]
 pub type DefaultGpuBackend = vulkan::VulkanBackend;
 
 #[cfg(all(not(feature = "wgpu"), feature = "web", target_arch = "wasm32"))]
@@ -67,7 +79,16 @@ pub type DefaultGpuBackend = webgpu::WebGpuBackend;
 #[cfg(all(
     not(feature = "wgpu"),
     not(any(
-        all(feature = "native", any(target_os = "macos", target_os = "ios", target_os = "windows", target_os = "linux", target_os = "android")),
+        all(
+            feature = "native",
+            any(
+                target_os = "macos",
+                target_os = "ios",
+                target_os = "windows",
+                target_os = "linux",
+                target_os = "android"
+            )
+        ),
         all(feature = "web", target_arch = "wasm32")
     ))
 ))]
@@ -400,11 +421,26 @@ pub struct ColorWriteMask {
 
 impl ColorWriteMask {
     /// No color channels written.
-    pub const NONE: Self = Self { red: false, green: false, blue: false, alpha: false };
+    pub const NONE: Self = Self {
+        red: false,
+        green: false,
+        blue: false,
+        alpha: false,
+    };
     /// All four channels written.
-    pub const ALL: Self = Self { red: true, green: true, blue: true, alpha: true };
+    pub const ALL: Self = Self {
+        red: true,
+        green: true,
+        blue: true,
+        alpha: true,
+    };
     /// Red, green, and blue (without alpha).
-    pub const RGB: Self = Self { red: true, green: true, blue: true, alpha: false };
+    pub const RGB: Self = Self {
+        red: true,
+        green: true,
+        blue: true,
+        alpha: false,
+    };
 }
 
 /// Color-target blend state.
@@ -782,8 +818,8 @@ impl BuiltinShader {
         match self {
             #[cfg(target_os = "android")]
             Self::Image => concat!(
-                include_str!("pipeline/shaders/android_color.wgsl"),
-                include_str!("pipeline/shaders/image.wgsl")
+                include_str!("pipeline/shaders/wgsl/android_color.wgsl"),
+                include_str!("pipeline/shaders/wgsl/image.wgsl")
             )
             .as_bytes(),
             #[cfg(not(target_os = "android"))]
@@ -799,8 +835,8 @@ impl BuiltinShader {
             }
             #[cfg(target_os = "android")]
             Self::Svg => concat!(
-                include_str!("pipeline/shaders/android_color.wgsl"),
-                include_str!("pipeline/shaders/svg.wgsl")
+                include_str!("pipeline/shaders/wgsl/android_color.wgsl"),
+                include_str!("pipeline/shaders/wgsl/svg.wgsl")
             )
             .as_bytes(),
             #[cfg(not(target_os = "android"))]
@@ -809,10 +845,10 @@ impl BuiltinShader {
                 include_str!("pipeline/shaders/wgsl/svg.wgsl")
             )
             .as_bytes(),
-            Self::FrameComposite => include_str!("pipeline/shaders/wgsl/frame_composite.wgsl").as_bytes(),
-            Self::Material => {
-                include_str!("pipeline/shaders/wgsl/material.wgsl").as_bytes()
+            Self::FrameComposite => {
+                include_str!("pipeline/shaders/wgsl/frame_composite.wgsl").as_bytes()
             }
+            Self::Material => include_str!("pipeline/shaders/wgsl/material.wgsl").as_bytes(),
         }
     }
 }
@@ -914,10 +950,7 @@ pub trait GpuBackend: Sized + 'static {
     fn create_sampler(&self, desc: &SamplerDescriptor) -> Self::Sampler;
 
     /// Create a bind group layout.
-    fn create_bind_group_layout(
-        &self,
-        entries: &[BindGroupLayoutEntry],
-    ) -> Self::BindGroupLayout;
+    fn create_bind_group_layout(&self, entries: &[BindGroupLayoutEntry]) -> Self::BindGroupLayout;
 
     /// Create a bind group from a layout and resource entries.
     fn create_bind_group(
@@ -930,10 +963,8 @@ pub trait GpuBackend: Sized + 'static {
     fn create_pipeline_layout(&self, layouts: &[&Self::BindGroupLayout]) -> Self::PipelineLayout;
 
     /// Create a render pipeline state object.
-    fn create_render_pipeline(
-        &self,
-        desc: &RenderPipelineDescriptor<Self>,
-    ) -> Self::RenderPipeline;
+    fn create_render_pipeline(&self, desc: &RenderPipelineDescriptor<Self>)
+    -> Self::RenderPipeline;
 
     /// Fallible counterpart of [`GpuBackend::create_render_pipeline`].
     ///

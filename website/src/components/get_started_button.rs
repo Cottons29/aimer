@@ -2,11 +2,11 @@
 // Hoverable Get Started button
 // ---------------------------------------------------------------------------
 
+use aimer::input::button::Button;
 use aimer::style::{
     BorderSlice, BorderStyle, BoxBorder, BoxDecoration, FontWeight, TextAlign, TextStyle, Theme,
     ThemeData,
 };
-use aimer::input::button::Button;
 use aimer::{BuildContext, Svg, SvgDocument, Widget, widget, *};
 
 const GITHUB_ICON_SVG: &[u8] = include_bytes!("../../assets/github-svgrepo-com.svg");

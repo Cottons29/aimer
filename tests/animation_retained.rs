@@ -12,9 +12,8 @@ use std::time::Duration;
 
 use aimer::animation::layout::AnimatedLayout;
 use aimer::animation::{
-    AnimatedPaint, AnimatedSwitcher, AnimationController, Curve, FadeTransition,
-    ImplicitAnimatedBuilder, MorphTransition, RotationTransition, ScaleTransition,
-    SlideTransition,
+    AnimatedPaint, AnimatedSwitcher, AnimationController, curves, FadeTransition,
+    ImplicitAnimatedBuilder, MorphTransition, RotationTransition, ScaleTransition, SlideTransition,
 };
 use aimer::canvas::Canvas;
 use aimer::cupid::utilities::{Color as V2Color, Rect};
@@ -34,7 +33,9 @@ fn render_staying_retained<W: Widget + 'static>(
 ) {
     for frame in 0..frames {
         app.render_frame();
-        let census = app.paint_source_census().expect("a mounted page has a root");
+        let census = app
+            .paint_source_census()
+            .expect("a mounted page has a root");
         assert!(
             census.drawn_unmapped.is_empty(),
             "{what}: frame {frame} drew an element the tree does not know: {census:?}"
@@ -137,12 +138,8 @@ impl State<Page> for PageState {
         } else {
             ("first", Color::Rgb(255, 0, 0))
         };
-        AnimatedSwitcher::new(
-            Duration::from_millis(400),
-            Curve::Linear,
-            Swatch { color },
-        )
-        .child_key(key)
+        AnimatedSwitcher::new(Duration::from_millis(400), curves::LINEAR, Swatch { color })
+            .child_key(key)
     }
 }
 
@@ -203,7 +200,7 @@ impl State<ImplicitPage> for ImplicitPageState {
         ImplicitAnimatedBuilder::new(
             self.target,
             Duration::from_millis(400),
-            Curve::Linear,
+            curves::LINEAR,
             |value: &f32| Swatch {
                 color: Color::Rgb((value.clamp(0.0, 1.0) * 255.0) as u8, 0, 0),
             },
@@ -293,7 +290,7 @@ impl State<MorphPage> for MorphPageState {
         } else {
             ("first", Color::Rgb(255, 0, 0))
         };
-        MorphTransition::new(Duration::from_millis(400), Curve::Linear, Swatch { color })
+        MorphTransition::new(Duration::from_millis(400), curves::LINEAR, Swatch { color })
             .child_key(key)
     }
 }
@@ -332,7 +329,7 @@ fn an_animated_opacity_over_an_unbounded_child_stays_on_the_retained_path() {
 
     impl Widget for FadePage {
         fn to_element(self, ctx: &BuildContext) -> AnyElement {
-            let controller = AnimationController::with_millis(400, Curve::Linear);
+            let controller = AnimationController::with_millis(400, curves::LINEAR);
             controller.forward();
             AnimatedPaint::new(
                 controller,
@@ -364,7 +361,7 @@ impl aimer::PortableWidget for Built {}
 
 /// A controller that is mid-run for the whole test.
 fn running_controller() -> AnimationController {
-    let controller = AnimationController::with_millis(2_000, Curve::Linear);
+    let controller = AnimationController::with_millis(2_000, curves::LINEAR);
     controller.forward_from_first_tick();
     controller
 }

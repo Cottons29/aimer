@@ -159,7 +159,12 @@ impl DevelopmentHostConfig {
     /// exceed the complete module ceiling, and widget depth must not exceed the
     /// widget count ceiling.
     pub fn validate(self) -> Result<Self, DevelopmentHostConfigError> {
-        validate_range("runtime_fuel_per_call", self.runtime_fuel_per_call, 1, MAX_FUEL)?;
+        validate_range(
+            "runtime_fuel_per_call",
+            self.runtime_fuel_per_call,
+            1,
+            MAX_FUEL,
+        )?;
         validate_range(
             "max_module_bytes",
             self.max_module_bytes as u64,
@@ -492,7 +497,10 @@ impl fmt::Display for DevelopmentHostConfigError {
                 formatter.write_str("development host configuration contains a malformed line")
             }
             Self::UnsupportedVersion(version) => {
-                write!(formatter, "unsupported development host configuration version {version}")
+                write!(
+                    formatter,
+                    "unsupported development host configuration version {version}"
+                )
             }
             Self::MissingField(field) => write!(
                 formatter,
@@ -690,10 +698,7 @@ impl ParsedValues {
                 required(self.widget_ir_diagnostics, "widget_ir_diagnostics")?,
                 "widget_ir_diagnostics",
             )?,
-            runtime_fuel_per_call: required(
-                self.runtime_fuel_per_call,
-                "runtime_fuel_per_call",
-            )?,
+            runtime_fuel_per_call: required(self.runtime_fuel_per_call, "runtime_fuel_per_call")?,
             max_module_bytes: bounded_usize(
                 required(self.max_module_bytes, "max_module_bytes")?,
                 "max_module_bytes",
@@ -718,10 +723,7 @@ impl ParsedValues {
                 MAX_CALL_DEPTH,
             )?,
             protocol_max_chunk_bytes: bounded_usize(
-                required(
-                    self.protocol_max_chunk_bytes,
-                    "protocol_max_chunk_bytes",
-                )?,
+                required(self.protocol_max_chunk_bytes, "protocol_max_chunk_bytes")?,
                 "protocol_max_chunk_bytes",
                 MAX_CHUNK_BYTES,
             )?,
@@ -762,10 +764,7 @@ impl ParsedValues {
                 "listener_authentication_backoff_ms",
             )?,
             model_max_document_bytes: bounded_usize(
-                required(
-                    self.model_max_document_bytes,
-                    "model_max_document_bytes",
-                )?,
+                required(self.model_max_document_bytes, "model_max_document_bytes")?,
                 "model_max_document_bytes",
                 MAX_MODEL_DOCUMENT_BYTES,
             )?,
@@ -841,17 +840,11 @@ fn set_once(
     Ok(())
 }
 
-fn required(
-    value: Option<u64>,
-    field: &'static str,
-) -> Result<u64, DevelopmentHostConfigError> {
+fn required(value: Option<u64>, field: &'static str) -> Result<u64, DevelopmentHostConfigError> {
     value.ok_or(DevelopmentHostConfigError::MissingField(field))
 }
 
-fn strict_bool(
-    value: u64,
-    field: &'static str,
-) -> Result<bool, DevelopmentHostConfigError> {
+fn strict_bool(value: u64, field: &'static str) -> Result<bool, DevelopmentHostConfigError> {
     match value {
         0 => Ok(false),
         1 => Ok(true),
@@ -915,8 +908,14 @@ mod tests {
         assert_eq!(config.to_text().unwrap(), CLI_SAFE_TEXT);
         assert!(!CLI_SAFE_TEXT.contains("session_id"));
         assert!(!CLI_SAFE_TEXT.contains("session_token"));
-        assert_eq!(CLI_SAFE_TEXT.parse::<DevelopmentHostConfig>().unwrap(), config);
-        assert_eq!(DevelopmentHostConfig::from_text(CLI_SAFE_TEXT).unwrap(), config);
+        assert_eq!(
+            CLI_SAFE_TEXT.parse::<DevelopmentHostConfig>().unwrap(),
+            config
+        );
+        assert_eq!(
+            DevelopmentHostConfig::from_text(CLI_SAFE_TEXT).unwrap(),
+            config
+        );
         assert_eq!(config.version(), DEVELOPMENT_HOST_CONFIG_VERSION);
         assert_eq!(config.runtime_fuel_per_call_limit(), 100_000_000);
         assert_eq!(config.module_bytes_limit(), 16 * 1_024 * 1_024);
@@ -958,18 +957,21 @@ mod tests {
     fn widget_ir_diagnostics_are_explicit_strict_and_round_trip() {
         let disabled = DevelopmentHostConfig::cli_safe_profile();
         let enabled = disabled.widget_ir_diagnostics(true);
-        let enabled_text = CLI_SAFE_TEXT.replacen(
-            "widget_ir_diagnostics=0",
-            "widget_ir_diagnostics=1",
-            1,
-        );
+        let enabled_text =
+            CLI_SAFE_TEXT.replacen("widget_ir_diagnostics=0", "widget_ir_diagnostics=1", 1);
 
         assert!(!disabled.widget_ir_diagnostics_enabled());
         assert!(enabled.widget_ir_diagnostics_enabled());
         assert_eq!(disabled.to_text().unwrap(), CLI_SAFE_TEXT);
         assert_eq!(enabled.to_text().unwrap(), enabled_text);
-        assert_eq!(CLI_SAFE_TEXT.parse::<DevelopmentHostConfig>().unwrap(), disabled);
-        assert_eq!(enabled_text.parse::<DevelopmentHostConfig>().unwrap(), enabled);
+        assert_eq!(
+            CLI_SAFE_TEXT.parse::<DevelopmentHostConfig>().unwrap(),
+            disabled
+        );
+        assert_eq!(
+            enabled_text.parse::<DevelopmentHostConfig>().unwrap(),
+            enabled
+        );
         assert_eq!(disabled.validate().unwrap(), disabled);
         assert_eq!(enabled.validate().unwrap(), enabled);
 
@@ -977,11 +979,15 @@ mod tests {
         let duplicate = format!("{CLI_SAFE_TEXT}widget_ir_diagnostics=0\n");
         assert!(matches!(
             missing.parse::<DevelopmentHostConfig>(),
-            Err(DevelopmentHostConfigError::MissingField("widget_ir_diagnostics"))
+            Err(DevelopmentHostConfigError::MissingField(
+                "widget_ir_diagnostics"
+            ))
         ));
         assert!(matches!(
             duplicate.parse::<DevelopmentHostConfig>(),
-            Err(DevelopmentHostConfigError::DuplicateField("widget_ir_diagnostics"))
+            Err(DevelopmentHostConfigError::DuplicateField(
+                "widget_ir_diagnostics"
+            ))
         ));
         for malformed in ["2", "true", "01"] {
             let text = CLI_SAFE_TEXT.replacen(
@@ -991,7 +997,9 @@ mod tests {
             );
             assert!(matches!(
                 text.parse::<DevelopmentHostConfig>(),
-                Err(DevelopmentHostConfigError::MalformedValue("widget_ir_diagnostics"))
+                Err(DevelopmentHostConfigError::MalformedValue(
+                    "widget_ir_diagnostics"
+                ))
             ));
         }
     }
@@ -1009,11 +1017,15 @@ mod tests {
 
         assert!(matches!(
             missing.parse::<DevelopmentHostConfig>(),
-            Err(DevelopmentHostConfigError::MissingField("event_queue_capacity"))
+            Err(DevelopmentHostConfigError::MissingField(
+                "event_queue_capacity"
+            ))
         ));
         assert!(matches!(
             duplicate.parse::<DevelopmentHostConfig>(),
-            Err(DevelopmentHostConfigError::DuplicateField("event_queue_capacity"))
+            Err(DevelopmentHostConfigError::DuplicateField(
+                "event_queue_capacity"
+            ))
         ));
         assert!(matches!(
             unknown.parse::<DevelopmentHostConfig>(),
@@ -1021,7 +1033,9 @@ mod tests {
         ));
         assert!(matches!(
             malformed.parse::<DevelopmentHostConfig>(),
-            Err(DevelopmentHostConfigError::MalformedValue("event_queue_capacity"))
+            Err(DevelopmentHostConfigError::MalformedValue(
+                "event_queue_capacity"
+            ))
         ));
         let secret_error = unknown.parse::<DevelopmentHostConfig>().unwrap_err();
         assert!(!format!("{secret_error:?} {secret_error}").contains("secret"));
@@ -1033,7 +1047,9 @@ mod tests {
             );
             assert!(matches!(
                 text.parse::<DevelopmentHostConfig>(),
-                Err(DevelopmentHostConfigError::MalformedValue("event_queue_capacity"))
+                Err(DevelopmentHostConfigError::MalformedValue(
+                    "event_queue_capacity"
+                ))
             ));
         }
     }
@@ -1052,11 +1068,8 @@ mod tests {
             "runtime_max_memory_pages=4294967296",
             1,
         );
-        let inconsistent = CLI_SAFE_TEXT.replacen(
-            "max_module_bytes=16777216",
-            "max_module_bytes=65535",
-            1,
-        );
+        let inconsistent =
+            CLI_SAFE_TEXT.replacen("max_module_bytes=16777216", "max_module_bytes=65535", 1);
 
         assert!(matches!(
             unknown_version.parse::<DevelopmentHostConfig>(),
@@ -1133,18 +1146,24 @@ mod tests {
             ("max_module_bytes", MAX_MODULE_BYTES, |config, value| {
                 config.max_module_bytes(value as usize)
             }),
-            ("runtime_max_memory_pages", MAX_MEMORY_PAGES, |config, value| {
-                config.runtime_max_memory_pages(value as u32)
-            }),
-            ("runtime_max_table_elements", MAX_TABLE_ELEMENTS, |config, value| {
-                config.runtime_max_table_elements(value as u32)
-            }),
+            (
+                "runtime_max_memory_pages",
+                MAX_MEMORY_PAGES,
+                |config, value| config.runtime_max_memory_pages(value as u32),
+            ),
+            (
+                "runtime_max_table_elements",
+                MAX_TABLE_ELEMENTS,
+                |config, value| config.runtime_max_table_elements(value as u32),
+            ),
             ("runtime_max_call_depth", MAX_CALL_DEPTH, |config, value| {
                 config.runtime_max_call_depth(value as u32)
             }),
-            ("protocol_max_chunk_bytes", MAX_CHUNK_BYTES, |config, value| {
-                config.protocol_max_chunk_bytes(value as usize)
-            }),
+            (
+                "protocol_max_chunk_bytes",
+                MAX_CHUNK_BYTES,
+                |config, value| config.protocol_max_chunk_bytes(value as usize),
+            ),
             (
                 "protocol_max_diagnostic_bytes",
                 MAX_DIAGNOSTIC_BYTES,
@@ -1155,9 +1174,11 @@ mod tests {
                 MAX_TERMINAL_RESULTS,
                 |config, value| config.protocol_max_terminal_results(value as usize),
             ),
-            ("protocol_io_timeout_ms", MAX_IO_TIMEOUT_MS, |config, value| {
-                config.protocol_io_timeout_ms(value)
-            }),
+            (
+                "protocol_io_timeout_ms",
+                MAX_IO_TIMEOUT_MS,
+                |config, value| config.protocol_io_timeout_ms(value),
+            ),
             (
                 "listener_credential_ttl_ms",
                 MAX_CREDENTIAL_TTL_MS,
@@ -1178,37 +1199,51 @@ mod tests {
                 MAX_MODEL_DOCUMENT_BYTES,
                 |config, value| config.model_max_document_bytes(value as usize),
             ),
-            ("model_max_state_entries", MAX_MODEL_ITEMS, |config, value| {
-                config.model_max_state_entries(value as u32)
-            }),
-            ("model_max_widget_nodes", MAX_MODEL_ITEMS, |config, value| {
-                config.model_max_widget_nodes(value as u32)
-            }),
-            ("model_max_properties", MAX_MODEL_PROPERTIES, |config, value| {
-                config.model_max_properties(value as u32)
-            }),
-            ("model_max_widget_depth", MAX_WIDGET_DEPTH, |config, value| {
-                config.model_max_widget_depth(value as u32)
-            }),
+            (
+                "model_max_state_entries",
+                MAX_MODEL_ITEMS,
+                |config, value| config.model_max_state_entries(value as u32),
+            ),
+            (
+                "model_max_widget_nodes",
+                MAX_MODEL_ITEMS,
+                |config, value| config.model_max_widget_nodes(value as u32),
+            ),
+            (
+                "model_max_properties",
+                MAX_MODEL_PROPERTIES,
+                |config, value| config.model_max_properties(value as u32),
+            ),
+            (
+                "model_max_widget_depth",
+                MAX_WIDGET_DEPTH,
+                |config, value| config.model_max_widget_depth(value as u32),
+            ),
             (
                 "generation_max_retired",
                 MAX_RETIRED_GENERATIONS,
                 |config, value| config.generation_max_retired(value as usize),
             ),
-            ("max_callback_bindings", MAX_CALLBACK_BINDINGS, |config, value| {
-                config.max_callback_bindings(value as u32)
-            }),
-            ("state_transfer_migration_fuel", MAX_FUEL, |config, value| {
-                config.state_transfer_migration_fuel(value)
-            }),
+            (
+                "max_callback_bindings",
+                MAX_CALLBACK_BINDINGS,
+                |config, value| config.max_callback_bindings(value as u32),
+            ),
+            (
+                "state_transfer_migration_fuel",
+                MAX_FUEL,
+                |config, value| config.state_transfer_migration_fuel(value),
+            ),
             (
                 "reload_command_queue_capacity",
                 MAX_QUEUE_CAPACITY,
                 |config, value| config.reload_command_queue_capacity(value as usize),
             ),
-            ("event_queue_capacity", MAX_QUEUE_CAPACITY, |config, value| {
-                config.event_queue_capacity(value as usize)
-            }),
+            (
+                "event_queue_capacity",
+                MAX_QUEUE_CAPACITY,
+                |config, value| config.event_queue_capacity(value as usize),
+            ),
         ];
 
         for (field, maximum, setter) in cases {

@@ -52,10 +52,9 @@ impl DocumentCache {
     }
 
     fn parse(&mut self, source: ShareRef<str>) -> Shared<Result<Document, MarkdownError>> {
-        self.entries
-            .get_or_insert_with(source, |source| {
-                Shared::new(Document::parse_shared(source.clone()))
-            })
+        self.entries.get_or_insert_with(source, |source| {
+            Shared::new(Document::parse_shared(source.clone()))
+        })
     }
 }
 

@@ -4,9 +4,7 @@ use core::arch::x86_64::{
     _mm_mul_ps, _mm_or_ps, _mm_set1_ps, _mm_storeu_ps, _mm_sub_ps,
 };
 
-use crate::simd_traits::{
-    Simd, SimdAdd, SimdCompare, SimdDiv, SimdMul, SimdSelect, SimdSub,
-};
+use crate::simd_traits::{Simd, SimdAdd, SimdCompare, SimdDiv, SimdMul, SimdSelect, SimdSub};
 
 /// x86_64 SSE2 backend for four f32, sixteen u8, or eight u16 lanes.
 ///
@@ -26,11 +24,7 @@ impl Sse2 {
     /// output pointer must reference sixteen writable f32 values and must not
     /// alias either input range.
     #[inline(always)]
-    pub(crate) unsafe fn add_block_16_f32(
-        left: *const f32,
-        right: *const f32,
-        output: *mut f32,
-    ) {
+    pub(crate) unsafe fn add_block_16_f32(left: *const f32, right: *const f32, output: *mut f32) {
         let _left0: __m128;
         let _left1: __m128;
         let _left2: __m128;
@@ -148,11 +142,6 @@ impl SimdSelect<f32, 4> for Sse2 {
     fn select(mask: Self::Mask, yes: Self::Vector, no: Self::Vector) -> Self::Vector {
         // SAFETY: x86_64 guarantees SSE support. Comparison masks contain
         // either all one or all zero bits in each lane.
-        unsafe {
-            _mm_or_ps(
-                _mm_and_ps(mask, yes),
-                _mm_andnot_ps(mask, no),
-            )
-        }
+        unsafe { _mm_or_ps(_mm_and_ps(mask, yes), _mm_andnot_ps(mask, no)) }
     }
 }

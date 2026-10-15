@@ -148,14 +148,11 @@ impl EventElement for RawKeyRelay {
             {
                 map_named_key(key)
             }
-            ElementEvent::CharInput { ch: ' ', action, .. }
-                if matches!(action, KeyAction::Pressed | KeyAction::Repeat) =>
-            {
-                Some(Key::Space)
-            }
+            ElementEvent::CharInput {
+                ch: ' ', action, ..
+            } if matches!(action, KeyAction::Pressed | KeyAction::Repeat) => Some(Key::Space),
             ElementEvent::TextInput { text, action, .. }
-                if text == " "
-                    && matches!(action, KeyAction::Pressed | KeyAction::Repeat) =>
+                if text == " " && matches!(action, KeyAction::Pressed | KeyAction::Repeat) =>
             {
                 Some(Key::Space)
             }

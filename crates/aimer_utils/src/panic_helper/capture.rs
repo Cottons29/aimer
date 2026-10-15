@@ -158,7 +158,9 @@ impl Drop for PanicWatch {
 /// Whether panics of this thread are currently being recorded.
 #[inline]
 fn watching() -> bool {
-    WATCH_DEPTH.try_with(|depth| depth.get() > 0).unwrap_or(false)
+    WATCH_DEPTH
+        .try_with(|depth| depth.get() > 0)
+        .unwrap_or(false)
 }
 
 /// Installs the panic hook that records watched panics, once per process.
@@ -193,7 +195,9 @@ mod tests {
         let watch = PanicSite::watch();
         let expected_line = line!() + 1;
         let failed = catch_unwind(|| panic!("boom")).is_err();
-        let site = watch.take_site().expect("the panic site should be recorded");
+        let site = watch
+            .take_site()
+            .expect("the panic site should be recorded");
 
         assert!(failed);
         assert_eq!(site.file(), file!());
@@ -210,7 +214,10 @@ mod tests {
             .to_string();
 
         assert!(rendered.starts_with("at "), "{rendered}");
-        assert!(rendered.contains("Option::<i32>::None.unwrap()"), "{rendered}");
+        assert!(
+            rendered.contains("Option::<i32>::None.unwrap()"),
+            "{rendered}"
+        );
         assert!(rendered.contains("^^^"), "{rendered}");
     }
 

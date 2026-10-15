@@ -10,11 +10,7 @@ pub(super) fn dictionary<T: JsCast>() -> T {
 }
 
 pub(super) fn set(object: &Object, name: &str, value: &JsValue) {
-    Reflect::set(
-        object.as_ref(),
-        &JsValue::from_str(name),
-        value,
-    )
+    Reflect::set(object.as_ref(), &JsValue::from_str(name), value)
         .unwrap_or_else(|error| panic!("set WebGPU descriptor field {name}: {error:?}"));
 }
 
@@ -51,7 +47,5 @@ pub(super) fn push_value(array: &Array, value: &JsValue) {
 }
 
 pub(super) fn js_error(value: JsValue) -> String {
-    value
-        .as_string()
-        .unwrap_or_else(|| format!("{value:?}"))
+    value.as_string().unwrap_or_else(|| format!("{value:?}"))
 }

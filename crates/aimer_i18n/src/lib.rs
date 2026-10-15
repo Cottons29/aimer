@@ -932,9 +932,7 @@ pub fn format_number(
     );
     let (integer, fraction) = raw.split_once('.').unwrap_or((&raw, ""));
     let mut fraction = fraction.to_owned();
-    while fraction.len() > usize::from(options.minimum_fraction_digits)
-        && fraction.ends_with('0')
-    {
+    while fraction.len() > usize::from(options.minimum_fraction_digits) && fraction.ends_with('0') {
         fraction.pop();
     }
 
@@ -1331,12 +1329,21 @@ pub fn format_time(locale: &Locale, time: CivilTime, style: TimeFormatStyle) -> 
         if matches!(style, TimeFormatStyle::Short) {
             format!("{hour}:{:02} {meridiem}", time.minute())
         } else {
-            format!("{hour}:{:02}:{:02} {meridiem}", time.minute(), time.second())
+            format!(
+                "{hour}:{:02}:{:02} {meridiem}",
+                time.minute(),
+                time.second()
+            )
         }
     } else if matches!(style, TimeFormatStyle::Short) {
         format!("{:02}:{:02}", time.hour(), time.minute())
     } else {
-        format!("{:02}:{:02}:{:02}", time.hour(), time.minute(), time.second())
+        format!(
+            "{:02}:{:02}:{:02}",
+            time.hour(),
+            time.minute(),
+            time.second()
+        )
     }
 }
 
@@ -1369,9 +1376,8 @@ fn civil_from_days(days: i64) -> (i64, u8, u8) {
     let z = days + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
     let day_of_era = z - era * 146_097;
-    let year_of_era = (day_of_era - day_of_era / 1_460 + day_of_era / 36_524
-        - day_of_era / 146_096)
-        / 365;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
     let mut year = year_of_era + era * 400;
     let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
     let month_part = (5 * day_of_year + 2) / 153;

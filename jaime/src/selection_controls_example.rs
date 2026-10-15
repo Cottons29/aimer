@@ -9,15 +9,15 @@
 //! W17 exposes the choice-control package through the umbrella crate and
 //! registers this page in the central showcase.
 
+use aimer::input::button::Button;
 use aimer::macros::widget;
 use aimer::style::{
     BorderSlice, BorderStyle, BoxBorder, BoxDecoration, FontWeight, LayoutSpacing, Spacing,
     TextAlign, TextStyle, Theme, ThemeData,
 };
-use aimer::input::button::Button;
 use aimer::{
-    AimerApp, AnyWidget, BuildContext, Column, Container, Dimension, Row, ScrollAxis,
-    Scrollable, State, StateUpdater, StatefulWidget, Text, Widget,
+    AimerApp, AnyWidget, BuildContext, Column, Container, Dimension, Row, ScrollAxis, Scrollable,
+    State, StateUpdater, StatefulWidget, Text, Widget,
 };
 
 pub use aimer::selection::CheckboxValue;
@@ -57,14 +57,12 @@ impl SelectionControlsExample {
             .box_decoration(
                 BoxDecoration::new()
                     .background_color(app_theme.surface_color)
-                    .border(
-                        BoxBorder::all(
-                            BorderSlice::new()
-                                .style(BorderStyle::Solid)
-                                .stroke(1.0)
-                                .color(theme::divider(&app_theme)),
-                        ),
-                    )
+                    .border(BoxBorder::all(
+                        BorderSlice::new()
+                            .style(BorderStyle::Solid)
+                            .stroke(1.0)
+                            .color(theme::divider(&app_theme)),
+                    ))
                     .border_radius(12),
             )
             .child(
@@ -133,7 +131,9 @@ impl State<SelectionControlsExample> for SelectionControlsExampleState {
         let reset_updater = self.updater;
         let reset = action_button("Reset all", app_theme, move || {
             reset_updater.set_state(|state| {
-                state.reset_generation = state.reset_generation.wrapping_add(1);
+                state.reset_generation = state
+                    .reset_generation
+                    .wrapping_add(1);
             });
         });
 
@@ -193,7 +193,9 @@ struct CheckboxSection {
 impl CheckboxSection {
     #[inline]
     fn new() -> Self {
-        Self { reset_generation: 0 }
+        Self {
+            reset_generation: 0,
+        }
     }
 
     #[inline]
@@ -285,17 +287,22 @@ impl State<CheckboxSection> for CheckboxSectionState {
                                     ),
                             )
                             .boxed(),
-                        Text::new(state.label().unwrap_or_default().to_owned())
-                            .text_style(
-                                TextStyle::new()
-                                    .font_size(15)
-                                    .color(if state.is_disabled() {
-                                        theme::muted_text(&checkbox_theme)
-                                    } else {
-                                        checkbox_theme.on_surface_color
-                                    }),
-                            )
-                            .boxed(),
+                        Text::new(
+                            state
+                                .label()
+                                .unwrap_or_default()
+                                .to_owned(),
+                        )
+                        .text_style(
+                            TextStyle::new()
+                                .font_size(15)
+                                .color(if state.is_disabled() {
+                                    theme::muted_text(&checkbox_theme)
+                                } else {
+                                    checkbox_theme.on_surface_color
+                                }),
+                        )
+                        .boxed(),
                     ])
                     .boxed()
             });
@@ -324,7 +331,9 @@ struct SwitchSection {
 impl SwitchSection {
     #[inline]
     fn new() -> Self {
-        Self { reset_generation: 0 }
+        Self {
+            reset_generation: 0,
+        }
     }
 
     #[inline]
@@ -391,7 +400,9 @@ struct RadioSection {
 impl RadioSection {
     #[inline]
     fn new() -> Self {
-        Self { reset_generation: 0 }
+        Self {
+            reset_generation: 0,
+        }
     }
 
     #[inline]
@@ -465,7 +476,9 @@ struct SelectSection {
 impl SelectSection {
     #[inline]
     fn new() -> Self {
-        Self { reset_generation: 0 }
+        Self {
+            reset_generation: 0,
+        }
     }
 
     #[inline]
@@ -525,7 +538,8 @@ impl State<SelectSection> for SelectSectionState {
             "Select",
             format!(
                 "Selected size: {}",
-                self.selected.unwrap_or("(none yet — click to open)")
+                self.selected
+                    .unwrap_or("(none yet — click to open)")
             ),
             select.boxed(),
             app_theme,
@@ -541,7 +555,9 @@ struct AutocompleteSection {
 impl AutocompleteSection {
     #[inline]
     fn new() -> Self {
-        Self { reset_generation: 0 }
+        Self {
+            reset_generation: 0,
+        }
     }
 
     #[inline]
@@ -616,7 +632,8 @@ impl State<AutocompleteSection> for AutocompleteSectionState {
             format!(
                 "Query: {:?}; selected: {}",
                 self.query,
-                self.selected.unwrap_or("(none yet)")
+                self.selected
+                    .unwrap_or("(none yet)")
             ),
             Column::new()
                 .gaps(LayoutSpacing::all(Spacing::Px(8)))
@@ -653,12 +670,20 @@ fn action_button(
         )
         .hover_decoration(
             BoxDecoration::new()
-                .background_color(app_theme.primary_color.lighten(0.08))
+                .background_color(
+                    app_theme
+                        .primary_color
+                        .lighten(0.08),
+                )
                 .border_radius(8),
         )
         .press_decoration(
             BoxDecoration::new()
-                .background_color(app_theme.primary_color.darken(0.08))
+                .background_color(
+                    app_theme
+                        .primary_color
+                        .darken(0.08),
+                )
                 .border_radius(8),
         )
         .child(

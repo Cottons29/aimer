@@ -1,9 +1,8 @@
 use core::arch::aarch64::{
-    uint8x16_t, uint16x8_t, vaddq_u8, vaddq_u16, vbslq_u8, vbslq_u16,
-    vcgtq_u8, vcgtq_u16, vdupq_n_u8, vdupq_n_u16, vld1q_u8, vld1q_u16,
-    vcombine_u8, vget_high_u8, vget_high_u16, vget_low_u8, vget_low_u16,
-    vmaxvq_u8, vmaxvq_u16, vmaxvq_u32, vmovn_u16, vmulq_u16, vmull_u8, vmull_u16,
-    vst1q_u8, vst1q_u16, vsubq_u8, vsubq_u16,
+    uint8x16_t, uint16x8_t, vaddq_u8, vaddq_u16, vbslq_u8, vbslq_u16, vcgtq_u8, vcgtq_u16,
+    vcombine_u8, vdupq_n_u8, vdupq_n_u16, vget_high_u8, vget_high_u16, vget_low_u8, vget_low_u16,
+    vld1q_u8, vld1q_u16, vmaxvq_u8, vmaxvq_u16, vmaxvq_u32, vmovn_u16, vmull_u8, vmull_u16,
+    vmulq_u16, vst1q_u8, vst1q_u16, vsubq_u8, vsubq_u16,
 };
 
 #[cfg(not(feature = "force-scalar"))]
@@ -101,10 +100,23 @@ macro_rules! impl_unsigned {
     };
 }
 
-impl_unsigned!(u8, 16, uint8x16_t, vld1q_u8, vst1q_u8,
-    vdupq_n_u8, vaddq_u8, vsubq_u8, vcgtq_u8, vmaxvq_u8, vbslq_u8);
-impl_unsigned!(u16, 8, uint16x8_t, vld1q_u16, vst1q_u16,
-    vdupq_n_u16, vaddq_u16, vsubq_u16, vcgtq_u16, vmaxvq_u16, vbslq_u16);
+impl_unsigned!(
+    u8, 16, uint8x16_t, vld1q_u8, vst1q_u8, vdupq_n_u8, vaddq_u8, vsubq_u8, vcgtq_u8, vmaxvq_u8,
+    vbslq_u8
+);
+impl_unsigned!(
+    u16,
+    8,
+    uint16x8_t,
+    vld1q_u16,
+    vst1q_u16,
+    vdupq_n_u16,
+    vaddq_u16,
+    vsubq_u16,
+    vcgtq_u16,
+    vmaxvq_u16,
+    vbslq_u16
+);
 
 impl SimdMul<u8, 16> for Neon {
     #[inline(always)]

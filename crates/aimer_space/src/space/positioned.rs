@@ -1,4 +1,3 @@
-
 use aimer_attribute::BoxConstraint;
 use aimer_attribute::dimension::Dimension;
 use aimer_attribute::position::Vec2d;
@@ -9,6 +8,8 @@ use aimer_widget::{
     AnyElement, AnyWidget, Drawable, Element, EventElement, LayoutElement, Rebuildable,
     VisitorElement, Widget,
 };
+
+use super::hug::hugged_size;
 
 #[allow(dead_code)]
 /// Positions and transforms one child relative to its parent, typically a
@@ -263,6 +264,30 @@ impl<E: Element> RawPositionedElement<E> {
         self
     }
 
+    /// Whether no edge offset is set, in which case the child is laid out in the
+    /// parent's own space rather than placed within it.
+    #[inline]
+    fn has_no_edges(&self) -> bool {
+        self.top == Dimension::Auto
+            && self.left == Dimension::Auto
+            && self.right == Dimension::Auto
+            && self.bottom == Dimension::Auto
+    }
+
+    /// The size the child occupies once placed.
+    ///
+    /// A child placed by edge offsets hugs its content, so `bottom` and `right`
+    /// are measured from the edge of the child that is really there; a child that
+    /// is not placed fills the constraint as it always did.
+    #[inline]
+    fn placed_child_size(&self, ctx: &BuildContext) -> ResolvedSize {
+        if self.has_no_edges() {
+            self.child.computed_size(ctx)
+        } else {
+            hugged_size(&self.child, ctx)
+        }
+    }
+
     /// The child node's own scale or rotation, about the child's origin. `None`
     /// for translation-only transforms, which move the child instead.
     fn child_presentation(&self) -> Option<aimer_cupid::utilities::Mat3> {
@@ -301,7 +326,9 @@ impl<E: Element> RawPositionedElement<E> {
             && self.left == Dimension::Auto
             && self.right == Dimension::Auto
             && self.bottom == Dimension::Auto;
-        let child_size = self.child.content_size(ctx);
+        // Edge offsets apply to the complete child box, including its padding,
+        // border, and margin, rather than only the child's inner content area.
+        let child_size = self.placed_child_size(ctx);
         if !child_size.width.is_finite()
             || !child_size.height.is_finite()
             || child_size.width < 0.0
@@ -371,7 +398,7 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
             return None;
         }
         let (_, child_ctx) = self.retained_child_layout(ctx)?;
-        Some(self.child.content_size(&child_ctx))
+        Some(self.placed_child_size(&child_ctx))
     }
 
     fn retained_v2_interaction_offset(&self, ctx: &BuildContext) -> (f32, f32) {
@@ -385,7 +412,9 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
     }
 
     #[inline]
-    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+    fn retained_v2_interaction_disagreement(
+        &self,
+    ) -> Option<aimer_widget::InteractionDisagreement> {
         self.bounds.disagreement("Positioned")
     }
 
@@ -467,7 +496,7 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
             self.bounds.clear_canvas();
             return;
         };
-        let size = self.child.content_size(&child_ctx);
+        let size = self.placed_child_size(&child_ctx);
         let (start_x, start_y) = ctx.canvas.get_transform_translation();
         self.bounds.save(
             ctx.scale,
@@ -502,7 +531,7 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
 
         let mut offset_x = 0.0;
         let mut offset_y = 0.0;
-        let child_size = self.child.content_size(ctx);
+        let child_size = self.placed_child_size(ctx);
 
         if !is_auto {
             if self.left != Dimension::Auto {
@@ -602,6 +631,7 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
                 cursor_pos: ctx.cursor_pos,
                 box_constraint: child_constraint,
                 visible_rect: child_visible_rect,
+                paint_background: ctx.paint_background,
                 window: ctx.window.clone(),
                 #[cfg(not(target_arch = "wasm32"))]
                 async_handle: ctx.async_handle.clone(),
@@ -642,10 +672,7 @@ impl<E: Element> VisitorElement for RawPositionedElement<E> {
         // double-rendering at (0,0).
     }
 
-    fn visit_retained_v2_children<'a>(
-        &'a self,
-        visitor: &mut dyn FnMut(usize, &'a dyn Element),
-    ) {
+    fn visit_retained_v2_children<'a>(&'a self, visitor: &mut dyn FnMut(usize, &'a dyn Element)) {
         visitor(0, &self.child);
     }
 
@@ -729,8 +756,8 @@ mod tests {
         // After the fix: shift by the 110px top offset. The title's real position
         // is stack y 110..140, still above the viewport (200), so culling it is
         // now *correct*; both title and body are judged in the same, correct space.
-        let shifted = shift_visible_rect(Some(stack_visible), 0.0, 110.0, &Transform::None)
-            .unwrap();
+        let shifted =
+            shift_visible_rect(Some(stack_visible), 0.0, 110.0, &Transform::None).unwrap();
         assert_eq!(shifted, (0.0, 90.0, 1000.0, 600.0));
 
         // A block near the top of the stack (offset 10px) whose title IS on screen

@@ -176,15 +176,47 @@ impl ImageInstance {
         }
     }
 
-        const GENERIC_ATTRIBUTES: [crate::backend::VertexAttribute; 8] = [
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x2, offset: std::mem::offset_of!(Self, position) as u64, shader_location: 0 },
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x2, offset: std::mem::offset_of!(Self, size) as u64, shader_location: 1 },
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x2, offset: std::mem::offset_of!(Self, uv_offset) as u64, shader_location: 2 },
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x2, offset: std::mem::offset_of!(Self, uv_scale) as u64, shader_location: 3 },
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, clip_rect) as u64, shader_location: 4 },
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, clip_border_radius) as u64, shader_location: 5 },
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32, offset: std::mem::offset_of!(Self, alpha) as u64, shader_location: 6 },
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32, offset: std::mem::offset_of!(Self, source_premultiplied) as u64, shader_location: 7 },
+    const GENERIC_ATTRIBUTES: [crate::backend::VertexAttribute; 8] = [
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Float32x2,
+            offset: std::mem::offset_of!(Self, position) as u64,
+            shader_location: 0,
+        },
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Float32x2,
+            offset: std::mem::offset_of!(Self, size) as u64,
+            shader_location: 1,
+        },
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Float32x2,
+            offset: std::mem::offset_of!(Self, uv_offset) as u64,
+            shader_location: 2,
+        },
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Float32x2,
+            offset: std::mem::offset_of!(Self, uv_scale) as u64,
+            shader_location: 3,
+        },
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Float32x4,
+            offset: std::mem::offset_of!(Self, clip_rect) as u64,
+            shader_location: 4,
+        },
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Float32x4,
+            offset: std::mem::offset_of!(Self, clip_border_radius) as u64,
+            shader_location: 5,
+        },
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Float32,
+            offset: std::mem::offset_of!(Self, alpha) as u64,
+            shader_location: 6,
+        },
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Float32,
+            offset: std::mem::offset_of!(Self, source_premultiplied) as u64,
+            shader_location: 7,
+        },
     ];
 }
 
@@ -199,7 +231,6 @@ struct TextureEntry<B: crate::backend::GpuBackend = crate::backend::DefaultGpuBa
     evictable: bool,
     retained_revision: Option<u64>,
 }
-
 
 const IMAGE_TEXTURE_CACHE_BUDGET_BYTES: u64 = 128 * 1024 * 1024;
 const IMAGE_TEXTURE_IDLE_FRAMES: u64 = 120;
@@ -251,8 +282,6 @@ pub struct ImagePipeline<B: crate::backend::GpuBackend = crate::backend::Default
     last_viewport: Option<(u32, u32, bool)>,
     frame_index: u64,
 }
-
-
 
 // ── Backend-agnostic generic path ──────────────────────────────────────────
 //
@@ -325,11 +354,7 @@ impl<B: crate::backend::GpuBackend> ImagePipeline<B> {
     ///
     /// The pipeline uses the backend's GPU operations while keeping image
     /// handling independent of the concrete graphics API.
-    pub fn new(
-        backend: &B,
-        format: B::TextureFormat,
-        antialiasing: crate::AntiAlias,
-    ) -> Self {
+    pub fn new(backend: &B, format: B::TextureFormat, antialiasing: crate::AntiAlias) -> Self {
         use crate::backend::*;
 
         let shader = backend.create_shader_module(
@@ -381,10 +406,8 @@ impl<B: crate::backend::GpuBackend> ImagePipeline<B> {
             },
         ]);
 
-        let pipeline_layout = backend.create_pipeline_layout(&[
-            &viewport_layout,
-            &texture_bind_group_layout,
-        ]);
+        let pipeline_layout =
+            backend.create_pipeline_layout(&[&viewport_layout, &texture_bind_group_layout]);
 
         let vertex_buffers = [Some(VertexBufferLayout {
             array_stride: size_of::<ImageInstance>() as u64,
@@ -501,13 +524,7 @@ impl<B: crate::backend::GpuBackend> ImagePipeline<B> {
     ///
     /// Equivalent to [`ImagePipeline::upload_image`] but routes all GPU
     /// operations through the backend trait.
-    pub fn upload_image(
-        &mut self,
-        backend: &B,
-        width: u32,
-        height: u32,
-        data: &[u8],
-    ) -> TextureId {
+    pub fn upload_image(&mut self, backend: &B, width: u32, height: u32, data: &[u8]) -> TextureId {
         let id = self.next_id;
         self.next_id += 1;
         self.upload_image_with_id_internal_generic(backend, id, width, height, data, false, None);
@@ -706,11 +723,7 @@ impl<B: crate::backend::GpuBackend> ImagePipeline<B> {
     ///
     /// Equivalent to [`ImagePipeline::create_external_bind_group`] but routes
     /// bind-group creation through the backend trait.
-    pub fn create_external_bind_group(
-        &self,
-        backend: &B,
-        view: &B::TextureView,
-    ) -> B::BindGroup {
+    pub fn create_external_bind_group(&self, backend: &B, view: &B::TextureView) -> B::BindGroup {
         backend.create_bind_group(
             &self.texture_bind_group_layout,
             &[
@@ -1086,7 +1099,11 @@ mod tests {
         for _ in 0..ROUNDS {
             for _ in 0..32 {
                 consume_image_result(
-                    (129, 65, Cow::Owned(resize_rgba8_nearest(513, 257, &source, 129, 65))),
+                    (
+                        129,
+                        65,
+                        Cow::Owned(resize_rgba8_nearest(513, 257, &source, 129, 65)),
+                    ),
                     &mut checksum,
                 );
             }
@@ -1094,7 +1111,11 @@ mod tests {
             let start = Instant::now();
             for _ in 0..256 {
                 consume_image_result(
-                    (129, 65, Cow::Owned(resize_rgba8_nearest(513, 257, &source, 129, 65))),
+                    (
+                        129,
+                        65,
+                        Cow::Owned(resize_rgba8_nearest(513, 257, &source, 129, 65)),
+                    ),
                     &mut checksum,
                 );
             }

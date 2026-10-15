@@ -9,8 +9,8 @@ use aimer::accessibility::{
     SemanticTree, ValueRange,
 };
 
-use aimer::{AnyElement, BuildContext, Column, Container, Text, Widget};
 use aimer::console::log::debug;
+use aimer::{AnyElement, BuildContext, Column, Container, Text, Widget};
 use aimer_widget::Key;
 
 /// Builds a settings subtree with a merged label, a range value, and an
@@ -52,16 +52,13 @@ pub struct AccessibilityExample;
 
 impl Widget for AccessibilityExample {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
-
         let snapshot = settings_semantics_example();
         Container::new()
-            .child(
-                Column::new().children(vec![
+            .child(Column::new().children(vec![
                     Text::new("Accessibility semantics title").boxed(),
                     Text::new(format!("Published nodes: {}", snapshot.len())).boxed(),
                     Text::new(snapshot.canonical_string()).wrapped().boxed(),
-                ]),
-            )
+                ]))
             .to_element(ctx)
     }
 

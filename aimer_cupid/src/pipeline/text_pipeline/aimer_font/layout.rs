@@ -18,8 +18,8 @@ use hashbrown::HashMap;
 
 use crate::pipeline::text_pipeline::unicode_script::Script;
 
-mod context;
 mod compiled;
+mod context;
 mod indic;
 mod southeast_asian;
 
@@ -104,9 +104,9 @@ const MAX_EXTENSION_DEPTH: u8 = 8;
 const MAX_CONTEXT_DEPTH: u8 = 8;
 
 const INDIC_SCRIPT_TAGS: &[Tag] = &[
-    DEVA2_TAG, DEVA_TAG, BENG2_TAG, BENG_TAG, GURU2_TAG, GURU_TAG, GUJR2_TAG, GUJR_TAG,
-    ORYA2_TAG, ORYA_TAG, TAML2_TAG, TAML_TAG, TELU2_TAG, TELU_TAG, KNDA2_TAG, KNDA_TAG,
-    MLYM2_TAG, MLYM_TAG, SINH_TAG,
+    DEVA2_TAG, DEVA_TAG, BENG2_TAG, BENG_TAG, GURU2_TAG, GURU_TAG, GUJR2_TAG, GUJR_TAG, ORYA2_TAG,
+    ORYA_TAG, TAML2_TAG, TAML_TAG, TELU2_TAG, TELU_TAG, KNDA2_TAG, KNDA_TAG, MLYM2_TAG, MLYM_TAG,
+    SINH_TAG,
 ];
 const INDIC_GSUB_FEATURE_TAGS: &[Tag] = &[
     LOCL_TAG, CCMP_TAG, NUKT_TAG, AKHN_TAG, RPHF_TAG, RKRF_TAG, PREF_TAG, BLWF_TAG, ABVF_TAG,
@@ -129,9 +129,8 @@ const MYANMAR_GSUB_FEATURE_TAGS: &[Tag] = &[
     LOCL_TAG, CCMP_TAG, RPHF_TAG, PREF_TAG, BLWF_TAG, PSTF_TAG, PRES_TAG, ABVS_TAG, BLWS_TAG,
     PSTS_TAG,
 ];
-const SOUTHEAST_ASIAN_GPOS_FEATURE_TAGS: &[Tag] = &[
-    DIST_TAG, ABVM_TAG, BLWM_TAG, MARK_TAG, MKMK_TAG, KERN_TAG,
-];
+const SOUTHEAST_ASIAN_GPOS_FEATURE_TAGS: &[Tag] =
+    &[DIST_TAG, ABVM_TAG, BLWM_TAG, MARK_TAG, MKMK_TAG, KERN_TAG];
 
 /// A glyph produced by the Aimer layout subset, still measured in font units.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -403,16 +402,11 @@ impl LayoutTableState {
             let mut subtable_offsets = Vec::with_capacity(subtable_count);
             for subtable_index in 0..subtable_count {
                 let offset = checked_add(6, checked_mul(subtable_index, 2)?)?;
-                let subtable_offset = relative_offset(
-                    lookup,
-                    0,
-                    read_u16(lookup, offset, tag)?,
-                    tag,
-                )?;
+                let subtable_offset =
+                    relative_offset(lookup, 0, read_u16(lookup, offset, tag)?, tag)?;
                 subtable_offsets.push(checked_add(lookup_offset, subtable_offset)?);
             }
-            let active = active_lookup_indices
-                .contains(&(lookup_index as u16))
+            let active = active_lookup_indices.contains(&(lookup_index as u16))
                 && !subtable_offsets.is_empty();
             // OpenType extension lookups carry the real lookup type in each
             // extension subtable. Decode it once so the run loop does not
@@ -446,9 +440,7 @@ impl LayoutTableState {
             let compiled_subtables = if active {
                 subtable_offsets
                     .iter()
-                    .map(|offset| {
-                        compiled::compile_subtable(table, tag, lookup_type, *offset)
-                    })
+                    .map(|offset| compiled::compile_subtable(table, tag, lookup_type, *offset))
                     .collect::<Result<Vec<_>, _>>()?
             } else {
                 Vec::new()
@@ -494,11 +486,9 @@ impl LayoutTableState {
 
         let mut feature_lookup_map = HashMap::with_capacity(feature_lookups.len());
         for (index, feature) in feature_lookups.iter().enumerate() {
-            if let Some(key) = FeatureQueryKey::new(
-                feature.script_tag,
-                feature.language_tag,
-                &feature.wanted,
-            ) {
+            if let Some(key) =
+                FeatureQueryKey::new(feature.script_tag, feature.language_tag, &feature.wanted)
+            {
                 // Preserve the old linear `.find()` behavior if malformed or
                 // unusual data describes the same feature tuple twice.
                 feature_lookup_map.entry(key).or_insert(index);
@@ -596,7 +586,6 @@ impl LayoutState {
             .flat_map(|feature| feature.lookups.iter())
             .count()
     }
-
 }
 
 /// Shapes a run through the currently supported Aimer-owned script subset.
@@ -716,7 +705,11 @@ fn shape_run_with_layout_options_at_coordinates_with_scratch(
         }
     }
 
-    if !vertical && text.chars().any(|codepoint| arabic_joining_type(codepoint).is_some()) {
+    if !vertical
+        && text
+            .chars()
+            .any(|codepoint| arabic_joining_type(codepoint).is_some())
+    {
         if let Some(shaped) = shape_arabic_run_with_layout(face, layout, text, scratch)? {
             return Ok(Some(shaped));
         }
@@ -725,9 +718,15 @@ fn shape_run_with_layout_options_at_coordinates_with_scratch(
     if can_shape_cjk_run_text(text)
         && (language.is_some() || vertical || can_shape_cjk_variation_text(text))
     {
-        if let Some(shaped) =
-            shape_cjk_run_with_options(face, layout, text, language, vertical, coordinates, scratch)?
-        {
+        if let Some(shaped) = shape_cjk_run_with_options(
+            face,
+            layout,
+            text,
+            language,
+            vertical,
+            coordinates,
+            scratch,
+        )? {
             return Ok(Some(shaped));
         }
     }
@@ -787,11 +786,15 @@ fn shape_simple_run(
 
     let metrics = face.metrics()?;
     scratch.glyphs.clear();
-    if !face.for_each_glyph_with_advance_and_variations(text, metrics, |cluster, glyph_id, advance| {
-        scratch
-            .glyphs
-            .push(LayoutGlyph::from_glyph_id(glyph_id, cluster, advance));
-    })? {
+    if !face.for_each_glyph_with_advance_and_variations(
+        text,
+        metrics,
+        |cluster, glyph_id, advance| {
+            scratch
+                .glyphs
+                .push(LayoutGlyph::from_glyph_id(glyph_id, cluster, advance));
+        },
+    )? {
         return Ok(None);
     }
 
@@ -831,11 +834,15 @@ fn shape_cjk_run_with_options(
 
     let metrics = face.metrics()?;
     scratch.glyphs.clear();
-    if !face.for_each_glyph_with_advance_and_variations(text, metrics, |cluster, glyph_id, advance| {
-        scratch
-            .glyphs
-            .push(LayoutGlyph::from_glyph_id(glyph_id, cluster, advance));
-    })? {
+    if !face.for_each_glyph_with_advance_and_variations(
+        text,
+        metrics,
+        |cluster, glyph_id, advance| {
+            scratch
+                .glyphs
+                .push(LayoutGlyph::from_glyph_id(glyph_id, cluster, advance));
+        },
+    )? {
         return Ok(None);
     }
 
@@ -853,14 +860,11 @@ fn shape_cjk_run_with_options(
         )?;
     }
     if vertical {
-        let vertical_feature = if layout
-            .gsub
-            .as_ref()
-            .is_some_and(|gsub| {
-                !gsub.feature_lookups_with_language(HANI_TAG, language_tag, &[VRT2_TAG])
-                    .is_empty()
-            })
-        {
+        let vertical_feature = if layout.gsub.as_ref().is_some_and(|gsub| {
+            !gsub
+                .feature_lookups_with_language(HANI_TAG, language_tag, &[VRT2_TAG])
+                .is_empty()
+        }) {
             VRT2_TAG
         } else {
             VERT_TAG
@@ -1022,7 +1026,8 @@ enum ArabicJoiningForm {
 /// shaper rather than being assigned a guessed form.
 fn arabic_joining_type(codepoint: char) -> Option<ArabicJoiningType> {
     let codepoint = codepoint as u32;
-    if matches!(codepoint, 0x0622..=0x0625 | 0x0627 | 0x062f..=0x0630 | 0x0631..=0x0632 | 0x0648 | 0x0649 | 0x06c9 | 0x06cc) {
+    if matches!(codepoint, 0x0622..=0x0625 | 0x0627 | 0x062f..=0x0630 | 0x0631..=0x0632 | 0x0648 | 0x0649 | 0x06c9 | 0x06cc)
+    {
         return Some(ArabicJoiningType::Right);
     }
     if matches!(
@@ -1119,9 +1124,8 @@ pub(crate) fn shape_latin_run(
     text: &str,
 ) -> Result<Option<AimerShapedRun>, SfntError> {
     let layout = LayoutState::parse(face)?;
-    LAYOUT_SCRATCH.with(|scratch| {
-        shape_latin_run_with_layout(face, &layout, text, &mut scratch.borrow_mut())
-    })
+    LAYOUT_SCRATCH
+        .with(|scratch| shape_latin_run_with_layout(face, &layout, text, &mut scratch.borrow_mut()))
 }
 
 fn shape_latin_run_with_layout(
@@ -1231,21 +1235,17 @@ fn shape_arabic_run_with_layout(
     scratch.forms.extend(
         scratch
             .joining_types
-        .iter()
-        .enumerate()
-        .map(|(index, form)| {
-            form.map(|joining_type| {
-                arabic_joining_form(
-                    joining_type,
-                    previous_joining_type(
-                        &scratch.joining_types,
-                        &scratch.transparent,
-                        index,
-                    ),
-                    next_joining_type(&scratch.joining_types, &scratch.transparent, index),
-                )
-            })
-        }),
+            .iter()
+            .enumerate()
+            .map(|(index, form)| {
+                form.map(|joining_type| {
+                    arabic_joining_form(
+                        joining_type,
+                        previous_joining_type(&scratch.joining_types, &scratch.transparent, index),
+                        next_joining_type(&scratch.joining_types, &scratch.transparent, index),
+                    )
+                })
+            }),
     );
 
     let joining_changed = apply_arabic_joining(
@@ -1366,11 +1366,7 @@ enum ClassDef {
 }
 
 impl ClassDef {
-    fn new(
-        bytes: &[u8],
-        offset: usize,
-        tag: Tag,
-    ) -> Result<Option<Self>, SfntError> {
+    fn new(bytes: &[u8], offset: usize, tag: Tag) -> Result<Option<Self>, SfntError> {
         if offset == 0 {
             return Ok(None);
         }
@@ -1461,8 +1457,7 @@ fn apply_gsub(
     for lookup in lookups {
         if lookup.compiled_ligature_only {
             for compiled in lookup.compiled_subtables.iter().flatten() {
-                compiled
-                    .apply_ligature(advances, glyphs, gdef, lookup.lookup_flags)?;
+                compiled.apply_ligature(advances, glyphs, gdef, lookup.lookup_flags)?;
             }
             continue;
         }
@@ -1736,10 +1731,8 @@ fn apply_arabic_cursive(
                         else {
                             continue;
                         };
-                        glyphs[current_index].x_offset =
-                            glyphs[previous_index].x_offset + x_offset;
-                        glyphs[current_index].y_offset =
-                            glyphs[previous_index].y_offset + y_offset;
+                        glyphs[current_index].x_offset = glyphs[previous_index].x_offset + x_offset;
+                        glyphs[current_index].y_offset = glyphs[previous_index].y_offset + y_offset;
                         changed = true;
                         applied = true;
                         break;
@@ -1756,10 +1749,8 @@ fn apply_arabic_cursive(
                 else {
                     continue;
                 };
-                glyphs[current_index].x_offset =
-                    glyphs[previous_index].x_offset + x_offset;
-                glyphs[current_index].y_offset =
-                    glyphs[previous_index].y_offset + y_offset;
+                glyphs[current_index].x_offset = glyphs[previous_index].x_offset + x_offset;
+                glyphs[current_index].y_offset = glyphs[previous_index].y_offset + y_offset;
                 changed = true;
                 applied = true;
                 break;
@@ -1878,8 +1869,7 @@ fn apply_arabic_mark_positioning(
                         0,
                     )?
                 };
-                let Some((x_offset, y_offset)) = adjustment
-                else {
+                let Some((x_offset, y_offset)) = adjustment else {
                     continue;
                 };
                 glyphs[mark_index].x_offset = base_x_offset + x_offset;
@@ -1951,13 +1941,11 @@ fn mark_to_mark_adjustment(
     }
     let mark1_array_offset = usize::from(read_u16(subtable, 8, GPOS_TAG)?);
     let mark2_array_offset = usize::from(read_u16(subtable, 10, GPOS_TAG)?);
-    let Some(mark1_index) =
-        coverage_index(subtable, mark1_coverage_offset, mark1_glyph, GPOS_TAG)?
+    let Some(mark1_index) = coverage_index(subtable, mark1_coverage_offset, mark1_glyph, GPOS_TAG)?
     else {
         return Ok(None);
     };
-    let Some(mark2_index) =
-        coverage_index(subtable, mark2_coverage_offset, mark2_glyph, GPOS_TAG)?
+    let Some(mark2_index) = coverage_index(subtable, mark2_coverage_offset, mark2_glyph, GPOS_TAG)?
     else {
         return Ok(None);
     };
@@ -1980,11 +1968,8 @@ fn mark_to_mark_adjustment(
     if mark_class >= class_count {
         return Err(malformed(GPOS_TAG));
     }
-    let mark1_anchor_offset = usize::from(read_u16(
-        subtable,
-        checked_add(mark1_record, 2)?,
-        GPOS_TAG,
-    )?);
+    let mark1_anchor_offset =
+        usize::from(read_u16(subtable, checked_add(mark1_record, 2)?, GPOS_TAG)?);
     let Some((mark1_x, mark1_y)) =
         anchor_position(subtable, mark1_array_offset, mark1_anchor_offset)?
     else {
@@ -2061,20 +2046,14 @@ fn cursive_adjustment(
     else {
         return Ok(None);
     };
-    let Some(previous_index) =
-        coverage_index(subtable, coverage_offset, previous_glyph, GPOS_TAG)?
+    let Some(previous_index) = coverage_index(subtable, coverage_offset, previous_glyph, GPOS_TAG)?
     else {
         return Ok(None);
     };
     if current_index >= record_count || previous_index >= record_count {
         return Err(malformed(GPOS_TAG));
     }
-    ensure(
-        subtable,
-        6,
-        checked_mul(record_count, 4)?,
-        GPOS_TAG,
-    )?;
+    ensure(subtable, 6, checked_mul(record_count, 4)?, GPOS_TAG)?;
 
     let current_record = checked_add(6, checked_mul(current_index, 4)?)?;
     let previous_record = checked_add(6, checked_mul(previous_index, 4)?)?;
@@ -2084,12 +2063,10 @@ fn cursive_adjustment(
         checked_add(previous_record, 2)?,
         GPOS_TAG,
     )?);
-    let Some((current_x, current_y)) = anchor_position(subtable, 0, current_entry_offset)?
-    else {
+    let Some((current_x, current_y)) = anchor_position(subtable, 0, current_entry_offset)? else {
         return Ok(None);
     };
-    let Some((previous_x, previous_y)) = anchor_position(subtable, 0, previous_exit_offset)?
-    else {
+    let Some((previous_x, previous_y)) = anchor_position(subtable, 0, previous_exit_offset)? else {
         return Ok(None);
     };
 
@@ -2144,13 +2121,11 @@ fn mark_to_base_adjustment(
     }
     let mark_array_offset = usize::from(read_u16(subtable, 8, GPOS_TAG)?);
     let base_array_offset = usize::from(read_u16(subtable, 10, GPOS_TAG)?);
-    let Some(mark_index) =
-        coverage_index(subtable, mark_coverage_offset, mark_glyph, GPOS_TAG)?
+    let Some(mark_index) = coverage_index(subtable, mark_coverage_offset, mark_glyph, GPOS_TAG)?
     else {
         return Ok(None);
     };
-    let Some(base_index) =
-        coverage_index(subtable, base_coverage_offset, base_glyph, GPOS_TAG)?
+    let Some(base_index) = coverage_index(subtable, base_coverage_offset, base_glyph, GPOS_TAG)?
     else {
         return Ok(None);
     };
@@ -2173,13 +2148,9 @@ fn mark_to_base_adjustment(
     if mark_class >= class_count {
         return Err(malformed(GPOS_TAG));
     }
-    let mark_anchor_offset = usize::from(read_u16(
-        subtable,
-        checked_add(mark_record, 2)?,
-        GPOS_TAG,
-    )?);
-    let Some((mark_x, mark_y)) =
-        anchor_position(subtable, mark_array_offset, mark_anchor_offset)?
+    let mark_anchor_offset =
+        usize::from(read_u16(subtable, checked_add(mark_record, 2)?, GPOS_TAG)?);
+    let Some((mark_x, mark_y)) = anchor_position(subtable, mark_array_offset, mark_anchor_offset)?
     else {
         return Ok(None);
     };
@@ -2199,8 +2170,7 @@ fn mark_to_base_adjustment(
         checked_add(base_record, checked_mul(mark_class, 2)?)?,
         GPOS_TAG,
     )?);
-    let Some((base_x, base_y)) =
-        anchor_position(subtable, base_array_offset, base_anchor_offset)?
+    let Some((base_x, base_y)) = anchor_position(subtable, base_array_offset, base_anchor_offset)?
     else {
         return Ok(None);
     };
@@ -2278,8 +2248,7 @@ fn apply_single_substitution(
 ) -> Result<bool, SfntError> {
     let format = read_u16(subtable, 0, GSUB_TAG)?;
     let coverage_offset = usize::from(read_u16(subtable, 2, GSUB_TAG)?);
-    let Some(coverage_index) =
-        coverage_index(subtable, coverage_offset, glyph.glyph_id, GSUB_TAG)?
+    let Some(coverage_index) = coverage_index(subtable, coverage_offset, glyph.glyph_id, GSUB_TAG)?
     else {
         return Ok(false);
     };
@@ -2290,12 +2259,7 @@ fn apply_single_substitution(
         }
         2 => {
             let replacement_count = usize::from(read_u16(subtable, 4, GSUB_TAG)?);
-            ensure(
-                subtable,
-                6,
-                checked_mul(replacement_count, 2)?,
-                GSUB_TAG,
-            )?;
+            ensure(subtable, 6, checked_mul(replacement_count, 2)?, GSUB_TAG)?;
             if coverage_index >= replacement_count {
                 return Err(malformed(GSUB_TAG));
             }
@@ -2333,20 +2297,11 @@ fn apply_alternate_substitution(
         return Ok(false);
     };
     let alternate_set_count = usize::from(read_u16(subtable, 4, GSUB_TAG)?);
-    ensure(
-        subtable,
-        6,
-        checked_mul(alternate_set_count, 2)?,
-        GSUB_TAG,
-    )?;
+    ensure(subtable, 6, checked_mul(alternate_set_count, 2)?, GSUB_TAG)?;
     if coverage_index >= alternate_set_count {
         return Err(malformed(GSUB_TAG));
     }
-    let alternate_set_offset = usize::from(read_u16(
-        subtable,
-        6 + coverage_index * 2,
-        GSUB_TAG,
-    )?);
+    let alternate_set_offset = usize::from(read_u16(subtable, 6 + coverage_index * 2, GSUB_TAG)?);
     if alternate_set_offset == 0 {
         return Err(malformed(GSUB_TAG));
     }
@@ -2405,17 +2360,10 @@ fn apply_gsub_lookup_at(
             extension_depth,
         ),
         3 => {
-            if lookup_flags != 0
-                && gdef.ignores(glyphs[target_index].glyph_id, lookup_flags)?
-            {
+            if lookup_flags != 0 && gdef.ignores(glyphs[target_index].glyph_id, lookup_flags)? {
                 return Ok(false);
             }
-            apply_alternate_substitution(
-                face,
-                metrics,
-                &mut glyphs[target_index],
-                subtable,
-            )
+            apply_alternate_substitution(face, metrics, &mut glyphs[target_index], subtable)
         }
         4 => apply_ligature_substitution_at(
             face,
@@ -2464,14 +2412,7 @@ fn apply_gsub_subtable(
     extension_depth: u8,
 ) -> Result<(), SfntError> {
     match lookup_type {
-        4 => apply_ligature_substitution(
-            face,
-            metrics,
-            glyphs,
-            gdef,
-            lookup_flags,
-            subtable,
-        ),
+        4 => apply_ligature_substitution(face, metrics, glyphs, gdef, lookup_flags, subtable),
         7 => {
             if extension_depth >= MAX_EXTENSION_DEPTH {
                 return Err(malformed(GSUB_TAG));
@@ -2519,7 +2460,8 @@ fn apply_ligature_substitution(
             index += 1;
             continue;
         }
-        let Some(set_index) = coverage_index(subtable, coverage_offset, glyphs[index].glyph_id, GSUB_TAG)?
+        let Some(set_index) =
+            coverage_index(subtable, coverage_offset, glyphs[index].glyph_id, GSUB_TAG)?
         else {
             index += 1;
             continue;
@@ -2552,11 +2494,7 @@ fn apply_ligature_substitution(
                 GSUB_TAG,
             )?;
             let ligature_glyph = read_u16(subtable, ligature_offset, GSUB_TAG)?;
-            let component_count = usize::from(read_u16(
-                subtable,
-                ligature_offset + 2,
-                GSUB_TAG,
-            )?);
+            let component_count = usize::from(read_u16(subtable, ligature_offset + 2, GSUB_TAG)?);
             if component_count == 0 {
                 return Err(malformed(GSUB_TAG));
             }
@@ -2633,7 +2571,12 @@ fn apply_ligature_substitution_at(
     if gdef.ignores(glyphs[target_index].glyph_id, lookup_flags)? {
         return Ok(false);
     }
-    let Some(set_index) = coverage_index(subtable, coverage_offset, glyphs[target_index].glyph_id, GSUB_TAG)?
+    let Some(set_index) = coverage_index(
+        subtable,
+        coverage_offset,
+        glyphs[target_index].glyph_id,
+        GSUB_TAG,
+    )?
     else {
         return Ok(false);
     };
@@ -2739,9 +2682,9 @@ fn apply_gpos(
     }
     let table = layout.table(face)?;
 
-    let has_ignored_pair_lookup = lookups.iter().any(|lookup| {
-        matches!(lookup.lookup_type, 2 | 9) && lookup.lookup_flags & 0x000e != 0
-    });
+    let has_ignored_pair_lookup = lookups
+        .iter()
+        .any(|lookup| matches!(lookup.lookup_type, 2 | 9) && lookup.lookup_flags & 0x000e != 0);
     if !has_ignored_pair_lookup {
         let mut changed = false;
         let mut pair_cache = HashMap::with_capacity(glyphs.len().min(256));
@@ -2759,12 +2702,9 @@ fn apply_gpos(
                     .iter()
                     .filter(|lookup| matches!(lookup.lookup_type, 2 | 9))
                 {
-                    if let Some((lookup_first, lookup_second)) = pair_adjustment_for_lookup_state(
-                        table,
-                        lookup,
-                        first_glyph,
-                        second_glyph,
-                    )? {
+                    if let Some((lookup_first, lookup_second)) =
+                        pair_adjustment_for_lookup_state(table, lookup, first_glyph, second_glyph)?
+                    {
                         first.add_assign(lookup_first);
                         second.add_assign(lookup_second);
                     }
@@ -2794,15 +2734,15 @@ fn apply_gpos(
     {
         let skips_glyphs = lookup.lookup_flags & 0x000e != 0;
         for first_index in 0..glyphs.len() {
-            if skips_glyphs
-                && gdef.ignores(glyphs[first_index].glyph_id, lookup.lookup_flags)?
-            {
+            if skips_glyphs && gdef.ignores(glyphs[first_index].glyph_id, lookup.lookup_flags)? {
                 continue;
             }
             let Some(second_index) = (if skips_glyphs {
                 next_unignored(glyphs, first_index + 1, lookup.lookup_flags, gdef)?
             } else {
-                first_index.checked_add(1).filter(|index| *index < glyphs.len())
+                first_index
+                    .checked_add(1)
+                    .filter(|index| *index < glyphs.len())
             }) else {
                 continue;
             };
@@ -2902,13 +2842,9 @@ fn pair_adjustment_for_lookup_state(
             }
         }
         let subtable = slice_from(table, *subtable_offset, GPOS_TAG)?;
-        if let Some(adjustment) = pair_adjustment_for_lookup(
-            subtable,
-            lookup.lookup_type,
-            first_glyph,
-            second_glyph,
-            0,
-        )? {
+        if let Some(adjustment) =
+            pair_adjustment_for_lookup(subtable, lookup.lookup_type, first_glyph, second_glyph, 0)?
+        {
             return Ok(Some(adjustment));
         }
     }
@@ -3003,10 +2939,7 @@ struct ValueAdjustment {
 
 impl ValueAdjustment {
     fn is_zero(self) -> bool {
-        self.x_placement == 0
-            && self.y_placement == 0
-            && self.x_advance == 0
-            && self.y_advance == 0
+        self.x_placement == 0 && self.y_placement == 0 && self.x_advance == 0 && self.y_advance == 0
     }
 
     fn add_assign(&mut self, other: Self) {
@@ -3058,12 +2991,8 @@ fn pair_adjustment(
                 if read_u16(subtable, record, GPOS_TAG)? != second_glyph {
                     continue;
                 }
-                let (first, first_size) = read_value_adjustment(
-                    subtable,
-                    record + 2,
-                    value_format_1,
-                    GPOS_TAG,
-                )?;
+                let (first, first_size) =
+                    read_value_adjustment(subtable, record + 2, value_format_1, GPOS_TAG)?;
                 let (second, _) = read_value_adjustment(
                     subtable,
                     record + 2 + first_size,
@@ -3108,12 +3037,8 @@ fn pair_adjustment(
             ensure(subtable, record, record_size, GPOS_TAG)?;
             let (first, first_size) =
                 read_value_adjustment(subtable, record, value_format_1, GPOS_TAG)?;
-            let (second, _) = read_value_adjustment(
-                subtable,
-                record + first_size,
-                value_format_2,
-                GPOS_TAG,
-            )?;
+            let (second, _) =
+                read_value_adjustment(subtable, record + first_size, value_format_2, GPOS_TAG)?;
             if first.is_zero() && second.is_zero() {
                 // A covered class-0 pair can be a zero-valued default;
                 // it must not mask a later alternative subtable.
@@ -3288,12 +3213,7 @@ fn selected_feature_indices(
     for index in 0..language_count {
         let record = script_offset + 4 + index * 6;
         let language_tag = read_tag(table, record, tag)?;
-        let offset = relative_offset(
-            table,
-            script_offset,
-            read_u16(table, record + 4, tag)?,
-            tag,
-        )?;
+        let offset = relative_offset(table, script_offset, read_u16(table, record + 4, tag)?, tag)?;
         first.get_or_insert(offset);
         if language_tag == DFLT_LANG_TAG {
             default = Some(offset);
@@ -3312,10 +3232,7 @@ fn selected_feature_indices(
     } else {
         None
     };
-    let language_offset = requested
-        .or(default_language)
-        .or(default)
-        .or(first);
+    let language_offset = requested.or(default_language).or(default).or(first);
     let Some(language_offset) = language_offset else {
         return Ok(Some(Vec::new()));
     };
@@ -3428,12 +3345,7 @@ fn slice_from<'a>(bytes: &'a [u8], offset: usize, tag: Tag) -> Result<&'a [u8], 
     bytes.get(offset..).ok_or_else(|| malformed(tag))
 }
 
-fn relative_offset(
-    bytes: &[u8],
-    base: usize,
-    relative: u16,
-    tag: Tag,
-) -> Result<usize, SfntError> {
+fn relative_offset(bytes: &[u8], base: usize, relative: u16, tag: Tag) -> Result<usize, SfntError> {
     let offset = base
         .checked_add(usize::from(relative))
         .ok_or(SfntError::ArithmeticOverflow)?;

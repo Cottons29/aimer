@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use aimer::animation::{AnimatedSwitcher, Curve};
+use aimer::animation::{AnimatedSwitcher, curves};
 use aimer::router::{Route, Router, Shell, split_path_query};
 use aimer::style::{TextAlign, TextStyle, Theme, ThemeData};
 use aimer::*;
@@ -94,7 +94,7 @@ impl AppRouter {
 }
 
 fn transitioned_page(key: &'static str, child: AnyWidget) -> AnimatedSwitcher<AnyWidget> {
-    AnimatedSwitcher::new(ROUTE_TRANSITION_DURATION, Curve::FastOutSlowIn, child)
+    AnimatedSwitcher::new(ROUTE_TRANSITION_DURATION, curves::FAST_OUT_SLOW_IN, child)
         .child_key(key)
         .key(ROUTE_SWITCHER_KEY)
 }
@@ -102,7 +102,6 @@ fn transitioned_page(key: &'static str, child: AnyWidget) -> AnimatedSwitcher<An
 impl Router for AppRouter {
     #[track_caller]
     fn build(&self, _ctx: &BuildContext) -> AnyWidget {
-
         #[cfg(test)]
         ROUTE_BUILDS.with(|builds| builds.borrow_mut().push(self.clone()));
         eprintln!("Current route: {:?}", self);

@@ -6,10 +6,8 @@ use std::rc::Rc;
 
 use aimer_attribute::{ResolvedSize, Vec2d};
 use aimer_canvas::Canvas;
-use aimer_style::{
-    FontStyle, LineHeight, TextAlign, TextDecorationLine, TextOverflow,
-};
 use aimer_style::TextTransform;
+use aimer_style::{FontStyle, LineHeight, TextAlign, TextDecorationLine, TextOverflow};
 use aimer_widget::base::{BuildContext, Color};
 use aimer_widget::layout_invalidation_generation;
 use unicode_segmentation::UnicodeSegmentation;
@@ -99,8 +97,7 @@ pub(crate) struct PreparedLayout {
     pub line_breaks: Vec<PreparedLineBreak>,
     pub line_heights: Vec<f32>,
     pub size: ResolvedSize,
-    pub aimer_interaction:
-        Option<Rc<aimer_cupid::text_layout::TextInteractionLayout>>,
+    pub aimer_interaction: Option<Rc<aimer_cupid::text_layout::TextInteractionLayout>>,
 }
 
 fn prepare_decorations(
@@ -182,14 +179,12 @@ fn centered_line_baseline(top: f32, ascent: f32, descent: f32, height: f32) -> f
 impl Paragraph {
     /// Creates a paragraph over already resolved spans.
     #[inline]
-    pub fn new(spans: Vec<ResolvedTextSpan>, text_align: TextAlign, overflow: TextOverflow) -> Self {
-        Self::with_layout(
-            spans,
-            text_align,
-            overflow,
-            LineHeight::default(),
-            0.0,
-        )
+    pub fn new(
+        spans: Vec<ResolvedTextSpan>,
+        text_align: TextAlign,
+        overflow: TextOverflow,
+    ) -> Self {
+        Self::with_layout(spans, text_align, overflow, LineHeight::default(), 0.0)
     }
 
     /// Creates a paragraph with its paragraph-level line-height and first-line
@@ -343,8 +338,8 @@ impl Paragraph {
         hovered_link: Option<&crate::TextSource>,
         link_hover_color: Option<Color>,
     ) {
-        use aimer_cupid::text_pipeline::TextShadowRequest;
         use aimer_cupid::text_pipeline::TextOverflowMode;
+        use aimer_cupid::text_pipeline::TextShadowRequest;
         use aimer_cupid::text_pipeline::text_layout::TextHorizontalAlign;
 
         for (fragment_index, fragment) in layout.fragments.iter().enumerate() {
@@ -398,10 +393,7 @@ impl Paragraph {
             let has_spacing = style.letter_spacing != 0.0 || style.word_spacing != 0.0;
             if has_spacing {
                 for run in &layout.paint_runs[fragment_index] {
-                    draw_run(
-                        &fragment.text[run.rendered_range.clone()],
-                        run.x,
-                    );
+                    draw_run(&fragment.text[run.rendered_range.clone()], run.x);
                 }
             } else {
                 draw_run(&fragment.text, fragment.x);
@@ -728,17 +720,17 @@ impl Paragraph {
                 mapped_cluster = true;
                 push_composed_cluster(
                     &mut clusters,
-                        TextCluster {
-                            text_range: source_range,
-                            line_index: fragment.line,
-                            level: cluster.level,
-                            start_x: fragment.x + cluster.start_x * fragment_scale,
-                            end_x: fragment.x + cluster.end_x * fragment_scale,
-                            start_y: baseline_for_line(fragment.line),
-                            end_y: baseline_for_line(fragment.line),
-                            y: line_top[fragment.line],
-                            height: line_heights[fragment.line],
-                        },
+                    TextCluster {
+                        text_range: source_range,
+                        line_index: fragment.line,
+                        level: cluster.level,
+                        start_x: fragment.x + cluster.start_x * fragment_scale,
+                        end_x: fragment.x + cluster.end_x * fragment_scale,
+                        start_y: baseline_for_line(fragment.line),
+                        end_y: baseline_for_line(fragment.line),
+                        y: line_top[fragment.line],
+                        height: line_heights[fragment.line],
+                    },
                 );
             }
 
@@ -792,20 +784,12 @@ impl Paragraph {
         let mut line_ranges = vec![None; line_count];
         for cluster in &clusters {
             if cluster.text_range.start != cluster.text_range.end {
-                merge_line_source_range(
-                    &mut line_ranges,
-                    cluster.line_index,
-                    &cluster.text_range,
-                );
+                merge_line_source_range(&mut line_ranges, cluster.line_index, &cluster.text_range);
             }
         }
         let mut hard_breaks = vec![false; line_count];
         for line_break in line_breaks {
-            merge_line_source_range(
-                &mut line_ranges,
-                line_break.line,
-                &line_break.source_range,
-            );
+            merge_line_source_range(&mut line_ranges, line_break.line, &line_break.source_range);
             if let Some(hard_break) = hard_breaks.get_mut(line_break.line) {
                 *hard_break = true;
             }
@@ -849,7 +833,7 @@ impl Paragraph {
                 (line_heights.get(line).copied().unwrap_or(0.0)
                     - line_ascent.get(line).copied().unwrap_or(0.0)
                     - line_descent.get(line).copied().unwrap_or(0.0))
-                    .max(0.0)
+                .max(0.0)
             })
             .fold(0.0, f32::max);
         let line_height = line_heights.iter().copied().fold(0.0, f32::max);
@@ -874,10 +858,11 @@ impl Paragraph {
 
     fn compute_layout(&self, ctx: &BuildContext, include_graphemes: bool) -> PreparedLayout {
         let wrap_width = self.wrap_width(ctx);
-        let first_line_indent = (if self
-            .text_indent
-            .is_finite() { self.text_indent } else { 0.0 })
-            * ctx.scale;
+        let first_line_indent = (if self.text_indent.is_finite() {
+            self.text_indent
+        } else {
+            0.0
+        }) * ctx.scale;
         let mut layout = layout_resolved_spans_with_indent(
             &self.spans,
             wrap_width,
@@ -895,13 +880,15 @@ impl Paragraph {
         );
         if matches!(self.overflow, TextOverflow::Ellipsis) {
             ellipsize_first_line(&mut layout, &self.spans, wrap_width, |text, style| {
-                adjusted_width(text, style, &mut |text, style| ctx.canvas.measure_text_styled(
-                    text,
-                    style.font_size.max(1) as f32 * ctx.scale,
-                    style.font_family,
-                    style.font_style,
-                    style.font_weight.numeric(),
-                ))
+                adjusted_width(text, style, &mut |text, style| {
+                    ctx.canvas.measure_text_styled(
+                        text,
+                        style.font_size.max(1) as f32 * ctx.scale,
+                        style.font_family,
+                        style.font_style,
+                        style.font_weight.numeric(),
+                    )
+                })
             });
         }
 
@@ -950,9 +937,7 @@ impl Paragraph {
         let line_heights = natural_line_heights
             .iter()
             .enumerate()
-            .map(|(line, natural)| {
-                self.resolved_line_height(*natural, line_font_size[line])
-            })
+            .map(|(line, natural)| self.resolved_line_height(*natural, line_font_size[line]))
             .collect::<Vec<_>>();
         let mut line_top = vec![0.0; layout.line_count];
         for line in 1..layout.line_count {
@@ -1298,15 +1283,13 @@ mod tests {
         let paragraph = Paragraph::with_layout(
             vec![ResolvedTextSpan::plain(
                 Rc::from("first\nsecond"),
-                TextStyle::new()
-                    .font_size(16)
-                    .text_decoration(
-                        TextDecoration::new()
-                            .line(TextDecorationLine::UNDERLINE | TextDecorationLine::OVERLINE)
-                            .style(TextDecorationStyle::Dashed)
-                            .thickness(2.0)
-                            .offset(1.0),
-                    ),
+                TextStyle::new().font_size(16).text_decoration(
+                    TextDecoration::new()
+                        .line(TextDecorationLine::UNDERLINE | TextDecorationLine::OVERLINE)
+                        .style(TextDecorationStyle::Dashed)
+                        .thickness(2.0)
+                        .offset(1.0),
+                ),
             )],
             TextAlign::TopLeft,
             TextOverflow::Clip,
@@ -1321,15 +1304,16 @@ mod tests {
         assert_eq!(first.decorations.len(), 2);
         assert_eq!(first.decorations[0].fragment_index, 0);
         assert_eq!(first.decorations[1].fragment_index, 1);
-        assert_eq!(first.decorations[0].paint.style, TextDecorationStyle::Dashed);
+        assert_eq!(
+            first.decorations[0].paint.style,
+            TextDecorationStyle::Dashed
+        );
         assert_eq!(first.decorations[0].paint.thickness, 2.0);
         assert_eq!(first.decorations[0].paint.offset, 1.0);
         assert!(
-            (first.decorations[1].underline_center
-                - first.decorations[0].underline_center
-                - 40.0)
+            (first.decorations[1].underline_center - first.decorations[0].underline_center - 40.0)
                 .abs()
-            < 0.001
+                < 0.001
         );
     }
 
@@ -1363,9 +1347,8 @@ mod tests {
         let paragraph = Paragraph::with_layout(
             vec![ResolvedTextSpan {
                 text: crate::TextSource::from("link"),
-                style: TextStyle::new().text_decoration(
-                    TextDecoration::new().line(TextDecorationLine::UNDERLINE),
-                ),
+                style: TextStyle::new()
+                    .text_decoration(TextDecoration::new().line(TextDecorationLine::UNDERLINE)),
                 link: Some(target.clone()),
             }],
             TextAlign::TopLeft,
@@ -1449,7 +1432,10 @@ mod tests {
 
         assert_eq!(layout.line_heights, vec![40.0, 40.0]);
         assert_eq!(layout.size.height, 80.0);
-        assert_eq!(layout.fragments[1].baseline - layout.fragments[0].baseline, 40.0);
+        assert_eq!(
+            layout.fragments[1].baseline - layout.fragments[0].baseline,
+            40.0
+        );
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -1457,9 +1443,9 @@ mod tests {
     fn aimer_interaction_composes_rich_spacing_transform_and_line_box_geometry() {
         use aimer_attribute::{ResolvedSize, Vec2d};
         use aimer_canvas::{FrameCanvas, InnerCanvas};
+        use aimer_cupid::text_layout::TextWritingMode;
         use aimer_style::{TextAlign, TextOverflow, TextTransform};
         use aimer_widget::base::{BuildContext, WindowHandle};
-        use aimer_cupid::text_layout::TextWritingMode;
 
         let inner = InnerCanvas::new();
         let canvas = FrameCanvas::new(&inner);
@@ -1518,20 +1504,26 @@ mod tests {
         assert!(interaction.clusters.iter().any(|cluster| {
             cluster.text_range == (0..1) && cluster.height == layout.line_heights[0]
         }));
-        assert!(interaction
-            .clusters
-            .iter()
-            .any(|cluster| cluster.text_range == (3..5)));
-        assert!(interaction
-            .clusters
-            .iter()
-            .filter(|cluster| cluster.text_range == (3..5))
-            .count()
-            == 1);
-        assert!(interaction
-            .clusters
-            .first()
-            .is_some_and(|cluster| cluster.start_x > 0.0));
+        assert!(
+            interaction
+                .clusters
+                .iter()
+                .any(|cluster| cluster.text_range == (3..5))
+        );
+        assert!(
+            interaction
+                .clusters
+                .iter()
+                .filter(|cluster| cluster.text_range == (3..5))
+                .count()
+                == 1
+        );
+        assert!(
+            interaction
+                .clusters
+                .first()
+                .is_some_and(|cluster| cluster.start_x > 0.0)
+        );
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -1578,13 +1570,17 @@ mod tests {
 
         assert_eq!(interaction.lines.len(), 1);
         assert!(interaction.lines[0].text_range.end < interaction.text.len());
-        assert!(interaction
-            .caret_geometry(interaction.lines[0].text_range.end)
-            .is_some());
-        assert!(interaction
-            .clusters
-            .iter()
-            .all(|cluster| cluster.text_range.end <= interaction.lines[0].text_range.end));
+        assert!(
+            interaction
+                .caret_geometry(interaction.lines[0].text_range.end)
+                .is_some()
+        );
+        assert!(
+            interaction
+                .clusters
+                .iter()
+                .all(|cluster| cluster.text_range.end <= interaction.lines[0].text_range.end)
+        );
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -1630,10 +1626,12 @@ mod tests {
             .expect("hard-break paragraphs must use the shared interaction layout");
 
         assert_eq!(interaction.lines.len(), 2);
-        assert!(interaction
-            .clusters
-            .iter()
-            .any(|cluster| cluster.text_range == (5..6) && cluster.start_x == cluster.end_x));
+        assert!(
+            interaction
+                .clusters
+                .iter()
+                .any(|cluster| cluster.text_range == (5..6) && cluster.start_x == cluster.end_x)
+        );
         assert_eq!(interaction.lines[0].text_range, 0..6);
         assert_eq!(interaction.lines[1].text_range, 6..12);
         assert!(interaction.lines[0].hard_break);

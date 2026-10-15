@@ -230,9 +230,7 @@ where
     K: Eq + Hash + Clone,
 {
     /// Creates a table and validates that every column has a unique ID.
-    pub fn new(
-        columns: impl IntoIterator<Item = DataColumn<R>>,
-    ) -> Result<Self, TableError<K>> {
+    pub fn new(columns: impl IntoIterator<Item = DataColumn<R>>) -> Result<Self, TableError<K>> {
         let columns: Vec<_> = columns.into_iter().collect();
         let mut ids = HashSet::with_capacity(columns.len());
         for column in &columns {
@@ -297,11 +295,7 @@ where
     }
 
     /// Changes one column's width policy.
-    pub fn set_column_width(
-        &mut self,
-        id: &str,
-        width: ColumnWidth,
-    ) -> Result<(), TableError<K>> {
+    pub fn set_column_width(&mut self, id: &str, width: ColumnWidth) -> Result<(), TableError<K>> {
         let column = self
             .columns
             .iter_mut()
@@ -353,10 +347,12 @@ where
         let mut view = Vec::with_capacity(self.rows.len());
         for (index, row) in self.rows.iter().enumerate() {
             let matches = query.is_empty()
-                || self
-                    .columns
-                    .iter()
-                    .any(|column| column.render(&row.value).to_ascii_lowercase().contains(&query));
+                || self.columns.iter().any(|column| {
+                    column
+                        .render(&row.value)
+                        .to_ascii_lowercase()
+                        .contains(&query)
+                });
             if matches {
                 view.push(index);
             }

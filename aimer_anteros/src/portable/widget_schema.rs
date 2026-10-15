@@ -1,21 +1,20 @@
 //! Stable identifiers for the initial portable Aimer widget schema.
 
-use crate::{
-    AsyncCallbackSchemaMetadata, CallbackSchemaMetadata, ChildCardinality, PortableWidgetSchemaMetadata,
-    PropertySchemaMetadata, PropertyValueKind, ValueSchemaMetadata, Version, WidgetSchemaMetadata,
-};
 use crate::schema_identity::{EventId, PropertyId, WidgetSchemaId};
+use crate::{
+    AsyncCallbackSchemaMetadata, CallbackSchemaMetadata, ChildCardinality,
+    PortableWidgetSchemaMetadata, PropertySchemaMetadata, PropertyValueKind, ValueSchemaMetadata,
+    Version, WidgetSchemaMetadata,
+};
 
 /// Canonical identity retained for the Column schema.
 pub const WIDGET_COLUMN_NAME: &str = "aimer.widget:aimer_flex::flex::Column";
 /// Canonical identity retained for the Row schema.
 pub const WIDGET_ROW_NAME: &str = "aimer.widget:aimer_flex::flex::Row";
 /// Canonical identity retained for the Container schema.
-pub const WIDGET_CONTAINER_NAME: &str =
-    "aimer.widget:aimer_container::single_child::Container";
+pub const WIDGET_CONTAINER_NAME: &str = "aimer.widget:aimer_container::single_child::Container";
 /// Canonical identity retained for the SizedBox schema.
-pub const WIDGET_SIZED_BOX_NAME: &str =
-    "aimer.widget:aimer_container::single_child::SizedBox";
+pub const WIDGET_SIZED_BOX_NAME: &str = "aimer.widget:aimer_container::single_child::SizedBox";
 /// Canonical identity retained for the Text schema.
 pub const WIDGET_TEXT_NAME: &str = "aimer.widget:aimer_text::Text";
 /// Canonical identity retained for the Button schema.
@@ -44,7 +43,8 @@ pub const WIDGET_TEXT: WidgetSchemaId = WidgetSchemaId::from_canonical_name(WIDG
 /// Schema identifier for a primary-action button.
 pub const WIDGET_BUTTON: WidgetSchemaId = WidgetSchemaId::from_canonical_name(WIDGET_BUTTON_NAME);
 /// Schema identifier for a portable provider scope.
-pub const WIDGET_PROVIDER: WidgetSchemaId = WidgetSchemaId::from_canonical_name(WIDGET_PROVIDER_NAME);
+pub const WIDGET_PROVIDER: WidgetSchemaId =
+    WidgetSchemaId::from_canonical_name(WIDGET_PROVIDER_NAME);
 /// Schema identifier for a portable animated theme scope.
 pub const WIDGET_ANIMATED_THEME: WidgetSchemaId =
     WidgetSchemaId::from_canonical_name(WIDGET_ANIMATED_THEME_NAME);
@@ -104,8 +104,7 @@ pub const PROPERTY_PROVIDER_TYPE_NAME: &str =
 pub const PROPERTY_PROVIDER_SCHEMA_VERSION_NAME: &str =
     "aimer.property:aimer_provider::Provider:provider_schema_version";
 /// Canonical identity for the provider snapshot payload property.
-pub const PROPERTY_PROVIDER_VALUE_NAME: &str =
-    "aimer.property:aimer_provider::Provider:value";
+pub const PROPERTY_PROVIDER_VALUE_NAME: &str = "aimer.property:aimer_provider::Provider:value";
 /// Maximum provider snapshot payload accepted by the permanent host contract.
 pub const PROVIDER_VALUE_MAXIMUM_ENCODED_BYTES: u32 = 65_536;
 
@@ -196,8 +195,7 @@ pub const PROPERTY_ROW_HORIZONTAL_ALIGNMENT: PropertyId =
 pub const PROPERTY_ROW_JUSTIFY_CONTENT: PropertyId =
     PropertyId::from_canonical_name(PROPERTY_ROW_JUSTIFY_CONTENT_NAME);
 /// Optional spacing payload used by the row schema.
-pub const PROPERTY_ROW_GAPS: PropertyId =
-    PropertyId::from_canonical_name(PROPERTY_ROW_GAPS_NAME);
+pub const PROPERTY_ROW_GAPS: PropertyId = PropertyId::from_canonical_name(PROPERTY_ROW_GAPS_NAME);
 /// Optional overflow behavior used by the row schema.
 pub const PROPERTY_ROW_OVERFLOW: PropertyId =
     PropertyId::from_canonical_name(PROPERTY_ROW_OVERFLOW_NAME);
@@ -251,11 +249,9 @@ pub const PROPERTY_COLUMN_HORIZONTAL_ALIGNMENT_NAME: &str =
 pub const PROPERTY_COLUMN_JUSTIFY_CONTENT_NAME: &str =
     "aimer.property:aimer_flex::flex::Column:justify_content";
 /// Canonical identity for the Column gaps property.
-pub const PROPERTY_COLUMN_GAPS_NAME: &str =
-    "aimer.property:aimer_flex::flex::Column:gaps";
+pub const PROPERTY_COLUMN_GAPS_NAME: &str = "aimer.property:aimer_flex::flex::Column:gaps";
 /// Canonical identity for the Column overflow property.
-pub const PROPERTY_COLUMN_OVERFLOW_NAME: &str =
-    "aimer.property:aimer_flex::flex::Column:overflow";
+pub const PROPERTY_COLUMN_OVERFLOW_NAME: &str = "aimer.property:aimer_flex::flex::Column:overflow";
 /// Canonical identity for the Row vertical-alignment property.
 pub const PROPERTY_ROW_VERTICAL_ALIGNMENT_NAME: &str =
     "aimer.property:aimer_flex::flex::Row:vertical_alignment";
@@ -266,11 +262,9 @@ pub const PROPERTY_ROW_HORIZONTAL_ALIGNMENT_NAME: &str =
 pub const PROPERTY_ROW_JUSTIFY_CONTENT_NAME: &str =
     "aimer.property:aimer_flex::flex::Row:justify_content";
 /// Canonical identity for the Row gaps property.
-pub const PROPERTY_ROW_GAPS_NAME: &str =
-    "aimer.property:aimer_flex::flex::Row:gaps";
+pub const PROPERTY_ROW_GAPS_NAME: &str = "aimer.property:aimer_flex::flex::Row:gaps";
 /// Canonical identity for the Row overflow property.
-pub const PROPERTY_ROW_OVERFLOW_NAME: &str =
-    "aimer.property:aimer_flex::flex::Row:overflow";
+pub const PROPERTY_ROW_OVERFLOW_NAME: &str = "aimer.property:aimer_flex::flex::Row:overflow";
 /// Canonical identity retained for the Container height property.
 pub const PROPERTY_CONTAINER_HEIGHT_NAME: &str =
     "aimer.property:aimer_container::single_child::Container:height";
@@ -299,8 +293,7 @@ pub const PROPERTY_TEXT_STYLE_NAME: &str = "aimer.property:aimer_text::Text:text
 /// Canonical identity for the optional Text alignment property.
 pub const PROPERTY_TEXT_ALIGN_NAME: &str = "aimer.property:aimer_text::Text:text_align";
 /// Canonical identity for the optional Text line-height property.
-pub const PROPERTY_TEXT_LINE_HEIGHT_NAME: &str =
-    "aimer.property:aimer_text::Text:line_height";
+pub const PROPERTY_TEXT_LINE_HEIGHT_NAME: &str = "aimer.property:aimer_text::Text:line_height";
 /// Canonical identity for the optional Text indentation property.
 pub const PROPERTY_TEXT_INDENT_NAME: &str = "aimer.property:aimer_text::Text:text_indent";
 
@@ -350,14 +343,11 @@ pub const EVENT_BUTTON_RIGHT_PRESS: EventId =
 /// Canonical identity retained for the Button press callback.
 pub const EVENT_BUTTON_PRESS_NAME: &str = "aimer.event:aimer_input::Button:on_press";
 /// Canonical identity retained for the Button long-press callback.
-pub const EVENT_BUTTON_LONG_PRESS_NAME: &str =
-    "aimer.event:aimer_input::Button:on_long_press";
+pub const EVENT_BUTTON_LONG_PRESS_NAME: &str = "aimer.event:aimer_input::Button:on_long_press";
 /// Canonical identity retained for the Button double-press callback.
-pub const EVENT_BUTTON_DOUBLE_PRESS_NAME: &str =
-    "aimer.event:aimer_input::Button:on_double_press";
+pub const EVENT_BUTTON_DOUBLE_PRESS_NAME: &str = "aimer.event:aimer_input::Button:on_double_press";
 /// Canonical identity retained for the Button right-press callback.
-pub const EVENT_BUTTON_RIGHT_PRESS_NAME: &str =
-    "aimer.event:aimer_input::Button:on_right_press";
+pub const EVENT_BUTTON_RIGHT_PRESS_NAME: &str = "aimer.event:aimer_input::Button:on_right_press";
 
 /// Primary completed-press event emitted by the gesture detector schema.
 pub const EVENT_GESTURE_DETECTOR_TAP: EventId =
@@ -375,8 +365,7 @@ pub const EVENT_GESTURE_DETECTOR_DRAG_END: EventId =
 pub const EVENT_GESTURE_DETECTOR_RIGHT_TAP: EventId =
     EventId::from_canonical_name(EVENT_GESTURE_DETECTOR_RIGHT_TAP_NAME);
 /// Canonical identity for the gesture detector's primary tap callback.
-pub const EVENT_GESTURE_DETECTOR_TAP_NAME: &str =
-    "aimer.event:aimer_input::GestureDetector:on_tap";
+pub const EVENT_GESTURE_DETECTOR_TAP_NAME: &str = "aimer.event:aimer_input::GestureDetector:on_tap";
 /// Canonical identity for the gesture detector's double-press callback.
 pub const EVENT_GESTURE_DETECTOR_DOUBLE_PRESS_NAME: &str =
     "aimer.event:aimer_input::GestureDetector:on_double_press";
@@ -403,8 +392,7 @@ pub const EVENT_MOUSE_REGION_HOVER_EXIT_NAME: &str =
     "aimer.event:aimer_input::MouseRegion:on_hover_exit";
 
 /// Canonical identity for the Button's normal decoration property.
-pub const PROPERTY_BUTTON_DECORATION_NAME: &str =
-    "aimer.property:aimer_input::Button:decoration";
+pub const PROPERTY_BUTTON_DECORATION_NAME: &str = "aimer.property:aimer_input::Button:decoration";
 /// Stable identity for the Button's normal decoration property.
 pub const PROPERTY_BUTTON_DECORATION: PropertyId =
     PropertyId::from_canonical_name(PROPERTY_BUTTON_DECORATION_NAME);
@@ -464,11 +452,8 @@ const FLEX_ROW_PROPERTIES: &[PropertySchemaMetadata<'static>] = &[
             LAYOUT_SPACING_VALUE_VERSION,
             LAYOUT_SPACING_VALUE_MAXIMUM_ENCODED_BYTES,
         )),
-    PropertySchemaMetadata::from_canonical_name(
-        PROPERTY_ROW_OVERFLOW_NAME,
-        PropertyValueKind::I64,
-    )
-    .optional(),
+    PropertySchemaMetadata::from_canonical_name(PROPERTY_ROW_OVERFLOW_NAME, PropertyValueKind::I64)
+        .optional(),
 ];
 const CONTAINER_PROPERTIES: &[PropertySchemaMetadata<'static>] = &[
     PropertySchemaMetadata::from_canonical_name(
@@ -554,11 +539,8 @@ const TEXT_PROPERTIES: &[PropertySchemaMetadata<'static>] = &[
         PROPERTY_TEXT_CONTENT_NAME,
         PropertyValueKind::StringRef,
     ),
-    PropertySchemaMetadata::from_canonical_name(
-        PROPERTY_TEXT_ALIGN_NAME,
-        PropertyValueKind::I64,
-    )
-    .optional(),
+    PropertySchemaMetadata::from_canonical_name(PROPERTY_TEXT_ALIGN_NAME, PropertyValueKind::I64)
+        .optional(),
     PropertySchemaMetadata::from_canonical_name(
         PROPERTY_TEXT_STYLE_NAME,
         PropertyValueKind::BlobRef,
@@ -579,17 +561,15 @@ const TEXT_PROPERTIES: &[PropertySchemaMetadata<'static>] = &[
         LINE_HEIGHT_VALUE_VERSION,
         LINE_HEIGHT_VALUE_MAXIMUM_ENCODED_BYTES,
     )),
-    PropertySchemaMetadata::from_canonical_name(
-        PROPERTY_TEXT_INDENT_NAME,
-        PropertyValueKind::F64,
-    )
-    .optional(),
+    PropertySchemaMetadata::from_canonical_name(PROPERTY_TEXT_INDENT_NAME, PropertyValueKind::F64)
+        .optional(),
 ];
-const PROVIDER_VALUE_SCHEMA: ValueSchemaMetadata<'static> = ValueSchemaMetadata::from_canonical_name(
-    "aimer.value:aimer_provider::ProviderSnapshot",
-    Version::new(1, 0),
-    PROVIDER_VALUE_MAXIMUM_ENCODED_BYTES,
-);
+const PROVIDER_VALUE_SCHEMA: ValueSchemaMetadata<'static> =
+    ValueSchemaMetadata::from_canonical_name(
+        "aimer.value:aimer_provider::ProviderSnapshot",
+        Version::new(1, 0),
+        PROVIDER_VALUE_MAXIMUM_ENCODED_BYTES,
+    );
 const PROVIDER_PROPERTIES: &[PropertySchemaMetadata<'static>] = &[
     PropertySchemaMetadata::from_canonical_name(
         PROPERTY_PROVIDER_TYPE_NAME,
@@ -699,8 +679,8 @@ const BUTTON_CALLBACKS: &[CallbackSchemaMetadata<'static>] = &[
         4_096,
     )),
 ];
-const BUTTON_PROPERTIES: &[PropertySchemaMetadata<'static>] = &[
-    PropertySchemaMetadata::from_canonical_name(
+const BUTTON_PROPERTIES: &[PropertySchemaMetadata<'static>] =
+    &[PropertySchemaMetadata::from_canonical_name(
         PROPERTY_BUTTON_DECORATION_NAME,
         PropertyValueKind::BlobRef,
     )
@@ -709,8 +689,7 @@ const BUTTON_PROPERTIES: &[PropertySchemaMetadata<'static>] = &[
         BOX_DECORATION_VALUE_NAME,
         BOX_DECORATION_VALUE_VERSION,
         BOX_DECORATION_VALUE_MAXIMUM_ENCODED_BYTES,
-    )),
-];
+    ))];
 
 const GESTURE_DETECTOR_CALLBACKS: &[CallbackSchemaMetadata<'static>] = &[
     CallbackSchemaMetadata::from_canonical_name(
@@ -718,31 +697,51 @@ const GESTURE_DETECTOR_CALLBACKS: &[CallbackSchemaMetadata<'static>] = &[
         BUILTIN_WIDGET_SCHEMA_VERSION,
         1,
     )
-    .with_async_schema(AsyncCallbackSchemaMetadata::new(Version::new(1, 0), 64, 4_096)),
+    .with_async_schema(AsyncCallbackSchemaMetadata::new(
+        Version::new(1, 0),
+        64,
+        4_096,
+    )),
     CallbackSchemaMetadata::from_canonical_name(
         EVENT_GESTURE_DETECTOR_DOUBLE_PRESS_NAME,
         BUILTIN_WIDGET_SCHEMA_VERSION,
         1,
     )
-    .with_async_schema(AsyncCallbackSchemaMetadata::new(Version::new(1, 0), 64, 4_096)),
+    .with_async_schema(AsyncCallbackSchemaMetadata::new(
+        Version::new(1, 0),
+        64,
+        4_096,
+    )),
     CallbackSchemaMetadata::from_canonical_name(
         EVENT_GESTURE_DETECTOR_LONG_PRESS_NAME,
         BUILTIN_WIDGET_SCHEMA_VERSION,
         1,
     )
-    .with_async_schema(AsyncCallbackSchemaMetadata::new(Version::new(1, 0), 64, 4_096)),
+    .with_async_schema(AsyncCallbackSchemaMetadata::new(
+        Version::new(1, 0),
+        64,
+        4_096,
+    )),
     CallbackSchemaMetadata::from_canonical_name(
         EVENT_GESTURE_DETECTOR_DRAG_END_NAME,
         BUILTIN_WIDGET_SCHEMA_VERSION,
         1,
     )
-    .with_async_schema(AsyncCallbackSchemaMetadata::new(Version::new(1, 0), 64, 4_096)),
+    .with_async_schema(AsyncCallbackSchemaMetadata::new(
+        Version::new(1, 0),
+        64,
+        4_096,
+    )),
     CallbackSchemaMetadata::from_canonical_name(
         EVENT_GESTURE_DETECTOR_RIGHT_TAP_NAME,
         BUILTIN_WIDGET_SCHEMA_VERSION,
         1,
     )
-    .with_async_schema(AsyncCallbackSchemaMetadata::new(Version::new(1, 0), 64, 4_096)),
+    .with_async_schema(AsyncCallbackSchemaMetadata::new(
+        Version::new(1, 0),
+        64,
+        4_096,
+    )),
 ];
 const MOUSE_REGION_CALLBACKS: &[CallbackSchemaMetadata<'static>] = &[
     CallbackSchemaMetadata::from_canonical_name(
@@ -750,13 +749,21 @@ const MOUSE_REGION_CALLBACKS: &[CallbackSchemaMetadata<'static>] = &[
         BUILTIN_WIDGET_SCHEMA_VERSION,
         1,
     )
-    .with_async_schema(AsyncCallbackSchemaMetadata::new(Version::new(1, 0), 64, 4_096)),
+    .with_async_schema(AsyncCallbackSchemaMetadata::new(
+        Version::new(1, 0),
+        64,
+        4_096,
+    )),
     CallbackSchemaMetadata::from_canonical_name(
         EVENT_MOUSE_REGION_HOVER_EXIT_NAME,
         BUILTIN_WIDGET_SCHEMA_VERSION,
         1,
     )
-    .with_async_schema(AsyncCallbackSchemaMetadata::new(Version::new(1, 0), 64, 4_096)),
+    .with_async_schema(AsyncCallbackSchemaMetadata::new(
+        Version::new(1, 0),
+        64,
+        4_096,
+    )),
 ];
 
 /// Complete portable metadata for every built-in AWIR widget schema.
@@ -836,9 +843,7 @@ mod tests {
         );
         assert_eq!(
             PROPERTY_CONTAINER_WIDTH.value(),
-            stable_schema_hash64(
-                "aimer.property:aimer_container::single_child::Container:width"
-            )
+            stable_schema_hash64("aimer.property:aimer_container::single_child::Container:width")
         );
         assert_ne!(PROPERTY_CONTAINER_WIDTH, PROPERTY_SIZED_BOX_WIDTH);
         assert_ne!(PROPERTY_CONTAINER_HEIGHT, PROPERTY_SIZED_BOX_HEIGHT);

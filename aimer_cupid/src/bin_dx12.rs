@@ -97,14 +97,8 @@ impl ApplicationHandler for Dx12Demo {
         };
         let hwnd = HWND(win32_handle.hwnd.get() as *mut c_void);
         let size = window.inner_size();
-        let surface = Dx12Surface::new(
-            &backend,
-            hwnd,
-            size.width,
-            size.height,
-            SURFACE_FORMAT,
-        )
-        .expect("create the DirectX 12 swap chain");
+        let surface = Dx12Surface::new(&backend, hwnd, size.width, size.height, SURFACE_FORMAT)
+            .expect("create the DirectX 12 swap chain");
 
         self.renderer = Some(RendererImpl::new(&backend, SURFACE_FORMAT));
         self.backend = Some(backend);

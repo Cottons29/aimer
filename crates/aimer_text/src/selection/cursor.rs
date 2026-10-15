@@ -216,7 +216,6 @@ mod tests {
         window.set_cursor(CursorIcon::Crosshair);
         let _ = cursor.apply(&window, &moved(PointerSource::Mouse), true, false, true);
 
-
         assert_eq!(window.headless_cursor(), Some(CursorIcon::Crosshair));
     }
 

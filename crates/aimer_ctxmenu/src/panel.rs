@@ -136,7 +136,10 @@ fn retained_panel_metrics(
         .border_radius
         .resolve(size.width, size.height, scale)
         .map(|radius| radius / scale);
-    if !radii.iter().all(|radius| radius.is_finite() && *radius >= 0.0) {
+    if !radii
+        .iter()
+        .all(|radius| radius.is_finite() && *radius >= 0.0)
+    {
         return None;
     }
 
@@ -278,11 +281,7 @@ fn retained_shadow_command(
         return None;
     }
     let (params, side) = retained_shadow_parameters(shadow, scale)?;
-    if params[2] == 0.0
-        && params[3] == 0.0
-        && params[0] == 0.0
-        && params[1] == 0.0
-        && !shadow.inset
+    if params[2] == 0.0 && params[3] == 0.0 && params[0] == 0.0 && params[1] == 0.0 && !shadow.inset
     {
         return None;
     }
@@ -301,18 +300,10 @@ fn retained_shadow_command(
     })
 }
 
-fn retained_shadow_parameters(
-    shadow: &BoxShadow,
-    scale: f32,
-) -> Option<([f32; 4], [f32; 3])> {
-    if ![
-        shadow.offset_x,
-        shadow.offset_y,
-        shadow.blur,
-        shadow.spread,
-    ]
-    .iter()
-    .all(|value| value.is_finite())
+fn retained_shadow_parameters(shadow: &BoxShadow, scale: f32) -> Option<([f32; 4], [f32; 3])> {
+    if ![shadow.offset_x, shadow.offset_y, shadow.blur, shadow.spread]
+        .iter()
+        .all(|value| value.is_finite())
     {
         return None;
     }
@@ -325,10 +316,12 @@ fn retained_shadow_parameters(
         shadow.spread / scale,
     ];
     let side = shadow.side.to_shader_params();
-    [params[0], params[1], params[2], params[3], side.0, side.1, side.2]
-        .iter()
-        .all(|value| value.is_finite())
-        .then_some((params, [side.0, side.1, side.2]))
+    [
+        params[0], params[1], params[2], params[3], side.0, side.1, side.2,
+    ]
+    .iter()
+    .all(|value| value.is_finite())
+    .then_some((params, [side.0, side.1, side.2]))
 }
 
 fn retained_color(color: Color) -> aimer_cupid::utilities::Color {
@@ -456,9 +449,7 @@ impl VisitorElement for RawContextMenuPanel {
 #[cfg(test)]
 mod tests {
     use aimer_attribute::{Dimension, ResolvedSize};
-    use aimer_style::{
-        BorderSlice, BorderStyle, BoxBorder, BoxDecoration, BoxOutline, BoxShadow,
-    };
+    use aimer_style::{BorderSlice, BorderStyle, BoxBorder, BoxDecoration, BoxOutline, BoxShadow};
     use aimer_widget::base::Color;
 
     use super::{retained_panel_commands, retained_panel_metrics};
@@ -534,13 +525,22 @@ mod tests {
         else {
             panic!("panel fill and stroke follow its outer shadow");
         };
-        assert_eq!(*color, aimer_cupid::utilities::Color::rgba8(70, 80, 90, 255));
+        assert_eq!(
+            *color,
+            aimer_cupid::utilities::Color::rgba8(70, 80, 90, 255)
+        );
         assert_eq!((rect.x, rect.y), (5.0, 5.5));
         assert_eq!(*border_radius, [8.0; 4]);
         assert_eq!(*border_width, [2.0; 4]);
-        assert_eq!(*border_color, aimer_cupid::utilities::Color::rgba8(10, 20, 30, 255));
+        assert_eq!(
+            *border_color,
+            aimer_cupid::utilities::Color::rgba8(10, 20, 30, 255)
+        );
         assert_eq!(*outline_width, [4.0; 4]);
-        assert_eq!(*outline_color, aimer_cupid::utilities::Color::rgba8(40, 50, 60, 255));
+        assert_eq!(
+            *outline_color,
+            aimer_cupid::utilities::Color::rgba8(40, 50, 60, 255)
+        );
         let aimer_cupid::draw_cmd_v2::DrawCommand::DrawShadowRect { inset, .. } = &commands[2]
         else {
             panic!("inset shadow is recorded after the panel");
@@ -551,14 +551,16 @@ mod tests {
     #[test]
     fn retained_panel_metrics_fall_back_for_non_finite_shadow_geometry() {
         let decoration = BoxDecoration::new().add_shadow(BoxShadow::new().blur(f32::NAN));
-        assert!(retained_panel_metrics(
-            &decoration,
-            ResolvedSize {
-                width: 200.0,
-                height: 80.0,
-            },
-            2.0,
-        )
-        .is_none());
+        assert!(
+            retained_panel_metrics(
+                &decoration,
+                ResolvedSize {
+                    width: 200.0,
+                    height: 80.0,
+                },
+                2.0,
+            )
+            .is_none()
+        );
     }
 }

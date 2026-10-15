@@ -254,8 +254,6 @@ impl VoidCallback {
     }
 }
 
-
-
 impl Debug for VoidCallback {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "VoidCallback()")

@@ -412,7 +412,11 @@ impl<T> ReorderableList<T> {
     /// pointer cleanup paths.
     #[inline]
     pub fn cancel_pointer(&mut self, pointer: PointerKey) -> bool {
-        if self.active.as_ref().is_some_and(|drag| drag.pointer == pointer) {
+        if self
+            .active
+            .as_ref()
+            .is_some_and(|drag| drag.pointer == pointer)
+        {
             self.active = None;
             true
         } else {
@@ -467,12 +471,16 @@ impl<T> ReorderableList<T> {
 
     fn insertion_index(&self, location: DropLocation) -> Result<usize, ReorderError> {
         match location {
-            DropLocation::Before(index) | DropLocation::After(index) if index >= self.items.len() => {
+            DropLocation::Before(index) | DropLocation::After(index)
+                if index >= self.items.len() =>
+            {
                 Err(ReorderError::InvalidLocation)
             }
             DropLocation::Before(index) => Ok(index),
             DropLocation::After(index) => Ok(index + 1),
-            DropLocation::Index(index) if index > self.items.len() => Err(ReorderError::InvalidLocation),
+            DropLocation::Index(index) if index > self.items.len() => {
+                Err(ReorderError::InvalidLocation)
+            }
             DropLocation::Index(index) => Ok(index),
         }
     }
@@ -503,7 +511,10 @@ mod tests {
     }
 
     fn keys(list: &ReorderableList<String>) -> Vec<&str> {
-        list.items().iter().map(|item| item.key().as_str()).collect()
+        list.items()
+            .iter()
+            .map(|item| item.key().as_str())
+            .collect()
     }
 
     #[test]
@@ -587,10 +598,7 @@ mod tests {
 
     #[test]
     fn duplicate_and_invalid_keys_are_rejected_before_dragging() {
-        assert!(matches!(
-            StableKey::try_new(""),
-            Err(StableKeyError::Empty)
-        ));
+        assert!(matches!(StableKey::try_new(""), Err(StableKeyError::Empty)));
         assert!(matches!(
             StableKey::try_new("has\ncontrol"),
             Err(StableKeyError::ControlCharacter)

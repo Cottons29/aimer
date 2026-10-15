@@ -275,7 +275,10 @@ mod tests {
             touch,
             "removing an absent source changes nothing"
         );
-        assert_eq!(touch.without(OverscrollSource::Touch), OverscrollSources::NONE);
+        assert_eq!(
+            touch.without(OverscrollSource::Touch),
+            OverscrollSources::NONE
+        );
     }
 
     #[test]
@@ -288,7 +291,10 @@ mod tests {
                 .with(OverscrollSource::Touch)
                 .with(OverscrollSource::Mouse)
         );
-        assert_eq!(pair | OverscrollSource::Wheel, pair.with(OverscrollSource::Wheel));
+        assert_eq!(
+            pair | OverscrollSource::Wheel,
+            pair.with(OverscrollSource::Wheel)
+        );
         assert_eq!(
             pair | OverscrollSources::ALL,
             OverscrollSources::ALL,

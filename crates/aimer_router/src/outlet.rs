@@ -1,9 +1,12 @@
-use std::any::TypeId;
+use std::any::{Any, TypeId};
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use aimer_widget::base::BuildContext;
-use aimer_widget::{AnyElement, AnyWidget, InheritedStates, Widget};
+use aimer_widget::{AnyElement, AnyWidget, Element, InheritedStates, Widget};
+use smallvec::SmallVec;
+
+use crate::transition_host::{NavigationRequest, RouteBoundary};
 
 /// Type-erased builder for the active child route rendered inside an
 /// [`Outlet`].
@@ -23,6 +26,12 @@ pub(crate) struct RouteChildContext {
 }
 
 impl RouteChildContext {
+    pub(crate) fn capture_page(ctx: &BuildContext, key: aimer_widget::Key) -> Self {
+        let mut context = Self::capture(ctx);
+        context.states.insert(TypeId::of::<RouteBoundary>(), Rc::new(RouteBoundary(key)));
+        context
+    }
+
     pub(crate) fn capture(ctx: &BuildContext) -> Self {
         Self {
             states: ctx.inherited_states.borrow().clone(),
@@ -34,13 +43,35 @@ impl RouteChildContext {
         ctx: &BuildContext<'a>,
         callback: impl FnOnce(&BuildContext<'a>) -> R,
     ) -> R {
-        let mut previous = Vec::new();
+        self.apply(ctx, false, callback)
+    }
+
+    pub(crate) fn with_page<'a, R>(&self, ctx: &BuildContext<'a>, callback: impl FnOnce(&BuildContext<'a>) -> R) -> R {
+        self.apply(ctx, true, callback)
+    }
+
+    pub(crate) fn with_shared_state<'a, T: Any, R>(&self, ctx: &BuildContext<'a>, state: Rc<T>, callback: impl FnOnce(&BuildContext<'a>) -> R) -> R {
+        self.with(ctx, |ctx| {
+            let type_id = TypeId::of::<T>();
+            let old = ctx.inherited_states.borrow_mut().insert(type_id, state);
+            let _guard = RouteChildContextGuard {
+                states: ctx.inherited_states.clone(), previous: smallvec::smallvec![(type_id, old)],
+            };
+            callback(ctx)
+        })
+    }
+
+    fn apply<'a, R>(&self, ctx: &BuildContext<'a>, page: bool, callback: impl FnOnce(&BuildContext<'a>) -> R) -> R {
+        // Most scopes restore only the page metadata and one or two providers.
+        // Keep that hot-path bookkeeping on the stack; larger scopes can spill.
+        let mut previous = SmallVec::new();
         {
             let mut states = ctx.inherited_states.borrow_mut();
             for (type_id, state) in &self.states {
-                if !states.contains_key(type_id) {
-                    states.insert(*type_id, state.clone());
-                    previous.push(*type_id);
+                let metadata = page && (*type_id == TypeId::of::<RouteBoundary>() || *type_id == TypeId::of::<NavigationRequest>());
+                if states.get(type_id).is_none_or(|current| metadata && !Rc::ptr_eq(current, state)) {
+                    let old = states.insert(*type_id, state.clone());
+                    previous.push((*type_id, old));
                 }
             }
         }
@@ -53,16 +84,19 @@ impl RouteChildContext {
     }
 }
 
+type SavedStates = SmallVec<[(TypeId, Option<Rc<dyn Any>>); 8]>;
+
 struct RouteChildContextGuard {
     states: Rc<RefCell<InheritedStates>>,
-    previous: Vec<TypeId>,
+    previous: SavedStates,
 }
 
 impl Drop for RouteChildContextGuard {
     fn drop(&mut self) {
         let mut states = self.states.borrow_mut();
-        for type_id in self.previous.drain(..).rev() {
-            states.remove(&type_id);
+        for (type_id, old) in self.previous.drain(..).rev() {
+            if let Some(old) = old { states.insert(type_id, old); }
+            else { states.remove(&type_id); }
         }
     }
 }
@@ -103,10 +137,8 @@ impl aimer_widget::PortableWidget for Outlet {
         self,
         ctx: &mut aimer_widget::portable::PortableBuildContext,
         source: aimer_widget::portable::SourceFingerprint,
-    ) -> Result<
-        aimer_widget::portable::PortableNodeId,
-        aimer_widget::portable::PortableBuildError,
-    > {
+    ) -> Result<aimer_widget::portable::PortableNodeId, aimer_widget::portable::PortableBuildError>
+    {
         let build_context = ctx.build_context();
         let Some(slot) = build_context.get_state::<OutletSlot>() else {
             return Err(ctx.unsupported_widget("Outlet", source));
@@ -128,8 +160,8 @@ impl Widget for Outlet {
         let Some(slot) = ctx.get_state::<OutletSlot>() else {
             panic!("No Shell found in context. An `Outlet` must be rendered inside a `Shell`.")
         };
-        let child = slot.build_child(ctx);
-        child.to_element(ctx)
+        aimer_widget::StatelessElement::from_builder(ctx,
+            move |ctx| slot.build_child(ctx).to_element(ctx), None, "Outlet").boxed()
     }
 
     fn debug_name(&self) -> &'static str {

@@ -1,11 +1,13 @@
-use core::arch::asm;
 use core::arch::aarch64::float32x4_t;
+use core::arch::asm;
 
 /// Returns the number of complete pixels processed by NEON.
 #[inline]
 pub(crate) fn composite(bitmap: &mut [u8], coverage: &[u8], color: [u8; 4]) -> usize {
     let end = (bitmap.len() / 4).min(coverage.len()) / 4 * 4;
-    if end == 0 { return 0; }
+    if end == 0 {
+        return 0;
+    }
     let source_r: float32x4_t;
     let source_g: float32x4_t;
     let source_b: float32x4_t;

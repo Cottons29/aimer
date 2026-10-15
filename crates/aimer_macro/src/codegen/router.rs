@@ -85,6 +85,9 @@ fn take_routing(item_enum: &mut ItemEnum) -> Result<TokenStream, syn::Error> {
     let mut name_arms = Vec::new();
     let mut resolve_arms = Vec::new();
     let mut redirect_arms = Vec::new();
+    let mut transition_arms = Vec::new();
+    let mut level_arms = Vec::new();
+    let mut shell_key_arms = Vec::new();
 
     for variant in &mut item_enum.variants {
         let variant_name = &variant.ident;
@@ -94,6 +97,8 @@ fn take_routing(item_enum: &mut ItemEnum) -> Result<TokenStream, syn::Error> {
         let mut redirect_to: Option<String> = None;
         let mut is_shell = false;
         let mut shell_prefix: Option<String> = None;
+        let mut transition: Option<Expr> = None;
+        let mut view_level: Option<syn::LitInt> = None;
 
         // Extract routes/name and remove the attributes from the AST
         let mut new_attrs = Vec::new();
@@ -220,11 +225,41 @@ fn take_routing(item_enum: &mut ItemEnum) -> Result<TokenStream, syn::Error> {
                         }
                     }
                 }
+            } else if attr.path().is_ident("transition") {
+                if transition.is_some() {
+                    return Err(syn::Error::new_spanned(attr, "duplicate #[transition] attribute"));
+                }
+                transition = Some(attr.parse_args::<Expr>()?);
+            } else if attr.path().is_ident("view_level") {
+                if view_level.is_some() {
+                    return Err(syn::Error::new_spanned(attr, "duplicate #[view_level] attribute"));
+                }
+                let level = attr.parse_args::<syn::LitInt>()?;
+                level.base10_parse::<u32>()?;
+                view_level = Some(level);
             } else {
                 new_attrs.push(attr.clone());
             }
         }
         variant.attrs = new_attrs;
+
+        let pattern = match &variant.fields {
+            Fields::Named(_) => quote! { Self::#variant_name { .. } },
+            Fields::Unnamed(_) => quote! { Self::#variant_name(..) },
+            Fields::Unit => quote! { Self::#variant_name },
+        };
+        if let Some(expression) = transition {
+            let disabled = matches!(&expression, Expr::Path(path) if path.path.is_ident("none"));
+            let selection = if disabled { quote! { aimer::router::TransitionChoice::Disabled } }
+                else { quote! { aimer::router::TransitionChoice::custom(#expression) } };
+            transition_arms.push(quote! { #pattern => #selection, });
+        }
+        if let Some(level) = view_level { level_arms.push(quote! { #pattern => #level, }); }
+        if is_shell {
+            shell_key_arms.push(quote! {
+                #pattern => Some(concat!(module_path!(), "::", stringify!(#enum_name), "::", stringify!(#variant_name))),
+            });
+        }
 
         // ---- shell variant: nested route delegating to a child enum ----
         if is_shell {
@@ -531,6 +566,30 @@ fn take_routing(item_enum: &mut ItemEnum) -> Result<TokenStream, syn::Error> {
                 }
             }
 
+            fn navigation_transition(&self) -> aimer::router::TransitionChoice<Self> {
+                match self {
+                    #(#transition_arms)*
+                    #[allow(unreachable_patterns)]
+                    _ => aimer::router::TransitionChoice::Inherit,
+                }
+            }
+
+            fn view_level(&self) -> u32 {
+                match self {
+                    #(#level_arms)*
+                    #[allow(unreachable_patterns)]
+                    _ => 0,
+                }
+            }
+
+            fn shell_key(&self) -> Option<&'static str> {
+                match self {
+                    #(#shell_key_arms)*
+                    #[allow(unreachable_patterns)]
+                    _ => None,
+                }
+            }
+
             fn resolve_named(name: &str, params: &std::collections::HashMap<String, String>) -> Option<Self> {
                 let _ = params;
                 match name {
@@ -558,6 +617,46 @@ mod tests {
     use quote::quote;
 
     use super::*;
+
+    #[test]
+    fn transition_attributes_generate_route_hooks_in_both_macro_forms() {
+        let item = quote! {
+            enum Pages {
+                #[route("/")]
+                #[transition(none)]
+                Home,
+                #[route("/detail")]
+                #[transition(aimer::router::ZoomTransition::new())]
+                #[view_level(2)]
+                Detail,
+                #[shell("/dashboard")]
+                #[view_level(1)]
+                Dashboard(Children),
+            }
+        };
+        for generated in [RouterCodegen::generate(item.clone()), RouterCodegen::derive(item)] {
+            let generated = generated.to_string();
+            assert!(generated.contains("fn navigation_transition"));
+            assert!(generated.contains("TransitionChoice :: Disabled"));
+            assert!(generated.contains("TransitionChoice :: custom"));
+            assert!(generated.contains("Self :: Detail => 2"));
+            assert!(generated.contains("Self :: Dashboard (..) => 1"));
+            assert!(generated.contains("fn shell_key"));
+        }
+    }
+
+    #[test]
+    fn malformed_and_duplicate_transition_metadata_is_rejected() {
+        for item in [
+            quote! { enum Pages { #[transition()] Home } },
+            quote! { enum Pages { #[transition(none)] #[transition(none)] Home } },
+            quote! { enum Pages { #[view_level(-1)] Home } },
+            quote! { enum Pages { #[view_level(1)] #[view_level(2)] Home } },
+            quote! { enum Pages { #[view_level(4294967296)] Home } },
+        ] {
+            assert!(RouterCodegen::generate(item).to_string().contains("compile_error"));
+        }
+    }
 
     #[test]
     fn generated_widget_uses_any_element_owner() {

@@ -389,10 +389,7 @@ fn duel(
 fn report_layout() {
     println!("--- payload layout ---");
     for (name, size) in [
-        (
-            "borrowing: AnyWidget",
-            size_of::<aimer_legacy::AnyWidget>(),
-        ),
+        ("borrowing: AnyWidget", size_of::<aimer_legacy::AnyWidget>()),
         ("consuming: AnyWidget", size_of::<aimer::AnyWidget>()),
         (
             "borrowing: Container<AnyWidget>",

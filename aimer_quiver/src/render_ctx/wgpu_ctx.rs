@@ -14,8 +14,8 @@ pub mod render_ctx {
     use crate::frame_stats::{FramePhase, PhaseTimer};
     use crate::raster::FramePresenter;
     use crate::raster::{FrameWorker, WorkerPresenter};
-    use crate::render_ctx::native_ctx::{BackendOutput, wake_event_loop};
     use crate::render_ctx::PresentOutcome;
+    use crate::render_ctx::native_ctx::{BackendOutput, wake_event_loop};
 
     /// The UI thread's copy of the surface dimensions.
     ///
@@ -116,11 +116,7 @@ pub mod render_ctx {
     }
 
     impl GpuPresenter {
-        fn present_inner(
-            &mut self,
-            frame: &Frame,
-            packet: Option<&FramePacket>,
-        ) -> bool {
+        fn present_inner(&mut self, frame: &Frame, packet: Option<&FramePacket>) -> bool {
             let acquire = PhaseTimer::start();
             let surface = match self.gpu.begin_frame() {
                 wgpu::CurrentSurfaceTexture::Success(texture)
@@ -160,12 +156,8 @@ pub mod render_ctx {
                     );
                 }
             } else if let Some(packet) = packet {
-                self.renderer.render_packet(
-                    &self.backend,
-                    &view,
-                    packet,
-                    self.gpu.is_srgb,
-                );
+                self.renderer
+                    .render_packet(&self.backend, &view, packet, self.gpu.is_srgb);
             } else {
                 self.renderer.render(
                     &self.backend,
@@ -181,9 +173,8 @@ pub mod render_ctx {
             // Deferred off-screen text is advisory and must not keep a settled
             // page repainting. A later scroll or other real frame will prepare
             // the text that has become visible.
-            if should_request_text_preparation_frame(
-                self.renderer.has_postponed_text_preparation(),
-            ) {
+            if should_request_text_preparation_frame(self.renderer.has_postponed_text_preparation())
+            {
                 aimer_events::window::request_animation_frame();
             }
 
@@ -197,25 +188,40 @@ pub mod render_ctx {
 
     // Surface creation stays on the UI thread; pipeline construction and all
     // subsequent surface use stay with the worker, without requiring Renderer: Send.
-    pub(in crate::render_ctx) fn start_worker(window: &'static Window, size: PhysicalSize<u32>, antialiasing: AntiAlias)
-        -> FrameWorker<BackendOutput>
-    {
+    pub(in crate::render_ctx) fn start_worker(
+        window: &'static Window,
+        size: PhysicalSize<u32>,
+        antialiasing: AntiAlias,
+    ) -> FrameWorker<BackendOutput> {
         let gpu = GpuContext::initialize(window, size);
         // WGPU presents on the worker, outside UI Core Animation transactions.
-        FrameWorker::spawn(move || {
-            let backend = gpu.backend();
-            let renderer = Renderer::with_antialiasing(&backend, gpu.format, antialiasing);
-            Ok(GpuPresenter { gpu, backend, renderer })
-        }, wake_event_loop)
+        FrameWorker::spawn(
+            move || {
+                let backend = gpu.backend();
+                let renderer = Renderer::with_antialiasing(&backend, gpu.format, antialiasing);
+                Ok(GpuPresenter {
+                    gpu,
+                    backend,
+                    renderer,
+                })
+            },
+            wake_event_loop,
+        )
     }
 
     impl WorkerPresenter for GpuPresenter {
         type Output = BackendOutput;
-        fn resize(&mut self, size: PhysicalSize<u32>) { FramePresenter::resize(self, size); }
-        fn max_texture_dimension(&self) -> u32 { self.gpu.max_texture_dimension() }
+        fn resize(&mut self, size: PhysicalSize<u32>) {
+            FramePresenter::resize(self, size);
+        }
+        fn max_texture_dimension(&self) -> u32 {
+            self.gpu.max_texture_dimension()
+        }
         fn render(&mut self, packet: &FramePacket) -> BackendOutput {
             let presented = FramePresenter::present_packet(self, packet);
-            if !presented { self.renderer.discard_frame(&self.backend, packet); }
+            if !presented {
+                self.renderer.discard_frame(&self.backend, packet);
+            }
             BackendOutput::Presented(presented)
         }
     }
@@ -320,7 +326,10 @@ pub mod render_ctx {
         ///
         /// [`build_frame`]: WgpuApi::build_frame
         /// [`present`]: WgpuApi::present
-        pub fn render_frame(&mut self, draw_fn: impl FnOnce(&CupidCanvas, u32, u32)) -> PresentOutcome {
+        pub fn render_frame(
+            &mut self,
+            draw_fn: impl FnOnce(&CupidCanvas, u32, u32),
+        ) -> PresentOutcome {
             match self.build_frame_packet(|canvas, width, height| {
                 draw_fn(canvas, width, height);
                 (1.0, DamageSet::full(width, height))
@@ -352,7 +361,10 @@ pub mod render_ctx {
         /// Returns `None` before the GPU context has been initialized.
         ///
         /// [`present`]: WgpuApi::present
-        pub fn build_frame(&mut self, draw_fn: impl FnOnce(&CupidCanvas, u32, u32)) -> Option<Frame> {
+        pub fn build_frame(
+            &mut self,
+            draw_fn: impl FnOnce(&CupidCanvas, u32, u32),
+        ) -> Option<Frame> {
             self.build_frame_packet(|canvas, width, height| {
                 draw_fn(canvas, width, height);
                 (1.0, DamageSet::full(width, height))
@@ -428,9 +440,15 @@ pub mod render_ctx {
 
         /// Presents a metadata-carrying frame packet inline.
         pub fn present_packet(&mut self, packet: FramePacket) -> PresentOutcome {
-            let Some(presenter) = &mut self.presentation else { return PresentOutcome::Dropped };
+            let Some(presenter) = &mut self.presentation else {
+                return PresentOutcome::Dropped;
+            };
             let presented = FramePresenter::present_packet(presenter, &packet);
-            if !presented { presenter.renderer.discard_frame(&presenter.backend, &packet); }
+            if !presented {
+                presenter
+                    .renderer
+                    .discard_frame(&presenter.backend, &packet);
+            }
             if let Some(canvas) = &self.canvas {
                 canvas.recycle_draw_list(packet.into_frame().into_draw_list());
             }

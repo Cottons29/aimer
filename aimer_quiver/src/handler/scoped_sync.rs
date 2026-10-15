@@ -158,8 +158,8 @@ impl WindowRenderTree {
 
         // The ancestors of `target`, outermost first, ending with `target`.
         let mut chain = vec![target];
-        while let Some(parent) = cache.specs[*chain.last().expect("chain starts non-empty")]
-            .parent_index
+        while let Some(parent) =
+            cache.specs[*chain.last().expect("chain starts non-empty")].parent_index
         {
             chain.push(parent);
         }

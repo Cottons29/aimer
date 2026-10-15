@@ -2,15 +2,15 @@
 //! measure pass and the draw pass of a scroll-list-shaped tree.
 
 use aimer::canvas::{FrameCanvas, InnerCanvas};
+use aimer::style::LayoutSpacing;
 use aimer::widget::base::WindowHandle;
 use aimer::widget::layout_cache::probe;
-use aimer::style::LayoutSpacing;
 use aimer::{
     AnyWidget, BoxAlignment, BuildContext, Color, Column, Container, Drawable, LayoutElement,
     ResolvedSize, Text, Vec2d, Widget,
 };
-use aimer_attribute::BoxConstraint;
 use aimer::{ScrollAxis, ScrollController, Scrollable};
+use aimer_attribute::BoxConstraint;
 
 const VIEWPORT_W: f32 = 400.0;
 const VIEWPORT_H: f32 = 800.0;
@@ -74,7 +74,11 @@ fn frame_cost_while_scrolling() {
         .build()
         .expect("test runtime");
 
-    let profile = if cfg!(debug_assertions) { "debug" } else { "release" };
+    let profile = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    };
     println!("profile = {profile}");
     println!(
         "{:>22}  {:>10}  {:>12}  {:>26}",
@@ -113,7 +117,10 @@ fn frame_cost_while_scrolling() {
         for i in 0..ITERS {
             if scrolling {
                 // What a wheel/drag does every frame: move the offset.
-                controller.jump_to(Vec2d { x: 0.0, y: i as f32 * 3.0 });
+                controller.jump_to(Vec2d {
+                    x: 0.0,
+                    y: i as f32 * 3.0,
+                });
             }
             element.update(&context);
             inner.take_draw_list();

@@ -137,8 +137,8 @@ fn copy_through_selection(window: &web_sys::Window, text: &str) -> Result<(), Cl
     let copied = html_document.exec_command("copy").unwrap_or(false);
 
     let _ = body.remove_child(&textarea);
-    let previously_focused = previously_focused
-        .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok());
+    let previously_focused =
+        previously_focused.and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok());
     if let Some(previous) = previously_focused {
         let _ = previous.focus();
     }

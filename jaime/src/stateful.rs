@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
+use aimer::input::button::Button;
 use aimer::macros::widget;
 use aimer::style::*;
 use aimer::{AimerApp, *};
-use aimer::input::button::Button;
 
 use crate::theme;
 
@@ -22,9 +22,7 @@ pub struct CounterWidget {
 
 impl CounterWidget {
     pub fn new(initial_count: i32) -> Self {
-        Self {
-            initial_count,
-        }
+        Self { initial_count }
     }
 }
 // create a state for the CounterWidget
@@ -75,13 +73,25 @@ impl State<CounterWidget> for CounterState {
                     .horizontal_alignment(BoxAlignment::Center)
                     .children([
                         Text::new("Widget with State")
-                            .text_style(TextStyle::new().font_size(25).color(theme.on_background_color))
+                            .text_style(
+                                TextStyle::new()
+                                    .font_size(25)
+                                    .color(theme.on_background_color),
+                            )
                             .boxed(),
-                        SizedBox::new().height(50).boxed(),
+                        SizedBox::new()
+                            .height(50)
+                            .boxed(),
                         Text::new(format!("Clicked: {}", self.count,))
-                            .text_style(TextStyle::new().font_size(25).color(theme.on_background_color))
+                            .text_style(
+                                TextStyle::new()
+                                    .font_size(25)
+                                    .color(theme.on_background_color),
+                            )
                             .boxed(),
-                        SizedBox::new().height(50).boxed(),
+                        SizedBox::new()
+                            .height(50)
+                            .boxed(),
                         Container::new()
                             .width(Dimension::Px(200.0))
                             .height(Dimension::Px(50.0))
@@ -95,15 +105,16 @@ impl State<CounterWidget> for CounterState {
 
                                         println!(
                                             "Button pressed with state : {}",
-                                            updater.read_state().count
+                                            updater
+                                                .read_state()
+                                                .count
                                         );
                                         updater.set_state(|state| {
                                             state.count += 1;
                                         });
                                     })
                                     .decoration(
-                                        BoxDecoration::new()
-                                            .background_color(theme.primary_color),
+                                        BoxDecoration::new().background_color(theme.primary_color),
                                     )
                                     .child(
                                         Text::new(if self.on_loading {
@@ -112,14 +123,14 @@ impl State<CounterWidget> for CounterState {
                                             "Click Me"
                                         })
                                         .text_align(TextAlign::MidCenter)
-                                        .text_style(
-                                            TextStyle::new().color(theme.on_primary_color),
-                                        ),
+                                        .text_style(TextStyle::new().color(theme.on_primary_color)),
                                     )
                                     .boxed(),
                             )
                             .boxed(),
-                        SizedBox::new().height(20).boxed(),
+                        SizedBox::new()
+                            .height(20)
+                            .boxed(),
                         Container::new()
                             .width(Dimension::Px(200.0))
                             .height(Dimension::Px(50.0))
@@ -131,7 +142,9 @@ impl State<CounterWidget> for CounterState {
                                         move || {
                                             println!(
                                                 "Button pressed with state : {}",
-                                                updater.read_state().count
+                                                updater
+                                                    .read_state()
+                                                    .count
                                             );
                                             updater.set_state(|state| {
                                                 state.count -= 1;
@@ -139,8 +152,7 @@ impl State<CounterWidget> for CounterState {
                                         }
                                     })
                                     .decoration(
-                                        BoxDecoration::new()
-                                            .background_color(theme.primary_color),
+                                        BoxDecoration::new().background_color(theme.primary_color),
                                     )
                                     .child(
                                         Text::new(if self.on_loading {
@@ -149,9 +161,7 @@ impl State<CounterWidget> for CounterState {
                                             "Click Me"
                                         })
                                         .text_align(TextAlign::MidCenter)
-                                        .text_style(
-                                            TextStyle::new().color(theme.on_primary_color),
-                                        ),
+                                        .text_style(TextStyle::new().color(theme.on_primary_color)),
                                     )
                                     .boxed(),
                             )

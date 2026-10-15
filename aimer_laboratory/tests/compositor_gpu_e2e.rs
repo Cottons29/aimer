@@ -13,10 +13,10 @@
 
 use std::sync::OnceLock;
 
+use aimer::cupid::WgpuBackend;
 use aimer::cupid::damage_region::DamageSet;
 use aimer::cupid::draw_cmd_v2::{Rect as V2Rect, RenderNodeSpec, RenderTree};
 use aimer::cupid::frame::{Frame, FramePacket, FrameRenderMetadata};
-use aimer::cupid::WgpuBackend;
 use aimer::cupid::renderer::Renderer;
 use aimer_laboratory::v2_render::Canvas as V2Canvas;
 use tokio::runtime::Runtime;
@@ -154,9 +154,8 @@ fn read_target_sized(
     for row in 0..height as usize {
         let source_start = row * bytes_per_row as usize;
         let target_start = row * unpadded_bytes_per_row as usize;
-        pixels[target_start..target_start + unpadded_bytes_per_row as usize].copy_from_slice(
-            &mapped[source_start..source_start + unpadded_bytes_per_row as usize],
-        );
+        pixels[target_start..target_start + unpadded_bytes_per_row as usize]
+            .copy_from_slice(&mapped[source_start..source_start + unpadded_bytes_per_row as usize]);
     }
     drop(mapped);
     readback.unmap();
@@ -176,13 +175,7 @@ fn assert_pixel(pixels: &[u8], x: u32, y: u32, expected: [u8; 4]) {
     assert_pixel_sized(pixels, WIDTH, x, y, expected);
 }
 
-fn assert_pixel_sized(
-    pixels: &[u8],
-    width: u32,
-    x: u32,
-    y: u32,
-    expected: [u8; 4],
-) {
+fn assert_pixel_sized(pixels: &[u8], width: u32, x: u32, y: u32, expected: [u8; 4]) {
     let actual = pixel_sized(pixels, width, x, y);
     for (channel, (actual, expected)) in actual.into_iter().zip(expected).enumerate() {
         assert!(
@@ -253,8 +246,18 @@ fn direct_retained_packet_interleaves_clipped_local_v2_lists_on_metal() {
     // The child paints a 32x32 square but only its top half is inside its clip.
     tree.set_clip(legacy, Some(V2Rect::new(0.0, 0.0, 32.0, 16.0)))
         .unwrap();
-    record_v2_fill(&tree, root, V2Rect::new(0.0, 0.0, 64.0, 64.0), [220, 20, 30, 255]);
-    record_v2_fill(&tree, legacy, V2Rect::new(0.0, 0.0, 32.0, 32.0), [20, 210, 60, 255]);
+    record_v2_fill(
+        &tree,
+        root,
+        V2Rect::new(0.0, 0.0, 64.0, 64.0),
+        [220, 20, 30, 255],
+    );
+    record_v2_fill(
+        &tree,
+        legacy,
+        V2Rect::new(0.0, 0.0, 32.0, 32.0),
+        [20, 210, 60, 255],
+    );
 
     let packet = FramePacket::from_v2_direct_with_frame(
         aimer::cupid::draw_cmd_v2::RenderFrame {
@@ -336,7 +339,9 @@ fn retained_v2_packet_updates_only_its_damaged_pixels_on_metal() {
     });
     let view = target.create_view(&wgpu::TextureViewDescriptor::default());
     let tree = RenderTree::new();
-    let root = tree.add_root(V2Rect::new(0.0, 0.0, WIDTH as f32, HEIGHT as f32)).unwrap();
+    let root = tree
+        .add_root(V2Rect::new(0.0, 0.0, WIDTH as f32, HEIGHT as f32))
+        .unwrap();
     let child = tree
         .add_child(root, V2Rect::new(16.0, 16.0, 32.0, 32.0))
         .unwrap();
@@ -346,7 +351,12 @@ fn retained_v2_packet_updates_only_its_damaged_pixels_on_metal() {
         V2Rect::new(0.0, 0.0, WIDTH as f32, HEIGHT as f32),
         [220, 20, 30, 255],
     );
-    record_v2_fill(&tree, child, V2Rect::new(0.0, 0.0, 32.0, 32.0), [20, 50, 220, 255]);
+    record_v2_fill(
+        &tree,
+        child,
+        V2Rect::new(0.0, 0.0, 32.0, 32.0),
+        [20, 50, 220, 255],
+    );
 
     let backend = WgpuBackend::new(device.clone(), queue.clone());
     let mut renderer = Renderer::new(&backend, FORMAT);
@@ -367,7 +377,12 @@ fn retained_v2_packet_updates_only_its_damaged_pixels_on_metal() {
     assert_pixel(&first_pixels, 8, 8, [220, 20, 30, 255]);
     assert_pixel(&first_pixels, 32, 32, [20, 50, 220, 255]);
 
-    record_v2_fill(&tree, child, V2Rect::new(0.0, 0.0, 32.0, 32.0), [20, 210, 60, 255]);
+    record_v2_fill(
+        &tree,
+        child,
+        V2Rect::new(0.0, 0.0, 32.0, 32.0),
+        [20, 210, 60, 255],
+    );
     let update_damage = tree.take_damage();
     assert_eq!(update_damage, vec![V2Rect::new(16.0, 16.0, 32.0, 32.0)]);
     let second_packet = FramePacket::from_v2_direct_with_frame(
@@ -378,7 +393,7 @@ fn retained_v2_packet_updates_only_its_damaged_pixels_on_metal() {
         metadata(DamageSet::new(WIDTH, HEIGHT)),
         Frame::new(aimer::cupid::draw_cmd::DrawList::new(), WIDTH, HEIGHT),
     )
-        .expect("lower incremental v2 render plan");
+    .expect("lower incremental v2 render plan");
     assert!(second_packet.frame().draw_list.commands().is_empty());
     assert!(second_packet.render_plan().unwrap().is_complete());
     assert!(second_packet.render_plan().unwrap().is_complete());
@@ -444,9 +459,24 @@ fn nested_opacity_groups_composite_overlapping_children_and_clip_damage_on_avail
     let yellow = tree
         .add_child(edge_group, V2Rect::new(0.0, 0.0, 32.0, 32.0))
         .unwrap();
-    record_v2_fill(&tree, green, V2Rect::new(0.0, 0.0, 32.0, 32.0), [0, 255, 0, 255]);
-    record_v2_fill(&tree, blue, V2Rect::new(0.0, 0.0, 40.0, 40.0), [0, 0, 255, 255]);
-    record_v2_fill(&tree, yellow, V2Rect::new(0.0, 0.0, 32.0, 32.0), [255, 255, 0, 255]);
+    record_v2_fill(
+        &tree,
+        green,
+        V2Rect::new(0.0, 0.0, 32.0, 32.0),
+        [0, 255, 0, 255],
+    );
+    record_v2_fill(
+        &tree,
+        blue,
+        V2Rect::new(0.0, 0.0, 40.0, 40.0),
+        [0, 0, 255, 255],
+    );
+    record_v2_fill(
+        &tree,
+        yellow,
+        V2Rect::new(0.0, 0.0, 32.0, 32.0),
+        [255, 255, 0, 255],
+    );
 
     let backend = WgpuBackend::new(device.clone(), queue.clone());
     let mut renderer = Renderer::new(&backend, FORMAT);
@@ -476,7 +506,10 @@ fn nested_opacity_groups_composite_overlapping_children_and_clip_damage_on_avail
     let update_damage = tree.take_damage();
     assert!(!update_damage.is_empty());
     assert!(update_damage.iter().all(|rect| {
-        rect.x >= 0.0 && rect.y >= 0.0 && rect.x + rect.width <= 48.0 && rect.y + rect.height <= 48.0
+        rect.x >= 0.0
+            && rect.y >= 0.0
+            && rect.x + rect.width <= 48.0
+            && rect.y + rect.height <= 48.0
     }));
     let second_packet = FramePacket::from_v2_direct_with_frame(
         aimer::cupid::draw_cmd_v2::RenderFrame {
@@ -506,10 +539,13 @@ fn nested_opacity_groups_composite_overlapping_children_and_clip_damage_on_avail
 
     tree.set_opacity(edge_group, 0.25).unwrap();
     let edge_damage = tree.take_damage();
-    assert!(edge_damage.iter().any(|rect| {
-        (rect.x + rect.width - WIDTH as f32).abs() < f32::EPSILON
-            && (rect.y + rect.height - HEIGHT as f32).abs() < f32::EPSILON
-    }), "edge group damage reaches both target edges: {edge_damage:?}");
+    assert!(
+        edge_damage.iter().any(|rect| {
+            (rect.x + rect.width - WIDTH as f32).abs() < f32::EPSILON
+                && (rect.y + rect.height - HEIGHT as f32).abs() < f32::EPSILON
+        }),
+        "edge group damage reaches both target edges: {edge_damage:?}"
+    );
     let edge_packet = FramePacket::from_v2_direct_with_frame(
         aimer::cupid::draw_cmd_v2::RenderFrame {
             damage: edge_damage,
@@ -555,9 +591,17 @@ fn nested_opacity_groups_composite_overlapping_children_and_clip_damage_on_avail
         false,
     );
     assert!(renderer.compositor_stats().full_repaint);
-    let resized_old_bounds =
-        read_target_sized(&device, &queue, &resized_target, RESIZED_WIDTH, RESIZED_HEIGHT);
-    assert_eq!(pixel_sized(&resized_old_bounds, RESIZED_WIDTH, 70, 70), [0, 0, 0, 0]);
+    let resized_old_bounds = read_target_sized(
+        &device,
+        &queue,
+        &resized_target,
+        RESIZED_WIDTH,
+        RESIZED_HEIGHT,
+    );
+    assert_eq!(
+        pixel_sized(&resized_old_bounds, RESIZED_WIDTH, 70, 70),
+        [0, 0, 0, 0]
+    );
     assert_pixel_sized(&resized_old_bounds, RESIZED_WIDTH, 62, 62, [32, 32, 0, 32]);
 
     tree.set_bounds(root, V2Rect::new(0.0, 0.0, 80.0, 80.0))
@@ -578,8 +622,13 @@ fn nested_opacity_groups_composite_overlapping_children_and_clip_damage_on_avail
     .expect("lower resized opacity group bounds");
     renderer.render_packet(&backend, &resized_view, &expanded_packet, false);
     assert!(renderer.compositor_stats().full_repaint);
-    let resized_expanded =
-        read_target_sized(&device, &queue, &resized_target, RESIZED_WIDTH, RESIZED_HEIGHT);
+    let resized_expanded = read_target_sized(
+        &device,
+        &queue,
+        &resized_target,
+        RESIZED_WIDTH,
+        RESIZED_HEIGHT,
+    );
     assert_pixel_sized(&resized_expanded, RESIZED_WIDTH, 70, 70, [32, 32, 0, 32]);
     assert_pixel_sized(&resized_expanded, RESIZED_WIDTH, 79, 79, [32, 32, 0, 32]);
 }
@@ -641,11 +690,7 @@ fn virtualized_scroll_partial_damage_preserves_pixels_outside_viewport_on_metal(
                     Some(1),
                     V2Rect::new(0.0, 0.0, ROW_WIDTH, ROW_HEIGHT * 4.0),
                 ),
-                RenderNodeSpec::new(
-                    None,
-                    Some(2),
-                    V2Rect::new(0.0, 0.0, ROW_WIDTH, ROW_HEIGHT),
-                ),
+                RenderNodeSpec::new(None, Some(2), V2Rect::new(0.0, 0.0, ROW_WIDTH, ROW_HEIGHT)),
                 RenderNodeSpec::new(
                     None,
                     Some(2),
@@ -733,7 +778,12 @@ fn virtualized_scroll_partial_damage_preserves_pixels_outside_viewport_on_metal(
     let update_damage = tree.take_damage();
     assert_eq!(
         update_damage,
-        vec![V2Rect::new(VIEWPORT_X, VIEWPORT_Y, VIEWPORT_SIZE, VIEWPORT_SIZE)],
+        vec![V2Rect::new(
+            VIEWPORT_X,
+            VIEWPORT_Y,
+            VIEWPORT_SIZE,
+            VIEWPORT_SIZE
+        )],
         "the row-window update damages only the clipped viewport"
     );
     let second_packet = direct_v2_packet(&tree, update_damage);

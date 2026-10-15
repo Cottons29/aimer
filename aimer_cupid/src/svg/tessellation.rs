@@ -242,17 +242,17 @@ fn tessellate(
             line_join,
             miter_limit,
         } => {
-            if !width.is_finite()
-                || width <= 0.0
-                || !miter_limit.is_finite()
-                || miter_limit < 1.0
-            {
+            if !width.is_finite() || width <= 0.0 || !miter_limit.is_finite() || miter_limit < 1.0 {
                 return Err(SvgTessellationError::Tessellation(
                     "invalid stroke parameters".to_owned(),
                 ));
             }
             let mut mesh = stroke_mesh(
-                &flatten_path(geometry, tolerance), width, line_cap, line_join, miter_limit,
+                &flatten_path(geometry, tolerance),
+                width,
+                line_cap,
+                line_join,
+                miter_limit,
             );
             if analytic_aa && fringe_width.is_finite() && fringe_width > 0.0 {
                 add_mesh_fringe(&mut mesh, fringe_width);
@@ -279,13 +279,18 @@ struct ScanEdge {
     winding: i32,
 }
 
-fn scanline_fill(contours: &[Vec<(f32, f32)>], rule: SvgFillRule) -> Result<SvgMesh, SvgTessellationError> {
+fn scanline_fill(
+    contours: &[Vec<(f32, f32)>],
+    rule: SvgFillRule,
+) -> Result<SvgMesh, SvgTessellationError> {
     let mut levels = Vec::new();
     let mut edges = Vec::new();
     for contour in contours {
         for &(x, y) in contour {
             if !x.is_finite() || !y.is_finite() {
-                return Err(SvgTessellationError::Tessellation("non-finite path coordinate".into()));
+                return Err(SvgTessellationError::Tessellation(
+                    "non-finite path coordinate".into(),
+                ));
             }
             levels.push(y);
         }
@@ -311,7 +316,9 @@ fn scanline_fill(contours: &[Vec<(f32, f32)>], rule: SvgFillRule) -> Result<SvgM
     let mut next_edge = 0;
     for band in levels.windows(2) {
         let (y0, y1) = (band[0], band[1]);
-        if y1 - y0 <= f32::EPSILON { continue; }
+        if y1 - y0 <= f32::EPSILON {
+            continue;
+        }
         let mid = y0 * 0.5 + y1 * 0.5;
         while next_edge < edges.len() && edges[next_edge].min_y <= mid {
             active_edges.push(next_edge);
@@ -340,23 +347,44 @@ fn scanline_fill(contours: &[Vec<(f32, f32)>], rule: SvgFillRule) -> Result<SvgM
                 winding: edge.winding,
             });
         }
-        crossings.sort_by(|a,b| a.x_mid.total_cmp(&b.x_mid));
+        crossings.sort_by(|a, b| a.x_mid.total_cmp(&b.x_mid));
         let mut start = None;
         let mut winding = 0i32;
         let mut parity = false;
         for crossing in crossings {
-            let was_inside = match rule { SvgFillRule::NonZero => winding != 0, SvgFillRule::EvenOdd => parity };
+            let was_inside = match rule {
+                SvgFillRule::NonZero => winding != 0,
+                SvgFillRule::EvenOdd => parity,
+            };
             winding += crossing.winding;
             parity = !parity;
-            let is_inside = match rule { SvgFillRule::NonZero => winding != 0, SvgFillRule::EvenOdd => parity };
-            if !was_inside && is_inside { start = Some(crossing); }
+            let is_inside = match rule {
+                SvgFillRule::NonZero => winding != 0,
+                SvgFillRule::EvenOdd => parity,
+            };
+            if !was_inside && is_inside {
+                start = Some(crossing);
+            }
             if was_inside && !is_inside {
-                if let Some(left) = start.take() { append_quad(&mut vertices, &mut indices, left.left, crossing.left, crossing.right, left.right); }
+                if let Some(left) = start.take() {
+                    append_quad(
+                        &mut vertices,
+                        &mut indices,
+                        left.left,
+                        crossing.left,
+                        crossing.right,
+                        left.right,
+                    );
+                }
             }
         }
     }
     let coverages = vec![1.0; vertices.len()];
-    Ok(SvgMesh { vertices: vertices.into(), coverages: coverages.into(), indices: indices.into() })
+    Ok(SvgMesh {
+        vertices: vertices.into(),
+        coverages: coverages.into(),
+        indices: indices.into(),
+    })
 }
 
 fn close_fill_contours(mut contours: Vec<Vec<(f32, f32)>>) -> Vec<Vec<(f32, f32)>> {
@@ -394,14 +422,24 @@ fn add_fill_fringe(
             let probe = (width * 0.5).min(length * 0.1).max(f32::EPSILON * 8.0);
             let normal = [-dy / length, dx / length];
             let midpoint = [(a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5];
-            let left = [midpoint[0] + normal[0] * probe, midpoint[1] + normal[1] * probe];
-            let right = [midpoint[0] - normal[0] * probe, midpoint[1] - normal[1] * probe];
+            let left = [
+                midpoint[0] + normal[0] * probe,
+                midpoint[1] + normal[1] * probe,
+            ];
+            let right = [
+                midpoint[0] - normal[0] * probe,
+                midpoint[1] - normal[1] * probe,
+            ];
             let left_filled = fill_query.contains(left, rule);
             let right_filled = fill_query.contains(right, rule);
             if left_filled == right_filled {
                 continue;
             }
-            let outward = if left_filled { [-normal[0], -normal[1]] } else { normal };
+            let outward = if left_filled {
+                [-normal[0], -normal[1]]
+            } else {
+                normal
+            };
             let outer_a = [a[0] + outward[0] * width, a[1] + outward[1] * width];
             let outer_b = [b[0] + outward[0] * width, b[1] + outward[1] * width];
             append_coverage_quad(
@@ -413,8 +451,16 @@ fn add_fill_fringe(
                 outer_b,
                 outer_a,
             );
-            corners.entry(point_key(a)).or_insert_with(|| (a, Vec::new())).1.push(outer_a);
-            corners.entry(point_key(b)).or_insert_with(|| (b, Vec::new())).1.push(outer_b);
+            corners
+                .entry(point_key(a))
+                .or_insert_with(|| (a, Vec::new()))
+                .1
+                .push(outer_a);
+            corners
+                .entry(point_key(b))
+                .or_insert_with(|| (b, Vec::new()))
+                .1
+                .push(outer_b);
         }
     }
 
@@ -473,14 +519,18 @@ impl FillQueryIndex {
             if point[1] < current.center {
                 for &index in &current.by_min {
                     let edge = self.edges[index];
-                    if edge.min_y > point[1] { break; }
+                    if edge.min_y > point[1] {
+                        break;
+                    }
                     add_fill_crossing(edge, point, &mut winding, &mut crossings);
                 }
                 node = current.left.as_deref();
             } else if point[1] > current.center {
                 for &index in &current.by_max {
                     let edge = self.edges[index];
-                    if edge.max_y <= point[1] { break; }
+                    if edge.max_y <= point[1] {
+                        break;
+                    }
                     add_fill_crossing(edge, point, &mut winding, &mut crossings);
                 }
                 node = current.right.as_deref();
@@ -502,7 +552,9 @@ fn build_fill_interval_node(
     edges: &[FillEdge],
     indices: Vec<usize>,
 ) -> Option<Box<FillIntervalNode>> {
-    if indices.is_empty() { return None; }
+    if indices.is_empty() {
+        return None;
+    }
     let mut centers = indices
         .iter()
         .map(|&index| edges[index].min_y * 0.5 + edges[index].max_y * 0.5)
@@ -534,12 +586,7 @@ fn build_fill_interval_node(
     }))
 }
 
-fn add_fill_crossing(
-    edge: FillEdge,
-    point: [f32; 2],
-    winding: &mut i32,
-    crossings: &mut u32,
-) {
+fn add_fill_crossing(edge: FillEdge, point: [f32; 2], winding: &mut i32, crossings: &mut u32) {
     let (a, b) = (edge.a, edge.b);
     if !((a.1 <= point[1] && b.1 > point[1]) || (b.1 <= point[1] && a.1 > point[1])) {
         return;
@@ -559,11 +606,14 @@ fn append_fringe_corner_fans(
 ) {
     for (_, (point, mut outer_points)) in corners {
         outer_points.sort_by(|a, b| {
-            (a[1] - point[1]).atan2(a[0] - point[0])
+            (a[1] - point[1])
+                .atan2(a[0] - point[0])
                 .total_cmp(&(b[1] - point[1]).atan2(b[0] - point[0]))
         });
         outer_points.dedup_by(|a, b| point_key(*a) == point_key(*b));
-        if outer_points.len() < 2 { continue; }
+        if outer_points.len() < 2 {
+            continue;
+        }
         for pair in outer_points.windows(2) {
             append_coverage_triangle(vertices, coverages, indices, point, pair[0], pair[1]);
         }
@@ -580,33 +630,98 @@ fn append_fringe_corner_fans(
     }
 }
 
-fn append_quad(vertices: &mut Vec<[f32; 2]>, indices: &mut Vec<u32>, a: (f32,f32), b: (f32,f32), c: (f32,f32), d: (f32,f32)) {
-    let Ok(base) = u32::try_from(vertices.len()) else { return; };
-    vertices.extend([[a.0,a.1],[b.0,b.1],[c.0,c.1],[d.0,d.1]]);
-    indices.extend([base,base+1,base+2,base,base+2,base+3]);
+fn append_quad(
+    vertices: &mut Vec<[f32; 2]>,
+    indices: &mut Vec<u32>,
+    a: (f32, f32),
+    b: (f32, f32),
+    c: (f32, f32),
+    d: (f32, f32),
+) {
+    let Ok(base) = u32::try_from(vertices.len()) else {
+        return;
+    };
+    vertices.extend([[a.0, a.1], [b.0, b.1], [c.0, c.1], [d.0, d.1]]);
+    indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
 }
 
-fn stroke_mesh(contours: &[Vec<(f32,f32)>], width: f32, cap: SvgLineCap, join: SvgLineJoin, miter_limit: f32) -> SvgMesh {
+fn stroke_mesh(
+    contours: &[Vec<(f32, f32)>],
+    width: f32,
+    cap: SvgLineCap,
+    join: SvgLineJoin,
+    miter_limit: f32,
+) -> SvgMesh {
     let radius = width * 0.5;
-    let mut vertices = Vec::new(); let mut indices = Vec::new();
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
     for contour in contours {
         let closed = contour.len() > 2 && contour.first() == contour.last();
         for (index, segment) in contour.windows(2).enumerate() {
-            let (a,b)=(segment[0],segment[1]); let dx=b.0-a.0; let dy=b.1-a.1; let len=dx.hypot(dy);
-            if len <= f32::EPSILON { continue; }
-            let (nx,ny)=(-dy/len*radius,dx/len*radius);
-            let (mut ax,mut ay,mut bx,mut by)=(a.0,a.1,b.0,b.1);
-            if !closed && cap == SvgLineCap::Square && index == 0 { ax-=dx/len*radius; ay-=dy/len*radius; }
-            if !closed && cap == SvgLineCap::Square && index+2 == contour.len() { bx+=dx/len*radius; by+=dy/len*radius; }
-            append_quad(&mut vertices,&mut indices,(ax+nx,ay+ny),(ax-nx,ay-ny),(bx-nx,by-ny),(bx+nx,by+ny));
-            if index > 0 { add_join(&mut vertices,&mut indices,contour[index-1],a,b,radius,join,miter_limit); }
-            if !closed && cap == SvgLineCap::Round && index == 0 { append_disc(&mut vertices,&mut indices,a,radius); }
-            if !closed && cap == SvgLineCap::Round && index+2 == contour.len() { append_disc(&mut vertices,&mut indices,b,radius); }
+            let (a, b) = (segment[0], segment[1]);
+            let dx = b.0 - a.0;
+            let dy = b.1 - a.1;
+            let len = dx.hypot(dy);
+            if len <= f32::EPSILON {
+                continue;
+            }
+            let (nx, ny) = (-dy / len * radius, dx / len * radius);
+            let (mut ax, mut ay, mut bx, mut by) = (a.0, a.1, b.0, b.1);
+            if !closed && cap == SvgLineCap::Square && index == 0 {
+                ax -= dx / len * radius;
+                ay -= dy / len * radius;
+            }
+            if !closed && cap == SvgLineCap::Square && index + 2 == contour.len() {
+                bx += dx / len * radius;
+                by += dy / len * radius;
+            }
+            append_quad(
+                &mut vertices,
+                &mut indices,
+                (ax + nx, ay + ny),
+                (ax - nx, ay - ny),
+                (bx - nx, by - ny),
+                (bx + nx, by + ny),
+            );
+            if index > 0 {
+                add_join(
+                    &mut vertices,
+                    &mut indices,
+                    contour[index - 1],
+                    a,
+                    b,
+                    radius,
+                    join,
+                    miter_limit,
+                );
+            }
+            if !closed && cap == SvgLineCap::Round && index == 0 {
+                append_disc(&mut vertices, &mut indices, a, radius);
+            }
+            if !closed && cap == SvgLineCap::Round && index + 2 == contour.len() {
+                append_disc(&mut vertices, &mut indices, b, radius);
+            }
         }
-        if closed && contour.len() > 3 { let count=contour.len();add_join(&mut vertices,&mut indices,contour[count-2],contour[0],contour[1],radius,join,miter_limit); }
+        if closed && contour.len() > 3 {
+            let count = contour.len();
+            add_join(
+                &mut vertices,
+                &mut indices,
+                contour[count - 2],
+                contour[0],
+                contour[1],
+                radius,
+                join,
+                miter_limit,
+            );
+        }
     }
     let coverages = vec![1.0; vertices.len()];
-    SvgMesh { vertices: vertices.into(), coverages: coverages.into(), indices: indices.into() }
+    SvgMesh {
+        vertices: vertices.into(),
+        coverages: coverages.into(),
+        indices: indices.into(),
+    }
 }
 
 type PointKey = (u32, u32);
@@ -634,7 +749,12 @@ impl TriangleGrid {
     const SIDE: usize = 32;
 
     fn new(mesh: &SvgMesh) -> Self {
-        let mut bounds = [f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY];
+        let mut bounds = [
+            f32::INFINITY,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::NEG_INFINITY,
+        ];
         for point in mesh.vertices.iter() {
             bounds[0] = bounds[0].min(point[0]);
             bounds[1] = bounds[1].min(point[1]);
@@ -645,10 +765,19 @@ impl TriangleGrid {
             ((bounds[2] - bounds[0]) / Self::SIDE as f32).max(f32::EPSILON),
             ((bounds[3] - bounds[1]) / Self::SIDE as f32).max(f32::EPSILON),
         ];
-        let mut cells = (0..Self::SIDE * Self::SIDE).map(|_| Vec::new()).collect::<Vec<_>>();
-        let triangles = mesh.indices
+        let mut cells = (0..Self::SIDE * Self::SIDE)
+            .map(|_| Vec::new())
+            .collect::<Vec<_>>();
+        let triangles = mesh
+            .indices
             .chunks_exact(3)
-            .map(|triangle| [triangle[0] as usize, triangle[1] as usize, triangle[2] as usize])
+            .map(|triangle| {
+                [
+                    triangle[0] as usize,
+                    triangle[1] as usize,
+                    triangle[2] as usize,
+                ]
+            })
             .collect::<Vec<_>>();
         for (triangle_index, triangle) in triangles.iter().enumerate() {
             let a = mesh.vertices[triangle[0]];
@@ -666,12 +795,19 @@ impl TriangleGrid {
                 }
             }
         }
-        Self { bounds, cell_size, cells, triangles }
+        Self {
+            bounds,
+            cell_size,
+            cells,
+            triangles,
+        }
     }
 
     fn contains(&self, mesh: &SvgMesh, point: [f32; 2]) -> bool {
-        if point[0] < self.bounds[0] || point[0] > self.bounds[2]
-            || point[1] < self.bounds[1] || point[1] > self.bounds[3]
+        if point[0] < self.bounds[0]
+            || point[0] > self.bounds[2]
+            || point[1] < self.bounds[1]
+            || point[1] > self.bounds[3]
         {
             return false;
         }
@@ -696,8 +832,7 @@ fn grid_cell(point: [f32; 2], bounds: [f32; 4], cell_size: [f32; 2]) -> (usize, 
 
 fn point_in_triangle(point: [f32; 2], a: [f32; 2], b: [f32; 2], c: [f32; 2]) -> bool {
     let cross = |from: [f32; 2], to: [f32; 2]| {
-        (to[0] - from[0]) * (point[1] - from[1])
-            - (to[1] - from[1]) * (point[0] - from[0])
+        (to[0] - from[0]) * (point[1] - from[1]) - (to[1] - from[1]) * (point[0] - from[0])
     };
     let ab = cross(a, b);
     let bc = cross(b, c);
@@ -723,7 +858,11 @@ fn add_mesh_fringe(mesh: &mut SvgMesh, width: f32) {
     let triangle_grid = TriangleGrid::new(mesh);
     let mut edges: HashMap<EdgeKey, BoundaryEdge> = HashMap::new();
     for triangle in mesh.indices.chunks_exact(3) {
-        let [ia, ib, ic] = [triangle[0] as usize, triangle[1] as usize, triangle[2] as usize];
+        let [ia, ib, ic] = [
+            triangle[0] as usize,
+            triangle[1] as usize,
+            triangle[2] as usize,
+        ];
         let a = mesh.vertices[ia];
         let b = mesh.vertices[ib];
         let c = mesh.vertices[ic];
@@ -779,17 +918,28 @@ fn add_mesh_fringe(mesh: &mut SvgMesh, width: f32) {
             outer_b,
             outer_a,
         );
-        corners.entry(point_key(edge.a)).or_insert_with(|| (edge.a, Vec::new())).1.push(outer_a);
-        corners.entry(point_key(edge.b)).or_insert_with(|| (edge.b, Vec::new())).1.push(outer_b);
+        corners
+            .entry(point_key(edge.a))
+            .or_insert_with(|| (edge.a, Vec::new()))
+            .1
+            .push(outer_a);
+        corners
+            .entry(point_key(edge.b))
+            .or_insert_with(|| (edge.b, Vec::new()))
+            .1
+            .push(outer_b);
     }
 
     for (_, (point, mut outer_points)) in corners {
         outer_points.sort_by(|a, b| {
-            (a[1] - point[1]).atan2(a[0] - point[0])
+            (a[1] - point[1])
+                .atan2(a[0] - point[0])
                 .total_cmp(&(b[1] - point[1]).atan2(b[0] - point[0]))
         });
         outer_points.dedup_by(|a, b| point_key(*a) == point_key(*b));
-        if outer_points.len() < 2 { continue; }
+        if outer_points.len() < 2 {
+            continue;
+        }
         for pair in outer_points.windows(2) {
             append_coverage_triangle(
                 &mut vertices,
@@ -826,7 +976,9 @@ fn append_coverage_quad(
     c: [f32; 2],
     d: [f32; 2],
 ) {
-    let Ok(base) = u32::try_from(vertices.len()) else { return; };
+    let Ok(base) = u32::try_from(vertices.len()) else {
+        return;
+    };
     vertices.extend([a, b, c, d]);
     coverages.extend([1.0, 1.0, 0.0, 0.0]);
     indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
@@ -840,31 +992,103 @@ fn append_coverage_triangle(
     b: [f32; 2],
     c: [f32; 2],
 ) {
-    let Ok(base) = u32::try_from(vertices.len()) else { return; };
+    let Ok(base) = u32::try_from(vertices.len()) else {
+        return;
+    };
     vertices.extend([a, b, c]);
     coverages.extend([1.0, 0.0, 0.0]);
     indices.extend([base, base + 1, base + 2]);
 }
 
-fn add_join(vertices:&mut Vec<[f32;2]>,indices:&mut Vec<u32>,previous:(f32,f32),point:(f32,f32),next:(f32,f32),radius:f32,join:SvgLineJoin,miter_limit:f32){
-    let d1=(point.0-previous.0,point.1-previous.1);let d2=(next.0-point.0,next.1-point.1);let l1=d1.0.hypot(d1.1);let l2=d2.0.hypot(d2.1);if l1<=f32::EPSILON||l2<=f32::EPSILON{return;}
-    let d1=(d1.0/l1,d1.1/l1);let d2=(d2.0/l2,d2.1/l2);let cross=d1.0*d2.1-d1.1*d2.0;if cross.abs()<=f32::EPSILON{return;}
-    if join==SvgLineJoin::Round{append_disc(vertices,indices,point,radius);return;}
-    let side=if cross>0.0{-1.0}else{1.0};let a=(point.0-side*d1.1*radius,point.1+side*d1.0*radius);let b=(point.0-side*d2.1*radius,point.1+side*d2.0*radius);
-    let miter=if matches!(join,SvgLineJoin::Miter|SvgLineJoin::MiterClip){let delta=(b.0-a.0,b.1-a.1);let t=(delta.0*d2.1-delta.1*d2.0)/cross;let candidate=(a.0+d1.0*t,a.1+d1.1*t);((candidate.0-point.0).hypot(candidate.1-point.1)<=miter_limit*radius).then_some(candidate)}else{None};
-    if let Some(miter)=miter{append_triangle(vertices,indices,a,miter,b)}else{append_triangle(vertices,indices,point,a,b)}
+fn add_join(
+    vertices: &mut Vec<[f32; 2]>,
+    indices: &mut Vec<u32>,
+    previous: (f32, f32),
+    point: (f32, f32),
+    next: (f32, f32),
+    radius: f32,
+    join: SvgLineJoin,
+    miter_limit: f32,
+) {
+    let d1 = (point.0 - previous.0, point.1 - previous.1);
+    let d2 = (next.0 - point.0, next.1 - point.1);
+    let l1 = d1.0.hypot(d1.1);
+    let l2 = d2.0.hypot(d2.1);
+    if l1 <= f32::EPSILON || l2 <= f32::EPSILON {
+        return;
+    }
+    let d1 = (d1.0 / l1, d1.1 / l1);
+    let d2 = (d2.0 / l2, d2.1 / l2);
+    let cross = d1.0 * d2.1 - d1.1 * d2.0;
+    if cross.abs() <= f32::EPSILON {
+        return;
+    }
+    if join == SvgLineJoin::Round {
+        append_disc(vertices, indices, point, radius);
+        return;
+    }
+    let side = if cross > 0.0 { -1.0 } else { 1.0 };
+    let a = (
+        point.0 - side * d1.1 * radius,
+        point.1 + side * d1.0 * radius,
+    );
+    let b = (
+        point.0 - side * d2.1 * radius,
+        point.1 + side * d2.0 * radius,
+    );
+    let miter = if matches!(join, SvgLineJoin::Miter | SvgLineJoin::MiterClip) {
+        let delta = (b.0 - a.0, b.1 - a.1);
+        let t = (delta.0 * d2.1 - delta.1 * d2.0) / cross;
+        let candidate = (a.0 + d1.0 * t, a.1 + d1.1 * t);
+        ((candidate.0 - point.0).hypot(candidate.1 - point.1) <= miter_limit * radius)
+            .then_some(candidate)
+    } else {
+        None
+    };
+    if let Some(miter) = miter {
+        append_triangle(vertices, indices, a, miter, b)
+    } else {
+        append_triangle(vertices, indices, point, a, b)
+    }
 }
 
-fn append_triangle(vertices:&mut Vec<[f32;2]>,indices:&mut Vec<u32>,a:(f32,f32),b:(f32,f32),c:(f32,f32)){
-    let Ok(base)=u32::try_from(vertices.len())else{return};vertices.extend([[a.0,a.1],[b.0,b.1],[c.0,c.1]]);indices.extend([base,base+1,base+2]);
+fn append_triangle(
+    vertices: &mut Vec<[f32; 2]>,
+    indices: &mut Vec<u32>,
+    a: (f32, f32),
+    b: (f32, f32),
+    c: (f32, f32),
+) {
+    let Ok(base) = u32::try_from(vertices.len()) else {
+        return;
+    };
+    vertices.extend([[a.0, a.1], [b.0, b.1], [c.0, c.1]]);
+    indices.extend([base, base + 1, base + 2]);
 }
 
-fn append_disc(vertices: &mut Vec<[f32;2]>, indices: &mut Vec<u32>, center: (f32,f32), radius: f32) {
+fn append_disc(
+    vertices: &mut Vec<[f32; 2]>,
+    indices: &mut Vec<u32>,
+    center: (f32, f32),
+    radius: f32,
+) {
     const STEPS: usize = 12;
-    let Ok(base)=u32::try_from(vertices.len()) else{return};
-    vertices.push([center.0,center.1]);
-    for step in 0..STEPS { let angle=std::f32::consts::TAU*step as f32/STEPS as f32; vertices.push([center.0+angle.cos()*radius,center.1+angle.sin()*radius]); }
-    for step in 0..STEPS {let a=base+1+step as u32;let b=base+1+((step+1)%STEPS) as u32;indices.extend([base,a,b]);}
+    let Ok(base) = u32::try_from(vertices.len()) else {
+        return;
+    };
+    vertices.push([center.0, center.1]);
+    for step in 0..STEPS {
+        let angle = std::f32::consts::TAU * step as f32 / STEPS as f32;
+        vertices.push([
+            center.0 + angle.cos() * radius,
+            center.1 + angle.sin() * radius,
+        ]);
+    }
+    for step in 0..STEPS {
+        let a = base + 1 + step as u32;
+        let b = base + 1 + ((step + 1) % STEPS) as u32;
+        indices.extend([base, a, b]);
+    }
 }
 
 /// Tessellates a stroke with the SVG dash pattern retained by [`SvgStroke`].
@@ -1019,12 +1243,7 @@ fn dash_cursor(pattern: &[f32], mut phase: f32) -> (usize, f32, bool) {
     (index, (pattern[index] - phase).max(0.0), index % 2 == 0)
 }
 
-fn advance_dash_cursor(
-    pattern: &[f32],
-    index: &mut usize,
-    remaining: &mut f32,
-    on: &mut bool,
-) {
+fn advance_dash_cursor(pattern: &[f32], index: &mut usize, remaining: &mut f32, on: &mut bool) {
     for _ in 0..pattern.len() {
         *index = (*index + 1) % pattern.len();
         *remaining = pattern[*index];
@@ -1202,16 +1421,11 @@ fn midpoint(a: (f32, f32), b: (f32, f32)) -> (f32, f32) {
     (a.0 * 0.5 + b.0 * 0.5, a.1 * 0.5 + b.1 * 0.5)
 }
 
-fn distance_to_segment_squared(
-    point: (f32, f32),
-    start: (f32, f32),
-    end: (f32, f32),
-) -> f32 {
+fn distance_to_segment_squared(point: (f32, f32), start: (f32, f32), end: (f32, f32)) -> f32 {
     let segment = (end.0 - start.0, end.1 - start.1);
     let length_squared = segment.0 * segment.0 + segment.1 * segment.1;
     let projection = if length_squared > 0.0 {
-        (((point.0 - start.0) * segment.0 + (point.1 - start.1) * segment.1)
-            / length_squared)
+        (((point.0 - start.0) * segment.0 + (point.1 - start.1) * segment.1) / length_squared)
             .clamp(0.0, 1.0)
     } else {
         0.0
@@ -1363,7 +1577,10 @@ mod tests {
                 },
             ]),
         };
-        let contour = flatten_path(&geometry, SvgToleranceBucket::from_scale(10_000.0).tolerance());
+        let contour = flatten_path(
+            &geometry,
+            SvgToleranceBucket::from_scale(10_000.0).tolerance(),
+        );
 
         assert_eq!(contour[0].len(), 2);
     }

@@ -34,6 +34,7 @@
 pub mod drag;
 pub mod scale;
 pub mod tap;
+pub mod trackpad;
 
 use aimer_events::pointer::{PointerEvent, PointerInfo};
 use aimer_utils::AnimInstant;
@@ -109,6 +110,47 @@ pub fn recognize(
             delta_x: *delta_x,
             delta_y: *delta_y,
         }),
+
+        // The platform has already recognized these, so there is nothing to
+        // measure: they only have to be put in order and shaped like the touch
+        // gestures they stand in for.
+        PointerEvent::Pinch { pos, delta, phase } => {
+            if mask.intersects(GestureMask::SCALE) {
+                trackpad::pinch(state, *pos, *delta, *phase)
+            } else {
+                GestureOutput::new()
+            }
+        }
+        PointerEvent::Rotate { pos, delta, phase } => {
+            if mask.intersects(GestureMask::SCALE) {
+                trackpad::rotate(state, *pos, *delta, *phase)
+            } else {
+                GestureOutput::new()
+            }
+        }
+        PointerEvent::Pan {
+            pos,
+            delta_x,
+            delta_y,
+            phase,
+        } => {
+            if mask.intersects(GestureMask::PAN) {
+                let delta = aimer_attribute::position::Vec2d {
+                    x: *delta_x,
+                    y: *delta_y,
+                };
+                trackpad::pan(state, *pos, delta, *phase)
+            } else {
+                GestureOutput::new()
+            }
+        }
+        PointerEvent::SmartZoom { pos } => {
+            if mask.intersects(GestureMask::SMART_ZOOM) {
+                trackpad::smart_zoom(*pos)
+            } else {
+                GestureOutput::new()
+            }
+        }
     }
 }
 
@@ -234,6 +276,8 @@ fn cancel(state: &mut GestureState) -> GestureOutput {
         output.push(GestureEvent::ScaleEnd);
     }
 
+    trackpad::cancel(state, &mut output);
+
     state.clear_press();
     state.clear_pinch();
     state.touches.clear();
@@ -317,7 +361,11 @@ mod tests {
         let pointer = touch(10.0, 10.0);
 
         let pressed = down(&mut state, pointer, clock.now);
-        let released = up(&mut state, pointer, clock.advance(Duration::from_millis(40)));
+        let released = up(
+            &mut state,
+            pointer,
+            clock.advance(Duration::from_millis(40)),
+        );
 
         assert_eq!(pressed.first(), Some(GestureEvent::TapDown { pointer }));
         assert_eq!(
@@ -339,7 +387,11 @@ mod tests {
         let pointer = mouse(5.0, 5.0, PointerButton::Secondary);
 
         down(&mut state, pointer, clock.now);
-        let released = up(&mut state, pointer, clock.advance(Duration::from_millis(20)));
+        let released = up(
+            &mut state,
+            pointer,
+            clock.advance(Duration::from_millis(20)),
+        );
 
         let tap = released
             .iter()
@@ -358,7 +410,11 @@ mod tests {
         let pointer = mouse(5.0, 5.0, PointerButton::Middle);
 
         down(&mut state, pointer, clock.now);
-        let released = up(&mut state, pointer, clock.advance(Duration::from_millis(20)));
+        let released = up(
+            &mut state,
+            pointer,
+            clock.advance(Duration::from_millis(20)),
+        );
 
         assert!(released.contains(&GestureEvent::Tap { pointer }));
         assert_eq!(
@@ -377,9 +433,21 @@ mod tests {
         let pointer = touch(10.0, 10.0);
 
         down(&mut state, pointer, clock.now);
-        up(&mut state, pointer, clock.advance(Duration::from_millis(30)));
-        down(&mut state, pointer, clock.advance(Duration::from_millis(60)));
-        let second = up(&mut state, pointer, clock.advance(Duration::from_millis(30)));
+        up(
+            &mut state,
+            pointer,
+            clock.advance(Duration::from_millis(30)),
+        );
+        down(
+            &mut state,
+            pointer,
+            clock.advance(Duration::from_millis(60)),
+        );
+        let second = up(
+            &mut state,
+            pointer,
+            clock.advance(Duration::from_millis(30)),
+        );
 
         assert!(second.contains(&GestureEvent::DoubleTap { pointer }));
         assert!(!second.contains(&GestureEvent::Tap { pointer }));
@@ -392,9 +460,17 @@ mod tests {
         let pointer = touch(10.0, 10.0);
 
         down(&mut state, pointer, clock.now);
-        up(&mut state, pointer, clock.advance(Duration::from_millis(30)));
+        up(
+            &mut state,
+            pointer,
+            clock.advance(Duration::from_millis(30)),
+        );
         down(&mut state, pointer, clock.advance(DOUBLE_TAP_TIMEOUT));
-        let second = up(&mut state, pointer, clock.advance(Duration::from_millis(30)));
+        let second = up(
+            &mut state,
+            pointer,
+            clock.advance(Duration::from_millis(30)),
+        );
 
         assert!(second.contains(&GestureEvent::Tap { pointer }));
         assert!(!second.contains(&GestureEvent::DoubleTap { pointer }));
@@ -542,7 +618,11 @@ mod tests {
         let crossed = touch(30.0, 0.0);
 
         down(&mut state, start, clock.now);
-        let moves = moved(&mut state, crossed, clock.advance(Duration::from_millis(16)));
+        let moves = moved(
+            &mut state,
+            crossed,
+            clock.advance(Duration::from_millis(16)),
+        );
 
         assert_eq!(
             moves.first(),
@@ -560,8 +640,16 @@ mod tests {
         let further = touch(45.0, 10.0);
 
         down(&mut state, start, clock.now);
-        moved(&mut state, crossed, clock.advance(Duration::from_millis(16)));
-        let updates = moved(&mut state, further, clock.advance(Duration::from_millis(16)));
+        moved(
+            &mut state,
+            crossed,
+            clock.advance(Duration::from_millis(16)),
+        );
+        let updates = moved(
+            &mut state,
+            further,
+            clock.advance(Duration::from_millis(16)),
+        );
 
         assert_eq!(
             updates.first(),
@@ -652,8 +740,16 @@ mod tests {
         let pointer = touch(10.0, 10.0);
 
         down(&mut state, pointer, clock.now);
-        poll(&mut state, clock.advance(LONG_PRESS_DURATION), GestureMask::ALL);
-        let released = up(&mut state, pointer, clock.advance(Duration::from_millis(10)));
+        poll(
+            &mut state,
+            clock.advance(LONG_PRESS_DURATION),
+            GestureMask::ALL,
+        );
+        let released = up(
+            &mut state,
+            pointer,
+            clock.advance(Duration::from_millis(10)),
+        );
 
         assert_eq!(
             released.iter().copied().collect::<Vec<_>>(),
@@ -698,8 +794,16 @@ mod tests {
         let dragged = touch(40.0, 10.0);
 
         down(&mut state, pointer, clock.now);
-        poll(&mut state, clock.advance(LONG_PRESS_DURATION), GestureMask::ALL);
-        let moves = moved(&mut state, dragged, clock.advance(Duration::from_millis(16)));
+        poll(
+            &mut state,
+            clock.advance(LONG_PRESS_DURATION),
+            GestureMask::ALL,
+        );
+        let moves = moved(
+            &mut state,
+            dragged,
+            clock.advance(Duration::from_millis(16)),
+        );
 
         let recognized: Vec<_> = moves.iter().copied().collect();
 
@@ -751,7 +855,9 @@ mod tests {
         );
 
         assert!(
-            mouse_moves.contains(&GestureEvent::DragStart { pointer: mouse_down }),
+            mouse_moves.contains(&GestureEvent::DragStart {
+                pointer: mouse_down
+            }),
             "5 px of mouse travel is a deliberate drag: {mouse_moves:?}"
         );
         assert!(
@@ -791,6 +897,10 @@ mod tests {
                 focal_y: 0.0,
                 scale: 2.0,
                 delta_scale: 2.0,
+                rotation: 0.0,
+                delta_rotation: 0.0,
+                focal_delta_x: 50.0,
+                focal_delta_y: 0.0,
             })
         );
 
@@ -859,7 +969,10 @@ mod tests {
         let fresh = second_touch(50.0, 50.0);
         let pressed = down(&mut state, fresh, clock.advance(Duration::from_secs(2)));
 
-        assert_eq!(pressed.first(), Some(GestureEvent::TapDown { pointer: fresh }));
+        assert_eq!(
+            pressed.first(),
+            Some(GestureEvent::TapDown { pointer: fresh })
+        );
         assert_eq!(state.touches.len(), 1);
         assert!(state.pinch.is_none());
     }
@@ -885,5 +998,82 @@ mod tests {
                 delta_y: 12.5,
             })
         );
+    }
+
+    #[test]
+    fn platform_gestures_nobody_listens_for_are_not_recognized() {
+        use aimer_events::element::TouchPhase;
+
+        let mut state = GestureState::default();
+        let at = Vec2d { x: 1.0, y: 1.0 };
+        let only_taps = GestureMask::TAP;
+
+        for event in [
+            PointerEvent::Pinch {
+                pos: at,
+                delta: 0.5,
+                phase: TouchPhase::Started,
+            },
+            PointerEvent::Rotate {
+                pos: at,
+                delta: 0.5,
+                phase: TouchPhase::Started,
+            },
+            PointerEvent::Pan {
+                pos: at,
+                delta_x: 1.0,
+                delta_y: 1.0,
+                phase: TouchPhase::Started,
+            },
+            PointerEvent::SmartZoom { pos: at },
+        ] {
+            let output = recognize(&mut state, &event, AnimInstant::now(), only_taps);
+
+            assert!(output.is_empty(), "{event:?} was recognized");
+        }
+        assert!(!state.is_engaged());
+    }
+
+    #[test]
+    fn a_cancel_ends_a_platform_pinch_and_pan_alongside_a_press() {
+        use aimer_events::element::TouchPhase;
+
+        let mut clock = Clock::new();
+        let mut state = GestureState::default();
+        let at = Vec2d { x: 1.0, y: 1.0 };
+        down(&mut state, mouse(1.0, 1.0, PointerButton::Primary), clock.now);
+        recognize(
+            &mut state,
+            &PointerEvent::Pinch {
+                pos: at,
+                delta: 0.0,
+                phase: TouchPhase::Started,
+            },
+            clock.now,
+            GestureMask::ALL,
+        );
+        recognize(
+            &mut state,
+            &PointerEvent::Pan {
+                pos: at,
+                delta_x: 0.0,
+                delta_y: 0.0,
+                phase: TouchPhase::Started,
+            },
+            clock.now,
+            GestureMask::ALL,
+        );
+
+        let cancelled = recognize(
+            &mut state,
+            &PointerEvent::Cancel,
+            clock.advance(Duration::from_millis(5)),
+            GestureMask::ALL,
+        );
+
+        assert!(cancelled.contains(&GestureEvent::TapCancel));
+        assert!(cancelled.contains(&GestureEvent::ScaleEnd));
+        assert!(cancelled.contains(&GestureEvent::PanEnd));
+        assert!(!state.is_engaged());
     }
 }

@@ -1,9 +1,9 @@
 use core::fmt;
 use std::sync::Arc;
 
+use crate::ShapeBounds;
 use crate::hit_test::ShapeHitTest;
 use crate::{FillStyle, Point, StrokeStyle};
-use crate::ShapeBounds;
 
 /// Extra limits applied while constructing a path.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -119,10 +119,16 @@ impl fmt::Display for ShapeError {
                 write!(f, "shape command {command_index} appears before MoveTo")
             }
             Self::CloseWithoutContour { command_index } => {
-                write!(f, "shape Close at command {command_index} has no active contour")
+                write!(
+                    f,
+                    "shape Close at command {command_index} has no active contour"
+                )
             }
             Self::RepeatedClose { command_index } => {
-                write!(f, "shape Close at command {command_index} repeats a closed contour")
+                write!(
+                    f,
+                    "shape Close at command {command_index} repeats a closed contour"
+                )
             }
             Self::NonFinite {
                 command_index,
@@ -131,18 +137,30 @@ impl fmt::Display for ShapeError {
             Self::CoordinateOutOfRange {
                 command_index,
                 field,
-            } => write!(f, "shape command {command_index} exceeds the {field} coordinate limit"),
+            } => write!(
+                f,
+                "shape command {command_index} exceeds the {field} coordinate limit"
+            ),
             Self::ZeroLengthSegment { command_index } => {
                 write!(f, "shape command {command_index} is a zero-length segment")
             }
-            Self::TooManyCommands { limit } => write!(f, "shape path exceeds the {limit}-command limit"),
-            Self::TooManyContours { limit } => write!(f, "shape path exceeds the {limit}-contour limit"),
+            Self::TooManyCommands { limit } => {
+                write!(f, "shape path exceeds the {limit}-command limit")
+            }
+            Self::TooManyContours { limit } => {
+                write!(f, "shape path exceeds the {limit}-contour limit")
+            }
             Self::InvalidLimit(name) => write!(f, "shape limit {name} is invalid"),
             Self::InvalidArc {
                 command_index,
                 reason,
-            } => write!(f, "shape arc at command {command_index} is invalid: {reason:?}"),
-            Self::InvalidTolerance => f.write_str("shape flattening tolerance must be finite and positive"),
+            } => write!(
+                f,
+                "shape arc at command {command_index} is invalid: {reason:?}"
+            ),
+            Self::InvalidTolerance => {
+                f.write_str("shape flattening tolerance must be finite and positive")
+            }
         }
     }
 }
@@ -498,7 +516,8 @@ impl ShapePath {
                     segments += 1;
                 }
                 ShapeCommand::Close => {
-                    let contour_start = start.ok_or(ShapeError::CloseWithoutContour { command_index })?;
+                    let contour_start =
+                        start.ok_or(ShapeError::CloseWithoutContour { command_index })?;
                     if !active {
                         return Err(ShapeError::RepeatedClose { command_index });
                     }
@@ -746,11 +765,8 @@ impl ShapePath {
                     sweep_angle,
                     rotation,
                 } => {
-                    let count = curve_steps(
-                        sweep_angle.abs() * radius_x.max(radius_y),
-                        tolerance,
-                        256,
-                    );
+                    let count =
+                        curve_steps(sweep_angle.abs() * radius_x.max(radius_y), tolerance, 256);
                     for index in 1..=count {
                         let t = index as f32 / count as f32;
                         points.push(arc_point(
@@ -773,7 +789,9 @@ impl ShapePath {
                 }
                 ShapeCommand::Close => {
                     if let Some(contour_start) = start
-                        && points.last().is_none_or(|last| !last.approx_eq(contour_start))
+                        && points
+                            .last()
+                            .is_none_or(|last| !last.approx_eq(contour_start))
                     {
                         points.push(contour_start);
                     }
@@ -870,7 +888,8 @@ impl ShapePathBuilder {
         x: f32,
         y: f32,
     ) -> Self {
-        if let Err(error) = self.try_cubic_to(control1_x, control1_y, control2_x, control2_y, x, y) {
+        if let Err(error) = self.try_cubic_to(control1_x, control1_y, control2_x, control2_y, x, y)
+        {
             self.record_error(error);
         }
         self
@@ -933,7 +952,9 @@ impl ShapePathBuilder {
         }
         let index = self.commands.len();
         if self.current.is_some() && !self.contour_has_segment {
-            return Err(ShapeError::EmptyContour { command_index: index });
+            return Err(ShapeError::EmptyContour {
+                command_index: index,
+            });
         }
         validate_builder_xy(x, y, index, self.limits)?;
         self.push(ShapeCommand::MoveTo { x, y })?;
@@ -953,7 +974,9 @@ impl ShapePathBuilder {
         validate_builder_xy(x, y, index, self.limits)?;
         let point = Point::new(x, y);
         if same_point(previous, point) {
-            return Err(ShapeError::ZeroLengthSegment { command_index: index });
+            return Err(ShapeError::ZeroLengthSegment {
+                command_index: index,
+            });
         }
         self.push(ShapeCommand::LineTo { x, y })?;
         self.current = Some(point);
@@ -978,7 +1001,9 @@ impl ShapePathBuilder {
         let control = Point::new(control_x, control_y);
         let point = Point::new(x, y);
         if same_point(previous, point) && same_point(previous, control) {
-            return Err(ShapeError::ZeroLengthSegment { command_index: index });
+            return Err(ShapeError::ZeroLengthSegment {
+                command_index: index,
+            });
         }
         self.push(ShapeCommand::QuadraticTo {
             control_x,
@@ -1015,7 +1040,9 @@ impl ShapePathBuilder {
             && same_point(previous, control1)
             && same_point(previous, control2)
         {
-            return Err(ShapeError::ZeroLengthSegment { command_index: index });
+            return Err(ShapeError::ZeroLengthSegment {
+                command_index: index,
+            });
         }
         self.push(ShapeCommand::CubicTo {
             control1_x,
@@ -1139,7 +1166,14 @@ impl ShapePathBuilder {
         rotation: f32,
     ) -> Result<(), ShapeError> {
         let start_angle = 0.0;
-        let start = arc_point(center_x, center_y, radius_x, radius_y, start_angle, rotation);
+        let start = arc_point(
+            center_x,
+            center_y,
+            radius_x,
+            radius_y,
+            start_angle,
+            rotation,
+        );
         self.try_move_to(start.x, start.y)?;
         self.try_arc(
             center_x,
@@ -1157,10 +1191,14 @@ impl ShapePathBuilder {
     pub fn try_close(&mut self) -> Result<(), ShapeError> {
         let index = self.commands.len();
         if self.current.is_none() {
-            return Err(ShapeError::CloseWithoutContour { command_index: index });
+            return Err(ShapeError::CloseWithoutContour {
+                command_index: index,
+            });
         }
         if !self.contour_has_segment {
-            return Err(ShapeError::EmptyContour { command_index: index });
+            return Err(ShapeError::EmptyContour {
+                command_index: index,
+            });
         }
         self.push(ShapeCommand::Close)?;
         self.current = None;
@@ -1279,12 +1317,7 @@ impl BoundsAccumulator {
     }
 }
 
-fn include_quadratic_bounds(
-    bounds: &mut BoundsAccumulator,
-    p0: Point,
-    p1: Point,
-    p2: Point,
-) {
+fn include_quadratic_bounds(bounds: &mut BoundsAccumulator, p0: Point, p1: Point, p2: Point) {
     bounds.include(p0);
     bounds.include(p2);
     for t in [
@@ -1347,15 +1380,15 @@ fn include_arc_bounds(
     let (sin_rotation, cos_rotation) = rotation.sin_cos();
     let x_phase = (-sin_rotation * radius_y).atan2(cos_rotation * radius_x);
     let y_phase = (cos_rotation * radius_y).atan2(sin_rotation * radius_x);
-    for phase in [x_phase, x_phase + core::f32::consts::PI, y_phase, y_phase + core::f32::consts::PI] {
+    for phase in [
+        x_phase,
+        x_phase + core::f32::consts::PI,
+        y_phase,
+        y_phase + core::f32::consts::PI,
+    ] {
         if angle_in_sweep(start_angle, sweep_angle, phase) {
             bounds.include(arc_point(
-                center_x,
-                center_y,
-                radius_x,
-                radius_y,
-                phase,
-                rotation,
+                center_x, center_y, radius_x, radius_y, phase, rotation,
             ));
         }
     }
@@ -1386,14 +1419,9 @@ fn arc_bounds(
 
 #[inline]
 fn bounds_within_limit(bounds: ShapeBounds, limit: f32) -> bool {
-    [
-        bounds.min.x,
-        bounds.min.y,
-        bounds.max.x,
-        bounds.max.y,
-    ]
-    .into_iter()
-    .all(|value| value.is_finite() && value.abs() <= limit)
+    [bounds.min.x, bounds.min.y, bounds.max.x, bounds.max.y]
+        .into_iter()
+        .all(|value| value.is_finite() && value.abs() <= limit)
 }
 
 #[inline]
@@ -1595,9 +1623,5 @@ fn compute_id(commands: &[ShapeCommand]) -> ShapePathId {
 
 #[inline]
 fn canonical_f32_bits(value: f32) -> u32 {
-    if value == 0.0 {
-        0
-    } else {
-        value.to_bits()
-    }
+    if value == 0.0 { 0 } else { value.to_bits() }
 }

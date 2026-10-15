@@ -83,10 +83,7 @@ where
 ///
 /// Output must be valid, aligned, and exclusively writable for LANES values.
 #[inline(always)]
-unsafe fn store_vector_chunk<T, K, const LANES: usize>(
-    output: *mut T,
-    value: K::Vector,
-)
+unsafe fn store_vector_chunk<T, K, const LANES: usize>(output: *mut T, value: K::Vector)
 where
     T: Number,
     K: Simd<T, LANES>,
@@ -106,8 +103,7 @@ unsafe fn add_vector_chunk<T, K, const LANES: usize>(
     left: *const T,
     right: *const T,
     output: *mut T,
-)
-where
+) where
     T: Number,
     K: Simd<T, LANES> + SimdAdd<T, LANES>,
 {
@@ -154,22 +150,14 @@ where
             // SAFETY: this block spans block_lanes elements and index is below
             // unrolled_end, so all input ranges fit in their slices.
             unsafe {
-                let left0 =
-                    load_vector_chunk::<T, K, LANES>(left_ptr.add(index));
-                let left1 =
-                    load_vector_chunk::<T, K, LANES>(left_ptr.add(index + LANES));
-                let left2 =
-                    load_vector_chunk::<T, K, LANES>(left_ptr.add(index + LANES * 2));
-                let left3 =
-                    load_vector_chunk::<T, K, LANES>(left_ptr.add(index + LANES * 3));
-                let right0 =
-                    load_vector_chunk::<T, K, LANES>(right_ptr.add(index));
-                let right1 =
-                    load_vector_chunk::<T, K, LANES>(right_ptr.add(index + LANES));
-                let right2 =
-                    load_vector_chunk::<T, K, LANES>(right_ptr.add(index + LANES * 2));
-                let right3 =
-                    load_vector_chunk::<T, K, LANES>(right_ptr.add(index + LANES * 3));
+                let left0 = load_vector_chunk::<T, K, LANES>(left_ptr.add(index));
+                let left1 = load_vector_chunk::<T, K, LANES>(left_ptr.add(index + LANES));
+                let left2 = load_vector_chunk::<T, K, LANES>(left_ptr.add(index + LANES * 2));
+                let left3 = load_vector_chunk::<T, K, LANES>(left_ptr.add(index + LANES * 3));
+                let right0 = load_vector_chunk::<T, K, LANES>(right_ptr.add(index));
+                let right1 = load_vector_chunk::<T, K, LANES>(right_ptr.add(index + LANES));
+                let right2 = load_vector_chunk::<T, K, LANES>(right_ptr.add(index + LANES * 2));
+                let right3 = load_vector_chunk::<T, K, LANES>(right_ptr.add(index + LANES * 3));
 
                 let sum0 = <K as SimdAdd<T, LANES>>::add(left0, right0);
                 let sum1 = <K as SimdAdd<T, LANES>>::add(left1, right1);
@@ -179,18 +167,9 @@ where
                 // SAFETY: all output ranges fit the same block and the input
                 // and output slices cannot alias under safe Rust borrowing.
                 store_vector_chunk::<T, K, LANES>(output_ptr.add(index), sum0);
-                store_vector_chunk::<T, K, LANES>(
-                    output_ptr.add(index + LANES),
-                    sum1,
-                );
-                store_vector_chunk::<T, K, LANES>(
-                    output_ptr.add(index + LANES * 2),
-                    sum2,
-                );
-                store_vector_chunk::<T, K, LANES>(
-                    output_ptr.add(index + LANES * 3),
-                    sum3,
-                );
+                store_vector_chunk::<T, K, LANES>(output_ptr.add(index + LANES), sum1);
+                store_vector_chunk::<T, K, LANES>(output_ptr.add(index + LANES * 2), sum2);
+                store_vector_chunk::<T, K, LANES>(output_ptr.add(index + LANES * 3), sum3);
             }
             index += block_lanes;
         }
@@ -223,31 +202,19 @@ where
 ///
 /// Returns [LengthMismatch] when the slice lengths differ.
 #[inline]
-pub fn add_f32(
-    left: &[f32],
-    right: &[f32],
-    output: &mut [f32],
-) -> Result<(), LengthMismatch> {
+pub fn add_f32(left: &[f32], right: &[f32], output: &mut [f32]) -> Result<(), LengthMismatch> {
     add_f32_selected(left, right, output)
 }
 
 #[cfg(feature = "force-scalar")]
 #[inline]
-fn add_f32_selected(
-    left: &[f32],
-    right: &[f32],
-    output: &mut [f32],
-) -> Result<(), LengthMismatch> {
+fn add_f32_selected(left: &[f32], right: &[f32], output: &mut [f32]) -> Result<(), LengthMismatch> {
     add_with::<f32, Scalar, 1>(left, right, output)
 }
 
 #[cfg(all(not(feature = "force-scalar"), target_arch = "aarch64"))]
 #[inline]
-fn add_f32_selected(
-    left: &[f32],
-    right: &[f32],
-    output: &mut [f32],
-) -> Result<(), LengthMismatch> {
+fn add_f32_selected(left: &[f32], right: &[f32], output: &mut [f32]) -> Result<(), LengthMismatch> {
     validate_lengths(left.len(), right.len(), output.len())?;
 
     let block_end = left.len() / 16 * 16;
@@ -274,11 +241,7 @@ fn add_f32_selected(
 
 #[cfg(all(not(feature = "force-scalar"), target_arch = "x86_64"))]
 #[inline]
-fn add_f32_selected(
-    left: &[f32],
-    right: &[f32],
-    output: &mut [f32],
-) -> Result<(), LengthMismatch> {
+fn add_f32_selected(left: &[f32], right: &[f32], output: &mut [f32]) -> Result<(), LengthMismatch> {
     validate_lengths(left.len(), right.len(), output.len())?;
 
     let block_end = left.len() / 16 * 16;
@@ -308,11 +271,7 @@ fn add_f32_selected(
     not(any(target_arch = "aarch64", target_arch = "x86_64"))
 ))]
 #[inline]
-fn add_f32_selected(
-    left: &[f32],
-    right: &[f32],
-    output: &mut [f32],
-) -> Result<(), LengthMismatch> {
+fn add_f32_selected(left: &[f32], right: &[f32], output: &mut [f32]) -> Result<(), LengthMismatch> {
     add_with::<f32, Scalar, 1>(left, right, output)
 }
 
@@ -322,10 +281,8 @@ mod tests {
     use std::time::Instant;
 
     use crate::backend::Scalar;
-    use crate::kernels::{add_f32, add_with, LengthMismatch};
-    use crate::simd_traits::{
-        Simd, SimdAdd, SimdCompare, SimdDiv, SimdMul, SimdSelect, SimdSub,
-    };
+    use crate::kernels::{LengthMismatch, add_f32, add_with};
+    use crate::simd_traits::{Simd, SimdAdd, SimdCompare, SimdDiv, SimdMul, SimdSelect, SimdSub};
 
     #[test]
     fn scalar_backend_adds_every_number_type() {

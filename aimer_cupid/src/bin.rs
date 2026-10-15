@@ -11,9 +11,9 @@ use demo_content::{
 };
 
 #[allow(unused_imports)]
-use aimer_cupid::canvas::CupidCanvas;
-#[allow(unused_imports)]
 use aimer_cupid::backend::wgpu::WgpuBackend;
+#[allow(unused_imports)]
+use aimer_cupid::canvas::CupidCanvas;
 #[allow(unused_imports)]
 use aimer_cupid::gpu_context::GpuContext;
 #[allow(unused_imports)]
@@ -117,12 +117,7 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
         // wrapping width it is drawn with, so it renders from the warm cache on
         // the very first frame. The wrap width mirrors the draw call below
         // (`inner_size().width - 60.0`).
-        img_renderer.warm_text(
-            &backend,
-            WELCOME_TEXT,
-            44.0,
-            size.width as f32 - 60.0,
-        );
+        img_renderer.warm_text(&backend, WELCOME_TEXT, 44.0, size.width as f32 - 60.0);
         img_renderer.warm_text(
             &backend,
             SOUTHEAST_ASIAN_TEXT,
@@ -137,12 +132,7 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
             .unwrap_or_else(|e| panic!("Failed to load {}: {e}", image_path.display()))
             .into_rgba8();
         let (img_w, img_h) = img.dimensions();
-        let tex_id = img_renderer.upload_image(
-            &backend,
-            img_w,
-            img_h,
-            img.as_raw(),
-        );
+        let tex_id = img_renderer.upload_image(&backend, img_w, img_h, img.as_raw());
         debug!("Uploaded image to GPU");
 
         self.texture_id = Some(tex_id);
@@ -341,8 +331,8 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::record_demo_frame;
-    use aimer_cupid::draw_cmd::DrawCommand;
     use aimer_cupid::canvas::CupidCanvas;
+    use aimer_cupid::draw_cmd::DrawCommand;
 
     #[test]
     fn demo_records_an_opaque_background_before_text() {
@@ -358,7 +348,10 @@ mod tests {
         ));
         assert!(draw_list.commands().iter().any(|command| matches!(
             command,
-            DrawCommand::DrawText { draw_glyphs: true, .. }
+            DrawCommand::DrawText {
+                draw_glyphs: true,
+                ..
+            }
         )));
         assert!(draw_list.commands().iter().any(|command| matches!(
             command,
@@ -394,7 +387,9 @@ mod tests {
 
         for weight in [200, 300, 400, 500, 600, 700, 800] {
             assert!(
-                draw_texts.iter().any(|(_, _, recorded)| *recorded == weight),
+                draw_texts
+                    .iter()
+                    .any(|(_, _, recorded)| *recorded == weight),
                 "the demo should record a {weight} weight sample"
             );
         }

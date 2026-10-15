@@ -15,13 +15,13 @@ use super::indic::{
     apply_alternate_lookup, apply_ligature_lookup, apply_multiple_lookup, apply_single_lookup,
 };
 use super::{
+    ABVM_TAG, AimerShapedRun, BLWM_TAG, DIST_TAG, GPOS_TAG, Gdef, KERN_TAG,
+    KHMER_GSUB_FEATURE_TAGS, KHMR_TAG, LAOO_TAG, LayoutGlyph, LayoutState, LayoutTableState,
+    MARK_TAG, MAX_EXTENSION_DEPTH, MKMK_TAG, MYANMAR_GSUB_FEATURE_TAGS, MYM2_TAG, MYMR_TAG,
+    SOUTHEAST_ASIAN_GPOS_FEATURE_TAGS, SOUTHEAST_ASIAN_GSUB_FEATURE_TAGS, THAI_TAG, Tag,
     apply_gpos, checked_add, checked_mul, context, coverage_index,
     mark_to_base_adjustment_for_lookup, mark_to_mark_adjustment_for_lookup, read_u16, read_u32,
-    slice_from, AimerShapedRun, Gdef, LayoutGlyph, LayoutState, LayoutTableState,
-    Tag, ABVM_TAG, BLWM_TAG, DIST_TAG, GPOS_TAG, KERN_TAG, MARK_TAG, MKMK_TAG,
-    KHMER_GSUB_FEATURE_TAGS, MYANMAR_GSUB_FEATURE_TAGS, MYM2_TAG,
-    SOUTHEAST_ASIAN_GPOS_FEATURE_TAGS, SOUTHEAST_ASIAN_GSUB_FEATURE_TAGS, THAI_TAG, LAOO_TAG,
-    KHMR_TAG, MYMR_TAG, MAX_EXTENSION_DEPTH,
+    slice_from,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -52,11 +52,7 @@ fn script_tag_with_features(
     if matches!(script, SoutheastAsianScript::Myanmar)
         && !feature_tags.iter().any(|feature_tag| {
             !layout
-                .feature_lookups_with_language(
-                    MYM2_TAG,
-                    None,
-                    std::slice::from_ref(feature_tag),
-                )
+                .feature_lookups_with_language(MYM2_TAG, None, std::slice::from_ref(feature_tag))
                 .is_empty()
         })
     {
@@ -100,9 +96,7 @@ fn script_for_codepoint(codepoint: char) -> Option<SoutheastAsianScript> {
         0x0e00..=0x0e7f => Some(SoutheastAsianScript::Thai),
         0x0e80..=0x0eff => Some(SoutheastAsianScript::Lao),
         0x1780..=0x17ff | 0x19e0..=0x19ff => Some(SoutheastAsianScript::Khmer),
-        0x1000..=0x109f | 0xa9e0..=0xa9ff | 0xaa60..=0xaa7f => {
-            Some(SoutheastAsianScript::Myanmar)
-        }
+        0x1000..=0x109f | 0xa9e0..=0xa9ff | 0xaa60..=0xaa7f => Some(SoutheastAsianScript::Myanmar),
         _ => None,
     }
 }
@@ -238,32 +232,32 @@ pub(super) fn shape_run_with_layout(
     // The cmap pass is in source order, so cluster keys are already sorted.
     // Keep this map before visual reordering; it also preserves the first
     // source codepoint for the Khmer composite glyph's duplicate cluster.
-    let reordered = reorder_prebase_marks(
-        &mut scratch.items,
-        script,
-        &mut scratch.myanmar_replacement,
-    );
-    scratch.glyphs.extend(scratch.items.drain(..).map(|(_, glyph)| glyph));
+    let reordered =
+        reorder_prebase_marks(&mut scratch.items, script, &mut scratch.myanmar_replacement);
+    scratch
+        .glyphs
+        .extend(scratch.items.drain(..).map(|(_, glyph)| glyph));
 
-    let Some((gsub_supported, gsub_changed)) =
-        apply_southeast_asian_gsub(
-            face,
-            metrics,
-            &mut scratch.glyphs,
-            &mut scratch.context_candidates,
-            &layout.gdef,
-            layout,
-            script,
-        )?
+    let Some((gsub_supported, gsub_changed)) = apply_southeast_asian_gsub(
+        face,
+        metrics,
+        &mut scratch.glyphs,
+        &mut scratch.context_candidates,
+        &layout.gdef,
+        layout,
+        script,
+    )?
     else {
         return Ok(None);
     };
     let source_codepoints = &scratch.source_codepoints;
     let shaped_glyphs = &scratch.glyphs;
     scratch.codepoints.clear();
-    scratch.codepoints.extend(shaped_glyphs.iter().map(|glyph| {
-        super::source_codepoint_for_cluster(source_codepoints, glyph.cluster)
-    }));
+    scratch.codepoints.extend(
+        shaped_glyphs
+            .iter()
+            .map(|glyph| super::source_codepoint_for_cluster(source_codepoints, glyph.cluster)),
+    );
     let Some((gpos_supported, gpos_changed)) = apply_southeast_asian_gpos(
         face,
         &mut scratch.glyphs,
@@ -417,8 +411,8 @@ fn reorder_myanmar_syllable(
     } else {
         start
     };
-    let Some(base_index) = (kinzi_end..end)
-        .find(|index| is_base(SoutheastAsianScript::Myanmar, items[*index].0))
+    let Some(base_index) =
+        (kinzi_end..end).find(|index| is_base(SoutheastAsianScript::Myanmar, items[*index].0))
     else {
         return false;
     };
@@ -503,9 +497,7 @@ fn reorder_khmer_syllables(items: &mut Vec<(char, LayoutGlyph)>) -> bool {
 
         let mut syllable_start = segment_start;
         for index in segment_start..segment_end {
-            if index > segment_start
-                && is_khmer_base_start(items, index)
-            {
+            if index > segment_start && is_khmer_base_start(items, index) {
                 changed |= reorder_khmer_syllable(items, syllable_start, index);
                 syllable_start = index;
             }
@@ -524,11 +516,7 @@ fn is_khmer_base_start(items: &[(char, LayoutGlyph)], index: usize) -> bool {
             .is_some_and(|(codepoint, _)| *codepoint == '\u{17d2}')
 }
 
-fn reorder_khmer_syllable(
-    items: &mut Vec<(char, LayoutGlyph)>,
-    start: usize,
-    end: usize,
-) -> bool {
+fn reorder_khmer_syllable(items: &mut Vec<(char, LayoutGlyph)>, start: usize, end: usize) -> bool {
     if start >= end {
         return false;
     }
@@ -546,8 +534,9 @@ fn reorder_khmer_syllable(
     let mut prebase_parts = Vec::new();
     let mut body = Vec::with_capacity(end - base_index);
     for (source_index, item) in items[base_index..end].iter().copied().enumerate() {
-        let composite_oo_component =
-            item.0 == '\u{17c4}' && source_index > 0 && items[base_index + source_index - 1].0 == '\u{17c1}';
+        let composite_oo_component = item.0 == '\u{17c4}'
+            && source_index > 0
+            && items[base_index + source_index - 1].0 == '\u{17c1}';
         if is_khmer_prebase_vowel(item.0) && !composite_oo_component {
             prebase_parts.push(item);
         } else {
@@ -561,9 +550,7 @@ fn reorder_khmer_syllable(
             preposed_ra = Some(index);
             break;
         }
-        if is_base(SoutheastAsianScript::Khmer, body[index].0)
-            && body[index].0 != '\u{17d2}'
-        {
+        if is_base(SoutheastAsianScript::Khmer, body[index].0) && body[index].0 != '\u{17d2}' {
             break;
         }
         index += 1;
@@ -637,17 +624,14 @@ fn apply_southeast_asian_gsub(
         for lookup in lookups {
             match lookup.execution_type {
                 1 => {
-                    changed |= apply_single_lookup(
-                        face, metrics, advances, glyphs, gdef, layout, lookup,
-                    )?;
+                    changed |=
+                        apply_single_lookup(face, metrics, advances, glyphs, gdef, layout, lookup)?;
                 }
                 2 => {
                     changed |= apply_multiple_lookup(face, advances, glyphs, layout, lookup)?;
                 }
                 3 => {
-                    changed |= apply_alternate_lookup(
-                        face, metrics, glyphs, gdef, layout, lookup,
-                    )?;
+                    changed |= apply_alternate_lookup(face, metrics, glyphs, gdef, layout, lookup)?;
                 }
                 4 => {
                     changed |= apply_ligature_lookup(
@@ -655,9 +639,8 @@ fn apply_southeast_asian_gsub(
                     )?;
                 }
                 7 => {
-                    changed |= apply_single_lookup(
-                        face, metrics, advances, glyphs, gdef, layout, lookup,
-                    )?;
+                    changed |=
+                        apply_single_lookup(face, metrics, advances, glyphs, gdef, layout, lookup)?;
                     changed |= apply_multiple_lookup(face, advances, glyphs, layout, lookup)?;
                     changed |= apply_ligature_lookup(
                         face, metrics, advances, glyphs, gdef, layout, lookup,
@@ -683,11 +666,7 @@ fn apply_southeast_asian_gpos(
     let Some(layout) = state.gpos.as_ref() else {
         return Ok(Some((false, false)));
     };
-    let script_tag = script_tag_with_features(
-        layout,
-        script,
-        SOUTHEAST_ASIAN_GPOS_FEATURE_TAGS,
-    );
+    let script_tag = script_tag_with_features(layout, script, SOUTHEAST_ASIAN_GPOS_FEATURE_TAGS);
     let mut supported = false;
     let mut changed = false;
     let mut has_pair = false;
@@ -745,9 +724,8 @@ fn apply_southeast_asian_gpos(
     }
 
     if has_single_lookup {
-        let Some(single_changed) = apply_southeast_asian_single_positioning(
-            face, glyphs, gdef, layout, script_tag,
-        )?
+        let Some(single_changed) =
+            apply_southeast_asian_single_positioning(face, glyphs, gdef, layout, script_tag)?
         else {
             return Ok(None);
         };
@@ -791,9 +769,8 @@ fn apply_southeast_asian_gpos(
     }
 
     if has_mark_lookup {
-        let Some(mark_changed) = apply_sea_mark_positioning(
-            face, glyphs, codepoints, gdef, layout, script_tag, script,
-        )?
+        let Some(mark_changed) =
+            apply_sea_mark_positioning(face, glyphs, codepoints, gdef, layout, script_tag, script)?
         else {
             return Ok(None);
         };
@@ -810,11 +787,8 @@ fn apply_southeast_asian_single_positioning(
     layout: &LayoutTableState,
     script_tag: Tag,
 ) -> Result<Option<bool>, SfntError> {
-    let lookups = layout.feature_lookups_with_language(
-        script_tag,
-        None,
-        std::slice::from_ref(&DIST_TAG),
-    );
+    let lookups =
+        layout.feature_lookups_with_language(script_tag, None, std::slice::from_ref(&DIST_TAG));
     if lookups.is_empty() {
         return Ok(Some(false));
     }
@@ -933,18 +907,12 @@ fn apply_sea_mark_positioning(
         SoutheastAsianScript::Myanmar => [MARK_TAG, ABVM_TAG, BLWM_TAG],
         _ => [ABVM_TAG, BLWM_TAG, MARK_TAG],
     };
-    let mark_to_mark_lookups = layout.feature_lookups_with_language(
-        script_tag,
-        None,
-        std::slice::from_ref(&MKMK_TAG),
-    );
+    let mark_to_mark_lookups =
+        layout.feature_lookups_with_language(script_tag, None, std::slice::from_ref(&MKMK_TAG));
     let has_base_lookups = base_feature_tags.iter().any(|feature_tag| {
-        !layout.feature_lookups_with_language(
-            script_tag,
-            None,
-            std::slice::from_ref(feature_tag),
-        )
-        .is_empty()
+        !layout
+            .feature_lookups_with_language(script_tag, None, std::slice::from_ref(feature_tag))
+            .is_empty()
     });
     if !has_base_lookups && mark_to_mark_lookups.is_empty() {
         return Ok(None);
@@ -964,11 +932,15 @@ fn apply_sea_mark_positioning(
     let table = layout.table(face)?;
     let mut changed = false;
     for mark_index in 0..glyphs.len() {
-        if !is_mark(gdef, glyphs[mark_index].glyph_id, codepoints[mark_index], script)? {
+        if !is_mark(
+            gdef,
+            glyphs[mark_index].glyph_id,
+            codepoints[mark_index],
+            script,
+        )? {
             continue;
         }
-        let Some(base_index) = sea_base_index(glyphs, codepoints, gdef, script, mark_index)?
-        else {
+        let Some(base_index) = sea_base_index(glyphs, codepoints, gdef, script, mark_index)? else {
             continue;
         };
         let mark_to_mark = is_mark(
@@ -979,15 +951,8 @@ fn apply_sea_mark_positioning(
         )?;
         if mark_to_mark {
             for lookup in mark_to_mark_lookups {
-                if apply_sea_mark_lookup(
-                    table,
-                    glyphs,
-                    gdef,
-                    lookup,
-                    mark_index,
-                    base_index,
-                    true,
-                )? {
+                if apply_sea_mark_lookup(table, glyphs, gdef, lookup, mark_index, base_index, true)?
+                {
                     changed = true;
                     break;
                 }
@@ -1001,13 +966,7 @@ fn apply_sea_mark_positioning(
                     std::slice::from_ref(&feature_tag),
                 ) {
                     if apply_sea_mark_lookup(
-                        table,
-                        glyphs,
-                        gdef,
-                        lookup,
-                        mark_index,
-                        base_index,
-                        false,
+                        table, glyphs, gdef, lookup, mark_index, base_index, false,
                     )? {
                         changed = true;
                         attached = true;
@@ -1048,10 +1007,7 @@ fn apply_sea_mark_lookup(
             .and_then(Option::as_ref)
             .filter(|compiled| compiled.is_mark_to_mark() == mark_to_mark)
             .map(|compiled| {
-                compiled.mark_adjustment(
-                    glyphs[mark_index].glyph_id,
-                    glyphs[base_index].glyph_id,
-                )
+                compiled.mark_adjustment(glyphs[mark_index].glyph_id, glyphs[base_index].glyph_id)
             })
             .transpose()?
             .flatten();
@@ -1110,8 +1066,12 @@ fn sea_base_index(
         if !is_script_codepoint(script, codepoints[candidate]) {
             break;
         }
-        if !is_mark(gdef, glyphs[candidate].glyph_id, codepoints[candidate], script)?
-            && glyphs[candidate].cluster <= glyphs[mark_index].cluster
+        if !is_mark(
+            gdef,
+            glyphs[candidate].glyph_id,
+            codepoints[candidate],
+            script,
+        )? && glyphs[candidate].cluster <= glyphs[mark_index].cluster
         {
             return Ok(Some(candidate));
         }
@@ -1120,7 +1080,12 @@ fn sea_base_index(
         if !is_script_codepoint(script, codepoints[candidate]) {
             break;
         }
-        if !is_mark(gdef, glyphs[candidate].glyph_id, codepoints[candidate], script)? {
+        if !is_mark(
+            gdef,
+            glyphs[candidate].glyph_id,
+            codepoints[candidate],
+            script,
+        )? {
             return Ok(Some(candidate));
         }
     }
@@ -1129,7 +1094,12 @@ fn sea_base_index(
             if !is_script_codepoint(script, codepoints[candidate]) {
                 break;
             }
-            if !is_mark(gdef, glyphs[candidate].glyph_id, codepoints[candidate], script)? {
+            if !is_mark(
+                gdef,
+                glyphs[candidate].glyph_id,
+                codepoints[candidate],
+                script,
+            )? {
                 return Ok(Some(candidate));
             }
         }
@@ -1153,7 +1123,12 @@ fn normalize_sea_clusters(
     script: SoutheastAsianScript,
 ) -> Result<(), SfntError> {
     for mark_index in 0..glyphs.len() {
-        if !is_mark(gdef, glyphs[mark_index].glyph_id, codepoints[mark_index], script)? {
+        if !is_mark(
+            gdef,
+            glyphs[mark_index].glyph_id,
+            codepoints[mark_index],
+            script,
+        )? {
             continue;
         }
         if let Some(base_index) = sea_base_index(glyphs, codepoints, gdef, script, mark_index)? {
@@ -1172,7 +1147,10 @@ mod tests {
         assert_eq!(script_for_text("สวัสดี"), Some(SoutheastAsianScript::Thai));
         assert_eq!(script_for_text("ສະບາຍດີ"), Some(SoutheastAsianScript::Lao));
         assert_eq!(script_for_text("សួស្តី"), Some(SoutheastAsianScript::Khmer));
-        assert_eq!(script_for_text("မင်္ဂလာပါ"), Some(SoutheastAsianScript::Myanmar));
+        assert_eq!(
+            script_for_text("မင်္ဂလာပါ"),
+            Some(SoutheastAsianScript::Myanmar)
+        );
         assert_eq!(script_for_text("สวัสดี ສະບາຍດີ"), None);
         assert_eq!(script_for_text("\u{0e31}"), None);
     }
@@ -1187,18 +1165,9 @@ mod tests {
     #[test]
     fn reorders_myanmar_prebase_vowel_without_crossing_a_base() {
         let mut items = vec![
-            (
-                '\u{1000}',
-                LayoutGlyph::from_glyph_id(1, 0, 600),
-            ),
-            (
-                '\u{1031}',
-                LayoutGlyph::from_glyph_id(2, 3, 0),
-            ),
-            (
-                '\u{1001}',
-                LayoutGlyph::from_glyph_id(3, 6, 600),
-            ),
+            ('\u{1000}', LayoutGlyph::from_glyph_id(1, 0, 600)),
+            ('\u{1031}', LayoutGlyph::from_glyph_id(2, 3, 0)),
+            ('\u{1001}', LayoutGlyph::from_glyph_id(3, 6, 600)),
         ];
 
         assert!(reorder_prebase_marks(
@@ -1207,7 +1176,10 @@ mod tests {
             &mut Vec::new(),
         ));
         assert_eq!(
-            items.iter().map(|(codepoint, _)| *codepoint).collect::<Vec<_>>(),
+            items
+                .iter()
+                .map(|(codepoint, _)| *codepoint)
+                .collect::<Vec<_>>(),
             vec!['\u{1031}', '\u{1000}', '\u{1001}']
         );
     }
@@ -1225,7 +1197,10 @@ mod tests {
             &mut Vec::new(),
         ));
         assert_eq!(
-            ra_items.iter().map(|(codepoint, _)| *codepoint).collect::<Vec<_>>(),
+            ra_items
+                .iter()
+                .map(|(codepoint, _)| *codepoint)
+                .collect::<Vec<_>>(),
             vec!['\u{17d2}', '\u{179a}', '\u{1780}']
         );
 
@@ -1241,7 +1216,10 @@ mod tests {
             &mut Vec::new(),
         ));
         assert_eq!(
-            e_items.iter().map(|(codepoint, _)| *codepoint).collect::<Vec<_>>(),
+            e_items
+                .iter()
+                .map(|(codepoint, _)| *codepoint)
+                .collect::<Vec<_>>(),
             vec!['\u{17c1}', '\u{1781}', '\u{17d2}', '\u{1798}']
         );
     }

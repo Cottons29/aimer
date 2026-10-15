@@ -8,7 +8,9 @@ pub mod profile;
 pub mod setting;
 
 use aimer::macros::widget;
-use aimer::router::{Navigator, Outlet, Router, Shell, StatefulShell};
+use aimer::router::{CrossFadeTransition, DynamicTransitions, NavigationContext,
+    NavigationTransition, Navigator, Outlet, Router, Shell, StatefulShell,
+    ViewLevelTransitions, ZoomTransition};
 use aimer::*;
 
 use crate::routing::home::HomeWidget;
@@ -19,12 +21,19 @@ use crate::routing::setting::SettingPage;
 #[derive(Clone, Debug, PartialEq)]
 pub enum AppRouting {
     #[route("/")]
+    #[transition(none)]
     Home,
     #[route("/profile/{name}", name = "profile")]
+    #[transition(ZoomTransition::new())]
+    #[view_level(2)]
     Profile { name: String },
     #[route("/search?q={q}&page={page}", name = "search")]
+    #[transition(CrossFadeTransition::new())]
+    #[view_level(1)]
     Search { q: String, page: u32 },
     #[route("/settings")]
+    #[transition(ViewLevelTransitions::new())]
+    #[view_level(1)]
     Settings,
     #[route("/login", name = "login")]
     Login,
@@ -42,6 +51,7 @@ pub enum DashRoute {
     #[route("/")]
     Overview,
     #[route("/reports")]
+    #[view_level(1)]
     Reports,
 }
 
@@ -82,7 +92,9 @@ impl Router for TabRoute {
 /// here whose buttons call
 /// `StatefulShellController::<TabRoute>::of(ctx).go_branch(i)`.
 fn tab_frame(_: &BuildContext) -> AnyWidget {
-    Container::new().child(Outlet).boxed()
+    Container::new()
+        .child(Outlet)
+        .boxed()
 }
 
 /// Builds the widget for a given tab route (each `TabRoute` is itself a
@@ -120,11 +132,22 @@ impl Router for AppRouting {
             AppRouting::Admin => HomeWidget {}.boxed(),
             AppRouting::Dashboard(child) => {
                 let child = child.clone();
+                let active = child.clone();
                 // Persistent shell frame: a Container wrapping the Outlet where
                 // the active dashboard child route renders.
                 Shell::new(Container::new().child(Outlet), move |_| {
-                    child.clone().boxed()
+                    child
+                        .clone()
+                        .boxed()
                 })
+                .route(active)
+                .transition(DynamicTransitions::new(|navigation: &NavigationContext<'_, '_, DashRoute>| {
+                    if matches!(navigation.to, DashRoute::Reports) {
+                        ZoomTransition::new().resolve(navigation)
+                    } else {
+                        CrossFadeTransition::new().resolve(navigation)
+                    }
+                }))
                 .boxed()
             }
         }
@@ -264,6 +287,7 @@ pub fn state_router() {
 /// Builds the generated-route showcase without starting an application.
 pub fn state_router_widget() -> impl Widget {
     Navigator::<AppRouting>::new(AppRouting::Home, |route| route.boxed())
+        .transition(ViewLevelTransitions::new())
 }
 
 /// Launch the tabbed stateful-shell demo: three branches (Feed, Notifications,
@@ -275,5 +299,5 @@ pub fn tab_shell_app() {
         vec![TabRoute::Feed, TabRoute::Notifications, TabRoute::Profile],
         tab_frame,
         tab_child,
-    )))
+    ).transition(CrossFadeTransition::new())))
 }

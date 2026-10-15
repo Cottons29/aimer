@@ -1,6 +1,6 @@
 use super::*;
-use crate::backend::*;
 use crate::backend::metal::MetalBackend;
+use crate::backend::*;
 use crate::damage_region::DamageSet;
 use crate::frame::Frame;
 use crate::utilities::Color;
@@ -8,7 +8,11 @@ use objc2_metal::MTLPixelFormat;
 
 const FORMAT: MTLPixelFormat = MTLPixelFormat::RGBA8Unorm;
 
-fn target(backend: &MetalBackend, width: u32, height: u32) -> <MetalBackend as GpuBackend>::Texture {
+fn target(
+    backend: &MetalBackend,
+    width: u32,
+    height: u32,
+) -> <MetalBackend as GpuBackend>::Texture {
     backend.create_texture(&TextureDescriptor {
         label: None,
         size: (width, height, 1),
@@ -37,15 +41,24 @@ fn pixels(backend: &MetalBackend, texture: &<MetalBackend as GpuBackend>::Textur
     backend.copy_texture_to_buffer(
         &mut encoder,
         &TexelCopyTextureInfo {
-            texture, mip_level: 0, origin: Origin3d::ZERO, aspect: TextureAspect::All,
+            texture,
+            mip_level: 0,
+            origin: Origin3d::ZERO,
+            aspect: TextureAspect::All,
         },
         &TexelCopyBufferInfo {
             buffer: &readback,
             layout: TexelCopyBufferLayout {
-                offset: 0, bytes_per_row: Some(256), rows_per_image: Some(64),
+                offset: 0,
+                bytes_per_row: Some(256),
+                rows_per_image: Some(64),
             },
         },
-        Extent3d { width: 64, height: 64, depth_or_array_layers: 1 },
+        Extent3d {
+            width: 64,
+            height: 64,
+            depth_or_array_layers: 1,
+        },
     );
     backend.submit(encoder);
     backend.read_buffer(&readback, 64 * 64 * 4)
@@ -59,10 +72,20 @@ fn resizing_full_repaints_does_not_allocate_cpu_clear_images() {
         let texture = target(&backend, width, height);
         let view = backend.create_texture_view(&texture, "resize clear test");
         renderer.render_packet(
-            &backend, &view,
-            &packet(width, height, DrawList::new(), DamageSet::full(width, height)), false,
+            &backend,
+            &view,
+            &packet(
+                width,
+                height,
+                DrawList::new(),
+                DamageSet::full(width, height),
+            ),
+            false,
         );
-        assert!(renderer.damage_clear_texture.is_none(), "full repaints must clear on the GPU");
+        assert!(
+            renderer.damage_clear_texture.is_none(),
+            "full repaints must clear on the GPU"
+        );
     }
 }
 
@@ -73,26 +96,59 @@ fn gpu_full_clear_and_partial_clear_preserve_their_pixel_contract() {
     let texture = target(&backend, 64, 64);
     let view = backend.create_texture_view(&texture, "clear pixel test");
     let mut draw = DrawList::new();
-    draw.fill_rect(Rect::new(0.0, 0.0, 16.0, 16.0), Color::red(), [0.0; 4], [0.0; 4], Color::transparent());
-    draw.fill_rect(Rect::new(40.0, 40.0, 16.0, 16.0), Color::blue(), [0.0; 4], [0.0; 4], Color::transparent());
-    renderer.render_packet(&backend, &view, &packet(64, 64, draw, DamageSet::full(64, 64)), false);
+    draw.fill_rect(
+        Rect::new(0.0, 0.0, 16.0, 16.0),
+        Color::red(),
+        [0.0; 4],
+        [0.0; 4],
+        Color::transparent(),
+    );
+    draw.fill_rect(
+        Rect::new(40.0, 40.0, 16.0, 16.0),
+        Color::blue(),
+        [0.0; 4],
+        [0.0; 4],
+        Color::transparent(),
+    );
+    renderer.render_packet(
+        &backend,
+        &view,
+        &packet(64, 64, draw, DamageSet::full(64, 64)),
+        false,
+    );
     let initial = pixels(&backend, &texture);
-    let pixel = |bytes: &[u8], x: usize, y: usize| bytes[(y * 64 + x) * 4..(y * 64 + x + 1) * 4].to_vec();
+    let pixel =
+        |bytes: &[u8], x: usize, y: usize| bytes[(y * 64 + x) * 4..(y * 64 + x + 1) * 4].to_vec();
     assert_eq!(pixel(&initial, 8, 8), [255, 0, 0, 255]);
     assert_eq!(pixel(&initial, 48, 48), [0, 0, 255, 255]);
     assert_eq!(pixel(&initial, 32, 32), [0; 4]);
 
     // An empty damage set preserves the complete retained image.
-    renderer.render_packet(&backend, &view, &packet(64, 64, DrawList::new(), DamageSet::new(64, 64)), false);
+    renderer.render_packet(
+        &backend,
+        &view,
+        &packet(64, 64, DrawList::new(), DamageSet::new(64, 64)),
+        false,
+    );
     assert_eq!(pixels(&backend, &texture), initial);
 
     let mut damage = DamageSet::new(64, 64);
     damage.add(DamageRect::new(0, 0, 16, 16));
-    renderer.render_packet(&backend, &view, &packet(64, 64, DrawList::new(), damage), false);
+    renderer.render_packet(
+        &backend,
+        &view,
+        &packet(64, 64, DrawList::new(), damage),
+        false,
+    );
     let partial = pixels(&backend, &texture);
     assert_eq!(pixel(&partial, 8, 8), [0; 4]);
     assert_eq!(pixel(&partial, 48, 48), [0, 0, 255, 255]);
 
-    renderer.render_packet(&backend, &view, &packet(64, 64, DrawList::new(), DamageSet::full(64, 64)), false);
+    renderer.render_packet(
+        &backend,
+        &view,
+        &packet(64, 64, DrawList::new(), DamageSet::full(64, 64)),
+        false,
+    );
     assert!(pixels(&backend, &texture).iter().all(|byte| *byte == 0));
 }

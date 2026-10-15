@@ -490,10 +490,7 @@ impl CapabilityRegistry {
         &self,
         manifest: &ManifestView<'_>,
     ) -> Result<CapabilityBindings, CapabilityRegistryError> {
-        self.negotiate_with_lifecycle(
-            manifest,
-            CapabilityGeneration::active(GenerationId::new(0)),
-        )
+        self.negotiate_with_lifecycle(manifest, CapabilityGeneration::active(GenerationId::new(0)))
     }
 
     /// Negotiates exact providers for one reload-coordinator-owned generation.
@@ -522,9 +519,7 @@ impl CapabilityRegistry {
                 .map(|index| self.providers[index].clone());
             let provider = match provider {
                 None if requirement.policy() == CapabilityPolicy::Required => {
-                    return Err(CapabilityRegistryError::MissingRequiredProvider {
-                        capability_id,
-                    });
+                    return Err(CapabilityRegistryError::MissingRequiredProvider { capability_id });
                 }
                 None => None,
                 Some(provider) => {
@@ -580,7 +575,10 @@ impl fmt::Display for CapabilityRegistryError {
                 write!(formatter, "capability provider limit {limit} exceeded")
             }
             Self::MissingRequiredProvider { capability_id } => {
-                write!(formatter, "missing required capability provider {capability_id:?}")
+                write!(
+                    formatter,
+                    "missing required capability provider {capability_id:?}"
+                )
             }
             Self::AbiMismatch {
                 capability_id,
@@ -591,7 +589,10 @@ impl fmt::Display for CapabilityRegistryError {
                 "capability {capability_id:?} requires ABI {required} but host provides {provided}"
             ),
             Self::ContractMismatch { capability_id } => {
-                write!(formatter, "capability {capability_id:?} contract fingerprint mismatch")
+                write!(
+                    formatter,
+                    "capability {capability_id:?} contract fingerprint mismatch"
+                )
             }
         }
     }
@@ -858,12 +859,13 @@ impl WasmCapabilityTransport {
 #[cfg(target_arch = "wasm32")]
 impl CapabilityTransport for WasmCapabilityTransport {
     fn invoke(&self, call: CapabilityCall<'_>) -> CapabilityResult<Vec<u8>> {
-        let request_length = i32::try_from(call.request().len())
-            .map_err(|_| CapabilityError::LimitExceeded)?;
-        let output_capacity = i32::try_from(call.response_limit())
-            .map_err(|_| CapabilityError::LimitExceeded)?;
-        let capability_id_pointer = i32::try_from(call.capability_id().as_bytes().as_ptr() as usize)
-            .map_err(|_| CapabilityError::InvalidRequest)?;
+        let request_length =
+            i32::try_from(call.request().len()).map_err(|_| CapabilityError::LimitExceeded)?;
+        let output_capacity =
+            i32::try_from(call.response_limit()).map_err(|_| CapabilityError::LimitExceeded)?;
+        let capability_id_pointer =
+            i32::try_from(call.capability_id().as_bytes().as_ptr() as usize)
+                .map_err(|_| CapabilityError::InvalidRequest)?;
         let request_pointer = i32::try_from(call.request().as_ptr() as usize)
             .map_err(|_| CapabilityError::InvalidRequest)?;
         let mut response = vec![0_u8; call.response_limit() as usize];
@@ -884,8 +886,8 @@ impl CapabilityTransport for WasmCapabilityTransport {
                 output_capacity,
             )
         };
-        let result = crate::AbiResult::from_packed(packed)
-            .map_err(|_| CapabilityError::InvalidResponse)?;
+        let result =
+            crate::AbiResult::from_packed(packed).map_err(|_| CapabilityError::InvalidResponse)?;
         match result.status() {
             crate::AbiStatus::Ok if result.value() <= call.response_limit() => {
                 response.truncate(result.value() as usize);
@@ -1170,14 +1172,8 @@ impl<'a> CapabilityDecoder<'a> {
     }
 
     fn take(&mut self, length: usize) -> CapabilityResult<&'a [u8]> {
-        let end = self
-            .offset
-            .checked_add(length)
-            .ok_or(self.invalid_error)?;
-        let value = self
-            .bytes
-            .get(self.offset..end)
-            .ok_or(self.invalid_error)?;
+        let end = self.offset.checked_add(length).ok_or(self.invalid_error)?;
+        let value = self.bytes.get(self.offset..end).ok_or(self.invalid_error)?;
         self.offset = end;
         Ok(value)
     }

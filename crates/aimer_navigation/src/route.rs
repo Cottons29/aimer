@@ -1,8 +1,6 @@
 use aimer_router::{NavigatorController, Route};
 
-use crate::{
-    NavigationAction, NavigationError, NavigationSemantics, Tab, TabBar,
-};
+use crate::{NavigationAction, NavigationError, NavigationSemantics, Tab, TabBar};
 
 /// The result of synchronizing a route-driven tab bar with a route.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

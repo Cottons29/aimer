@@ -39,7 +39,12 @@ impl<B: GpuBackend> Renderer<B> {
         backend.submit(encoder);
     }
 
-    pub(super) fn ensure_damage_clear_texture(&mut self, backend: &B, width: u32, height: u32) -> B::Texture {
+    pub(super) fn ensure_damage_clear_texture(
+        &mut self,
+        backend: &B,
+        width: u32,
+        height: u32,
+    ) -> B::Texture {
         let recreate = self.damage_clear_texture.as_ref().is_none_or(|target| {
             target.width != width || target.height != height || target.format != self.format
         });

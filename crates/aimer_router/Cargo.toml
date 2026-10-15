@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-portable-guest = ["aimer_widget/portable-guest"]
+portable-guest = ["aimer_widget/portable-guest", "aimer_animation/portable-guest", "aimer_space/portable-guest", "aimer_container/portable-guest"]
 
 [dependencies]
 aimer_utils.workspace = true
@@ -12,6 +12,12 @@ aimer_widget.workspace = true
 aimer_attribute.workspace =  true
 aimer_color.workspace = true
 aimer_events.workspace = true
+aimer_animation.workspace = true
+aimer_canvas.workspace = true
+aimer_container.workspace = true
+aimer_cupid.workspace = true
+aimer_space.workspace = true
+smallvec.workspace = true
 
 url.workspace = true
 
@@ -20,5 +26,8 @@ wasm-bindgen = "0.2"
 web-sys = { version = "0.3", features = ["Window", "History", "Location", "EventTarget", "PopStateEvent"] }
 
 [dev-dependencies]
-aimer_canvas.workspace = true
 tokio.workspace = true
+aimer_macro.workspace = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(aimer_portable_guest)"] }

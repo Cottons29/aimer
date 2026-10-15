@@ -1,7 +1,7 @@
 use aimer_events::element::ScrollDeltaKind;
 use aimer_widget::PointerKey;
 
-use crate::{TimeOfDay, TIME_WHEEL_ROW_HEIGHT, TIME_WHEEL_ROWS};
+use crate::{TIME_WHEEL_ROW_HEIGHT, TIME_WHEEL_ROWS, TimeOfDay};
 
 /// The pointer state retained while a wheel column is being dragged.
 #[derive(Clone, Copy)]

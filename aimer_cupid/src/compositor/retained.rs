@@ -255,4 +255,3 @@ impl RetainedSceneTree {
         self.target_size
     }
 }
-

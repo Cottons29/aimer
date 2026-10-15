@@ -116,7 +116,10 @@ impl<W: Widget + 'static> Widget for FeedbackSlot<W> {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
         Container::new()
             .padding(self.padding)
-            .color(self.background_color.unwrap_or_else(|| self.kind.background_color()))
+            .color(
+                self.background_color
+                    .unwrap_or_else(|| self.kind.background_color()),
+            )
             .child(self.child)
             .to_element(ctx)
     }
@@ -255,7 +258,10 @@ impl Widget for StatusBanner {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
         let text = format!("{}  {}", self.kind.symbol(), self.message);
         FeedbackSlot::new(self.kind)
-            .background_color(self.background_color.unwrap_or_else(|| self.kind.background_color()))
+            .background_color(
+                self.background_color
+                    .unwrap_or_else(|| self.kind.background_color()),
+            )
             .padding(self.padding)
             .child(Text::new(text).text_style(TextStyle::new().color(self.foreground_color)))
             .to_element(ctx)

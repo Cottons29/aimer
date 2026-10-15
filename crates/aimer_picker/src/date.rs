@@ -115,7 +115,6 @@ impl Date {
         let index = (days_from_civil(self.year, self.month, self.day) + 3).rem_euclid(7);
         Weekday::from_index(index as u8)
     }
-
 }
 
 /// A validated year/month pair used as a calendar viewport key.
@@ -251,13 +250,22 @@ impl fmt::Display for DateError {
             Self::InvalidYear { year } => write!(formatter, "year {year} is outside 1..=9999"),
             Self::InvalidMonth { month } => write!(formatter, "month {month} is outside 1..=12"),
             Self::InvalidDay { year, month, day } => {
-                write!(formatter, "day {day} does not exist in {year:04}-{month:02}")
+                write!(
+                    formatter,
+                    "day {day} does not exist in {year:04}-{month:02}"
+                )
             }
             Self::InvalidBounds { min, max } => {
-                write!(formatter, "date bounds are reversed: min={min:?}, max={max:?}")
+                write!(
+                    formatter,
+                    "date bounds are reversed: min={min:?}, max={max:?}"
+                )
             }
             Self::OutOfBounds { date, min, max } => {
-                write!(formatter, "date {date:?} is outside bounds: min={min:?}, max={max:?}")
+                write!(
+                    formatter,
+                    "date {date:?} is outside bounds: min={min:?}, max={max:?}"
+                )
             }
         }
     }
@@ -277,7 +285,10 @@ impl DateBounds {
     pub fn new(min: Option<Date>, max: Option<Date>) -> Result<Self, DateError> {
         if let (Some(min), Some(max)) = (min, max) {
             if min > max {
-                return Err(DateError::InvalidBounds { min: Some(min), max: Some(max) });
+                return Err(DateError::InvalidBounds {
+                    min: Some(min),
+                    max: Some(max),
+                });
             }
         }
         Ok(Self { min, max })
@@ -286,7 +297,10 @@ impl DateBounds {
     /// Creates an unconstrained date range.
     #[inline]
     pub const fn unbounded() -> Self {
-        Self { min: None, max: None }
+        Self {
+            min: None,
+            max: None,
+        }
     }
 
     /// Returns the inclusive lower bound, if present.
@@ -322,7 +336,11 @@ impl DateBounds {
         if self.contains(date) {
             Ok(())
         } else {
-            Err(DateError::OutOfBounds { date, min: self.min, max: self.max })
+            Err(DateError::OutOfBounds {
+                date,
+                min: self.min,
+                max: self.max,
+            })
         }
     }
 
@@ -347,9 +365,7 @@ fn days_from_civil(year: i32, month: u8, day: u8) -> i64 {
     let era = if year >= 0 { year } else { year - 399 }.div_euclid(400);
     let year_of_era = year - era * 400;
     let month = i64::from(month);
-    let day_of_year = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5
-        + i64::from(day)
-        - 1;
+    let day_of_year = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + i64::from(day) - 1;
     let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
     era * 146_097 + day_of_era - 719_468
 }
@@ -358,7 +374,8 @@ fn civil_from_days(days: i64) -> (i32, u8, u8) {
     let days = days + 719_468;
     let era = if days >= 0 { days } else { days - 146_096 }.div_euclid(146_097);
     let day_of_era = days - era * 146_097;
-    let year_of_era = (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096)
+    let year_of_era = (day_of_era - day_of_era / 1_460 + day_of_era / 36_524
+        - day_of_era / 146_096)
         .div_euclid(365);
     let year = year_of_era + era * 400;
     let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);

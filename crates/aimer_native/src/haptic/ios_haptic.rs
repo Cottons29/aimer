@@ -89,13 +89,12 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2_core_haptics::{
     CHHapticDeviceCapability, CHHapticEngine, CHHapticEventParameterIDHapticIntensity,
-    CHHapticEventParameterIDHapticSharpness, CHHapticEventType,
-    CHHapticEventTypeHapticContinuous, CHHapticEventTypeHapticTransient, CHHapticPattern,
-    CHHapticPatternKeyEvent, CHHapticPatternKeyEventDuration,
-    CHHapticPatternKeyEventParameters, CHHapticPatternKeyEventType,
-    CHHapticPatternKeyParameterID, CHHapticPatternKeyParameterValue, CHHapticPatternKeyPattern,
-    CHHapticPatternKeyTime, CHHapticPatternKeyVersion, CHHapticPatternPlayer,
-    CHHapticTimeImmediate,
+    CHHapticEventParameterIDHapticSharpness, CHHapticEventType, CHHapticEventTypeHapticContinuous,
+    CHHapticEventTypeHapticTransient, CHHapticPattern, CHHapticPatternKeyEvent,
+    CHHapticPatternKeyEventDuration, CHHapticPatternKeyEventParameters,
+    CHHapticPatternKeyEventType, CHHapticPatternKeyParameterID, CHHapticPatternKeyParameterValue,
+    CHHapticPatternKeyPattern, CHHapticPatternKeyTime, CHHapticPatternKeyVersion,
+    CHHapticPatternPlayer, CHHapticTimeImmediate,
 };
 use objc2_foundation::{NSError, NSMutableArray, NSMutableDictionary, NSNumber, NSString};
 use std::cell::RefCell;
@@ -192,13 +191,13 @@ struct Session {
 }
 
 thread_local! {
-        /// One [`Session`] per thread, created on first use.
-        ///
-        /// `Retained` is neither `Send` nor `Sync`, so the engine cannot be a
-        /// global; per-thread is the natural fit anyway, since haptics are
-        /// triggered from the thread that handles input.
-        static SESSION: RefCell<Option<Session>> = const { RefCell::new(None) };
-    }
+    /// One [`Session`] per thread, created on first use.
+    ///
+    /// `Retained` is neither `Send` nor `Sync`, so the engine cannot be a
+    /// global; per-thread is the natural fit anyway, since haptics are
+    /// triggered from the thread that handles input.
+    static SESSION: RefCell<Option<Session>> = const { RefCell::new(None) };
+}
 
 /// How long a finished player is kept around beyond its pattern's
 /// duration.
@@ -273,8 +272,7 @@ impl Session {
 
             let dict = ahap_dict(pattern);
             let chpattern =
-                match CHHapticPattern::initWithDictionary_error(CHHapticPattern::alloc(), &dict)
-                {
+                match CHHapticPattern::initWithDictionary_error(CHHapticPattern::alloc(), &dict) {
                     Ok(chpattern) => chpattern,
                     Err(error) => {
                         report("CHHapticPattern init", &error);
@@ -295,9 +293,7 @@ impl Session {
 
             self.playing.push(Playing {
                 player,
-                until: Instant::now()
-                    + Duration::from_secs_f64(pattern.duration())
-                    + RELEASE_GRACE,
+                until: Instant::now() + Duration::from_secs_f64(pattern.duration()) + RELEASE_GRACE,
             });
         }
     }
@@ -331,8 +327,8 @@ pub(super) fn play_pattern(pattern: &HapticPattern) {
 
 #[cfg(test)]
 mod tests {
-    use crate::haptic::Haptics;
     use super::*;
+    use crate::haptic::Haptics;
 
     #[test]
     fn new_pattern_is_empty() {
@@ -441,8 +437,8 @@ mod tests {
         // Spelled in pieces so these needles don't match this test itself.
         let unavailable = concat!("CHHapticEngine::", "init(CHHapticEngine::alloc())");
         let designated = concat!(
-        "CHHapticEngine::",
-        "initAndReturnError(CHHapticEngine::alloc())"
+            "CHHapticEngine::",
+            "initAndReturnError(CHHapticEngine::alloc())"
         );
 
         assert!(

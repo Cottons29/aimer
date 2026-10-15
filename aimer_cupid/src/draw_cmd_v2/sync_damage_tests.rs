@@ -50,7 +50,10 @@ fn a_geometry_change_to_every_node_visits_each_subtree_once() {
         derived <= 12 * DEPTH,
         "{derived} frames were derived to damage {DEPTH} nodes"
     );
-    assert!(!tree.take_damage().is_empty(), "the resize recorded no damage");
+    assert!(
+        !tree.take_damage().is_empty(),
+        "the resize recorded no damage"
+    );
 }
 
 #[test]
@@ -76,7 +79,10 @@ fn damage_covers_every_node_that_moved_even_when_ancestors_and_descendants_chang
                     rng.range(20.0, 300.0),
                 ),
             ));
-            clips.push(rng.chance(30).then(|| Rect::new(0.0, 0.0, rng.range(50.0, 400.0), 300.0)));
+            clips.push(
+                rng.chance(30)
+                    .then(|| Rect::new(0.0, 0.0, rng.range(50.0, 400.0), 300.0)),
+            );
         }
         let tree = RenderTree::new();
         let ids = tree.sync_structure_with_clips(&specs, &clips).unwrap();
@@ -84,7 +90,9 @@ fn damage_covers_every_node_that_moved_even_when_ancestors_and_descendants_chang
 
         let before: Vec<_> = {
             let inner = tree.draw_cmd.borrow();
-            ids.iter().map(|id| inner.visible_node_bounds(*id)).collect()
+            ids.iter()
+                .map(|id| inner.visible_node_bounds(*id))
+                .collect()
         };
 
         for (index, spec) in specs.iter_mut().enumerate() {

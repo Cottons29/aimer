@@ -5,6 +5,7 @@
 //! directly, which is what makes the recognizers in [`super::recognize`]
 //! testable without a live widget tree.
 
+use aimer_attribute::position::Vec2d;
 use aimer_events::pointer::{PointerInfo, PointerSource};
 use aimer_utils::AnimInstant;
 
@@ -178,6 +179,37 @@ pub struct Pinch {
     /// The most recently reported scale, which the next delta is measured
     /// against.
     pub scale: f32,
+    /// The direction of the line between the two pointers at the last report,
+    /// in radians; the reference the next rotation delta is measured from.
+    pub angle: f32,
+    /// The rotation accumulated since the pinch began, in radians, clockwise
+    /// positive.
+    pub rotation: f32,
+    /// The midpoint at the last report, which the next focal delta is measured
+    /// from.
+    pub focal: Vec2d,
+}
+
+/// A trackpad (or other platform-recognized) pinch and rotation in progress.
+///
+/// The platform reports magnification and rotation as two independent gestures
+/// that may overlap, but a consumer wants one transform. This is the shared
+/// session they both feed: it opens with the first of them, accumulates both,
+/// and closes when the last one ends.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PlatformTransform {
+    /// Where the transform is anchored; the platform reports one position, so
+    /// the focal point does not move.
+    pub focal: Vec2d,
+    /// The scale accumulated since the session began.
+    pub scale: f32,
+    /// The rotation accumulated since the session began, in radians, clockwise
+    /// positive.
+    pub rotation: f32,
+    /// Whether a platform pinch is currently between its start and end.
+    pub pinching: bool,
+    /// Whether a platform rotation is currently between its start and end.
+    pub rotating: bool,
 }
 
 /// Everything the recognizers remember between pointer events.
@@ -193,6 +225,10 @@ pub struct GestureState {
     pub touches: ActiveTouches,
     /// The pinch in progress, if two contacts are down.
     pub pinch: Option<Pinch>,
+    /// The platform-recognized pinch and rotation in progress, if any.
+    pub platform_transform: Option<PlatformTransform>,
+    /// Whether a platform multi-finger pan is in progress.
+    pub platform_pan: bool,
 }
 
 impl GestureState {
@@ -227,7 +263,12 @@ impl GestureState {
     /// every mouse move that merely crosses it.
     #[inline]
     pub fn is_engaged(&self) -> bool {
-        self.press.is_some() || self.drag.is_some() || self.pinch.is_some() || !self.touches.is_empty()
+        self.press.is_some()
+            || self.drag.is_some()
+            || self.pinch.is_some()
+            || self.platform_transform.is_some()
+            || self.platform_pan
+            || !self.touches.is_empty()
     }
 
     /// Forgets everything about the single-pointer press: the press itself, any

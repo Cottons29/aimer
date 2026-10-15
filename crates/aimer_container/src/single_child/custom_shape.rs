@@ -235,11 +235,9 @@ impl Drawable for RawCustomShape {
     fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
         self.child.update(ctx);
     }
-
 }
 
-impl RawCustomShape {
-}
+impl RawCustomShape {}
 
 impl VisitorElement for RawCustomShape {
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {

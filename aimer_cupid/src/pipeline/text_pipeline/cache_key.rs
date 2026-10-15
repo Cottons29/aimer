@@ -217,11 +217,9 @@ pub(super) fn span_layout_keys_with_writing_mode(
     // the horizontal width-independent canonical entry.
     let fits_unwrapped = !writing_mode.is_vertical()
         && requested_extent > 0.0
-        && shaping_cache
-            .get(&shaping_key)
-            .is_some_and(|shaped| {
-                shaped.max_line_width + WIDTH_INDEPENDENCE_SLACK <= requested_extent
-            });
+        && shaping_cache.get(&shaping_key).is_some_and(|shaped| {
+            shaped.max_line_width + WIDTH_INDEPENDENCE_SLACK <= requested_extent
+        });
     let (layout_width, layout_height, fallback) = if fits_unwrapped {
         let width_keyed = LayoutCacheKey::new_with_writing_mode(
             text.clone(),

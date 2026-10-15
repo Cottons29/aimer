@@ -6,13 +6,13 @@
 
 use std::time::Duration;
 
-use aimer::animation::{AnimatedSwitcher, Curve};
+use aimer::animation::{AnimatedSwitcher, curves};
 use aimer::macros::widget;
 use aimer::router::{Navigator, Outlet, Router, Shell};
 use aimer::style::{AnimatedTheme, Theme, ThemeData};
 use aimer::{
-    router, AimerApp, AnyWidget, BuildContext, Container, Provider, ProviderContext,
-    StatelessWidget, Text, Widget,
+    AimerApp, AnyWidget, BuildContext, Container, Provider, ProviderContext, StatelessWidget, Text,
+    Widget, router,
 };
 
 #[derive(Clone, Copy)]
@@ -85,7 +85,7 @@ impl aimer::StatelessWidget for ContextRoutePageWidget {
             .child(
                 AnimatedSwitcher::new(
                     Duration::from_millis(180),
-                    Curve::EaseInOut,
+                    curves::EASE_IN_OUT,
                     Text::new(format!("{} — {}", self.title, scope)),
                 )
                 .child_key(self.title),

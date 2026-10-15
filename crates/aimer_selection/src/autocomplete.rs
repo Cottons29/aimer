@@ -325,24 +325,26 @@ impl<T> Autocomplete<T> {
             }
             InputEvent::KeyDown(key) if is_next_key(key) => {
                 if self.open {
-                    self.move_focus(true).map_or(ControlAction::Ignored, ControlAction::FocusMoved)
+                    self.move_focus(true)
+                        .map_or(ControlAction::Ignored, ControlAction::FocusMoved)
                 } else {
                     self.open_menu()
                 }
             }
             InputEvent::KeyDown(key) if is_previous_key(key) => {
                 if self.open {
-                    self.move_focus(false).map_or(ControlAction::Ignored, ControlAction::FocusMoved)
+                    self.move_focus(false)
+                        .map_or(ControlAction::Ignored, ControlAction::FocusMoved)
                 } else {
                     self.open_menu()
                 }
             }
-            InputEvent::KeyDown(Key::Home) if self.open => {
-                self.focus_edge(false).map_or(ControlAction::Ignored, ControlAction::FocusMoved)
-            }
-            InputEvent::KeyDown(Key::End) if self.open => {
-                self.focus_edge(true).map_or(ControlAction::Ignored, ControlAction::FocusMoved)
-            }
+            InputEvent::KeyDown(Key::Home) if self.open => self
+                .focus_edge(false)
+                .map_or(ControlAction::Ignored, ControlAction::FocusMoved),
+            InputEvent::KeyDown(Key::End) if self.open => self
+                .focus_edge(true)
+                .map_or(ControlAction::Ignored, ControlAction::FocusMoved),
             InputEvent::Cancel => {
                 self.state.set_pressed(false);
                 self.cancel()
@@ -442,7 +444,11 @@ impl<T> Autocomplete<T> {
         let value = option.value().clone();
         self.focused_index = Some(index);
         self.open = false;
-        if self.selected.as_ref().is_some_and(|selected| selected == &value) {
+        if self
+            .selected
+            .as_ref()
+            .is_some_and(|selected| selected == &value)
+        {
             return ControlAction::Closed;
         }
         emit_change(&self.on_change, value)

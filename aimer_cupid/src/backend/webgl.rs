@@ -29,7 +29,10 @@ pub struct WebGl2Error {
 
 impl WebGl2Error {
     fn new(operation: &'static str, message: impl Into<String>) -> Self {
-        Self { operation, message: message.into() }
+        Self {
+            operation,
+            message: message.into(),
+        }
     }
 }
 
@@ -63,15 +66,14 @@ impl WebGl2Backend {
         let context = canvas
             .get_context("webgl2")
             .map_err(|error| WebGl2Error::new("get WebGL2 context", js_error(error)))?
-            .ok_or_else(|| WebGl2Error::new("get WebGL2 context", "browser returned no WebGL2 context"))?
+            .ok_or_else(|| {
+                WebGl2Error::new("get WebGL2 context", "browser returned no WebGL2 context")
+            })?
             .dyn_into::<WebGl2RenderingContext>()
             .map_err(|error| WebGl2Error::new("cast WebGL2 context", js_error(error.into())))?;
 
-        let max_texture_dimension_2d = parameter_u32(
-            &context,
-            WebGl2RenderingContext::MAX_TEXTURE_SIZE,
-            2048,
-        );
+        let max_texture_dimension_2d =
+            parameter_u32(&context, WebGl2RenderingContext::MAX_TEXTURE_SIZE, 2048);
         let min_uniform_buffer_offset_alignment = parameter_u32(
             &context,
             WebGl2RenderingContext::UNIFORM_BUFFER_OFFSET_ALIGNMENT,
@@ -127,14 +129,18 @@ impl WebGl2Backend {
 impl WebGl2Shared {
     pub(super) fn allocate_id(&self) -> u32 {
         let id = self.next_id.get();
-        self.next_id.set(id.checked_add(1).expect("WebGL resource id overflow"));
+        self.next_id
+            .set(id.checked_add(1).expect("WebGL resource id overflow"));
         id
     }
 
     pub(super) fn invalidate_framebuffers_for(&self, texture: u32) {
         let mut cache = self.framebuffer_cache.borrow_mut();
         cache.retain(|key, framebuffer| {
-            let keep = !key.attachments.iter().any(|attachment| attachment.1 == texture);
+            let keep = !key
+                .attachments
+                .iter()
+                .any(|attachment| attachment.1 == texture);
             if !keep {
                 self.gl.delete_framebuffer(Some(framebuffer));
             }
@@ -162,7 +168,5 @@ fn parameter_u32(context: &WebGl2RenderingContext, parameter: u32, fallback: u32
 }
 
 fn js_error(value: JsValue) -> String {
-    value
-        .as_string()
-        .unwrap_or_else(|| format!("{value:?}"))
+    value.as_string().unwrap_or_else(|| format!("{value:?}"))
 }

@@ -296,10 +296,12 @@ mod tests {
             theme.on_background_color.with_opacity(120)
         );
         assert_eq!(link_style.color, theme.on_background_color);
-        assert!(hover_style
-            .text_decoration
-            .line
-            .contains(TextDecorationLine::UNDERLINE));
+        assert!(
+            hover_style
+                .text_decoration
+                .line
+                .contains(TextDecorationLine::UNDERLINE)
+        );
     }
 
     #[test]

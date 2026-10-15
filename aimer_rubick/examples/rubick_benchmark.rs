@@ -135,11 +135,7 @@ fn report_layout() {
         large.is_inline()
     );
     let wide: Wide = Rubick::erase(Medium::new(0));
-    println!(
-        "{:<52} {}",
-        "inline at 8 words? Medium",
-        wide.is_inline()
-    );
+    println!("{:<52} {}", "inline at 8 words? Medium", wide.is_inline());
     println!();
 }
 
@@ -381,63 +377,75 @@ fn bench_tree_rebuild() {
             black_box(total);
         }
     });
-    measure("Rubick erased tree frame, widget capacity", NODES * FRAMES, || {
-        for _ in 0..FRAMES {
-            let mut tree: Vec<Wide> = Vec::with_capacity(NODES);
-            for index in 0..NODES {
-                match index % 3 {
-                    0 => tree.push(Rubick::erase(Tiny::new(index))),
-                    1 => tree.push(Rubick::erase(Medium::new(index))),
-                    _ => tree.push(Rubick::erase(Large::new(index))),
+    measure(
+        "Rubick erased tree frame, widget capacity",
+        NODES * FRAMES,
+        || {
+            for _ in 0..FRAMES {
+                let mut tree: Vec<Wide> = Vec::with_capacity(NODES);
+                for index in 0..NODES {
+                    match index % 3 {
+                        0 => tree.push(Rubick::erase(Tiny::new(index))),
+                        1 => tree.push(Rubick::erase(Medium::new(index))),
+                        _ => tree.push(Rubick::erase(Large::new(index))),
+                    }
                 }
+                let mut total = 0_usize;
+                for node in &tree {
+                    total = total.wrapping_add(node.value());
+                }
+                black_box(total);
             }
-            let mut total = 0_usize;
-            for node in &tree {
-                total = total.wrapping_add(node.value());
-            }
-            black_box(total);
-        }
-    });
+        },
+    );
     let ui_memory = UiMemory::new(UI_MEMORY_LIMIT);
     let ui_allocator = ui_memory.allocator();
-    measure("UiMemory erased tree frame, matched capacity", NODES * FRAMES, || {
-        ui_allocator.scope(|| {
-            for _ in 0..FRAMES {
-                let mut tree: Vec<Rubick<dyn Node>> = Vec::with_capacity(NODES);
-                for index in 0..NODES {
-                    match index % 3 {
-                        0 => tree.push(Rubick::erase(Tiny::new(index))),
-                        1 => tree.push(Rubick::erase(Medium::new(index))),
-                        _ => tree.push(Rubick::erase(Large::new(index))),
+    measure(
+        "UiMemory erased tree frame, matched capacity",
+        NODES * FRAMES,
+        || {
+            ui_allocator.scope(|| {
+                for _ in 0..FRAMES {
+                    let mut tree: Vec<Rubick<dyn Node>> = Vec::with_capacity(NODES);
+                    for index in 0..NODES {
+                        match index % 3 {
+                            0 => tree.push(Rubick::erase(Tiny::new(index))),
+                            1 => tree.push(Rubick::erase(Medium::new(index))),
+                            _ => tree.push(Rubick::erase(Large::new(index))),
+                        }
                     }
-                }
-                let mut total = 0_usize;
-                for node in &tree {
-                    total = total.wrapping_add(node.value());
-                }
-                black_box(total);
-            }
-        });
-    });
-    measure("UiMemory erased tree frame, element capacity", NODES * FRAMES, || {
-        ui_allocator.scope(|| {
-            for _ in 0..FRAMES {
-                let mut tree: Vec<Rubick<dyn Node, 1>> = Vec::with_capacity(NODES);
-                for index in 0..NODES {
-                    match index % 3 {
-                        0 => tree.push(Rubick::erase(Tiny::new(index))),
-                        1 => tree.push(Rubick::erase(Medium::new(index))),
-                        _ => tree.push(Rubick::erase(Large::new(index))),
+                    let mut total = 0_usize;
+                    for node in &tree {
+                        total = total.wrapping_add(node.value());
                     }
+                    black_box(total);
                 }
-                let mut total = 0_usize;
-                for node in &tree {
-                    total = total.wrapping_add(node.value());
+            });
+        },
+    );
+    measure(
+        "UiMemory erased tree frame, element capacity",
+        NODES * FRAMES,
+        || {
+            ui_allocator.scope(|| {
+                for _ in 0..FRAMES {
+                    let mut tree: Vec<Rubick<dyn Node, 1>> = Vec::with_capacity(NODES);
+                    for index in 0..NODES {
+                        match index % 3 {
+                            0 => tree.push(Rubick::erase(Tiny::new(index))),
+                            1 => tree.push(Rubick::erase(Medium::new(index))),
+                            _ => tree.push(Rubick::erase(Large::new(index))),
+                        }
+                    }
+                    let mut total = 0_usize;
+                    for node in &tree {
+                        total = total.wrapping_add(node.value());
+                    }
+                    black_box(total);
                 }
-                black_box(total);
-            }
-        });
-    });
+            });
+        },
+    );
     measure("Box tree frame", NODES * FRAMES, || {
         for _ in 0..FRAMES {
             let mut tree: Vec<Box<dyn Node>> = Vec::with_capacity(NODES);

@@ -83,11 +83,9 @@ impl ApplicationHandler for OpenGlDemo {
                 .expect("create OpenGL demo window"),
         );
         let size = window.inner_size();
-        let (backend, surface) = OpenGlBackend::new_windowed(
-            window.clone(),
-            (size.width, size.height),
-        )
-        .expect("create OpenGL backend and surface");
+        let (backend, surface) =
+            OpenGlBackend::new_windowed(window.clone(), (size.width, size.height))
+                .expect("create OpenGL backend and surface");
         let renderer = RendererImpl::new(&backend, surface.format());
 
         self.renderer = Some(renderer);

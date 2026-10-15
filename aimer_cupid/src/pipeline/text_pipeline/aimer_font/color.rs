@@ -1,4 +1,4 @@
-use super::{SfntError, SfntFace, Tag, checked_add, checked_mul, Reader};
+use super::{Reader, SfntError, SfntFace, Tag, checked_add, checked_mul};
 
 const COLR_TAG: Tag = Tag(*b"COLR");
 const CPAL_TAG: Tag = Tag(*b"CPAL");
@@ -72,7 +72,9 @@ impl ColorTables {
             // path and keeps COLR foreground layers deterministic.
             return Some(ColorRgba::new(0, 0, 0, 255));
         }
-        self.default_palette.get(usize::from(palette_index)).copied()
+        self.default_palette
+            .get(usize::from(palette_index))
+            .copied()
     }
 }
 
@@ -126,10 +128,9 @@ fn parse_colr_v0(
     }
 
     let base_count = usize::from(reader.u16(2)?);
-    let base_offset = usize::try_from(reader.u32(4)?)
-        .map_err(|_| SfntError::ArithmeticOverflow)?;
-    let layer_offset = usize::try_from(reader.u32(8)?)
-        .map_err(|_| SfntError::ArithmeticOverflow)?;
+    let base_offset = usize::try_from(reader.u32(4)?).map_err(|_| SfntError::ArithmeticOverflow)?;
+    let layer_offset =
+        usize::try_from(reader.u32(8)?).map_err(|_| SfntError::ArithmeticOverflow)?;
     let layer_count = usize::from(reader.u16(12)?);
 
     if base_count > MAX_BASE_COLOR_GLYPHS || layer_count > MAX_COLOR_LAYERS {
@@ -187,8 +188,8 @@ fn parse_cpal_default_palette(table: &[u8]) -> Result<Option<Vec<ColorRgba>>, Sf
     let palette_entries = usize::from(reader.u16(2)?);
     let palette_count = usize::from(reader.u16(4)?);
     let color_record_count = usize::from(reader.u16(6)?);
-    let color_records_offset = usize::try_from(reader.u32(8)?)
-        .map_err(|_| SfntError::ArithmeticOverflow)?;
+    let color_records_offset =
+        usize::try_from(reader.u32(8)?).map_err(|_| SfntError::ArithmeticOverflow)?;
     if palette_entries == 0
         || palette_entries > MAX_PALETTE_ENTRIES
         || palette_count == 0

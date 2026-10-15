@@ -593,7 +593,9 @@ mod tests {
         // Neither side fits, so the panel keeps its side and slides inside —
         // and "inside" now stops at the status bar rather than at the window.
         let placement = resolve_placement(
-            PlacementSpec::new().side(FloatingSide::Top).safe_area(PHONE),
+            PlacementSpec::new()
+                .side(FloatingSide::Top)
+                .safe_area(PHONE),
             Bounds::new(40.0, 20.0, 100.0, 20.0),
             panel(180.0, 560.0),
             VIEWPORT,

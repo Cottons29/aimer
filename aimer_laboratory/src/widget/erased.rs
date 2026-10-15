@@ -271,7 +271,10 @@ mod tests {
             recorder: recorder(&drops),
             _bytes: [0; WIDGET_WORDS],
         });
-        assert!(!widget.is_inline(), "the fixture must exercise heap storage");
+        assert!(
+            !widget.is_inline(),
+            "the fixture must exercise heap storage"
+        );
         let block = widget.payload_address();
 
         let element = widget.into_element();

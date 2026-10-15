@@ -3,10 +3,7 @@
 use std::hint::black_box;
 use std::time::Instant;
 
-use aimer::quiver::winit::{
-    dpi::PhysicalSize,
-    event::WindowEvent,
-};
+use aimer::quiver::winit::{dpi::PhysicalSize, event::WindowEvent};
 use aimer::{
     AimerApp, AnyWidget, FontStyle, FontWeight, HeadlessOptions, RichText, SpanStyle, TextSpan,
     Widget,

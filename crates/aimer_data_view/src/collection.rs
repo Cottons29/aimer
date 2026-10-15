@@ -430,10 +430,7 @@ where
     }
 
     /// Resolves the current loading/empty/error/content presentation slot.
-    pub fn slot(
-        &self,
-        spec: &WindowSpec,
-    ) -> Result<CollectionSlot<'_, K, T>, WindowError> {
+    pub fn slot(&self, spec: &WindowSpec) -> Result<CollectionSlot<'_, K, T>, WindowError> {
         match self.status {
             CollectionStatus::Empty => Ok(CollectionSlot::Empty),
             CollectionStatus::Loading => Ok(CollectionSlot::Loading),

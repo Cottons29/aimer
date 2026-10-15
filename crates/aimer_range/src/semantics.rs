@@ -43,9 +43,8 @@ impl RangeSemantics {
     /// Builds metadata for a single slider without panicking on invalid raw
     /// inputs.
     pub fn from_slider(min: f64, max: f64, step: f64, value: f64, enabled: bool) -> Self {
-        let invalid_range = !valid_domain(min, max, step)
-            || !value.is_finite()
-            || !contains(min, max, value);
+        let invalid_range =
+            !valid_domain(min, max, step) || !value.is_finite() || !contains(min, max, value);
         Self {
             role: RangeRole::Slider,
             min,

@@ -914,12 +914,13 @@ mod tests {
         use aimer_style::{BoxDecoration, LayoutSpacing, Spacing};
         use aimer_text::Text;
         use aimer_widget::portable::{
-            PortableNativeWidget, PortableWidgetSchema, __anteros::stable_schema_hash64,
+            __anteros::stable_schema_hash64, PortableNativeWidget, PortableWidgetSchema,
+        };
+        use aimer_widget::portable::{
+            PortableBuildContext, PortableLimits, PortableWidgetLimits, SourceFingerprint,
+            StableId128,
         };
         use aimer_widget::{PortableWidget, RequiredChild, Widget};
-        use aimer_widget::portable::{
-            PortableBuildContext, PortableLimits, PortableWidgetLimits, SourceFingerprint, StableId128,
-        };
 
         use crate::Container;
 
@@ -959,10 +960,12 @@ mod tests {
             assert_eq!(
                 container.properties(),
                 &[
-                    WidgetProperty::new(PROPERTY_CONTAINER_WIDTH, PropertyValue::BlobRef(0)).optional(),
+                    WidgetProperty::new(PROPERTY_CONTAINER_WIDTH, PropertyValue::BlobRef(0))
+                        .optional(),
                     WidgetProperty::new(PROPERTY_CONTAINER_COLOR, PropertyValue::Rgba(0x112233FF))
                         .optional(),
-                    WidgetProperty::new(PROPERTY_CONTAINER_HEIGHT, PropertyValue::BlobRef(1)).optional(),
+                    WidgetProperty::new(PROPERTY_CONTAINER_HEIGHT, PropertyValue::BlobRef(1))
+                        .optional(),
                 ],
             );
             assert_eq!(graph.blob(0), Some(&[1, 1, 0, 0, 160, 67][..]));
@@ -981,7 +984,8 @@ mod tests {
 
             let document = graph.compile();
             let encoded = document.encode().unwrap();
-            let view = aimer_anteros::WidgetDocumentView::decode(&encoded, document.model_limits()).unwrap();
+            let view = aimer_anteros::WidgetDocumentView::decode(&encoded, document.model_limits())
+                .unwrap();
             assert_eq!(view.root_node(), root.index());
             assert_eq!(view.string(0), Some("Hello"));
         }
@@ -1007,9 +1011,12 @@ mod tests {
                     "aimer.property:aimer_container::single_child::Container:color",
                 ],
             );
-            assert!(container.properties().iter().all(|property| {
-                property.presence() == PropertyPresence::Optional
-            }));
+            assert!(
+                container
+                    .properties()
+                    .iter()
+                    .all(|property| { property.presence() == PropertyPresence::Optional })
+            );
             assert_eq!(
                 container.properties()[0].value_kind(),
                 PropertyValueKind::BlobRef
@@ -1033,14 +1040,23 @@ mod tests {
             assert_eq!(text.widget().id(), WIDGET_TEXT);
             assert_eq!(text.children().maximum(), 0);
             assert_eq!(text.properties().len(), 3);
-            assert_eq!(text.properties()[0].canonical_name(), PROPERTY_TEXT_CONTENT_NAME);
-            assert_eq!(text.properties()[0].value_kind(), PropertyValueKind::StringRef);
+            assert_eq!(
+                text.properties()[0].canonical_name(),
+                PROPERTY_TEXT_CONTENT_NAME
+            );
+            assert_eq!(
+                text.properties()[0].value_kind(),
+                PropertyValueKind::StringRef
+            );
             assert_eq!(text.properties()[0].presence(), PropertyPresence::Required);
             assert_eq!(text.properties()[1].id(), PROPERTY_TEXT_ALIGN);
             assert_eq!(text.properties()[1].value_kind(), PropertyValueKind::I64);
             assert_eq!(text.properties()[1].presence(), PropertyPresence::Optional);
             assert_eq!(text.properties()[2].id(), PROPERTY_TEXT_STYLE);
-            assert_eq!(text.properties()[2].value_kind(), PropertyValueKind::BlobRef);
+            assert_eq!(
+                text.properties()[2].value_kind(),
+                PropertyValueKind::BlobRef
+            );
             assert_eq!(text.properties()[2].presence(), PropertyPresence::Optional);
         }
 
@@ -1081,12 +1097,13 @@ mod tests {
             let encoded = document.encode().unwrap();
             let view = WidgetDocumentView::decode(&encoded, document.model_limits()).unwrap();
             let child = view.node(root.index()).unwrap().children().next().unwrap();
-            let _container = <Container<RequiredChild> as PortableNativeWidget>::materialize_widget(
-                &view,
-                view.node(root.index()).unwrap(),
-                vec![Text::new("native child").boxed()],
-            )
-            .unwrap();
+            let _container =
+                <Container<RequiredChild> as PortableNativeWidget>::materialize_widget(
+                    &view,
+                    view.node(root.index()).unwrap(),
+                    vec![Text::new("native child").boxed()],
+                )
+                .unwrap();
             let _text = <Text as PortableNativeWidget>::materialize_widget(
                 &view,
                 view.node(child).unwrap(),

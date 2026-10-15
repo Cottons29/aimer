@@ -2,26 +2,25 @@ use js_sys::Array;
 use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{
     GpuBindGroupDescriptor, GpuBindGroupLayoutDescriptor, GpuBufferDescriptor,
-    GpuCommandEncoderDescriptor, GpuPipelineLayoutDescriptor, GpuRenderPassDescriptor,
-    GpuRenderPipelineDescriptor, GpuSamplerDescriptor, GpuShaderModuleDescriptor,
-    GpuExtent3dDict, GpuTexelCopyBufferInfo, GpuTexelCopyBufferLayout,
+    GpuCommandEncoderDescriptor, GpuExtent3dDict, GpuPipelineLayoutDescriptor,
+    GpuRenderPassDescriptor, GpuRenderPipelineDescriptor, GpuSamplerDescriptor,
+    GpuShaderModuleDescriptor, GpuTexelCopyBufferInfo, GpuTexelCopyBufferLayout,
     GpuTexelCopyTextureInfo, GpuTextureDescriptor, GpuTextureFormat,
 };
 
 use crate::backend::{
     AddressMode, BackendError, BindGroupEntry, BindGroupLayoutEntry, BindingResource, BindingType,
-    BlendFactor, BlendOperation, BufferDescriptor, BufferUsage, CompareFunction,
-    DepthStencilState, Extent3d, Face, FilterMode, FragmentState, FrontFace, GpuBackend,
-    GpuLimits, IndexFormat,
+    BlendFactor, BlendOperation, BufferDescriptor, BufferUsage, CompareFunction, DepthStencilState,
+    Extent3d, Face, FilterMode, FragmentState, FrontFace, GpuBackend, GpuLimits, IndexFormat,
     LoadOp, MultisampleState, Operations, PolygonMode, PrimitiveState, PrimitiveTopology,
     RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPassDescriptor,
-    RenderPipelineDescriptor, SamplerBindingType, SamplerDescriptor, ShaderStage,
-    StencilFaceState, StencilOperation, StoreOp,
-    TexelCopyBufferInfo, TexelCopyTextureInfo, TextureAspect, TextureDescriptor, TextureDimension,
-    TextureSampleType, TextureUsage, TextureViewDimension, VertexFormat, VertexState,
-    VertexStepMode, WriteTextureDescriptor,
+    RenderPipelineDescriptor, SamplerBindingType, SamplerDescriptor, ShaderStage, StencilFaceState,
+    StencilOperation, StoreOp, TexelCopyBufferInfo, TexelCopyTextureInfo, TextureAspect,
+    TextureDescriptor, TextureDimension, TextureSampleType, TextureUsage, TextureViewDimension,
+    VertexFormat, VertexState, VertexStepMode, WriteTextureDescriptor,
 };
 
+use super::WebGpuBackend;
 use super::pipeline::{
     WebGpuBindGroup, WebGpuBindGroupLayout, WebGpuBuffer, WebGpuCommandEncoder,
     WebGpuPipelineLayout, WebGpuRenderPass, WebGpuRenderPipeline, WebGpuSampler,
@@ -31,7 +30,6 @@ use super::util::{
     dictionary, js_error, object, push_value, set, set_array, set_bool, set_f64, set_i32, set_ref,
     set_str, set_u32,
 };
-use super::WebGpuBackend;
 
 const BUFFER_MAP_READ: u32 = 0x0001;
 const BUFFER_MAP_WRITE: u32 = 0x0002;
@@ -100,7 +98,11 @@ impl GpuBackend for WebGpuBackend {
 
     fn create_buffer(&self, desc: &BufferDescriptor) -> Self::Buffer {
         assert!(desc.size > 0, "WebGPU buffers must have a non-zero size");
-        assert_eq!(desc.size % 4, 0, "WebGPU buffer size must be a multiple of four");
+        assert_eq!(
+            desc.size % 4,
+            0,
+            "WebGPU buffer size must be a multiple of four"
+        );
         assert!(
             buffer_usage(&desc.usage) != 0,
             "WebGPU buffers require at least one usage flag"
@@ -110,7 +112,11 @@ impl GpuBackend for WebGpuBackend {
             set_str(descriptor.unchecked_ref(), "label", label);
         }
         set_f64(descriptor.unchecked_ref(), "size", desc.size as f64);
-        set_u32(descriptor.unchecked_ref(), "usage", buffer_usage(&desc.usage));
+        set_u32(
+            descriptor.unchecked_ref(),
+            "usage",
+            buffer_usage(&desc.usage),
+        );
         let raw = self
             .shared
             .device
@@ -132,7 +138,11 @@ impl GpuBackend for WebGpuBackend {
         set_u32(&size, "height", desc.size.1);
         set_u32(&size, "depthOrArrayLayers", desc.size.2);
         set_ref(descriptor.unchecked_ref(), "size", &size);
-        set_u32(descriptor.unchecked_ref(), "mipLevelCount", desc.mip_level_count);
+        set_u32(
+            descriptor.unchecked_ref(),
+            "mipLevelCount",
+            desc.mip_level_count,
+        );
         set_u32(descriptor.unchecked_ref(), "sampleCount", desc.sample_count);
         set_str(
             descriptor.unchecked_ref(),
@@ -182,8 +192,16 @@ impl GpuBackend for WebGpuBackend {
             "addressModeW",
             address_mode(desc.address_mode_w),
         );
-        set_str(descriptor.unchecked_ref(), "magFilter", filter_mode(desc.mag_filter));
-        set_str(descriptor.unchecked_ref(), "minFilter", filter_mode(desc.min_filter));
+        set_str(
+            descriptor.unchecked_ref(),
+            "magFilter",
+            filter_mode(desc.mag_filter),
+        );
+        set_str(
+            descriptor.unchecked_ref(),
+            "minFilter",
+            filter_mode(desc.min_filter),
+        );
         set_str(
             descriptor.unchecked_ref(),
             "mipmapFilter",
@@ -200,7 +218,11 @@ impl GpuBackend for WebGpuBackend {
             f64::from(desc.lod_max_clamp),
         );
         if let Some(compare) = desc.compare {
-            set_str(descriptor.unchecked_ref(), "compare", compare_function(compare));
+            set_str(
+                descriptor.unchecked_ref(),
+                "compare",
+                compare_function(compare),
+            );
         }
         set_u32(
             descriptor.unchecked_ref(),
@@ -214,10 +236,7 @@ impl GpuBackend for WebGpuBackend {
         )
     }
 
-    fn create_bind_group_layout(
-        &self,
-        entries: &[BindGroupLayoutEntry],
-    ) -> Self::BindGroupLayout {
+    fn create_bind_group_layout(&self, entries: &[BindGroupLayoutEntry]) -> Self::BindGroupLayout {
         let descriptor: GpuBindGroupLayoutDescriptor = dictionary();
         let raw_entries = Array::new();
         for entry in entries {
@@ -272,11 +291,7 @@ impl GpuBackend for WebGpuBackend {
             push_value(&raw_entries, raw_entry.as_ref());
         }
         set_array(descriptor.unchecked_ref(), "entries", &raw_entries);
-        WebGpuBindGroup(
-            self.shared
-                .device
-                .create_bind_group(&descriptor),
-        )
+        WebGpuBindGroup(self.shared.device.create_bind_group(&descriptor))
     }
 
     fn create_pipeline_layout(&self, layouts: &[&Self::BindGroupLayout]) -> Self::PipelineLayout {
@@ -290,9 +305,7 @@ impl GpuBackend for WebGpuBackend {
             "bindGroupLayouts",
             &layout_values,
         );
-        WebGpuPipelineLayout(
-            self.shared.device.create_pipeline_layout(&descriptor),
-        )
+        WebGpuPipelineLayout(self.shared.device.create_pipeline_layout(&descriptor))
     }
 
     fn create_render_pipeline(
@@ -339,9 +352,21 @@ impl GpuBackend for WebGpuBackend {
     }
 
     fn write_buffer(&self, buffer: &Self::Buffer, offset: u64, data: &[u8]) {
-        assert!(offset.checked_add(data.len() as u64).is_some_and(|end| end <= buffer.size));
-        assert_eq!(offset % 4, 0, "WebGPU write_buffer offset must be aligned to four bytes");
-        assert_eq!(data.len() % 4, 0, "WebGPU write_buffer size must be a multiple of four");
+        assert!(
+            offset
+                .checked_add(data.len() as u64)
+                .is_some_and(|end| end <= buffer.size)
+        );
+        assert_eq!(
+            offset % 4,
+            0,
+            "WebGPU write_buffer offset must be aligned to four bytes"
+        );
+        assert_eq!(
+            data.len() % 4,
+            0,
+            "WebGPU write_buffer size must be a multiple of four"
+        );
         self.shared
             .queue
             .write_buffer_with_f64_and_u8_slice(&buffer.raw, offset as f64, data)
@@ -400,7 +425,11 @@ impl GpuBackend for WebGpuBackend {
         );
         if let Some(depth_stencil) = &desc.depth_stencil_attachment {
             let attachment = depth_stencil_attachment(depth_stencil, encoder);
-            set_ref(descriptor.unchecked_ref(), "depthStencilAttachment", &attachment);
+            set_ref(
+                descriptor.unchecked_ref(),
+                "depthStencilAttachment",
+                &attachment,
+            );
         }
         let raw = encoder
             .raw
@@ -417,20 +446,12 @@ impl GpuBackend for WebGpuBackend {
         extent: Extent3d,
     ) {
         let source = buffer_copy_info(src);
-        let destination = texture_copy_info(
-            &dst.texture.0.raw,
-            dst.mip_level,
-            dst.origin,
-            dst.aspect,
-        );
+        let destination =
+            texture_copy_info(&dst.texture.0.raw, dst.mip_level, dst.origin, dst.aspect);
         let size = extent_dict(extent);
         encoder
             .raw
-            .copy_buffer_to_texture_with_gpu_extent_3d_dict(
-                &source,
-                &destination,
-                &size,
-            )
+            .copy_buffer_to_texture_with_gpu_extent_3d_dict(&source, &destination, &size)
             .unwrap_or_else(|error| panic!("copy WebGPU buffer to texture: {error:?}"));
     }
 
@@ -441,26 +462,13 @@ impl GpuBackend for WebGpuBackend {
         dst: &TexelCopyTextureInfo<Self>,
         extent: Extent3d,
     ) {
-        let source = texture_copy_info(
-            &src.texture.0.raw,
-            src.mip_level,
-            src.origin,
-            src.aspect,
-        );
-        let destination = texture_copy_info(
-            &dst.texture.0.raw,
-            dst.mip_level,
-            dst.origin,
-            dst.aspect,
-        );
+        let source = texture_copy_info(&src.texture.0.raw, src.mip_level, src.origin, src.aspect);
+        let destination =
+            texture_copy_info(&dst.texture.0.raw, dst.mip_level, dst.origin, dst.aspect);
         let size = extent_dict(extent);
         encoder
             .raw
-            .copy_texture_to_texture_with_gpu_extent_3d_dict(
-                &source,
-                &destination,
-                &size,
-            )
+            .copy_texture_to_texture_with_gpu_extent_3d_dict(&source, &destination, &size)
             .unwrap_or_else(|error| panic!("copy WebGPU texture: {error:?}"));
     }
 
@@ -471,21 +479,12 @@ impl GpuBackend for WebGpuBackend {
         dst: &TexelCopyBufferInfo<Self>,
         extent: Extent3d,
     ) {
-        let source = texture_copy_info(
-            &src.texture.0.raw,
-            src.mip_level,
-            src.origin,
-            src.aspect,
-        );
+        let source = texture_copy_info(&src.texture.0.raw, src.mip_level, src.origin, src.aspect);
         let destination = buffer_copy_info(dst);
         let size = extent_dict(extent);
         encoder
             .raw
-            .copy_texture_to_buffer_with_gpu_extent_3d_dict(
-                &source,
-                &destination,
-                &size,
-            )
+            .copy_texture_to_buffer_with_gpu_extent_3d_dict(&source, &destination, &size)
             .unwrap_or_else(|error| panic!("copy WebGPU texture to buffer: {error:?}"));
     }
 
@@ -518,7 +517,9 @@ impl WebGpuBackend {
         match &view.0.target {
             super::pipeline::WebGpuViewTarget::Texture { raw, .. } => raw.clone(),
             super::pipeline::WebGpuViewTarget::Surface(_) => {
-                panic!("a WebGPU canvas texture view is only available while encoding a render pass")
+                panic!(
+                    "a WebGPU canvas texture view is only available while encoding a render pass"
+                )
             }
         }
     }
@@ -828,11 +829,7 @@ fn vertex_state(state: &VertexState<'_, WebGpuBackend>) -> js_sys::Object {
         let attributes = Array::new();
         for attribute in layout.attributes {
             let raw_attribute = object();
-            set_str(
-                &raw_attribute,
-                "format",
-                vertex_format(attribute.format),
-            );
+            set_str(&raw_attribute, "format", vertex_format(attribute.format));
             set_f64(&raw_attribute, "offset", attribute.offset as f64);
             set_u32(&raw_attribute, "shaderLocation", attribute.shader_location);
             push_value(&attributes, raw_attribute.as_ref());
@@ -916,7 +913,11 @@ fn depth_stencil_state(state: &DepthStencilState<GpuTextureFormat>) -> js_sys::O
     set(&raw, "format", &format);
     set_bool(&raw, "depthWriteEnabled", state.depth_write_enabled);
     set_str(&raw, "depthCompare", compare_function(state.depth_compare));
-    set_ref(&raw, "stencilFront", &stencil_face_state(state.stencil.front));
+    set_ref(
+        &raw,
+        "stencilFront",
+        &stencil_face_state(state.stencil.front),
+    );
     set_ref(&raw, "stencilBack", &stencil_face_state(state.stencil.back));
     set_u32(&raw, "stencilReadMask", state.stencil.read_mask);
     set_u32(&raw, "stencilWriteMask", state.stencil.write_mask);
@@ -943,7 +944,11 @@ fn multisample_state(state: MultisampleState) -> js_sys::Object {
     let raw = object();
     set_u32(&raw, "count", state.count);
     set_u32(&raw, "mask", state.mask as u32);
-    set_bool(&raw, "alphaToCoverageEnabled", state.alpha_to_coverage_enabled);
+    set_bool(
+        &raw,
+        "alphaToCoverageEnabled",
+        state.alpha_to_coverage_enabled,
+    );
     raw
 }
 
@@ -1008,11 +1013,7 @@ fn set_attachment_operations<T: Copy + Into<f64>>(
         LoadOp::Load => set_str(descriptor, &format!("{prefix}LoadOp"), "load"),
         LoadOp::Clear(value) => {
             set_str(descriptor, &format!("{prefix}LoadOp"), "clear");
-            set_f64(
-                descriptor,
-                &format!("{prefix}ClearValue"),
-                value.into(),
-            );
+            set_f64(descriptor, &format!("{prefix}ClearValue"), value.into());
         }
     }
     set_str(

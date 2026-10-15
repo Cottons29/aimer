@@ -7,6 +7,7 @@
 //! application UI heap. Otherwise, it uses the same thread-local size-class
 //! pool as heap-mode [`Rubick`] values.
 
+use allocator_api2::alloc::Allocator;
 use std::alloc::{Layout, handle_alloc_error};
 use std::borrow::Borrow;
 use std::cell::Cell;
@@ -21,12 +22,11 @@ use std::ops::Deref;
 use std::ptr::{self, NonNull};
 use std::rc::Rc;
 use std::str::FromStr;
-use allocator_api2::alloc::Allocator;
 
 use crate::erase::ErasedFrom;
 use crate::pool;
-use crate::{Rubick, UiAllocator};
 pub(crate) use crate::share_ref::ShareRef;
+use crate::{Rubick, UiAllocator};
 
 struct SharedAllocation<T: ?Sized> {
     strong: Cell<usize>,
@@ -167,9 +167,6 @@ pub struct Shared<T: ?Sized> {
     not_thread_safe: PhantomData<*const Cell<()>>,
 }
 
-
-
-
 /// A non-owning handle to a [`Shared`] allocation.
 ///
 /// A `Weak` handle does not keep the value alive. Use [`upgrade`](Self::upgrade)
@@ -307,7 +304,6 @@ impl<T> Shared<T> {
     {
         Self::try_unwrap(this).unwrap_or_else(|shared| (*shared).clone())
     }
-
 }
 
 impl<T: ?Sized> Shared<T> {
@@ -337,10 +333,7 @@ impl<T: ?Sized> Shared<T> {
         Self::from_static_with_allocator(value, Some(allocator.clone()))
     }
 
-    fn from_static_with_allocator(
-        value: &'static T,
-        allocator: Option<UiAllocator>,
-    ) -> Self
+    fn from_static_with_allocator(value: &'static T, allocator: Option<UiAllocator>) -> Self
     where
         T: 'static,
     {
@@ -556,7 +549,9 @@ impl<T: ?Sized> Shared<T> {
         match &mut allocation.value {
             SharedValueStorage::Inline(value) => value.as_ptr(),
             SharedValueStorage::Boxed(value) => &mut ***value,
-            SharedValueStorage::Static(_) => unreachable!("static values cannot be mutably borrowed"),
+            SharedValueStorage::Static(_) => {
+                unreachable!("static values cannot be mutably borrowed")
+            }
         }
     }
 }
@@ -655,8 +650,6 @@ impl<T: ?Sized> Clone for Shared<T> {
     }
 }
 
-
-
 impl<T: ?Sized> Drop for Shared<T> {
     fn drop(&mut self) {
         let count = Self::strong_count(self);
@@ -718,7 +711,6 @@ impl<T> From<T> for Shared<T> {
         Self::new(value)
     }
 }
-
 
 impl<T: Clone> From<&[T]> for Shared<[T]> {
     fn from(value: &[T]) -> Self {
@@ -808,8 +800,6 @@ impl Default for Shared<str> {
     }
 }
 
-
-
 impl<T: ?Sized> fmt::Pointer for Shared<T> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Pointer::fmt(&self.value_ptr(), formatter)
@@ -845,8 +835,6 @@ impl<T: ?Sized + Hash> Hash for Shared<T> {
         (**self).hash(state);
     }
 }
-
-
 
 #[cfg(test)]
 mod share_ref_tests {

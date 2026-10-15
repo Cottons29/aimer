@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use aimer::animation::{AnimatedBuilder, AnimationController, Curve};
+use aimer::animation::{AnimatedBuilder, AnimationController, curves};
 use aimer::style::{LayoutSpacing, Spacing, TextStyle};
 use aimer::{
     AimerApp, Colors, Column, Container, CustomShape, FillStyle, ShapeClip, ShapeColor, ShapeFit,
@@ -47,7 +47,7 @@ pub fn custom_shape_example() -> impl Widget {
     let path = shared_demo_shape_path();
     let path_id = path.id().0;
     let invalid_geometry_rejected = invalid_shape_is_rejected();
-    let controller = AnimationController::with_millis(1_600, Curve::EaseInOut);
+    let controller = AnimationController::with_millis(1_600, curves::EASE_IN_OUT);
     controller.forward_from_first_tick();
 
     AnimatedBuilder::new(controller, move |progress| {
@@ -71,8 +71,7 @@ pub fn custom_shape_example() -> impl Widget {
                     .width(360.0)
                     .height(250.0)
                     .padding(LayoutSpacing::all(Spacing::Px(22)))
-                    .child(
-                        Column::new().children(vec![
+                    .child(Column::new().children(vec![
                             Text::new("CustomShape")
                                 .text_style(
                                     TextStyle::new()
@@ -104,8 +103,7 @@ pub fn custom_shape_example() -> impl Widget {
                             .text_style(TextStyle::new().color(Colors::Black))
                             .wrapped()
                             .boxed(),
-                        ]),
-                    ),
+                        ])),
             )
     })
 }

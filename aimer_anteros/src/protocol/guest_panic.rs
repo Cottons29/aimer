@@ -112,9 +112,7 @@ pub fn capture_guest_panic<T>(operation: impl FnOnce() -> T) -> Result<T, GuestP
         WATCHED_LOCATIONS.with(|locations| locations.borrow_mut().push(None));
         WATCHED_CONTEXTS.with(|contexts| contexts.borrow_mut().push(None));
         let result = catch_unwind(AssertUnwindSafe(operation));
-        let location = WATCHED_LOCATIONS.with(|locations| {
-            locations.borrow_mut().pop().flatten()
-        });
+        let location = WATCHED_LOCATIONS.with(|locations| locations.borrow_mut().pop().flatten());
         let context = WATCHED_CONTEXTS.with(|contexts| contexts.borrow_mut().pop().flatten());
         return result.map_err(|payload| GuestPanicRecord {
             payload: panic_payload(payload),
@@ -166,11 +164,8 @@ fn install_hook() {
                 return;
             }
             if let Some(location) = info.location() {
-                let location = GuestSourceLocation::new(
-                    location.file(),
-                    location.line(),
-                    location.column(),
-                );
+                let location =
+                    GuestSourceLocation::new(location.file(), location.line(), location.column());
                 let _ = WATCHED_LOCATIONS.try_with(|locations| {
                     if let Some(current) = locations.borrow_mut().last_mut() {
                         *current = Some(location);
@@ -201,8 +196,13 @@ mod tests {
         .expect_err("panic should recover");
 
         assert_eq!(panic.payload(), "boom");
-        assert_eq!(panic.context(), Some(GuestPanicContext::new("HttpRequestButton", "build")));
-        let location = panic.location().expect("panic should have a source location");
+        assert_eq!(
+            panic.context(),
+            Some(GuestPanicContext::new("HttpRequestButton", "build"))
+        );
+        let location = panic
+            .location()
+            .expect("panic should have a source location");
         assert_eq!(location.file(), file!());
         assert_eq!(location.line(), expected_line);
     }

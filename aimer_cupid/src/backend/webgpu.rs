@@ -137,9 +137,7 @@ impl WebGpuBackend {
         configuration.set_alpha_mode(GpuCanvasAlphaMode::Premultiplied);
         context
             .configure(&configuration)
-            .map_err(|error| {
-                WebGpuError::terminal("configure WebGPU canvas", js_error(error))
-            })?;
+            .map_err(|error| WebGpuError::terminal("configure WebGPU canvas", js_error(error)))?;
 
         let limits = device.limits();
         let shared = Rc::new(WebGpuShared {
@@ -198,7 +196,10 @@ impl WebGpuBackend {
             ));
         }
         let size = u32::try_from(size).map_err(|_| {
-            WebGpuError::new("read WebGPU buffer", "mapped range exceeds the wasm typed-array limit")
+            WebGpuError::new(
+                "read WebGPU buffer",
+                "mapped range exceeds the wasm typed-array limit",
+            )
         })?;
         let map_promise: Promise = buffer
             .raw
@@ -240,7 +241,5 @@ impl WebGpuShared {
 }
 
 fn js_error(value: JsValue) -> String {
-    value
-        .as_string()
-        .unwrap_or_else(|| format!("{value:?}"))
+    value.as_string().unwrap_or_else(|| format!("{value:?}"))
 }

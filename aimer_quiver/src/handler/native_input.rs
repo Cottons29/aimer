@@ -8,19 +8,32 @@ use super::{AimerApplicationHandler, event_handler::WindowEventHandler};
 
 impl WindowEventHandler {
     pub(super) fn handle_native_input<W: Widget + 'static>(
-        app: &mut AimerApplicationHandler<W>, event: ElementEvent, modifiers: Modifiers,
+        app: &mut AimerApplicationHandler<W>,
+        event: ElementEvent,
+        modifiers: Modifiers,
     ) {
         app.current_modifiers = modifiers;
-        let scale = if app.window_scale.is_finite() && app.window_scale > 0.0 { app.window_scale } else { 1.0 };
+        let scale = if app.window_scale.is_finite() && app.window_scale > 0.0 {
+            app.window_scale
+        } else {
+            1.0
+        };
         match event {
             ElementEvent::Cancel => {
                 app.pressed_button = None;
                 let result = app.cancel_element_events();
-                if result.is_consumed() || result.needs_redraw() { app.request_full_redraw(); }
+                if result.is_consumed() || result.needs_redraw() {
+                    app.request_full_redraw();
+                }
             }
             ElementEvent::PointerMove(pointer) if pointer.source == PointerSource::Mouse => {
-                Self::handle_cursor_move(PhysicalPosition::new(
-                    f64::from(pointer.pos.x) * scale, f64::from(pointer.pos.y) * scale), app);
+                Self::handle_cursor_move(
+                    PhysicalPosition::new(
+                        f64::from(pointer.pos.x) * scale,
+                        f64::from(pointer.pos.y) * scale,
+                    ),
+                    app,
+                );
             }
             ElementEvent::PointerExited(PointerSource::Mouse, _) => Self::handle_cursor_left(app),
             ElementEvent::PointerDown(pointer) | ElementEvent::PointerUp(pointer)
@@ -38,23 +51,50 @@ impl WindowEventHandler {
                 };
                 let state = if matches!(event, ElementEvent::PointerDown(_)) {
                     ElementState::Pressed
-                } else { ElementState::Released };
+                } else {
+                    ElementState::Released
+                };
                 Self::handle_mouse_input(state, button, app);
             }
             ElementEvent::Scroll { delta, phase, .. } => {
-                Self::handle_mouse_wheel(MouseScrollDelta::PixelDelta(PhysicalPosition::new(
-                    f64::from(delta.x) * scale, f64::from(delta.y) * scale)), phase, app);
+                Self::handle_mouse_wheel(
+                    MouseScrollDelta::PixelDelta(PhysicalPosition::new(
+                        f64::from(delta.x) * scale,
+                        f64::from(delta.y) * scale,
+                    )),
+                    phase,
+                    app,
+                );
+            }
+            // UIKit recognizes these itself and reports where they happened, in
+            // logical points, so no scale factor applies. Anchoring the cursor
+            // first keeps later wheel events on the same widget.
+            ElementEvent::Pinch { pos, .. }
+            | ElementEvent::Rotate { pos, .. }
+            | ElementEvent::Pan { pos, .. }
+            | ElementEvent::SmartZoom { pos } => {
+                app.cursor_pos = pos;
+                Self::dispatch_platform_gesture(app, event);
             }
             ElementEvent::KeyInput { key, action, .. } => {
-                if app.ime_composing && !app.current_modifiers.ctrl && !app.current_modifiers.meta { return; }
+                if app.ime_composing && !app.current_modifiers.ctrl && !app.current_modifiers.meta {
+                    return;
+                }
                 if app.active_root().is_some() {
-                    let result = app.dispatch_element_event(app.cursor_pos, &ElementEvent::KeyInput {
-                        key, action, modifiers: app.current_modifiers.clone(),
-                    });
-                    if result.is_consumed() || result.needs_redraw() { app.request_full_redraw(); }
+                    let result = app.dispatch_element_event(
+                        app.cursor_pos,
+                        &ElementEvent::KeyInput {
+                            key,
+                            action,
+                            modifiers: app.current_modifiers.clone(),
+                        },
+                    );
+                    if result.is_consumed() || result.needs_redraw() {
+                        app.request_full_redraw();
+                    }
                 }
             }
-            _ => {},
+            _ => {}
         }
     }
 }

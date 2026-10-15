@@ -2,9 +2,9 @@ use std::cell::{Cell, RefCell, UnsafeCell};
 use std::collections::{HashSet, VecDeque};
 use std::rc::Rc;
 
-use aimer_animation::AnimInstant;
-use aimer_canvas::Canvas;
+use aimer_animation::{AnimInstant, Curve};
 use aimer_attribute::size::{ResolvedSize, Size};
+use aimer_canvas::Canvas;
 use aimer_events::element::ElementEvent;
 use aimer_events::window::request_animation_frame;
 use aimer_macro::Rebuildable;
@@ -12,8 +12,8 @@ use aimer_widget::base::BuildContext;
 use aimer_widget::focus::FocusTrap;
 use aimer_widget::{
     AnyElement, Drawable, Element, EventDispatcher, EventElement, EventResult, EventTreeRole,
-    LayoutElement, PointerKey, Rebuildable as RebuildableTrait, RequiredChild, VisitorElement, Widget, broadcast_event,
-    dispatch_focused_event,
+    LayoutElement, PointerKey, Rebuildable as RebuildableTrait, RequiredChild, VisitorElement,
+    Widget, broadcast_event, dispatch_focused_event,
 };
 
 use crate::ModalAnimation;
@@ -127,7 +127,11 @@ impl OverlayLayer {
         CONTENTS.with(|contents| {
             contents.items_mut().push(HostedContent {
                 id,
-                element: OverlayFollower { child: element, position }.boxed(),
+                element: OverlayFollower {
+                    child: element,
+                    position,
+                }
+                .boxed(),
             });
         });
         aimer_widget::notify_hosted_element_tree_changed();
@@ -583,7 +587,7 @@ impl RawModalOverlay {
 fn draw_hosted_entries(entries: &HostedModalEntries, ctx: &BuildContext) {
     let now = AnimInstant::now();
     for entry in entries.entries() {
-        entry.timeline.borrow_mut().tick(now, entry.animation);
+        entry.timeline.borrow_mut().tick(now, entry.animation.as_ref());
         entry.element.update(ctx);
     }
 
@@ -658,10 +662,11 @@ impl EventElement for RawModalOverlay {
             // topmost modal directly so an anchored wheel can consume a
             // trackpad or mouse-wheel frame instead of the page beneath
             // it. Pointer events still use normal hit testing/capture.
-            return self.forward_child_redraw(entries.last().map_or_else(
-                EventResult::ignored,
-                |entry| dispatch_focused_event(entry.element.as_ref(), event),
-            ));
+            return self.forward_child_redraw(
+                entries.last().map_or_else(EventResult::ignored, |entry| {
+                    dispatch_focused_event(entry.element.as_ref(), event)
+                }),
+            );
         }
         if matches!(
             event,
@@ -671,10 +676,11 @@ impl EventElement for RawModalOverlay {
                 ..
             }
         ) {
-            return self.forward_child_redraw(entries.last().map_or_else(
-                EventResult::ignored,
-                |entry| entry.element.on_event(event),
-            ));
+            return self.forward_child_redraw(
+                entries
+                    .last()
+                    .map_or_else(EventResult::ignored, |entry| entry.element.on_event(event)),
+            );
         }
         let pointer = event_pointer_key(event);
         if let Some(pointer) = pointer
@@ -762,10 +768,7 @@ impl VisitorElement for RawModalOverlay {
         }
     }
 
-    fn visit_retained_v2_children<'a>(
-        &'a self,
-        visitor: &mut dyn FnMut(usize, &'a dyn Element),
-    ) {
+    fn visit_retained_v2_children<'a>(&'a self, visitor: &mut dyn FnMut(usize, &'a dyn Element)) {
         let entries = self.entries.entries();
         for (index, entry) in entries.iter().enumerate() {
             visitor(index, entry.element.as_ref());
@@ -918,7 +921,10 @@ impl ModalTimeline {
     }
 
     pub(crate) fn is_active(&self) -> bool {
-        matches!(self.phase, TimelinePhase::Entering { .. } | TimelinePhase::Exiting { .. })
+        matches!(
+            self.phase,
+            TimelinePhase::Entering { .. } | TimelinePhase::Exiting { .. }
+        )
     }
 
     fn begin_exit(&mut self, animated: bool) {
@@ -940,7 +946,7 @@ impl ModalTimeline {
         request_animation_frame();
     }
 
-    fn tick(&mut self, now: AnimInstant, animation: Option<ModalAnimation>) {
+    fn tick(&mut self, now: AnimInstant, animation: Option<&ModalAnimation>) {
         let Some(animation) = animation else {
             return;
         };
@@ -1113,7 +1119,7 @@ mod tests {
     use std::rc::Rc;
     use std::time::Duration;
 
-    use aimer_animation::{AnimInstant, Curve};
+    use aimer_animation::{AnimInstant, curves};
     use aimer_attribute::Vec2d;
     use aimer_events::element::ElementEvent;
     use aimer_events::pointer::{PointerButton, PointerInfo, PointerSource};
@@ -1121,8 +1127,7 @@ mod tests {
     use aimer_widget::focus::{FocusNode, FocusTrap, active_focus_trap};
     use aimer_widget::{
         CaptureRequest, Drawable, Element, EventDispatcher, EventElement, EventResult,
-        EventTreeRole,
-        LayoutElement, PointerKey, Rebuildable, VisitorElement,
+        EventTreeRole, LayoutElement, PointerKey, Rebuildable, VisitorElement,
     };
 
     use super::{HostedModal, ModalId, ModalTimeline, dispatch_hosted_event};
@@ -1231,7 +1236,11 @@ mod tests {
         position.set(Vec2d { x: 50.0, y: 60.0 });
         let mut moved = None;
         overlay.visit_retained_v2_children(&mut |_, child| moved = child.pos());
-        assert_eq!(moved, Some(Vec2d { x: 50.0, y: 60.0 }), "the place is read each time");
+        assert_eq!(
+            moved,
+            Some(Vec2d { x: 50.0, y: 60.0 }),
+            "the place is read each time"
+        );
 
         let mut routed = 0;
         overlay.visit_children(&mut |_| routed += 1);
@@ -1300,10 +1309,12 @@ mod tests {
 
     #[test]
     fn a_hosted_entry_confines_focus_until_it_is_dismissed() {
-        let entry = trapping_entry(CapturingModalElement {
-            events: Rc::new(Cell::new(0)),
-        }
-        .boxed());
+        let entry = trapping_entry(
+            CapturingModalElement {
+                events: Rc::new(Cell::new(0)),
+            }
+            .boxed(),
+        );
 
         assert_eq!(
             active_focus_trap(),
@@ -1468,7 +1479,11 @@ mod tests {
         let _ = dispatcher.dispatch(host.as_ref(), inside, &down);
         assert!(dispatcher.is_captured(pointer));
         assert_eq!(modal_events.get(), 1);
-        assert_eq!(app_events.get(), 0, "the modal overlay stays above app content");
+        assert_eq!(
+            app_events.get(),
+            0,
+            "the modal overlay stays above app content"
+        );
 
         let move_event = ElementEvent::PointerMove(PointerInfo::new(
             outside,
@@ -1524,23 +1539,23 @@ mod tests {
         let animation = ModalAnimation::new()
             .enter_duration(Duration::from_millis(100))
             .exit_duration(Duration::from_millis(100))
-            .enter_curve(Curve::Linear)
-            .exit_curve(Curve::Linear);
+            .enter_curve(curves::LINEAR)
+            .exit_curve(curves::LINEAR);
         let start = AnimInstant::now();
         let mut timeline = ModalTimeline::new(true);
         assert!(timeline.is_active());
 
-        timeline.tick(start, Some(animation));
-        timeline.tick(start + Duration::from_millis(50), Some(animation));
+        timeline.tick(start, Some(&animation));
+        timeline.tick(start + Duration::from_millis(50), Some(&animation));
         assert!((timeline.progress() - 0.5).abs() < 0.01);
         assert!(timeline.is_active());
 
         timeline.begin_exit(true);
         assert!(timeline.is_active());
-        timeline.tick(start + Duration::from_millis(50), Some(animation));
+        timeline.tick(start + Duration::from_millis(50), Some(&animation));
         assert!((timeline.progress() - 0.5).abs() < 0.01);
 
-        timeline.tick(start + Duration::from_millis(100), Some(animation));
+        timeline.tick(start + Duration::from_millis(100), Some(&animation));
         assert!((timeline.progress() - 0.25).abs() < 0.01);
         assert!(timeline.is_active());
     }
@@ -1553,12 +1568,12 @@ mod tests {
         let now = AnimInstant::now();
         let mut timeline = ModalTimeline::new(true);
 
-        timeline.tick(now, Some(animation));
+        timeline.tick(now, Some(&animation));
         assert_eq!(timeline.progress(), 1.0);
         assert!(!timeline.is_active());
 
         timeline.begin_exit(true);
-        timeline.tick(now, Some(animation));
+        timeline.tick(now, Some(&animation));
         assert_eq!(timeline.progress(), 0.0);
         assert!(timeline.finished());
         assert!(!timeline.is_active());

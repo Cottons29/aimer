@@ -1,7 +1,7 @@
 use aimer_picker::{
     CancelReason, ColorChannel, ColorKey, ColorPicker, Date, DateTime, DateTimePicker,
     DateTimePickerPolicy, FocusTarget, Hsva, OverlayAnchor, OverlayConsumer, OverlayRequest,
-    PickerOverlay, PickerOutcome, PickerSessionError, TimeOfDay, TimeZonePolicy,
+    PickerOutcome, PickerOverlay, PickerSessionError, TimeOfDay, TimeZonePolicy,
 };
 
 #[derive(Default)]
@@ -94,7 +94,9 @@ fn overlay_dismissal_restores_focus_once_and_honors_the_policy() {
         dismissed: Vec::new(),
     };
     let mut overlay = PickerOverlay::present(&mut host, request, FocusTarget::new(11));
-    let mut focus = RecordingFocus { restored: Vec::new() };
+    let mut focus = RecordingFocus {
+        restored: Vec::new(),
+    };
 
     assert!(!overlay.dismiss(CancelReason::Escape, &mut host, &mut focus));
     assert!(overlay.is_presented());
@@ -111,7 +113,9 @@ fn external_dismissal_acknowledgement_closes_without_repeating_host_dismissal() 
     let request = OverlayRequest::new(OverlayAnchor::new(7), true);
     let mut host = RecordingHost::default();
     let mut overlay = PickerOverlay::present(&mut host, request, FocusTarget::new(11));
-    let mut focus = RecordingFocus { restored: Vec::new() };
+    let mut focus = RecordingFocus {
+        restored: Vec::new(),
+    };
 
     assert!(overlay.acknowledge_external_dismissal(CancelReason::Escape, &mut focus));
     assert!(!overlay.is_presented());
@@ -125,7 +129,9 @@ fn external_dismissal_acknowledgement_honors_the_request_policy() {
     let request = OverlayRequest::new(OverlayAnchor::new(7), true).dismiss_on_escape(false);
     let mut host = RecordingHost::default();
     let mut overlay = PickerOverlay::present(&mut host, request, FocusTarget::new(11));
-    let mut focus = RecordingFocus { restored: Vec::new() };
+    let mut focus = RecordingFocus {
+        restored: Vec::new(),
+    };
 
     assert!(!overlay.acknowledge_external_dismissal(CancelReason::Escape, &mut focus));
     assert!(overlay.is_presented());
@@ -172,18 +178,11 @@ fn overlay_presentation_reports_missing_and_unsupported_hosts_without_side_effec
 fn date_time_picker_overlay_confirmation_commits_and_restores_focus() {
     let timezone = TimeZonePolicy::fixed_offset(330).unwrap();
     let date = Date::try_new(2024, 5, 15).unwrap();
-    let initial = DateTime::try_new(
-        date,
-        TimeOfDay::try_new(9, 30, 0, 0).unwrap(),
-        timezone,
-    )
-    .unwrap();
+    let initial =
+        DateTime::try_new(date, TimeOfDay::try_new(9, 30, 0, 0).unwrap(), timezone).unwrap();
     let changed_time = TimeOfDay::try_new(10, 45, 0, 0).unwrap();
-    let mut picker = DateTimePicker::try_new(
-        Some(initial),
-        DateTimePickerPolicy::unbounded(timezone),
-    )
-    .unwrap();
+    let mut picker =
+        DateTimePicker::try_new(Some(initial), DateTimePickerPolicy::unbounded(timezone)).unwrap();
     let request = OverlayRequest::new(OverlayAnchor::new(12), true);
     let focus_target = FocusTarget::new(34);
     let mut host = RecordingHost::default();
@@ -192,7 +191,9 @@ fn date_time_picker_overlay_confirmation_commits_and_restores_focus() {
         .unwrap();
 
     picker.set_time(changed_time).unwrap();
-    let mut focus = RecordingFocus { restored: Vec::new() };
+    let mut focus = RecordingFocus {
+        restored: Vec::new(),
+    };
     let expected = DateTime::try_new(date, changed_time, timezone).unwrap();
     assert_eq!(
         picker
@@ -216,17 +217,16 @@ fn color_picker_overlay_escape_rolls_back_and_restores_focus() {
         .open_with_overlay(&mut host, request, focus_target)
         .unwrap();
 
-    picker.handle_key(ColorChannel::Hue, ColorKey::Increase).unwrap();
+    picker
+        .handle_key(ColorChannel::Hue, ColorKey::Increase)
+        .unwrap();
     assert_ne!(picker.draft(), initial);
-    let mut focus = RecordingFocus { restored: Vec::new() };
+    let mut focus = RecordingFocus {
+        restored: Vec::new(),
+    };
     assert_eq!(
         picker
-            .cancel_with_overlay(
-                &mut overlay,
-                CancelReason::Escape,
-                &mut host,
-                &mut focus,
-            )
+            .cancel_with_overlay(&mut overlay, CancelReason::Escape, &mut host, &mut focus,)
             .unwrap(),
         PickerOutcome::Cancelled {
             reason: CancelReason::Escape,

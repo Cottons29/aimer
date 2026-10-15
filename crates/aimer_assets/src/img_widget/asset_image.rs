@@ -5,9 +5,7 @@ use aimer_attribute::size::Size;
 use aimer_style::BoxFit;
 use aimer_widget::base::BuildContext;
 use aimer_widget::portable::__anteros::{PropertyId, WidgetDocumentView, WidgetNodeView};
-use aimer_widget::portable::{
-    required_materialized_property, PortableMaterializeError,
-};
+use aimer_widget::portable::{PortableMaterializeError, required_materialized_property};
 use aimer_widget::{AnyElement, AnyWidget, Element, LayoutCache, Widget};
 
 use crate::img_widget::image_widget::RawImageWidget;
@@ -175,10 +173,10 @@ impl Widget for AssetImage {
 #[cfg(all(test, feature = "portable-guest"))]
 mod tests {
     use aimer_attribute::Dimension;
+    use aimer_widget::PortableWidget;
     use aimer_widget::portable::{
         PortableBuildContext, PortableLimits, PortableWidgetLimits, SourceFingerprint,
     };
-    use aimer_widget::PortableWidget;
 
     use super::AssetImage;
 
@@ -191,9 +189,8 @@ mod tests {
             PortableLimits::new(8, 16, 64, 128, 4_096),
         )
         .unwrap();
-        let source = SourceFingerprint::new(
-            aimer_widget::portable::StableId128::from_bytes([34; 16]),
-        );
+        let source =
+            SourceFingerprint::new(aimer_widget::portable::StableId128::from_bytes([34; 16]));
         let root = AssetImage::new("assets/polished_tooling.png")
             .width(Dimension::Px(128.0))
             .height(Dimension::Px(64.0))

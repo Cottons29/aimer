@@ -19,9 +19,9 @@
 use std::future::Future;
 use std::pin::Pin;
 
+use aimer::input::button::Button;
 use aimer::style::{FontWeight, LayoutSpacing, TextAlign, TextStyle, Theme, ThemeData};
 use aimer::*;
-use aimer::input::button::Button;
 
 /// The URL the button asks for: small, stable, and made for exactly this.
 const EXAMPLE_URL: &str = "https://example.com";

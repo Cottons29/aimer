@@ -352,7 +352,10 @@ impl MediaElement {
             });
         }
         self.ensure_supported()?;
-        if matches!(self.state, MediaState::Ready | MediaState::Paused | MediaState::Stopped) {
+        if matches!(
+            self.state,
+            MediaState::Ready | MediaState::Paused | MediaState::Stopped
+        ) {
             self.state = MediaState::Playing;
             Ok(())
         } else {

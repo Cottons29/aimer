@@ -172,7 +172,10 @@ impl<T> Select<T> {
             return ControlAction::Ignored;
         }
         self.open = true;
-        if self.focused_index.is_none_or(|index| !self.is_available(index)) {
+        if self
+            .focused_index
+            .is_none_or(|index| !self.is_available(index))
+        {
             self.focused_index = self.selected_index().or_else(|| self.first_available());
         }
         ControlAction::Opened
@@ -254,24 +257,26 @@ impl<T> Select<T> {
             }
             InputEvent::KeyDown(key) if is_next_key(key) => {
                 if self.open {
-                    self.move_focus(true).map_or(ControlAction::Ignored, ControlAction::FocusMoved)
+                    self.move_focus(true)
+                        .map_or(ControlAction::Ignored, ControlAction::FocusMoved)
                 } else {
                     self.open_menu()
                 }
             }
             InputEvent::KeyDown(key) if is_previous_key(key) => {
                 if self.open {
-                    self.move_focus(false).map_or(ControlAction::Ignored, ControlAction::FocusMoved)
+                    self.move_focus(false)
+                        .map_or(ControlAction::Ignored, ControlAction::FocusMoved)
                 } else {
                     self.open_menu()
                 }
             }
-            InputEvent::KeyDown(Key::Home) if self.open => {
-                self.focus_edge(false).map_or(ControlAction::Ignored, ControlAction::FocusMoved)
-            }
-            InputEvent::KeyDown(Key::End) if self.open => {
-                self.focus_edge(true).map_or(ControlAction::Ignored, ControlAction::FocusMoved)
-            }
+            InputEvent::KeyDown(Key::Home) if self.open => self
+                .focus_edge(false)
+                .map_or(ControlAction::Ignored, ControlAction::FocusMoved),
+            InputEvent::KeyDown(Key::End) if self.open => self
+                .focus_edge(true)
+                .map_or(ControlAction::Ignored, ControlAction::FocusMoved),
             InputEvent::Cancel => {
                 self.state.set_pressed(false);
                 self.cancel()
@@ -287,7 +292,9 @@ impl<T> Select<T> {
     }
 
     fn is_available(&self, index: usize) -> bool {
-        self.options.get(index).is_some_and(|option| !option.disabled())
+        self.options
+            .get(index)
+            .is_some_and(|option| !option.disabled())
     }
 
     fn first_available(&self) -> Option<usize> {
@@ -354,7 +361,11 @@ impl<T> Select<T> {
         let value = option.value().clone();
         self.focused_index = Some(index);
         self.open = false;
-        if self.selected.as_ref().is_some_and(|selected| selected == &value) {
+        if self
+            .selected
+            .as_ref()
+            .is_some_and(|selected| selected == &value)
+        {
             return ControlAction::Closed;
         }
         emit_change(&self.on_change, value)

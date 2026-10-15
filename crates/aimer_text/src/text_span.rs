@@ -328,15 +328,10 @@ fn transform_grapheme(
 }
 
 fn rendered_source_ranges(text: &str, source_range: &Range<usize>) -> Vec<Range<usize>> {
-    text.graphemes(true)
-        .map(|_| source_range.clone())
-        .collect()
+    text.graphemes(true).map(|_| source_range.clone()).collect()
 }
 
-fn extend_source_range(
-    source_range: &mut Option<Range<usize>>,
-    appended_range: &Range<usize>,
-) {
+fn extend_source_range(source_range: &mut Option<Range<usize>>, appended_range: &Range<usize>) {
     if let Some(source_range) = source_range {
         source_range.end = appended_range.end;
     } else {
@@ -344,14 +339,8 @@ fn extend_source_range(
     }
 }
 
-fn source_range_from_rendered(
-    rendered_source_ranges: &[Range<usize>],
-) -> Option<Range<usize>> {
-    Some(
-        rendered_source_ranges
-            .first()?
-            .start..rendered_source_ranges.last()?.end,
-    )
+fn source_range_from_rendered(rendered_source_ranges: &[Range<usize>]) -> Option<Range<usize>> {
+    Some(rendered_source_ranges.first()?.start..rendered_source_ranges.last()?.end)
 }
 
 fn is_word_spacing_grapheme(grapheme: &str) -> bool {
@@ -365,12 +354,16 @@ pub(crate) fn adjusted_grapheme_advance(
     count: usize,
     measure: &mut dyn FnMut(&str, &TextStyle) -> f32,
 ) -> f32 {
-    let letter_spacing = if style
-        .letter_spacing
-        .is_finite() { style.letter_spacing } else { 0.0 };
-    let word_spacing = if style
-        .word_spacing
-        .is_finite() { style.word_spacing } else { 0.0 };
+    let letter_spacing = if style.letter_spacing.is_finite() {
+        style.letter_spacing
+    } else {
+        0.0
+    };
+    let word_spacing = if style.word_spacing.is_finite() {
+        style.word_spacing
+    } else {
+        0.0
+    };
     let spacing = if index + 1 < count {
         letter_spacing
     } else {
@@ -388,12 +381,16 @@ pub(crate) fn adjusted_width(
     style: &TextStyle,
     measure: &mut dyn FnMut(&str, &TextStyle) -> f32,
 ) -> f32 {
-    let letter_spacing = if style
-        .letter_spacing
-        .is_finite() { style.letter_spacing } else { 0.0 };
-    let word_spacing = if style
-        .word_spacing
-        .is_finite() { style.word_spacing } else { 0.0 };
+    let letter_spacing = if style.letter_spacing.is_finite() {
+        style.letter_spacing
+    } else {
+        0.0
+    };
+    let word_spacing = if style.word_spacing.is_finite() {
+        style.word_spacing
+    } else {
+        0.0
+    };
     if letter_spacing == 0.0 && word_spacing == 0.0 {
         return measure(text, style);
     }
@@ -576,13 +573,14 @@ pub(crate) fn layout_resolved_spans_with_indent(
                     width: 0.0,
                 }
             };
-            candidate.width = adjusted_width(
-                &candidate.text,
-                &spans[candidate.span_index].style,
-                measure,
-            );
+            candidate.width =
+                adjusted_width(&candidate.text, &spans[candidate.span_index].style, measure);
 
-            if !same_span && max_width > 0.0 && *line_has_content && *x + candidate.width > max_width {
+            if !same_span
+                && max_width > 0.0
+                && *line_has_content
+                && *x + candidate.width > max_width
+            {
                 *line += 1;
                 *x = 0.0;
                 *line_has_content = false;
@@ -596,16 +594,13 @@ pub(crate) fn layout_resolved_spans_with_indent(
             {
                 let split_at = candidate.text.len() - grapheme.text.len();
                 candidate.text.truncate(split_at);
-                candidate
-                    .rendered_source_ranges
-                    .truncate(candidate.rendered_source_ranges.len() - grapheme.rendered_source_ranges.len());
+                candidate.rendered_source_ranges.truncate(
+                    candidate.rendered_source_ranges.len() - grapheme.rendered_source_ranges.len(),
+                );
                 candidate.source_range =
                     source_range_from_rendered(&candidate.rendered_source_ranges);
-                candidate.width = adjusted_width(
-                    &candidate.text,
-                    &spans[candidate.span_index].style,
-                    measure,
-                );
+                candidate.width =
+                    adjusted_width(&candidate.text, &spans[candidate.span_index].style, measure);
                 fragments.push(candidate);
                 *line += 1;
                 *x = 0.0;
@@ -661,11 +656,8 @@ pub(crate) fn layout_resolved_spans_with_indent(
             }
 
             let is_break = break_offsets.binary_search(&source_range.end).is_ok();
-            let transformed = transform_grapheme(
-                grapheme,
-                span.style.text_transform,
-                &mut capitalize_next,
-            );
+            let transformed =
+                transform_grapheme(grapheme, span.style.text_transform, &mut capitalize_next);
             let rendered_source_ranges = if span.style.text_transform == TextTransform::None {
                 Vec::new()
             } else {
@@ -787,11 +779,7 @@ pub(crate) fn ellipsize_first_line(
                 last.rendered_source_ranges.pop();
                 last.source_range = source_range_from_rendered(&last.rendered_source_ranges);
             }
-            last.width = adjusted_width(
-                &last.text,
-                &spans[last.span_index].style,
-                &mut measure,
-            );
+            last.width = adjusted_width(&last.text, &spans[last.span_index].style, &mut measure);
         }
         if last.text.is_empty() {
             layout.fragments.pop();
@@ -803,11 +791,7 @@ pub(crate) fn ellipsize_first_line(
         let mut rendered_text = last.text.clone();
         rendered_text.pop();
         rendered_text.push('…');
-        last.width = adjusted_width(
-            &rendered_text,
-            &spans[last.span_index].style,
-            &mut measure,
-        );
+        last.width = adjusted_width(&rendered_text, &spans[last.span_index].style, &mut measure);
     } else {
         let ellipsis_width = adjusted_width("…", &spans[span_index].style, &mut measure);
         layout.fragments.push(SpanLayoutFragment {
@@ -835,10 +819,8 @@ mod tests {
     #[test]
     fn plain_source_keeps_share_ref_backing() {
         let source = ShareRef::from_static("shared plain span text");
-        let span = ResolvedTextSpan::plain_source(
-            TextSource::from(source.clone()),
-            TextStyle::default(),
-        );
+        let span =
+            ResolvedTextSpan::plain_source(TextSource::from(source.clone()), TextStyle::default());
         let TextSource::ShareRef(span_source) = span.text else {
             panic!("plain resolved span should retain its shared source")
         };
@@ -958,15 +940,11 @@ mod tests {
             TextStyle::new().text_transform(TextTransform::Uppercase),
         )];
 
-        let layout = layout_resolved_spans(&spans, 0.0, |text, _| {
-            text.graphemes(true).count() as f32
-        });
+        let layout =
+            layout_resolved_spans(&spans, 0.0, |text, _| text.graphemes(true).count() as f32);
 
         assert_eq!(layout.fragments[0].text, "SS");
-        assert_eq!(
-            layout.fragments[0].rendered_source_ranges,
-            vec![0..2, 0..2]
-        );
+        assert_eq!(layout.fragments[0].rendered_source_ranges, vec![0..2, 0..2]);
     }
 
     #[test]
@@ -1050,10 +1028,7 @@ mod tests {
                         .text_transform(TextTransform::Lowercase)
                         .letter_spacing(1.0),
                 ),
-                ResolvedTextSpan::plain(
-                    Rc::from(" cd"),
-                    TextStyle::new().word_spacing(2.0),
-                ),
+                ResolvedTextSpan::plain(Rc::from(" cd"), TextStyle::new().word_spacing(2.0)),
             ],
             0.0,
             |text, _| text.graphemes(true).count() as f32,
@@ -1071,9 +1046,8 @@ mod tests {
             TextStyle::new().letter_spacing(1.0),
         )];
 
-        let layout = layout_resolved_spans(&spans, 5.0, |text, _| {
-            text.graphemes(true).count() as f32
-        });
+        let layout =
+            layout_resolved_spans(&spans, 5.0, |text, _| text.graphemes(true).count() as f32);
 
         assert_eq!(layout.line_count, 2);
         assert_eq!(layout.fragments[0].text, "ab ");
@@ -1088,16 +1062,18 @@ mod tests {
             TextStyle::new().letter_spacing(1.0).word_spacing(2.0),
         )];
 
-        let layout = layout_resolved_spans(&spans, 0.0, |text, _| {
-            text.graphemes(true).count() as f32
-        });
+        let layout =
+            layout_resolved_spans(&spans, 0.0, |text, _| text.graphemes(true).count() as f32);
 
         assert_eq!(layout.fragments[0].width, 7.0);
     }
 
     #[test]
     fn first_line_indent_changes_only_the_first_line_origin() {
-        let spans = vec![ResolvedTextSpan::plain(Rc::from("one two"), TextStyle::default())];
+        let spans = vec![ResolvedTextSpan::plain(
+            Rc::from("one two"),
+            TextStyle::default(),
+        )];
 
         let layout = layout_resolved_spans_with_indent(&spans, 5.0, 2.0, |text, _| {
             text.graphemes(true).count() as f32
@@ -1105,11 +1081,13 @@ mod tests {
 
         assert_eq!(layout.fragments[0].x, 2.0);
         assert!(layout.fragments.iter().any(|fragment| fragment.line > 0));
-        assert!(layout
-            .fragments
-            .iter()
-            .filter(|fragment| fragment.line > 0)
-            .all(|fragment| fragment.x == 0.0));
+        assert!(
+            layout
+                .fragments
+                .iter()
+                .filter(|fragment| fragment.line > 0)
+                .all(|fragment| fragment.x == 0.0)
+        );
     }
 
     #[test]
@@ -1125,11 +1103,13 @@ mod tests {
 
         assert_eq!(layout.fragments[0].x, -2.0);
         assert!(layout.fragments.iter().any(|fragment| fragment.line > 0));
-        assert!(layout
-            .fragments
-            .iter()
-            .filter(|fragment| fragment.line > 0)
-            .all(|fragment| fragment.x == 0.0));
+        assert!(
+            layout
+                .fragments
+                .iter()
+                .filter(|fragment| fragment.line > 0)
+                .all(|fragment| fragment.x == 0.0)
+        );
     }
 
     #[test]

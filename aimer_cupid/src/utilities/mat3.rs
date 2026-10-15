@@ -227,19 +227,18 @@ mod tests {
         let (actual, expected) = (a.mul(&b), mul_by_loops(&a, &b));
         for c in 0..3 {
             for r in 0..3 {
-                assert_eq!(
-                    actual.cols[c][r].to_bits(),
-                    expected.cols[c][r].to_bits()
-                );
+                assert_eq!(actual.cols[c][r].to_bits(), expected.cols[c][r].to_bits());
             }
         }
     }
 
     #[test]
     fn inverse_transform_point_rejects_singular_transforms() {
-        assert!(Mat3::scale(0.0, 2.0)
-            .inverse_transform_point(1.0, 1.0)
-            .is_none());
+        assert!(
+            Mat3::scale(0.0, 2.0)
+                .inverse_transform_point(1.0, 1.0)
+                .is_none()
+        );
     }
 
     #[test]

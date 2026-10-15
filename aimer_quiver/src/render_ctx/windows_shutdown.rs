@@ -1,5 +1,7 @@
 //! Emergency shutdown keeps DXGI's synchronous window messages serviceable.
-use windows::Win32::UI::WindowsAndMessaging::{DispatchMessageW, MSG, PeekMessageW, PM_REMOVE, PostQuitMessage, TranslateMessage, WM_QUIT};
+use windows::Win32::UI::WindowsAndMessaging::{
+    DispatchMessageW, MSG, PM_REMOVE, PeekMessageW, PostQuitMessage, TranslateMessage, WM_QUIT,
+};
 
 pub(super) fn pump_messages() {
     // SAFETY: called only on the window/event-loop thread. PeekMessageW

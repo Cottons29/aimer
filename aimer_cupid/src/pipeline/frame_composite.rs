@@ -10,17 +10,12 @@ pub(crate) struct FrameCompositePipeline<
     bind_group_layout: B::BindGroupLayout,
 }
 
-
-
 // ── Backend-agnostic generic path ──────────────────────────────────────────
 //
 // Pipeline resources and draw operations use the selected backend's associated types.
 impl<B: crate::backend::GpuBackend> FrameCompositePipeline<B> {
     /// Creates the frame composite pipeline using the selected backend.
-    pub(crate) fn new(
-        backend: &B,
-        format: B::TextureFormat,
-    ) -> Self {
+    pub(crate) fn new(backend: &B, format: B::TextureFormat) -> Self {
         use crate::backend::*;
 
         let shader = backend.create_shader_module(
@@ -69,11 +64,7 @@ impl<B: crate::backend::GpuBackend> FrameCompositePipeline<B> {
         }
     }
 
-    pub(crate) fn create_bind_group(
-        &self,
-        backend: &B,
-        source: &B::TextureView,
-    ) -> B::BindGroup {
+    pub(crate) fn create_bind_group(&self, backend: &B, source: &B::TextureView) -> B::BindGroup {
         backend.create_bind_group(
             &self.bind_group_layout,
             &[crate::backend::BindGroupEntry {
@@ -83,11 +74,7 @@ impl<B: crate::backend::GpuBackend> FrameCompositePipeline<B> {
         )
     }
 
-    pub(crate) fn render<'a>(
-        &'a self,
-        pass: &mut B::RenderPass<'a>,
-        bind_group: &'a B::BindGroup,
-    )
+    pub(crate) fn render<'a>(&'a self, pass: &mut B::RenderPass<'a>, bind_group: &'a B::BindGroup)
     where
         B::RenderPass<'a>: crate::backend::GpuRenderPass<B>,
     {

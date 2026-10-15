@@ -320,7 +320,10 @@ mod tests {
         for magnitude in [120.0, 100.0, 82.0, 66.0] {
             decay.observe(down(magnitude));
         }
-        assert!(!decay.observe(down(54.0)), "the flick has decayed into a tail");
+        assert!(
+            !decay.observe(down(54.0)),
+            "the flick has decayed into a tail"
+        );
 
         // The recovery terminates the gesture while the browser still has most
         // of the flick queued.

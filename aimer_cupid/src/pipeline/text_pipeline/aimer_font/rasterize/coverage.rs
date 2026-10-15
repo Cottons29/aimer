@@ -1,5 +1,7 @@
-use super::{Edge, FlattenedGlyph, Point, MAX_FLATTENED_POINTS, SAMPLE_GRID,
-    SMALL_GLYPH_SAMPLE_GRID, edge_winding};
+use super::{
+    Edge, FlattenedGlyph, MAX_FLATTENED_POINTS, Point, SAMPLE_GRID, SMALL_GLYPH_SAMPLE_GRID,
+    edge_winding,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum CoverageFillRule {
@@ -97,11 +99,7 @@ pub(super) fn build_coverage_bitmap_with_fill_rule(
 fn contours_to_edges(contours: &[Vec<Point>]) -> Vec<Edge> {
     contours
         .iter()
-        .flat_map(|contour| {
-            contour
-                .windows(2)
-                .map(|edge| Edge::new(edge[0], edge[1]))
-        })
+        .flat_map(|contour| contour.windows(2).map(|edge| Edge::new(edge[0], edge[1])))
         .collect()
 }
 
@@ -192,13 +190,7 @@ fn build_scanline_plan_and_fill(
         sample_grid,
         |scanline, spans| {
             let row = scanline / sample_grid_usize;
-            has_coverage |= fill_coverage_spans(
-                spans,
-                row * width,
-                width,
-                sample_grid,
-                bitmap,
-            );
+            has_coverage |= fill_coverage_spans(spans, row * width, width, sample_grid, bitmap);
         },
     )?;
     normalize_bitmap(&mut bitmap[..bitmap_len], sample_grid);
@@ -222,9 +214,7 @@ where
     let sample_grid_usize = usize::try_from(sample_grid).ok()?;
     let scanline_count = height.checked_mul(sample_grid_usize)?;
     let mut offsets = Vec::new();
-    offsets
-        .try_reserve(scanline_count.checked_add(1)?)
-        .ok()?;
+    offsets.try_reserve(scanline_count.checked_add(1)?).ok()?;
     offsets.push(0);
 
     let mut intersections = Vec::new();
@@ -234,8 +224,7 @@ where
     for row in 0..height {
         let edges_for_row = row_edges.row(row);
         for sample_y in 0..sample_grid {
-            let y = height as f32
-                - (row as f32 + (sample_y as f32 + 0.5) / sample_grid as f32);
+            let y = height as f32 - (row as f32 + (sample_y as f32 + 0.5) / sample_grid as f32);
             intersections.clear();
             for &edge_index in edges_for_row {
                 let edge = edges[edge_index];
@@ -250,9 +239,7 @@ where
                     });
                 }
             }
-            intersections.sort_unstable_by(|first, second| {
-                first.x.total_cmp(&second.x)
-            });
+            intersections.sort_unstable_by(|first, second| first.x.total_cmp(&second.x));
 
             let line_start = spans.len();
             let mut winding = 0_i32;
@@ -289,12 +276,7 @@ where
     })
 }
 
-fn fill_scanline_plan(
-    plan: &ScanlinePlan,
-    width: usize,
-    height: usize,
-    bitmap: &mut [u8],
-) -> bool {
+fn fill_scanline_plan(plan: &ScanlinePlan, width: usize, height: usize, bitmap: &mut [u8]) -> bool {
     let Some(bitmap_len) = width.checked_mul(height) else {
         return false;
     };
@@ -351,7 +333,9 @@ fn fill_coverage_spans(
 #[inline]
 fn fill_coverage_span(row: &mut [u8], start: f32, end: f32, sample_grid: u32) -> bool {
     // Scanline crossings supply finite coordinates clipped to this row.
-    if start >= end || sample_grid == 0 { return false; }
+    if start >= end || sample_grid == 0 {
+        return false;
+    }
     let first_column = start.floor() as usize;
     let last_column = end.ceil().min(row.len() as f32) as usize;
     let full_start = start.ceil() as usize;
@@ -372,7 +356,9 @@ fn fill_coverage_span(row: &mut [u8], start: f32, end: f32, sample_grid: u32) ->
         has_coverage = true;
         if full_end < last_column {
             let samples = horizontal_coverage_samples(start, end, full_end as f32, sample_grid);
-            if samples != 0 { row[full_end] += samples as u8; }
+            if samples != 0 {
+                row[full_end] += samples as u8;
+            }
         }
     } else {
         // A span without a full pixel touches at most two boundary pixels.
@@ -420,9 +406,7 @@ fn scan_convert_reference(
                     });
                 }
             }
-            intersections.sort_unstable_by(|first, second| {
-                first.x.total_cmp(&second.x)
-            });
+            intersections.sort_unstable_by(|first, second| first.x.total_cmp(&second.x));
 
             let mut winding = 0_i32;
             let mut span_start = 0.0_f32;
@@ -439,8 +423,7 @@ fn scan_convert_reference(
                     let last_column = end.ceil().min(width as f32) as usize;
                     for column in first_column..last_column {
                         for sample_x in 0..SAMPLE_GRID {
-                            let x = column as f32
-                                + (sample_x as f32 + 0.5) / SAMPLE_GRID as f32;
+                            let x = column as f32 + (sample_x as f32 + 0.5) / SAMPLE_GRID as f32;
                             if x >= start && x < end {
                                 covered_samples[row * width + column] += 1;
                             }
@@ -515,23 +498,11 @@ fn scan_convert_into_with_fill_rule(
         let candidates = row_edges.map(|rows| rows.row(row));
 
         for sample_y in 0..sample_grid {
-            let y = height as f32
-                - (row as f32 + (sample_y as f32 + 0.5) / sample_grid as f32);
-            update_active_edges(
-                edges,
-                candidates,
-                y,
-                scratch,
-            );
+            let y = height as f32 - (row as f32 + (sample_y as f32 + 0.5) / sample_grid as f32);
+            update_active_edges(edges, candidates, y, scratch);
             sort_active_edges(scratch, sample_y == 0);
-            has_coverage |= fill_active_scanline(
-                row,
-                width,
-                sample_grid,
-                bitmap,
-                scratch,
-                fill_rule,
-            );
+            has_coverage |=
+                fill_active_scanline(row, width, sample_grid, bitmap, scratch, fill_rule);
         }
 
         for active in &scratch.active_edges {
@@ -666,12 +637,7 @@ fn fill_active_scanline(
     has_coverage
 }
 
-fn horizontal_coverage_samples(
-    start: f32,
-    end: f32,
-    column_start: f32,
-    sample_grid: u32,
-) -> u32 {
+fn horizontal_coverage_samples(start: f32, end: f32, column_start: f32, sample_grid: u32) -> u32 {
     let grid = sample_grid as f32;
     let first = (((start - column_start) * grid) - 0.5)
         .ceil()

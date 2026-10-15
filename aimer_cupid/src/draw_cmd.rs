@@ -9,11 +9,11 @@ use hashbrown::DefaultHashBuilder;
 use crate::draw_cmd_v2::ImageResource;
 use crate::font::{FontFamily, FontStyle, TextLanguage};
 use crate::svg::{SvgNodeStyleOverride, SvgScene};
-use crate::text_pipeline::{TextOverflowMode, TextShadowRequest};
 use crate::text_pipeline::text_layout::TextHorizontalAlign;
-use crate::utilities::{Color, Mat3, Rect, TextureId, Vec2d};
+use crate::text_pipeline::{TextOverflowMode, TextShadowRequest};
 #[cfg(test)]
 use crate::utilities::Rgba8;
+use crate::utilities::{Color, Mat3, Rect, TextureId, Vec2d};
 
 // Texture IDs are content identities across frames; keep one random seed so
 // identical images do not receive a new ID on every call.
@@ -571,8 +571,9 @@ impl RetainedLayerContent {
                 DrawCommand::FillRect { outline_width, .. } => {
                     outline_width.iter().all(|width| *width <= 0.0)
                 }
-                DrawCommand::DrawText { shadow, .. } => shadow
-                    .is_none_or(|shadow| shadow_is_covered(shadow, padding)),
+                DrawCommand::DrawText { shadow, .. } => {
+                    shadow.is_none_or(|shadow| shadow_is_covered(shadow, padding))
+                }
                 DrawCommand::DrawShadowRect { .. } => false,
                 _ => true,
             });
@@ -633,8 +634,16 @@ fn shadow_is_covered(shadow: TextShadowRequest, padding: RetainedLayerPadding) -
     if shadow.color.0[3] == 0 {
         return true;
     }
-    let offset_x = shadow.offset_x.is_finite().then_some(shadow.offset_x).unwrap_or(0.0);
-    let offset_y = shadow.offset_y.is_finite().then_some(shadow.offset_y).unwrap_or(0.0);
+    let offset_x = shadow
+        .offset_x
+        .is_finite()
+        .then_some(shadow.offset_x)
+        .unwrap_or(0.0);
+    let offset_y = shadow
+        .offset_y
+        .is_finite()
+        .then_some(shadow.offset_y)
+        .unwrap_or(0.0);
     let blur = shadow
         .blur
         .is_finite()
@@ -755,14 +764,14 @@ impl DrawCommand {
                 border_radius: *border_radius,
             },
             Self::PopClip => Self::PopClip,
-            Self::PushTransform { matrix } => Self::PushTransform {
-                matrix: *matrix,
-            },
+            Self::PushTransform { matrix } => Self::PushTransform { matrix: *matrix },
             Self::PopTransform => Self::PopTransform,
             Self::SetAlpha { alpha } => Self::SetAlpha { alpha: *alpha },
             Self::RestoreAlpha => Self::RestoreAlpha,
             Self::SetItalic { italic } => Self::SetItalic { italic: *italic },
-            Self::SetTextLanguage { language } => Self::SetTextLanguage { language: *language },
+            Self::SetTextLanguage { language } => Self::SetTextLanguage {
+                language: *language,
+            },
             // Upload commands own byte buffers. A static image may still be
             // retained after it has become a stable texture draw, but a
             // loading/upload transition must go through the provider path.
@@ -814,9 +823,9 @@ impl DrawCommand {
             Self::SetTransform { matrix } => Self::SetTransform {
                 matrix: base.mul(matrix),
             },
-            _ => self.clone_for_retention().expect(
-                "retained draw lists contain only commands supported by replay",
-            ),
+            _ => self
+                .clone_for_retention()
+                .expect("retained draw lists contain only commands supported by replay"),
         }
     }
 }
@@ -1034,7 +1043,8 @@ impl DrawList {
             return;
         }
         self.retain_texture_reference(texture_id);
-        self.commands.push(DrawCommand::DrawImage { rect, texture_id });
+        self.commands
+            .push(DrawCommand::DrawImage { rect, texture_id });
     }
 
     /// Records a draw while retaining the pixels needed to restore its texture.
@@ -1419,19 +1429,14 @@ impl DrawList {
             metadata.height = height;
             update_registry
         } else {
-            self.texture_sizes.insert(
-                texture_id,
-                TextureMetadata::new(width, height, 0),
-            );
+            self.texture_sizes
+                .insert(texture_id, TextureMetadata::new(width, height, 0));
             true
         };
         if update_registry {
-            let registry_serial = self.texture_registry.record_size(
-                texture_id,
-                width,
-                height,
-                force_new_serial,
-            );
+            let registry_serial =
+                self.texture_registry
+                    .record_size(texture_id, width, height, force_new_serial);
             if let Some(metadata) = self.texture_sizes.get_mut(&texture_id) {
                 metadata.registry_serial = registry_serial;
             }
@@ -1643,9 +1648,7 @@ impl DrawList {
                 // this list's metadata (or a newer replacement). A recycled
                 // draw list can retain `available = true` locally after the
                 // renderer evicts the texture from the submitted list.
-                Some((width, height, serial, available))
-                    if serial >= metadata.registry_serial =>
-                {
+                Some((width, height, serial, available)) if serial >= metadata.registry_serial => {
                     available.then_some((width, height))
                 }
                 Some(_) | None => metadata
@@ -2057,10 +2060,9 @@ mod memory_tests {
         let (_, _, serial, _) = registry
             .texture_state(7)
             .expect("the uploaded texture must be registered");
-        replacement.texture_sizes.insert(
-            7,
-            TextureMetadata::new(320, 200, serial),
-        );
+        replacement
+            .texture_sizes
+            .insert(7, TextureMetadata::new(320, 200, serial));
 
         submitted.mark_texture_evicted(7, serial);
 
@@ -2339,11 +2341,7 @@ mod memory_tests {
         assert!(!unsafe_content.is_compositor_safe());
 
         let mut unsafe_frame = DrawList::new();
-        unsafe_frame.draw_retained_layer(
-            8,
-            Rect::new(0.0, 0.0, 10.0, 10.0),
-            unsafe_content,
-        );
+        unsafe_frame.draw_retained_layer(8, Rect::new(0.0, 0.0, 10.0, 10.0), unsafe_content);
         assert_eq!(unsafe_frame.stats().retained_layers, 0);
         assert!(matches!(
             unsafe_frame.commands().first(),
@@ -2366,12 +2364,7 @@ mod memory_tests {
         let mut oversized_frame = DrawList::new();
         oversized_frame.draw_retained_layer(
             9,
-            Rect::new(
-                0.0,
-                0.0,
-                RETAINED_LAYER_MAX_DIMENSION as f32 + 1.0,
-                10.0,
-            ),
+            Rect::new(0.0, 0.0, RETAINED_LAYER_MAX_DIMENSION as f32 + 1.0, 10.0),
             plain_content,
         );
         assert_eq!(oversized_frame.stats().retained_layers, 0);

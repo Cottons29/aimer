@@ -187,8 +187,8 @@ impl<T: Element, D: Decoration> LayoutElement for RawContainer<T, D> {
     fn get_size_from_child(&self) -> Option<Size> {
         let mut size = self.child.get_size_from_child().unwrap_or_default();
 
-        let m_w: f32 = 0.0;
-        let m_h: f32 = 0.0;
+        let mut m_w: f32 = 0.0;
+        let mut m_h: f32 = 0.0;
         let mut p_w: f32 = 0.0;
         let mut p_h: f32 = 0.0;
         let mut b_w: f32 = 0.0;
@@ -198,6 +198,21 @@ impl<T: Element, D: Decoration> LayoutElement for RawContainer<T, D> {
         // percentages, so we can only accurately add Px values. Percentages
         // will be ignored or should be handled by the layout system during
         // actual resolution.
+
+        // `computed_size` adds the margin to the box, so a size read from the
+        // content has to include it or a parent that hugs it clips the child.
+        if let Spacing::Px(v) = self.margin.left {
+            m_w += v as f32;
+        }
+        if let Spacing::Px(v) = self.margin.right {
+            m_w += v as f32;
+        }
+        if let Spacing::Px(v) = self.margin.top {
+            m_h += v as f32;
+        }
+        if let Spacing::Px(v) = self.margin.bottom {
+            m_h += v as f32;
+        }
 
         if let Spacing::Px(v) = self.padding.left {
             p_w += v as f32;
@@ -256,9 +271,14 @@ impl<T: Element, D: Decoration> LayoutElement for RawContainer<T, D> {
             return Some((start, end));
         };
         Some((
-            Vec2d { x: start.x.min(child_start.x), y: start.y.min(child_start.y) },
-            Vec2d { x: end.x.max(child_end.x), y: end.y.max(child_end.y) },
+            Vec2d {
+                x: start.x.min(child_start.x),
+                y: start.y.min(child_start.y),
+            },
+            Vec2d {
+                x: end.x.max(child_end.x),
+                y: end.y.max(child_end.y),
+            },
         ))
     }
 }
-

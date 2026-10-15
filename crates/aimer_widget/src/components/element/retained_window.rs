@@ -25,6 +25,16 @@ thread_local! {
 /// treated as inside it, absorbing rounding in the rounded child offsets.
 const WINDOW_MARGIN: f32 = 2.0;
 
+/// Whether an ancestor clip may hide a descendant that escapes clipping.
+/// Outside retained rendering, preserve legacy culling. The retained query
+/// reads a count and does not walk descendants or clone recording handles.
+#[doc(hidden)]
+pub fn may_escape_ancestor_clips() -> bool {
+    V2_RENDER_CONTEXT_STACK.with(|stack| {
+        stack.borrow().last().is_some_and(|context| context.tree.has_clip_escape())
+    })
+}
+
 /// Marks the frame being drawn as requested by scrolling alone.
 ///
 /// Such a frame cannot carry an animation tick, a state change, a rebuild or a

@@ -162,7 +162,6 @@ impl<E: Element> Drawable for RawExpanded<E> {
     fn sync_paint_geometry(&self, ctx: &BuildContext) {
         self.child.sync_paint_geometry(ctx);
     }
-
 }
 
 impl<E: Element> VisitorElement for RawExpanded<E> {
@@ -238,10 +237,7 @@ pub(crate) fn distribute_flex_space_in_place(remaining: f32, weights: &mut [f32]
 
 #[cfg(test)]
 #[inline]
-pub(crate) fn distribute_flex_space_in_place_scalar_reference(
-    remaining: f32,
-    weights: &mut [f32],
-) {
+pub(crate) fn distribute_flex_space_in_place_scalar_reference(remaining: f32, weights: &mut [f32]) {
     debug_assert!(remaining >= 0.0);
     let total = positive_weight_sum_scalar(weights);
     if total <= 0.0 {
@@ -336,8 +332,8 @@ fn distribute_positive_weight_shares_scalar(remaining: f32, total: f32, weights:
 #[inline]
 fn distribute_positive_weight_shares_simd(remaining: f32, total: f32, weights: &mut [f32]) {
     use std::arch::aarch64::{
-        float32x4_t, vceqq_f32, vcgtq_f32, vdivq_f32, vdupq_n_f32, vld1q_f32, vmvnq_u32,
-        vmulq_f32, vorrq_u32, vbslq_f32, vst1q_f32,
+        float32x4_t, vbslq_f32, vceqq_f32, vcgtq_f32, vdivq_f32, vdupq_n_f32, vld1q_f32, vmulq_f32,
+        vmvnq_u32, vorrq_u32, vst1q_f32,
     };
 
     let remaining_value = remaining;
@@ -367,11 +363,7 @@ fn distribute_positive_weight_shares_simd(remaining: f32, total: f32, weights: &
         }
     }
 
-    distribute_positive_weight_shares_scalar(
-        remaining_value,
-        total_value,
-        chunks.into_remainder(),
-    );
+    distribute_positive_weight_shares_scalar(remaining_value, total_value, chunks.into_remainder());
 }
 
 #[cfg(all(
@@ -382,7 +374,7 @@ fn distribute_positive_weight_shares_simd(remaining: f32, total: f32, weights: &
 #[inline]
 fn distribute_positive_weight_shares_simd(remaining: f32, total: f32, weights: &mut [f32]) {
     use std::arch::x86_64::{
-        _mm_and_ps, _mm_andnot_ps, _mm_cmpgt_ps, _mm_cmpunord_ps, _mm_cmpeq_ps, _mm_div_ps,
+        _mm_and_ps, _mm_andnot_ps, _mm_cmpeq_ps, _mm_cmpgt_ps, _mm_cmpunord_ps, _mm_div_ps,
         _mm_loadu_ps, _mm_mul_ps, _mm_or_ps, _mm_set1_ps, _mm_setzero_ps, _mm_storeu_ps,
     };
 
@@ -402,10 +394,8 @@ fn distribute_positive_weight_shares_simd(remaining: f32, total: f32, weights: &
         unsafe {
             let values = _mm_loadu_ps(chunk.as_ptr());
             let positive = _mm_cmpgt_ps(values, zero);
-            let zero_or_nan = _mm_or_ps(
-                _mm_cmpeq_ps(values, zero),
-                _mm_cmpunord_ps(values, values),
-            );
+            let zero_or_nan =
+                _mm_or_ps(_mm_cmpeq_ps(values, zero), _mm_cmpunord_ps(values, values));
             let shares = _mm_mul_ps(remaining, _mm_div_ps(values, total));
             let non_positive = _mm_or_ps(
                 _mm_and_ps(zero_or_nan, negative_zero),
@@ -419,19 +409,12 @@ fn distribute_positive_weight_shares_simd(remaining: f32, total: f32, weights: &
         }
     }
 
-    distribute_positive_weight_shares_scalar(
-        remaining_value,
-        total_value,
-        chunks.into_remainder(),
-    );
+    distribute_positive_weight_shares_scalar(remaining_value, total_value, chunks.into_remainder());
 }
 
 #[cfg(test)]
 mod in_place_tests {
-    use super::{
-        distribute_flex_space_in_place,
-        distribute_flex_space_in_place_scalar_reference,
-    };
+    use super::{distribute_flex_space_in_place, distribute_flex_space_in_place_scalar_reference};
 
     #[test]
     fn in_place_distribution_preserves_non_flex_and_zero_weight_markers() {
@@ -639,9 +622,8 @@ mod tests {
         let mut samples = Vec::with_capacity(ROUNDS);
         let mut checksum = 0.0;
         for _ in 0..ROUNDS {
-            let mut inputs: Vec<Vec<f32>> = (0..WARMUP + MEASURED)
-                .map(|_| template.to_vec())
-                .collect();
+            let mut inputs: Vec<Vec<f32>> =
+                (0..WARMUP + MEASURED).map(|_| template.to_vec()).collect();
             let mut inputs = inputs.iter_mut();
 
             for _ in 0..WARMUP {
@@ -663,7 +645,10 @@ mod tests {
 
         assert!(checksum.is_finite());
         samples.sort_by(f64::total_cmp);
-        (samples[ROUNDS / 2], samples[(ROUNDS * 95).div_ceil(100) - 1])
+        (
+            samples[ROUNDS / 2],
+            samples[(ROUNDS * 95).div_ceil(100) - 1],
+        )
     }
 
     #[test]
@@ -701,28 +686,23 @@ mod tests {
         ];
 
         for (case_index, (name, template)) in cases.into_iter().enumerate() {
-            let (scalar_p50, scalar_p95, optimized_p50, optimized_p95) =
-                if case_index % 2 == 0 {
-                    let (scalar_p50, scalar_p95) = measure_distribution_variant(
-                        &template,
-                        distribute_flex_space_in_place_scalar_reference,
-                    );
-                    let (optimized_p50, optimized_p95) = measure_distribution_variant(
-                        &template,
-                        distribute_flex_space_in_place,
-                    );
-                    (scalar_p50, scalar_p95, optimized_p50, optimized_p95)
-                } else {
-                    let (optimized_p50, optimized_p95) = measure_distribution_variant(
-                        &template,
-                        distribute_flex_space_in_place,
-                    );
-                    let (scalar_p50, scalar_p95) = measure_distribution_variant(
-                        &template,
-                        distribute_flex_space_in_place_scalar_reference,
-                    );
-                    (scalar_p50, scalar_p95, optimized_p50, optimized_p95)
-                };
+            let (scalar_p50, scalar_p95, optimized_p50, optimized_p95) = if case_index % 2 == 0 {
+                let (scalar_p50, scalar_p95) = measure_distribution_variant(
+                    &template,
+                    distribute_flex_space_in_place_scalar_reference,
+                );
+                let (optimized_p50, optimized_p95) =
+                    measure_distribution_variant(&template, distribute_flex_space_in_place);
+                (scalar_p50, scalar_p95, optimized_p50, optimized_p95)
+            } else {
+                let (optimized_p50, optimized_p95) =
+                    measure_distribution_variant(&template, distribute_flex_space_in_place);
+                let (scalar_p50, scalar_p95) = measure_distribution_variant(
+                    &template,
+                    distribute_flex_space_in_place_scalar_reference,
+                );
+                (scalar_p50, scalar_p95, optimized_p50, optimized_p95)
+            };
             println!(
                 "{name}: scalar {scalar_p50:.3}/{scalar_p95:.3} us, optimized {optimized_p50:.3}/{optimized_p95:.3} us"
             );

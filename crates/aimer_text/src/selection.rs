@@ -367,5 +367,4 @@ mod tests {
 
         assert_eq!(text_offset_at(&regions, -100.0, 10.0), Some(0));
     }
-
 }

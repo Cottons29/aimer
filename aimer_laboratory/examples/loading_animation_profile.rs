@@ -15,16 +15,16 @@
 
 use std::time::{Duration, Instant};
 
-use aimer::animation::{AnimatedBuilder, AnimationController, Curve, RotationTransition};
-use aimer::{AnyElement, BuildContext, State, StateUpdater, StatefulElement, StatefulWidget};
-use std::cell::RefCell;
-use std::rc::Rc;
+use aimer::animation::{AnimatedBuilder, AnimationController, curves, RotationTransition};
 use aimer::quiver::winit::dpi::PhysicalSize;
 use aimer::style::{FontWeight, TextAlign, TextStyle};
 use aimer::{
     AimerApp, BoxAlignment, Color, Column, Container, Dimension, HeadlessOptions, SizedBox, Svg,
     SvgDocument, Text, Widget,
 };
+use aimer::{AnyElement, BuildContext, State, StateUpdater, StatefulElement, StatefulWidget};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 const FRAME_WIDTH: u32 = 1280;
 const FRAME_HEIGHT: u32 = 800;
@@ -37,13 +37,15 @@ fn measured_frames() -> usize {
 }
 
 fn page() -> impl Widget {
-    let controller = AnimationController::new(Duration::from_millis(1500), Curve::Linear);
+    let controller = AnimationController::new(Duration::from_millis(1500), curves::LINEAR);
     controller.set_repeat(true);
-    controller.set_curve(Curve::EaseInOut);
+    controller.set_curve(curves::EASE_IN_OUT);
     controller.forward_from_first_tick();
     let icon = Svg::new(
-        SvgDocument::from_svg(include_bytes!("../../jaime/assets/loading-1-svgrepo-com.svg"))
-            .expect("the bundled loading icon SVG should be valid"),
+        SvgDocument::from_svg(include_bytes!(
+            "../../jaime/assets/loading-1-svgrepo-com.svg"
+        ))
+        .expect("the bundled loading icon SVG should be valid"),
     )
     .bounded()
     .width(Dimension::Px(96.0))
@@ -76,7 +78,7 @@ fn page() -> impl Widget {
 /// A repeating `AnimatedBuilder` above a few hundred static rows: the shape of
 /// a build-driven animation inside a real page. Used with an external sampler.
 fn builder_page(calls: Rc<std::cell::Cell<usize>>) -> impl Widget {
-    let controller = AnimationController::new(Duration::from_millis(1500), Curve::Linear);
+    let controller = AnimationController::new(Duration::from_millis(1500), curves::LINEAR);
     controller.set_repeat(true);
     controller.forward_from_first_tick();
     let animated = AnimatedBuilder::new(controller, move |progress| {
@@ -91,10 +93,16 @@ fn builder_page(calls: Rc<std::cell::Cell<usize>>) -> impl Widget {
         SizedBox::new()
             .width(Dimension::Px(300.0))
             .height(Dimension::Px(8.0))
-            .color(if i % 2 == 0 { Color::WHITE } else { Color::Rgb(240, 240, 245) })
+            .color(if i % 2 == 0 {
+                Color::WHITE
+            } else {
+                Color::Rgb(240, 240, 245)
+            })
             .boxed()
     }));
-    Container::new().color(Color::WHITE).child(Column::new().children(rows))
+    Container::new()
+        .color(Color::WHITE)
+        .child(Column::new().children(rows))
 }
 
 /// A stateful root above the same few hundred rows: every `set_state` rebuilds
@@ -112,7 +120,10 @@ impl StatefulWidget for StatePage {
     type State = StatePageState;
 
     fn create_state(self) -> StatePageState {
-        StatePageState { count: 0, handle: self.handle }
+        StatePageState {
+            count: 0,
+            handle: self.handle,
+        }
     }
 }
 
@@ -136,15 +147,23 @@ fn state_page(handle: Rc<RefCell<Option<StateUpdater<StatePageState>>>>) -> impl
         SizedBox::new()
             .width(Dimension::Px(300.0))
             .height(Dimension::Px(8.0))
-            .color(if i % 2 == 0 { Color::WHITE } else { Color::Rgb(240, 240, 245) })
+            .color(if i % 2 == 0 {
+                Color::WHITE
+            } else {
+                Color::Rgb(240, 240, 245)
+            })
             .boxed()
     }));
-    Container::new().color(Color::WHITE).child(Column::new().children(rows))
+    Container::new()
+        .color(Color::WHITE)
+        .child(Column::new().children(rows))
 }
 
 impl Widget for StatePage {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
-        StatefulElement::new_with_name(self, ctx, "StatePage", None).0.boxed()
+        StatefulElement::new_with_name(self, ctx, "StatePage", None)
+            .0
+            .boxed()
     }
 }
 
@@ -153,11 +172,17 @@ impl aimer::PortableWidget for StatePage {}
 fn main() {
     // `LOADING_STATE_FRAMES=<n>` calls `set_state` before each of `n` frames of
     // the page above, flat out, so a sampler can attach.
-    if let Some(frames) = std::env::var("LOADING_STATE_FRAMES").ok().and_then(|v| v.parse::<usize>().ok()) {
+    if let Some(frames) = std::env::var("LOADING_STATE_FRAMES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+    {
         let handle = Rc::new(RefCell::new(None));
         let mut app = AimerApp::start_headless_with(
             state_page(handle.clone()),
-            HeadlessOptions { size: PhysicalSize::new(FRAME_WIDTH, FRAME_HEIGHT), scale_factor: 1.0 },
+            HeadlessOptions {
+                size: PhysicalSize::new(FRAME_WIDTH, FRAME_HEIGHT),
+                scale_factor: 1.0,
+            },
         );
         app.set_incremental_sync(std::env::var_os("LOADING_NO_INCREMENTAL").is_none());
         app.render_frame();
@@ -173,27 +198,43 @@ fn main() {
             aimer_events::window::request_scoped_frame();
             app.render_frame();
         }
-        println!("set_state frame: {:.1}us", start.elapsed().as_secs_f64() * 1e6 / frames as f64);
+        println!(
+            "set_state frame: {:.1}us",
+            start.elapsed().as_secs_f64() * 1e6 / frames as f64
+        );
         println!("syncs (full, scoped): {:?}", app.sync_counts());
         println!("tree walks, passes: {:?}", aimer::traversal_counts());
         return;
     }
     // `LOADING_BUILDER_FRAMES=<n>` renders a build-driven page flat out so a
     // sampler can attach; it prints nothing else.
-    if let Some(frames) = std::env::var("LOADING_BUILDER_FRAMES").ok().and_then(|v| v.parse::<usize>().ok()) {
+    if let Some(frames) = std::env::var("LOADING_BUILDER_FRAMES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+    {
         let calls = Rc::new(std::cell::Cell::new(0));
         let mut app = AimerApp::start_headless_with(
             builder_page(calls.clone()),
-            HeadlessOptions { size: PhysicalSize::new(FRAME_WIDTH, FRAME_HEIGHT), scale_factor: 1.0 },
+            HeadlessOptions {
+                size: PhysicalSize::new(FRAME_WIDTH, FRAME_HEIGHT),
+                scale_factor: 1.0,
+            },
         );
         app.set_incremental_sync(std::env::var_os("LOADING_NO_INCREMENTAL").is_none());
         let start = Instant::now();
         for _ in 0..frames {
             app.render_frame();
         }
-        println!("builder frame: {:.1}us, builder calls: {}", start.elapsed().as_secs_f64() * 1e6 / frames as f64, calls.get());
+        println!(
+            "builder frame: {:.1}us, builder calls: {}",
+            start.elapsed().as_secs_f64() * 1e6 / frames as f64,
+            calls.get()
+        );
         println!("syncs (full, scoped): {:?}", app.sync_counts());
-        println!("tree walks, animation-only passes: {:?}", aimer::traversal_counts());
+        println!(
+            "tree walks, animation-only passes: {:?}",
+            aimer::traversal_counts()
+        );
         return;
     }
     // `LOADING_WINDOW=1` opens a real window, so the native encode and present

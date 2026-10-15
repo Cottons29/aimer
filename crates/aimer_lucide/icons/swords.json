@@ -1,0 +1,38 @@
+{
+  "$schema": "../icon.schema.json",
+  "contributors": [
+    "karsa-mistmere",
+    "ericfennis",
+    "jguddas"
+  ],
+  "use-cases": [
+    "Representing battles or duels in games",
+    "Indicating player-versus-player combat modes",
+    "Showing opposing factions in strategy interfaces",
+    "Marking conflict or rivalry in competition brackets"
+  ],
+  "tags": [
+    "battle",
+    "challenge",
+    "combat",
+    "conflict",
+    "crossed",
+    "duel",
+    "faction",
+    "fantasy",
+    "game",
+    "melee",
+    "medieval",
+    "opponent",
+    "rivalry",
+    "rpg",
+    "versus",
+    "weapon",
+    "war",
+    "warrior"
+  ],
+  "categories": [
+    "gaming",
+    "tools"
+  ]
+}

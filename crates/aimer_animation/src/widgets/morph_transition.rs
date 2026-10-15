@@ -9,14 +9,14 @@ use aimer_events::element::ElementEvent;
 use aimer_widget::base::*;
 use aimer_widget::{
     AnyElement, ChildBuilder, Drawable, Element, EventElement, EventResult, Key, LayoutElement,
-    Rebuildable, State, StateUpdater, StatefulElement, StatefulWidget,
-    StatelessElement, VisitorElement, Widget,
+    Rebuildable, State, StateUpdater, StatefulElement, StatefulWidget, StatelessElement,
+    VisitorElement, Widget,
 };
 
 use crate::control::controller::AnimationController;
 use crate::local_cell::LocalCell;
 use crate::primitives::animatable::Animatable;
-use crate::primitives::curve::Curve;
+use crate::primitives::curve::{AnyCurve, Curve};
 use crate::primitives::time::AnimInstant;
 
 // ---------------------------------------------------------------------------
@@ -112,12 +112,12 @@ impl Animatable for Rgba {
 /// ```rust
 /// use std::time::Duration;
 ///
-/// use aimer_animation::{Curve, MorphTransition, Rgba};
+/// use aimer_animation::{curves, MorphTransition, Rgba};
 /// use aimer_widget::ErrorWidget;
 ///
 /// let transition =
 ///     MorphTransition::new(Duration::from_millis(400),
-///                          Curve::Linear,
+///                          curves::LINEAR,
 ///                          ErrorWidget::new("Profile card")).background_color(Rgba::WHITE)
 ///                                                           .child_key("profile-card");
 /// ```
@@ -131,7 +131,7 @@ pub struct MorphTransition<T: Widget + 'static> {
     #[portable_skip]
     pub duration: Duration,
     #[portable_skip]
-    pub curve: Curve,
+    pub curve: AnyCurve,
     /// Optional background color to morph. If set, the color transitions
     /// from the old value to this value when the child changes.
     #[portable_skip]
@@ -153,11 +153,11 @@ impl<T: Widget> MorphTransition<T> {
     /// a morph when the effective child key or optional background color
     /// changes. The child's own [`Widget::key`] is the default identity.
 
-    pub fn new(duration: Duration, curve: Curve, child: T) -> Self {
+    pub fn new(duration: Duration, curve: impl Curve, child: T) -> Self {
         Self {
             child: ChildBuilder::from_widget(child),
             duration,
-            curve,
+            curve: curve.into_any(),
             background_color: None,
             transition_key: None,
             widget_key: None,
@@ -205,17 +205,15 @@ impl<T: Widget + 'static> StatefulWidget for MorphTransition<T> {
 
     fn create_state(self) -> Self::State {
         MorphTransitionState {
-            child_key: self
-                .transition_key
-                .or_else(|| Widget::key(&self.child)),
+            child_key: self.transition_key.or_else(|| Widget::key(&self.child)),
             current_child: self.child,
             old_child: None,
             old_child_key: None,
             duration: self.duration,
+            controller: AnimationController::new(self.duration, self.curve.clone()),
             curve: self.curve,
             current_color: self.background_color,
             old_color: None,
-            controller: AnimationController::new(self.duration, self.curve),
             updater: StateUpdater::empty(),
             marker: PhantomData,
         }
@@ -242,7 +240,7 @@ pub struct MorphTransitionState<T: Widget + 'static> {
     child_key: Option<Key>,
     old_child_key: Option<Key>,
     duration: Duration,
-    curve: Curve,
+    curve: AnyCurve,
     current_color: Option<Rgba>,
     old_color: Option<Rgba>,
     controller: AnimationController,
@@ -259,7 +257,7 @@ impl<T: Widget + 'static> State<MorphTransition<T>> for MorphTransitionState<T> 
         self.duration = new.duration;
         self.curve = new.curve;
         self.controller.set_duration(self.duration);
-        self.controller.set_curve(self.curve);
+        self.controller.set_curve(self.curve.clone());
 
         if self.child_key != new.child_key || self.current_color != new.current_color {
             self.old_child = Some(self.current_child.clone());
@@ -394,7 +392,6 @@ impl Drawable for MorphBackgroundElement {
     fn local_v2_paint_needs_recording(&self, _ctx: &BuildContext) -> bool {
         self.recorded_signature.get() != Some(Self::signature(self.paint_value()))
     }
-
 }
 
 impl VisitorElement for MorphBackgroundElement {
@@ -605,11 +602,7 @@ impl Drawable for MorphTransitionElement {
         }
 
         if self.morph_state.get() == MorphState::Idle {
-            return ctx.set_local_v2_child_presentation_at(
-                0,
-                aimer_canvas::Mat3::identity(),
-                1.0,
-            );
+            return ctx.set_local_v2_child_presentation_at(0, aimer_canvas::Mat3::identity(), 1.0);
         }
 
         if unsafe { self.old_child.get() }.is_none() {
@@ -747,10 +740,7 @@ impl VisitorElement for MorphTransitionElement {
         }
     }
 
-    fn visit_retained_v2_children<'a>(
-        &'a self,
-        visitor: &mut dyn FnMut(usize, &'a dyn Element),
-    ) {
+    fn visit_retained_v2_children<'a>(&'a self, visitor: &mut dyn FnMut(usize, &'a dyn Element)) {
         let mut index = 0;
         if self.morph_state.get() == MorphState::MorphingIn {
             unsafe {
@@ -870,6 +860,7 @@ fn lerp_f32(a: f32, b: f32, t: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::primitives::curve::curves;
 
     struct TestWidget(&'static str);
 
@@ -886,7 +877,7 @@ mod tests {
     impl aimer_widget::PortableWidget for TestWidget {}
 
     fn state(key: &'static str, color: Rgba) -> MorphTransitionState<TestWidget> {
-        MorphTransition::new(Duration::from_millis(100), Curve::Linear, TestWidget(key))
+        MorphTransition::new(Duration::from_millis(100), curves::LINEAR, TestWidget(key))
             .background_color(color)
             .create_state()
     }

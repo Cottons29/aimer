@@ -3,9 +3,9 @@
 use super::super::SfntError;
 use super::super::Tag;
 use super::{
-    checked_add, checked_mul, ensure, malformed, read_i16, read_u16, read_u32,
-    relative_offset, slice_from, ClassDef, Gdef, LayoutGlyph, ValueAdjustment,
-    GPOS_TAG, GSUB_TAG, MAX_EXTENSION_DEPTH,
+    ClassDef, GPOS_TAG, GSUB_TAG, Gdef, LayoutGlyph, MAX_EXTENSION_DEPTH, ValueAdjustment,
+    checked_add, checked_mul, ensure, malformed, read_i16, read_u16, read_u32, relative_offset,
+    slice_from,
 };
 
 #[derive(Clone)]
@@ -127,12 +127,7 @@ fn compile_subtable_bytes(
                 let extension_offset = usize::try_from(read_u32(subtable, 4, GSUB_TAG)?)
                     .map_err(|_| SfntError::ArithmeticOverflow)?;
                 let extension = slice_from(subtable, extension_offset, GSUB_TAG)?;
-                compile_subtable_bytes(
-                    extension,
-                    GSUB_TAG,
-                    extension_type,
-                    extension_depth + 1,
-                )
+                compile_subtable_bytes(extension, GSUB_TAG, extension_type, extension_depth + 1)
             }
             _ => Ok(None),
         }
@@ -157,12 +152,7 @@ fn compile_subtable_bytes(
                 let extension_offset = usize::try_from(read_u32(subtable, 4, GPOS_TAG)?)
                     .map_err(|_| SfntError::ArithmeticOverflow)?;
                 let extension = slice_from(subtable, extension_offset, GPOS_TAG)?;
-                compile_subtable_bytes(
-                    extension,
-                    GPOS_TAG,
-                    extension_type,
-                    extension_depth + 1,
-                )
+                compile_subtable_bytes(extension, GPOS_TAG, extension_type, extension_depth + 1)
             }
             _ => Ok(None),
         }
@@ -412,12 +402,8 @@ fn parse_pair(subtable: &[u8]) -> Result<PairPlan, SfntError> {
             let mut records = Vec::with_capacity(record_count);
             for index in 0..record_count {
                 let record = 16 + index * record_size;
-                let (first, first_size) = super::read_value_adjustment(
-                    subtable,
-                    record,
-                    value_format_1,
-                    GPOS_TAG,
-                )?;
+                let (first, first_size) =
+                    super::read_value_adjustment(subtable, record, value_format_1, GPOS_TAG)?;
                 let (second, _) = super::read_value_adjustment(
                     subtable,
                     record + first_size,
@@ -516,11 +502,7 @@ fn parse_mark(subtable: &[u8]) -> Result<MarkPlan, SfntError> {
         let record = base_array_offset + 2 + index * base_record_size;
         let mut anchors = Vec::with_capacity(class_count);
         for class in 0..class_count {
-            let anchor_offset = usize::from(read_u16(
-                subtable,
-                record + class * 2,
-                GPOS_TAG,
-            )?);
+            let anchor_offset = usize::from(read_u16(subtable, record + class * 2, GPOS_TAG)?);
             anchors.push(super::anchor_position(
                 subtable,
                 base_array_offset,
@@ -556,9 +538,9 @@ impl CompiledSubtable {
         };
         let replacement = match &plan.replacement {
             SingleReplacement::Delta(delta) => glyph.glyph_id.wrapping_add(*delta as u16),
-            SingleReplacement::Values(values) => *values
-                .get(index)
-                .ok_or_else(|| malformed(GSUB_TAG))?,
+            SingleReplacement::Values(values) => {
+                *values.get(index).ok_or_else(|| malformed(GSUB_TAG))?
+            }
         };
         if replacement == glyph.glyph_id {
             return Ok(Some(false));
@@ -683,8 +665,7 @@ impl CompiledSubtable {
                 let record_index = class_1
                     .checked_mul(*class_2_count)
                     .and_then(|base| base.checked_add(class_2));
-                record_index
-                    .and_then(|index| records.get(index).copied())
+                record_index.and_then(|index| records.get(index).copied())
             }
         };
         Ok(pair.filter(|(first, second)| !first.is_zero() || !second.is_zero()))

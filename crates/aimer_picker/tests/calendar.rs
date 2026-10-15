@@ -1,6 +1,6 @@
 use aimer_picker::{
-    Calendar, CalendarError, Date, DateBounds, DateError, DateSelection, DateSelectionMode,
-    Month, Weekday,
+    Calendar, CalendarError, Date, DateBounds, DateError, DateSelection, DateSelectionMode, Month,
+    Weekday,
 };
 
 fn date(year: i32, month: u8, day: u8) -> Date {
@@ -18,9 +18,16 @@ fn individual_disabled_dates_are_visible_but_not_selectable() {
     .unwrap()
     .with_disabled_dates([holiday]);
 
-    let holiday_cell = calendar.cells().into_iter().find(|cell| cell.date() == holiday).unwrap();
+    let holiday_cell = calendar
+        .cells()
+        .into_iter()
+        .find(|cell| cell.date() == holiday)
+        .unwrap();
     assert!(holiday_cell.is_disabled());
-    assert_eq!(calendar.select(holiday), Err(CalendarError::DisabledDate(holiday)));
+    assert_eq!(
+        calendar.select(holiday),
+        Err(CalendarError::DisabledDate(holiday))
+    );
     assert_eq!(calendar.selection(), DateSelection::Single(None));
 }
 
@@ -29,13 +36,10 @@ fn calendar_keyboard_focus_skips_disabled_dates() {
     let focused = date(2024, 5, 15);
     let disabled_one = date(2024, 5, 16);
     let disabled_two = date(2024, 5, 17);
-    let mut calendar = Calendar::try_new(
-        focused,
-        DateBounds::unbounded(),
-        DateSelectionMode::Single,
-    )
-    .unwrap()
-    .with_disabled_dates([disabled_one, disabled_two]);
+    let mut calendar =
+        Calendar::try_new(focused, DateBounds::unbounded(), DateSelectionMode::Single)
+            .unwrap()
+            .with_disabled_dates([disabled_one, disabled_two]);
 
     assert_eq!(
         calendar.focus(disabled_one),
@@ -58,12 +62,30 @@ fn dates_validate_gregorian_edges_and_arithmetic_boundaries() {
     assert_eq!(date(2_000, 2, 29).day(), 29);
     assert!(Date::try_new(1_900, 2, 29).is_err());
     assert!(Date::try_new(2_023, 2, 29).is_err());
-    assert!(matches!(Date::try_new(0, 1, 1), Err(DateError::InvalidYear { year: 0 })));
-    assert!(matches!(Date::try_new(10_000, 1, 1), Err(DateError::InvalidYear { year: 10_000 })));
-    assert!(matches!(Date::try_new(2024, 0, 1), Err(DateError::InvalidMonth { month: 0 })));
-    assert!(matches!(Date::try_new(2024, 13, 1), Err(DateError::InvalidMonth { month: 13 })));
-    assert!(matches!(Date::try_new(2024, 2, 0), Err(DateError::InvalidDay { .. })));
-    assert!(matches!(Date::try_new(2024, 4, 31), Err(DateError::InvalidDay { .. })));
+    assert!(matches!(
+        Date::try_new(0, 1, 1),
+        Err(DateError::InvalidYear { year: 0 })
+    ));
+    assert!(matches!(
+        Date::try_new(10_000, 1, 1),
+        Err(DateError::InvalidYear { year: 10_000 })
+    ));
+    assert!(matches!(
+        Date::try_new(2024, 0, 1),
+        Err(DateError::InvalidMonth { month: 0 })
+    ));
+    assert!(matches!(
+        Date::try_new(2024, 13, 1),
+        Err(DateError::InvalidMonth { month: 13 })
+    ));
+    assert!(matches!(
+        Date::try_new(2024, 2, 0),
+        Err(DateError::InvalidDay { .. })
+    ));
+    assert!(matches!(
+        Date::try_new(2024, 4, 31),
+        Err(DateError::InvalidDay { .. })
+    ));
 
     assert_eq!(date(2024, 1, 31).add_months(1), Some(date(2024, 2, 29)));
     assert_eq!(date(2023, 1, 31).add_months(1), Some(date(2023, 2, 28)));
@@ -130,13 +152,13 @@ fn date_bounds_are_inclusive_and_rejected_operations_preserve_state() {
         Err(DateError::InvalidBounds { .. })
     ));
 
-    let mut calendar = Calendar::try_new(
-        date(2024, 5, 15),
-        bounds,
-        DateSelectionMode::Single,
-    )
-    .unwrap();
-    let minimum_cell = calendar.cells().into_iter().find(|cell| cell.date() == minimum).unwrap();
+    let mut calendar =
+        Calendar::try_new(date(2024, 5, 15), bounds, DateSelectionMode::Single).unwrap();
+    let minimum_cell = calendar
+        .cells()
+        .into_iter()
+        .find(|cell| cell.date() == minimum)
+        .unwrap();
     let before_minimum_cell = calendar
         .cells()
         .into_iter()
@@ -145,9 +167,15 @@ fn date_bounds_are_inclusive_and_rejected_operations_preserve_state() {
     assert!(!minimum_cell.is_disabled());
     assert!(before_minimum_cell.is_disabled());
 
-    assert_eq!(calendar.focus(date(2024, 5, 9)), Err(CalendarError::OutOfBounds(date(2024, 5, 9))));
+    assert_eq!(
+        calendar.focus(date(2024, 5, 9)),
+        Err(CalendarError::OutOfBounds(date(2024, 5, 9)))
+    );
     assert_eq!(calendar.focused_date(), date(2024, 5, 15));
-    assert_eq!(calendar.select(date(2024, 5, 9)), Err(CalendarError::OutOfBounds(date(2024, 5, 9))));
+    assert_eq!(
+        calendar.select(date(2024, 5, 9)),
+        Err(CalendarError::OutOfBounds(date(2024, 5, 9)))
+    );
     assert_eq!(calendar.selection(), DateSelection::Single(None));
     assert!(!calendar.navigate(aimer_picker::CalendarNavigation::PreviousWeek));
     assert_eq!(calendar.focused_date(), date(2024, 5, 15));
@@ -160,7 +188,11 @@ fn date_bounds_are_inclusive_and_rejected_operations_preserve_state() {
     assert_eq!(calendar.focused_date(), maximum);
 
     calendar.navigate(aimer_picker::CalendarNavigation::NextMonth);
-    let maximum_cell = calendar.cells().into_iter().find(|cell| cell.date() == maximum).unwrap();
+    let maximum_cell = calendar
+        .cells()
+        .into_iter()
+        .find(|cell| cell.date() == maximum)
+        .unwrap();
     let after_maximum_cell = calendar
         .cells()
         .into_iter()
@@ -231,13 +263,24 @@ fn calendar_cell_identity_is_the_same_date_across_month_changes() {
         .find(|cell| cell.date() == carried_date)
         .unwrap();
     assert_eq!(before.id(), after.id());
-    assert_eq!(before.id(), aimer_picker::CalendarCellId::from_date(carried_date));
+    assert_eq!(
+        before.id(),
+        aimer_picker::CalendarCellId::from_date(carried_date)
+    );
     assert_eq!(after.id().date(), after.date());
 
     let cells = calendar.cells();
     for (index, cell) in cells.iter().enumerate() {
-        assert_eq!(cell.id(), aimer_picker::CalendarCellId::from_date(cell.date()));
-        assert!(cells.iter().skip(index + 1).all(|other| other.id() != cell.id()));
+        assert_eq!(
+            cell.id(),
+            aimer_picker::CalendarCellId::from_date(cell.date())
+        );
+        assert!(
+            cells
+                .iter()
+                .skip(index + 1)
+                .all(|other| other.id() != cell.id())
+        );
     }
 }
 
@@ -250,11 +293,17 @@ fn range_selection_is_inclusive_and_swaps_reversed_endpoints() {
 
     assert_eq!(
         calendar.select(end).unwrap(),
-        DateSelection::Range { start: Some(end), end: None }
+        DateSelection::Range {
+            start: Some(end),
+            end: None
+        }
     );
     assert_eq!(
         calendar.select(start).unwrap(),
-        DateSelection::Range { start: Some(start), end: Some(end) }
+        DateSelection::Range {
+            start: Some(start),
+            end: Some(end)
+        }
     );
     assert!(calendar.selection().is_complete());
     assert!(calendar.selection().contains(start));
@@ -305,10 +354,8 @@ fn range_policy_handles_disallowed_same_day_and_restart_order() {
     let first = date(2024, 5, 20);
     let earlier = date(2024, 5, 15);
     let later = date(2024, 5, 25);
-    let no_same_day = aimer_picker::DateRangePolicy::new(
-        false,
-        aimer_picker::RangeOrderPolicy::Restart,
-    );
+    let no_same_day =
+        aimer_picker::DateRangePolicy::new(false, aimer_picker::RangeOrderPolicy::Restart);
     let mut calendar = Calendar::try_new(
         first,
         DateBounds::unbounded(),
@@ -323,15 +370,24 @@ fn range_policy_handles_disallowed_same_day_and_restart_order() {
     );
     assert_eq!(
         calendar.selection(),
-        DateSelection::Range { start: Some(first), end: None }
+        DateSelection::Range {
+            start: Some(first),
+            end: None
+        }
     );
     assert_eq!(
         calendar.select(earlier).unwrap(),
-        DateSelection::Range { start: Some(earlier), end: None }
+        DateSelection::Range {
+            start: Some(earlier),
+            end: None
+        }
     );
     assert_eq!(
         calendar.select(later).unwrap(),
-        DateSelection::Range { start: Some(earlier), end: Some(later) }
+        DateSelection::Range {
+            start: Some(earlier),
+            end: Some(later)
+        }
     );
 }
 
@@ -348,10 +404,16 @@ fn disabled_dates_cannot_complete_a_range() {
     .with_disabled_dates([disabled]);
 
     calendar.select(start).unwrap();
-    assert_eq!(calendar.select(disabled), Err(CalendarError::DisabledDate(disabled)));
+    assert_eq!(
+        calendar.select(disabled),
+        Err(CalendarError::DisabledDate(disabled))
+    );
     assert_eq!(
         calendar.selection(),
-        DateSelection::Range { start: Some(start), end: None }
+        DateSelection::Range {
+            start: Some(start),
+            end: None
+        }
     );
 }
 
@@ -361,8 +423,14 @@ fn single_selection_replaces_the_previous_date_and_can_be_cleared() {
     let second = date(2024, 5, 22);
     let mut calendar = Calendar::new(first);
 
-    assert_eq!(calendar.select(first).unwrap(), DateSelection::Single(Some(first)));
-    assert_eq!(calendar.select(second).unwrap(), DateSelection::Single(Some(second)));
+    assert_eq!(
+        calendar.select(first).unwrap(),
+        DateSelection::Single(Some(first))
+    );
+    assert_eq!(
+        calendar.select(second).unwrap(),
+        DateSelection::Single(Some(second))
+    );
     assert_eq!(calendar.focused_date(), second);
     assert!(
         calendar

@@ -2,8 +2,8 @@ pub mod media_query;
 mod provider;
 
 pub use provider::{
-    NotifierProvider, PortableProviderCodec, PortableProviderCodecError, Provider, ProviderContext,
-    ProviderHandle, Snapshot, StoreProvider,
+    NotifierProvider, Observation, PortableProviderCodec, PortableProviderCodecError, Provider,
+    ProviderContext, ProviderHandle, Snapshot, StoreProvider,
 };
 
 #[cfg(feature = "portable-guest")]

@@ -166,32 +166,34 @@ impl LayoutCache {
     }
 
     /// Inserts a layout, stamped as used by the current frame.
-    pub(super) fn insert(
-        &mut self,
-        key: LayoutCacheKey,
-        layout: impl Into<PositionedTextLayout>,
-    ) {
+    pub(super) fn insert(&mut self, key: LayoutCacheKey, layout: impl Into<PositionedTextLayout>) {
         let generation = self.generation;
-        self.entries
-            .insert(key, CachedLayout { layout: layout.into(), last_used: generation });
+        self.entries.insert(
+            key,
+            CachedLayout {
+                layout: layout.into(),
+                last_used: generation,
+            },
+        );
     }
 
     /// Inserts every layout of `layouts`, each stamped as used by the current
     /// frame.
-    pub(super) fn extend<L>(
-        &mut self,
-        layouts: impl IntoIterator<Item = (LayoutCacheKey, L)>,
-    ) where
+    pub(super) fn extend<L>(&mut self, layouts: impl IntoIterator<Item = (LayoutCacheKey, L)>)
+    where
         L: Into<PositionedTextLayout>,
     {
         let generation = self.generation;
-        self.entries.extend(
-            layouts
-                .into_iter()
-                .map(|(key, layout)| {
-                    (key, CachedLayout { layout: layout.into(), last_used: generation })
-                }),
-        );
+        self.entries
+            .extend(layouts.into_iter().map(|(key, layout)| {
+                (
+                    key,
+                    CachedLayout {
+                        layout: layout.into(),
+                        last_used: generation,
+                    },
+                )
+            }));
     }
 }
 

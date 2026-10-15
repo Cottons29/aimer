@@ -6,6 +6,7 @@ struct SvgVertexIn {
     float4 clip_rect [[attribute(4)]];
     float4 clip_border_radius [[attribute(5)]];
     float4 viewport [[attribute(6)]];
+    float coverage [[attribute(7)]];
 };
 
 struct SvgVaryings {
@@ -15,6 +16,7 @@ struct SvgVaryings {
     float4 clip_rect [[user(loc2)]];
     float4 clip_border_radius [[user(loc3)]];
     float surface_is_srgb [[user(loc4)]];
+    float coverage [[user(loc5)]];
 };
 
 struct SvgFragmentIn {
@@ -23,6 +25,7 @@ struct SvgFragmentIn {
     float4 clip_rect [[user(loc2)]];
     float4 clip_border_radius [[user(loc3)]];
     float surface_is_srgb [[user(loc4)]];
+    float coverage [[user(loc5)]];
 };
 
 vertex SvgVaryings vs_main(SvgVertexIn attributes [[stage_in]]) {
@@ -39,6 +42,7 @@ vertex SvgVaryings vs_main(SvgVertexIn attributes [[stage_in]]) {
     out.clip_rect = attributes.clip_rect;
     out.clip_border_radius = attributes.clip_border_radius;
     out.surface_is_srgb = attributes.viewport.z;
+    out.coverage = attributes.coverage;
     return out;
 }
 
@@ -74,7 +78,7 @@ fragment float4 fs_main(SvgFragmentIn varyings [[stage_in]]) {
         color = float4(srgb_to_linear(color.r), srgb_to_linear(color.g),
                        srgb_to_linear(color.b), color.a);
     }
-    float4 result = float4(color.rgb * color.a, color.a) * clip;
+    float4 result = float4(color.rgb * color.a, color.a) * clip * varyings.coverage;
     if (varyings.surface_is_srgb < 0.5 && result.a > 0.000001) {
         float3 unpremultiplied = result.rgb / result.a;
         result = float4(float3(linear_to_srgb(unpremultiplied.r),

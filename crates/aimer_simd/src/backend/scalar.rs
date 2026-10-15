@@ -1,7 +1,5 @@
 use crate::number::Number;
-use crate::simd_traits::{
-    Simd, SimdAdd, SimdCompare, SimdDiv, SimdMul, SimdSelect, SimdSub,
-};
+use crate::simd_traits::{Simd, SimdAdd, SimdCompare, SimdDiv, SimdMul, SimdSelect, SimdSub};
 
 /// Scalar implementation of the SIMD backend traits.
 ///

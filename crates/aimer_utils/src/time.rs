@@ -122,13 +122,11 @@ fn duration_nanos(duration: Duration) -> u64 {
 pub fn set_portable_frame_time(frame: u64) {
     #[cfg(any(aimer_portable_guest, test))]
     {
-    const CLOCK_ORIGIN_NANOS: u64 = 1_000_000_000;
-    const FRAME_NANOS: u64 = 16_000_000;
-    PORTABLE_FRAME_TIME_NANOS.with(|time| {
-        time.set(
-            CLOCK_ORIGIN_NANOS.saturating_add(frame.saturating_mul(FRAME_NANOS)),
-        );
-    });
+        const CLOCK_ORIGIN_NANOS: u64 = 1_000_000_000;
+        const FRAME_NANOS: u64 = 16_000_000;
+        PORTABLE_FRAME_TIME_NANOS.with(|time| {
+            time.set(CLOCK_ORIGIN_NANOS.saturating_add(frame.saturating_mul(FRAME_NANOS)));
+        });
     }
 
     #[cfg(not(any(aimer_portable_guest, test)))]

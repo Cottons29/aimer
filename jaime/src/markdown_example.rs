@@ -1,11 +1,11 @@
 use std::rc::Rc;
 
+use aimer::input::button::Button;
 use aimer::macros::widget;
 use aimer::style::{
     BoxDecoration, FontWeight, LayoutSpacing, Spacing, TextAlign, TextStyle, Theme, ThemeData,
 };
 use aimer::*;
-use aimer::input::button::Button;
 
 const JAIME_MARKDOWN: &str = include_str!("../assets/JAIME.md");
 const CUSTOM_MARKDOWN: &str = r#"# Custom Markdown Widgets
@@ -40,13 +40,18 @@ impl MarkdownCustomBlock for TypedCallout {
     type Props = TypedCalloutProps;
 
     fn parse(input: MarkdownCustomBlockInput<'_>) -> Result<Self::Props, MarkdownError> {
-        let message = input.raw.trim().to_owned();
+        let message = input
+            .raw
+            .trim()
+            .to_owned();
         if message.is_empty() {
             return Err(MarkdownError::new("typed callout cannot be empty"));
         }
         Ok(TypedCalloutProps {
             message,
-            content: input.content.clone(),
+            content: input
+                .content
+                .clone(),
         })
     }
 
@@ -61,10 +66,18 @@ impl MarkdownCustomBlock for TypedCallout {
                     Text::new("Typed block")
                         .text_style(TextStyle::new().font_weight(FontWeight::Bold))
                         .boxed(),
-                    Text::new(props.message.clone()).boxed(),
+                    Text::new(
+                        props
+                            .message
+                            .clone(),
+                    )
+                    .boxed(),
                     Text::new(format!(
                         "Nested blocks parsed: {}",
-                        props.content.blocks.len()
+                        props
+                            .content
+                            .blocks
+                            .len()
                     ))
                     .boxed(),
                 ]),
@@ -142,12 +155,15 @@ fn custom_markdown_content_with_press(on_press: impl Fn() + 'static) -> Markdown
                                         .color(crate::theme::app_theme().primary_color),
                                 )
                                 .boxed(),
-                            Text::new(data.text.trim().to_owned())
-                                .text_style(
-                                    TextStyle::new()
-                                        .color(crate::theme::app_theme().on_surface_color),
-                                )
-                                .boxed(),
+                            Text::new(
+                                data.text
+                                    .trim()
+                                    .to_owned(),
+                            )
+                            .text_style(
+                                TextStyle::new().color(crate::theme::app_theme().on_surface_color),
+                            )
+                            .boxed(),
                         ]),
                     )
                     .boxed()
@@ -172,14 +188,18 @@ fn custom_markdown_content_with_press(on_press: impl Fn() + 'static) -> Markdown
                     .hover_decoration(
                         BoxDecoration::new()
                             .background_color(
-                                crate::theme::app_theme().primary_color.darken(0.08),
+                                crate::theme::app_theme()
+                                    .primary_color
+                                    .darken(0.08),
                             )
                             .border_radius(6),
                     )
                     .press_decoration(
                         BoxDecoration::new()
                             .background_color(
-                                crate::theme::app_theme().primary_color.darken(0.18),
+                                crate::theme::app_theme()
+                                    .primary_color
+                                    .darken(0.18),
                             )
                             .border_radius(6),
                     )
@@ -188,14 +208,15 @@ fn custom_markdown_content_with_press(on_press: impl Fn() + 'static) -> Markdown
                         Container::new()
                             .width(120)
                             .height(20)
-                            .child(Text::new(data.label.clone())
-                                .text_align(TextAlign::MidCenter)
-                                .text_style(
-                                TextStyle::new()
-
-                                    .font_weight(FontWeight::Bold)
-                                    .color(crate::theme::app_theme().on_primary_color),
-                            )),
+                            .child(
+                                Text::new(data.label.clone())
+                                    .text_align(TextAlign::MidCenter)
+                                    .text_style(
+                                        TextStyle::new()
+                                            .font_weight(FontWeight::Bold)
+                                            .color(crate::theme::app_theme().on_primary_color),
+                                    ),
+                            ),
                     )
                     .boxed()
             },
@@ -266,13 +287,10 @@ pub fn custom_markdown_viewer() -> impl Widget {
 
     Container::new()
         .color(app_theme.background_color)
-        .child(
-            Row::new()
-                .children([
-                Expanded::new().box_child(typed_custom_markdown_content()),
-                    Expanded::new().box_child(CustomMarkdownExample::new()),
-            ]),
-        )
+        .child(Row::new().children([
+            Expanded::new().box_child(typed_custom_markdown_content()),
+            Expanded::new().box_child(CustomMarkdownExample::new()),
+        ]))
 }
 
 pub fn start_custom_markdown_example() {
@@ -288,8 +306,8 @@ mod tests {
     use aimer::{MarkdownDocument, Widget};
 
     use super::{
-        custom_markdown_content, jaime_markdown_content, jaime_markdown_source,
-        typed_custom_markdown_content, CUSTOM_MARKDOWN, TYPED_CUSTOM_MARKDOWN,
+        CUSTOM_MARKDOWN, TYPED_CUSTOM_MARKDOWN, custom_markdown_content, jaime_markdown_content,
+        jaime_markdown_source, typed_custom_markdown_content,
     };
 
     #[test]
@@ -305,13 +323,21 @@ mod tests {
     fn custom_markdown_source_contains_registered_syntax() {
         assert!(CUSTOM_MARKDOWN.contains("{{button:Press me}}"));
         assert!(CUSTOM_MARKDOWN.contains(":::callout"));
-        assert!(custom_markdown_content().text_content().is_some());
+        assert!(
+            custom_markdown_content()
+                .text_content()
+                .is_some()
+        );
     }
 
     #[test]
     fn typed_custom_markdown_registers_strongly_typed_rules() {
         assert!(TYPED_CUSTOM_MARKDOWN.contains("@{alice}"));
         assert!(TYPED_CUSTOM_MARKDOWN.contains(":::typed-callout"));
-        assert!(typed_custom_markdown_content().text_content().is_some());
+        assert!(
+            typed_custom_markdown_content()
+                .text_content()
+                .is_some()
+        );
     }
 }

@@ -96,8 +96,8 @@ pub fn capability(args: TokenStream, input: TokenStream) -> TokenStream {
 /// - **Native** (`not(target_arch = "wasm32")`): a `#[no_mangle] pub extern "C"
 ///   fn __generated_entrance_point()` that calls your function.
 /// - **Android** (`target_os = "android"`): an `android_main(app: AndroidApp)`
-///   that stores the `AndroidApp` handle in `ANDROID_APP` and then calls your
-///   function.
+///   that registers the `AndroidApp` handle (in `ANDROID_APP`, and as the
+///   location `aimer_storage` keeps app data in) and then calls your function.
 /// - **WASM** (`target_arch = "wasm32"`): a `#[wasm_bindgen] pub fn
 ///   __generated_entrance_point()` that calls your function. Aimer CLI's
 ///   private portable-guest compilation omits this browser-only entry point.
@@ -142,7 +142,7 @@ fn expand_main(input_fn: ItemFn) -> proc_macro2::TokenStream {
         #[cfg(target_os = "android")]
         #[unsafe(no_mangle)]
         pub extern "C" fn android_main(app: aimer::quiver::winit::platform::android::activity::AndroidApp) {
-            let _ = aimer::quiver::aimer_app::ANDROID_APP.set(app);
+            aimer::quiver::register_android_app(app);
             if !aimer::quiver::initialize_hot_reload_host() {
                 return;
             }
@@ -401,7 +401,7 @@ pub fn stateful_widget_derive(input: TokenStream) -> TokenStream {
 ///
 /// [`Route::resolve_named`]: https://docs.rs/aimer_router
 /// [`Route::redirect`]: https://docs.rs/aimer_router
-#[proc_macro_derive(Router, attributes(route, routes, shell, redirect))]
+#[proc_macro_derive(Router, attributes(route, routes, shell, redirect, transition, view_level))]
 pub fn router_derive(input: TokenStream) -> TokenStream {
     TokenStream::from(RouterCodegen::derive(input.into()))
 }
@@ -2059,7 +2059,6 @@ mod portable_widget_compile_tests {
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::process::{Command, Output};
-
 
     #[test]
     fn generated_widgets_use_the_portable_runtime_lifecycle() {

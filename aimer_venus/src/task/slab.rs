@@ -361,7 +361,11 @@ mod tests {
             ];
 
             assert!(slab.remove(tasks[removed_first]));
-            assert_eq!(slab.remove_scope(scope), 2, "early finisher #{removed_first}");
+            assert_eq!(
+                slab.remove_scope(scope),
+                2,
+                "early finisher #{removed_first}"
+            );
             assert_eq!(slab.len(), 0);
         }
     }

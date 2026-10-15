@@ -9,7 +9,7 @@ use super::*;
 use std::cell::RefCell;
 use std::time::Duration;
 
-use aimer_animation::{Animatable, Curve, ImplicitAnimatedBuilder};
+use aimer_animation::{Animatable, curves, ImplicitAnimatedBuilder};
 use aimer_container::{Direction, Resizable};
 use aimer_style::{BorderSlice, BorderStyle, BoxDecoration, BoxOutline};
 use winit::event::{ElementState, MouseButton};
@@ -34,7 +34,11 @@ impl StatefulWidget for Sidebar {
     type State = SidebarState;
 
     fn create_state(self) -> SidebarState {
-        SidebarState { resizable: false, updater: self.updater, hovered: self.hovered }
+        SidebarState {
+            resizable: false,
+            updater: self.updater,
+            hovered: self.hovered,
+        }
     }
 }
 
@@ -51,7 +55,7 @@ impl State<Sidebar> for SidebarState {
         ImplicitAnimatedBuilder::new(
             if self.resizable { 1.0 } else { 0.0 },
             Duration::from_millis(300),
-            Curve::EaseInOut,
+            curves::EASE_IN_OUT,
             move |delta: &f32| {
                 let zone_updater = zone_updater;
                 let hovered = hovered.clone();
@@ -118,7 +122,9 @@ impl State<Sidebar> for SidebarState {
 
 impl Widget for Sidebar {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
-        StatefulElement::new_with_name(self, ctx, "Sidebar", None).0.boxed()
+        StatefulElement::new_with_name(self, ctx, "Sidebar", None)
+            .0
+            .boxed()
     }
 }
 
@@ -131,15 +137,27 @@ struct Shell {
 
 impl Widget for Shell {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
-        aimer_container::Container::new().color(Color::Rgb(10, 10, 10)).child(Row::new()
-            .justify_content(aimer_flex::JustifyContent::SpaceBetween)
-            .children(vec![
-                Sidebar { updater: self.updater, hovered: self.hovered }.boxed(),
-                aimer_flex::Expanded::new()
-                    .flex(0.95)
-                    .child(SizedBox::new().height(Dimension::Px(400.0)).color(Color::Rgb(20, 20, 20)))
-                    .boxed(),
-            ]))
+        aimer_container::Container::new()
+            .color(Color::Rgb(10, 10, 10))
+            .child(
+                Row::new()
+                    .justify_content(aimer_flex::JustifyContent::SpaceBetween)
+                    .children(vec![
+                        Sidebar {
+                            updater: self.updater,
+                            hovered: self.hovered,
+                        }
+                        .boxed(),
+                        aimer_flex::Expanded::new()
+                            .flex(0.95)
+                            .child(
+                                SizedBox::new()
+                                    .height(Dimension::Px(400.0))
+                                    .color(Color::Rgb(20, 20, 20)),
+                            )
+                            .boxed(),
+                    ]),
+            )
             .to_element(ctx)
     }
 }
@@ -162,7 +180,10 @@ fn find<'a>(element: &'a dyn Element, name: &str) -> Option<&'a dyn Element> {
 /// The width the resizable itself reports.
 fn panel_width(app: &HeadlessAimerApp<impl Widget + 'static>) -> f32 {
     let root = app.app.widget_root.as_ref().unwrap().as_ref();
-    match find(root, "Resizable").and_then(|resizable| resizable.size()).map(|size| size.width) {
+    match find(root, "Resizable")
+        .and_then(|resizable| resizable.size())
+        .map(|size| size.width)
+    {
         Some(Dimension::Px(width)) => width,
         _ => f32::NAN,
     }
@@ -170,14 +191,17 @@ fn panel_width(app: &HeadlessAimerApp<impl Widget + 'static>) -> f32 {
 
 fn move_to(app: &mut HeadlessAimerApp<impl Widget + 'static>, x: f64, frames: usize) {
     app.send_window_event(WindowEvent::CursorMoved {
-        device_id: DeviceId::dummy(), position: PhysicalPosition::new(x, 200.0),
+        device_id: DeviceId::dummy(),
+        position: PhysicalPosition::new(x, 200.0),
     });
     app.pump_frames(frames);
 }
 
 fn button(app: &mut HeadlessAimerApp<impl Widget + 'static>, state: ElementState) {
     app.send_window_event(WindowEvent::MouseInput {
-        device_id: DeviceId::dummy(), state, button: MouseButton::Left,
+        device_id: DeviceId::dummy(),
+        state,
+        button: MouseButton::Left,
     });
     app.pump_frames(1);
 }
@@ -192,8 +216,14 @@ fn drag(frames: usize, steps: u32) -> Vec<(u32, f64, f32, f32)> {
 /// nothing hovered first, the way a click arrives.
 fn drag_from(offset: f64, frames: usize, steps: u32) -> Vec<(u32, f64, f32, f32)> {
     let mut app = AimerApp::start_headless_with(
-        Shell { updater: Rc::new(RefCell::new(None)), hovered: Rc::new(std::cell::Cell::new(0)) },
-        HeadlessOptions { size: PhysicalSize::new(800, 400), scale_factor: 1.0 },
+        Shell {
+            updater: Rc::new(RefCell::new(None)),
+            hovered: Rc::new(std::cell::Cell::new(0)),
+        },
+        HeadlessOptions {
+            size: PhysicalSize::new(800, 400),
+            scale_factor: 1.0,
+        },
     );
     move_to(&mut app, 600.0, 1);
     app.pump_frames(3);
@@ -216,7 +246,9 @@ fn drag_from(offset: f64, frames: usize, steps: u32) -> Vec<(u32, f64, f32, f32)
 
 #[test]
 fn a_sidebar_that_rebuilds_for_the_zone_still_follows_the_drag() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     for frames in [1, 2, 4] {
         let wrong = drag(frames, 24);
         assert!(
@@ -228,7 +260,9 @@ fn a_sidebar_that_rebuilds_for_the_zone_still_follows_the_drag() {
 
 #[test]
 fn a_press_anywhere_in_the_grab_band_starts_the_drag() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     let mut dead = Vec::new();
     for offset in [-13.0, -10.0, -6.0, -2.0, 2.0, 6.0, 10.0] {
         // No frame between the move and the press, as with a click.
@@ -239,12 +273,17 @@ fn a_press_anywhere_in_the_grab_band_starts_the_drag() {
             }
         }
     }
-    assert!(dead.is_empty(), "presses at these offsets from the edge did not drag it: {dead:?}");
+    assert!(
+        dead.is_empty(),
+        "presses at these offsets from the edge did not drag it: {dead:?}"
+    );
 }
 
 #[test]
 fn rows_in_a_sidebar_that_follows_its_zone_are_not_left_hovered_in_the_pane() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     // The pointer crosses the rows, rests in the grab band, and leaves in one
     // jump or by sliding out, by every route a mouse takes to the pane.
     let routes: [&[f64]; 4] = [
@@ -257,14 +296,21 @@ fn rows_in_a_sidebar_that_follows_its_zone_are_not_left_hovered_in_the_pane() {
     for (route, xs) in routes.iter().enumerate() {
         let hovered = Rc::new(std::cell::Cell::new(0));
         let mut app = AimerApp::start_headless_with(
-            Shell { updater: Rc::new(RefCell::new(None)), hovered: hovered.clone() },
-            HeadlessOptions { size: PhysicalSize::new(800, 400), scale_factor: 1.0 },
+            Shell {
+                updater: Rc::new(RefCell::new(None)),
+                hovered: hovered.clone(),
+            },
+            HeadlessOptions {
+                size: PhysicalSize::new(800, 400),
+                scale_factor: 1.0,
+            },
         );
         app.pump_frames(3);
         for &x in *xs {
             for y in [60.0, 61.0] {
                 app.send_window_event(WindowEvent::CursorMoved {
-                    device_id: DeviceId::dummy(), position: PhysicalPosition::new(x, y),
+                    device_id: DeviceId::dummy(),
+                    position: PhysicalPosition::new(x, y),
                 });
                 app.pump_frames(2);
             }
@@ -273,28 +319,51 @@ fn rows_in_a_sidebar_that_follows_its_zone_are_not_left_hovered_in_the_pane() {
             lingering.push((route, hovered.get()));
         }
     }
-    assert!(lingering.is_empty(), "(route, rows still hovered) after the pointer reached the pane: {lingering:?}");
+    assert!(
+        lingering.is_empty(),
+        "(route, rows still hovered) after the pointer reached the pane: {lingering:?}"
+    );
 }
 
 // The paint-time hover check consults this flag: a list the dragged edge sweeps
 // across must not start hovering, because the moves that leave it go to the edge.
 #[test]
 fn the_pointer_counts_as_captured_for_exactly_the_length_of_the_drag() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     let mut app = AimerApp::start_headless_with(
-        Shell { updater: Rc::new(RefCell::new(None)), hovered: Rc::new(std::cell::Cell::new(0)) },
-        HeadlessOptions { size: PhysicalSize::new(800, 400), scale_factor: 1.0 },
+        Shell {
+            updater: Rc::new(RefCell::new(None)),
+            hovered: Rc::new(std::cell::Cell::new(0)),
+        },
+        HeadlessOptions {
+            size: PhysicalSize::new(800, 400),
+            scale_factor: 1.0,
+        },
     );
     move_to(&mut app, 600.0, 1);
     app.pump_frames(3);
     move_to(&mut app, f64::from(WIDTH) - 3.0, 2);
-    assert!(!aimer_widget::pointer_capture_active(), "hovering the edge captures nothing");
+    assert!(
+        !aimer_widget::pointer_capture_active(),
+        "hovering the edge captures nothing"
+    );
 
     button(&mut app, ElementState::Pressed);
-    assert!(aimer_widget::pointer_capture_active(), "a press on the edge owns the pointer");
+    assert!(
+        aimer_widget::pointer_capture_active(),
+        "a press on the edge owns the pointer"
+    );
     move_to(&mut app, 200.0, 2);
-    assert!(aimer_widget::pointer_capture_active(), "and keeps it while the drag moves");
+    assert!(
+        aimer_widget::pointer_capture_active(),
+        "and keeps it while the drag moves"
+    );
 
     button(&mut app, ElementState::Released);
-    assert!(!aimer_widget::pointer_capture_active(), "the release gives it back");
+    assert!(
+        !aimer_widget::pointer_capture_active(),
+        "the release gives it back"
+    );
 }

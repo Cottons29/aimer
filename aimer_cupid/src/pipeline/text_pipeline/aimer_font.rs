@@ -10,22 +10,22 @@ use std::sync::{Arc, OnceLock, RwLock};
 use super::font_resolver::FontData;
 use super::glyph_rasterizer::{GlyphKey, NORMAL_GLYPH_WEIGHT, RasterizedGlyph};
 
-mod outline;
+mod apple_private;
+mod bitmap;
 mod cff;
 mod color;
-mod bitmap;
 mod layout;
-mod apple_private;
+mod outline;
+mod rasterize;
 mod svg;
 mod variation;
-mod rasterize;
 
+#[cfg(test)]
+pub(crate) use layout::{shape_arabic_run, shape_latin_run, shape_run_with_options};
 #[cfg(test)]
 pub(crate) use rasterize::rasterize_font_glyph;
 #[cfg(test)]
 pub(crate) use rasterize::rasterize_font_glyphs;
-#[cfg(test)]
-pub(crate) use layout::{shape_arabic_run, shape_latin_run, shape_run_with_options};
 
 pub(crate) fn recycle_shaped_glyphs(glyphs: Vec<layout::AimerLayoutGlyph>) {
     layout::recycle_shaped_glyphs(glyphs);
@@ -218,10 +218,7 @@ impl VerticalMetricsTable {
         let vmtx_tag = Tag::from_bytes(*b"vmtx");
         let required_size = checked_add(
             checked_mul(usize::from(number_of_v_metrics), 4)?,
-            checked_mul(
-                usize::from(metrics.num_glyphs - number_of_v_metrics),
-                2,
-            )?,
+            checked_mul(usize::from(metrics.num_glyphs - number_of_v_metrics), 2)?,
         )?;
         if vmtx.len() < required_size {
             return Err(SfntError::MalformedTable(vmtx_tag));
@@ -417,19 +414,23 @@ impl<'a> SfntFace<'a> {
             )?;
             reader.range(12, offsets_size)?;
 
-            let selected_offset = reader.u32(12 + checked_mul(
-                usize::try_from(face_index).map_err(|_| SfntError::ArithmeticOverflow)?,
-                4,
-            )?)?;
+            let selected_offset = reader.u32(
+                12 + checked_mul(
+                    usize::try_from(face_index).map_err(|_| SfntError::ArithmeticOverflow)?,
+                    4,
+                )?,
+            )?;
 
             // Validate every collection offset before parsing the selected
             // face. A malformed unselected face must not hide in a shared
             // font buffer and become a later source of unchecked offsets.
             for face in 0..face_count {
-                let offset = reader.u32(12 + checked_mul(
-                    usize::try_from(face).map_err(|_| SfntError::ArithmeticOverflow)?,
-                    4,
-                )?)?;
+                let offset = reader.u32(
+                    12 + checked_mul(
+                        usize::try_from(face).map_err(|_| SfntError::ArithmeticOverflow)?,
+                        4,
+                    )?,
+                )?;
                 validate_face_offset(&reader, offset)?;
             }
 
@@ -477,13 +478,16 @@ impl<'a> SfntFace<'a> {
     /// contain `tag`.
     pub(crate) fn table(&self, tag: [u8; 4]) -> Option<&[u8]> {
         let tag = Tag::from_bytes(tag);
-        self.tables.binary_search_by_key(&tag, |record| record.tag).ok().map(|index| {
-            let record = &self.tables[index];
-            // `from_directory` checked this range and stores host-sized
-            // values, so this access cannot fail while the owned byte handle
-            // remains valid.
-            &self.bytes.as_ref()[record.offset..record.offset + record.length]
-        })
+        self.tables
+            .binary_search_by_key(&tag, |record| record.tag)
+            .ok()
+            .map(|index| {
+                let record = &self.tables[index];
+                // `from_directory` checked this range and stores host-sized
+                // values, so this access cannot fail while the owned byte handle
+                // remains valid.
+                &self.bytes.as_ref()[record.offset..record.offset + record.length]
+            })
     }
 
     /// Reports whether the face advertises a color-glyph table understood by
@@ -552,7 +556,11 @@ impl<'a> SfntFace<'a> {
             .get_or_init(|| color::parse(self))
             .as_ref()
             .map_err(|error| *error)
-            .map(|tables| tables.as_ref().and_then(|tables| tables.palette_color(palette_index)))
+            .map(|tables| {
+                tables
+                    .as_ref()
+                    .and_then(|tables| tables.palette_color(palette_index))
+            })
     }
 
     /// Rasterizes a supported embedded bitmap strike using the face-local
@@ -611,9 +619,7 @@ impl<'a> SfntFace<'a> {
         let Some(cmap) = self.table(*b"cmap") else {
             return Ok(None);
         };
-        let parsed = self
-            .cmap_cache
-            .get_or_init(|| ParsedCmap::parse(cmap));
+        let parsed = self.cmap_cache.get_or_init(|| ParsedCmap::parse(cmap));
         parsed
             .as_ref()
             .map_err(|error| *error)
@@ -713,9 +719,7 @@ impl<'a> SfntFace<'a> {
     fn vertical_metrics(&self) -> Result<Option<&VerticalMetricsTable>, SfntError> {
         self.vertical_metrics_cache
             .get_or_init(|| {
-                let (Some(vhea), Some(vmtx)) =
-                    (self.table(*b"vhea"), self.table(*b"vmtx"))
-                else {
+                let (Some(vhea), Some(vmtx)) = (self.table(*b"vhea"), self.table(*b"vmtx")) else {
                     return Ok(None);
                 };
                 let metrics = self.metrics()?;
@@ -726,11 +730,7 @@ impl<'a> SfntFace<'a> {
             .map(Option::as_ref)
     }
 
-    fn glyph_y_max(
-        &self,
-        glyph_id: u16,
-        metrics: FontMetrics,
-    ) -> Result<Option<i32>, SfntError> {
+    fn glyph_y_max(&self, glyph_id: u16, metrics: FontMetrics) -> Result<Option<i32>, SfntError> {
         if let Some(outline) = self.outline_with_metrics(glyph_id, metrics)? {
             return Ok(Some(i32::from(outline.bounds[3])));
         }
@@ -786,10 +786,7 @@ impl<'a> SfntFace<'a> {
         weight: u16,
     ) -> Result<Option<VerticalGlyphMetrics>, SfntError> {
         let (coordinates, coordinate_count) = self.coordinates_for_weight_instance(weight);
-        self.vertical_glyph_metrics_at_coordinates(
-            glyph_id,
-            &coordinates[..coordinate_count],
-        )
+        self.vertical_glyph_metrics_at_coordinates(glyph_id, &coordinates[..coordinate_count])
     }
 
     /// Returns one glyph's vertical metrics after applying a complete
@@ -802,8 +799,8 @@ impl<'a> SfntFace<'a> {
         let Some(metrics) = self.vertical_glyph_metrics(glyph_id)? else {
             return Ok(None);
         };
-        let [advance_delta, bearing_delta, origin_delta] = self
-            .vertical_metric_deltas_at_coordinates(glyph_id, coordinates)?;
+        let [advance_delta, bearing_delta, origin_delta] =
+            self.vertical_metric_deltas_at_coordinates(glyph_id, coordinates)?;
         let origin_delta = if self
             .vertical_metrics()?
             .is_some_and(|vertical_metrics| vertical_metrics.vorg.is_none())
@@ -816,7 +813,8 @@ impl<'a> SfntFace<'a> {
             advance_height: (i32::from(metrics.advance_height) + advance_delta)
                 .clamp(0, i32::from(u16::MAX)) as u16,
             top_side_bearing: (i32::from(metrics.top_side_bearing) + bearing_delta)
-                .clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16,
+                .clamp(i32::from(i16::MIN), i32::from(i16::MAX))
+                as i16,
             vert_origin_y: metrics.vert_origin_y.saturating_add(origin_delta),
         }))
     }
@@ -876,8 +874,7 @@ impl<'a> SfntFace<'a> {
         let Some(base) = self.glyph_advance_with_metrics(glyph_id, metrics)? else {
             return Ok(None);
         };
-        let delta = self
-            .horizontal_metric_deltas_at_coordinates(glyph_id, coordinates)?[0];
+        let delta = self.horizontal_metric_deltas_at_coordinates(glyph_id, coordinates)?[0];
         Ok(Some((i32::from(base) + delta).max(0)))
     }
 
@@ -1027,10 +1024,7 @@ impl<'a> SfntFace<'a> {
 
         let mut fallback = None;
         for index in 0..count {
-            let record_offset = checked_add(
-                6,
-                checked_mul(usize::from(index), 12)?,
-            )?;
+            let record_offset = checked_add(6, checked_mul(usize::from(index), 12)?)?;
             let platform = reader.u16(record_offset)?;
             let record_name_id = reader.u16(checked_add(record_offset, 6)?)?;
             if record_name_id != name_id {
@@ -1087,10 +1081,7 @@ impl<'a> SfntFace<'a> {
             });
         }
 
-        let directory_size = checked_add(
-            12,
-            checked_mul(usize::from(table_count), 16)?,
-        )?;
+        let directory_size = checked_add(12, checked_mul(usize::from(table_count), 16)?)?;
         reader.range(offset, directory_size)?;
 
         let mut tables = Vec::with_capacity(usize::from(table_count));
@@ -1172,9 +1163,7 @@ impl VariationInstanceRegistry {
             if !coordinate.is_finite() {
                 return None;
             }
-            let quantized = (*coordinate * 16_384.0)
-                .round()
-                .clamp(-16_384.0, 16_384.0) as i16;
+            let quantized = (*coordinate * 16_384.0).round().clamp(-16_384.0, 16_384.0) as i16;
             *coordinate = f32::from(quantized) / 16_384.0;
             identity.push(quantized);
         }
@@ -1200,9 +1189,7 @@ impl VariationInstanceRegistry {
     }
 
     fn coordinates(&self, instance_id: u32) -> Option<&[f32]> {
-        self.coordinates_by_id
-            .get(&instance_id)
-            .map(AsRef::as_ref)
+        self.coordinates_by_id.get(&instance_id).map(AsRef::as_ref)
     }
 }
 
@@ -1270,10 +1257,7 @@ fn primary_aimer_font(data: FontData, face_index: u32) -> Option<SharedParsedAim
         .clone()
 }
 
-fn parsed_aimer_font(
-    data: FontData,
-    face_index: u32,
-) -> Result<Arc<ParsedAimerFont>, SfntError> {
+fn parsed_aimer_font(data: FontData, face_index: u32) -> Result<Arc<ParsedAimerFont>, SfntError> {
     let bytes = data.as_ref();
     let key = ParsedAimerFontKey {
         data_address: bytes.as_ptr() as usize,
@@ -1350,10 +1334,7 @@ pub(crate) struct AimerFontState {
 impl AimerFontState {
     /// Builds a cacheable face and metrics record. OpenType layout state is
     /// parsed lazily on the first shaping call and retained thereafter.
-    pub(crate) fn from_font_data(
-        data: FontData,
-        face_index: u32,
-    ) -> Result<Self, SfntError> {
+    pub(crate) fn from_font_data(data: FontData, face_index: u32) -> Result<Self, SfntError> {
         let shared = parsed_aimer_font(data, face_index)?;
         Ok(Self::from_shared(shared))
     }
@@ -1362,8 +1343,7 @@ impl AimerFontState {
     /// face. The parsed face, OpenType layout, and shared outline caches stay
     /// process-wide; only the small mutable raster handle is local.
     pub(crate) fn from_shared(shared: SharedParsedAimerFont) -> Self {
-        let raster_cache =
-            rasterize::GlyphRasterCache::with_shared(shared.raster_cache.clone());
+        let raster_cache = rasterize::GlyphRasterCache::with_shared(shared.raster_cache.clone());
         Self {
             shared,
             raster_cache,
@@ -1436,12 +1416,7 @@ impl AimerFontState {
         language: Option<crate::font::TextLanguage>,
         vertical: bool,
     ) -> Result<Option<layout::AimerShapedRun>, SfntError> {
-        self.shape_run_with_options_at_weight(
-            text,
-            language,
-            vertical,
-            NORMAL_GLYPH_WEIGHT,
-        )
+        self.shape_run_with_options_at_weight(text, language, vertical, NORMAL_GLYPH_WEIGHT)
     }
 
     /// Shapes a run while selecting the requested readable `wght` instance.
@@ -1455,16 +1430,17 @@ impl AimerFontState {
         weight: u16,
     ) -> Result<Option<layout::AimerShapedRun>, SfntError> {
         let layout = self.shared.layout()?;
-        self.shared.with_variation_coordinates(weight, 0, |coordinates| {
-            layout::shape_run_with_layout_options_at_coordinates(
-                &self.shared.face,
-                layout,
-                text,
-                language,
-                vertical,
-                coordinates,
-            )
-        })
+        self.shared
+            .with_variation_coordinates(weight, 0, |coordinates| {
+                layout::shape_run_with_layout_options_at_coordinates(
+                    &self.shared.face,
+                    layout,
+                    text,
+                    language,
+                    vertical,
+                    coordinates,
+                )
+            })
     }
 
     /// Shapes a run at an interned arbitrary variation instance.
@@ -1538,13 +1514,11 @@ impl AimerFontState {
         let advance = self
             .shared
             .with_variation_coordinates(weight, variation_id, |coordinates| {
-                self.shared
-                    .face
-                    .glyph_advance_with_metrics_at_coordinates(
-                        glyph_id,
-                        self.shared.metrics,
-                        coordinates,
-                    )
+                self.shared.face.glyph_advance_with_metrics_at_coordinates(
+                    glyph_id,
+                    self.shared.metrics,
+                    coordinates,
+                )
             })
             .ok()??;
         Some(advance as f32 * (font_size / f32::from(self.shared.metrics.units_per_em)))
@@ -1780,13 +1754,10 @@ impl ParsedCmap {
                 } else if codepoint > segment.end {
                     low = index + 1;
                 } else {
-                    let glyph = segment
-                        .glyphs
-                        .as_ref()
-                        .map_or_else(
-                            || add_delta(codepoint, segment.delta),
-                            |glyphs| glyphs[usize::from(codepoint - segment.start)],
-                        );
+                    let glyph = segment.glyphs.as_ref().map_or_else(
+                        || add_delta(codepoint, segment.delta),
+                        |glyphs| glyphs[usize::from(codepoint - segment.start)],
+                    );
                     return Ok(nonzero_glyph(if segment.glyphs.is_some() {
                         add_delta(glyph, segment.delta)
                     } else {
@@ -1866,7 +1837,10 @@ fn parse_format0_cmap(subtable: &[u8]) -> Result<Vec<u16>, SfntError> {
         return Err(SfntError::MalformedCmap(0));
     }
     let bytes = reader.range(6, 256)?;
-    Ok(bytes.iter().map(|glyph| u16::from(*glyph)).collect::<Vec<_>>())
+    Ok(bytes
+        .iter()
+        .map(|glyph| u16::from(*glyph))
+        .collect::<Vec<_>>())
 }
 
 fn parse_format4_cmap(subtable: &[u8]) -> Result<Vec<CmapSegment>, SfntError> {
@@ -1900,8 +1874,7 @@ fn parse_format4_cmap(subtable: &[u8]) -> Result<Vec<CmapSegment>, SfntError> {
         previous_end = Some(end);
 
         let delta = reader.i16(checked_add(id_deltas, checked_mul(index, 2)?)?)?;
-        let range_offset_position =
-            checked_add(id_range_offsets, checked_mul(index, 2)?)?;
+        let range_offset_position = checked_add(id_range_offsets, checked_mul(index, 2)?)?;
         let range_offset = reader.u16(range_offset_position)?;
         let glyphs = if range_offset == 0 {
             None
@@ -1948,10 +1921,7 @@ fn parse_format12_cmap(subtable: &[u8]) -> Result<Vec<CmapGroup>, SfntError> {
         let offset = checked_add(16, checked_mul(index, 12)?)?;
         let start = reader.u32(offset)?;
         let end = reader.u32(checked_add(offset, 4)?)?;
-        if start > end
-            || end > 0x0010_ffff
-            || previous_end.is_some_and(|value| start <= value)
-        {
+        if start > end || end > 0x0010_ffff || previous_end.is_some_and(|value| start <= value) {
             return Err(SfntError::MalformedCmap(12));
         }
         let start_glyph = reader.u32(checked_add(offset, 8)?)?;
@@ -1982,8 +1952,7 @@ fn parse_format14_cmap(subtable: &[u8]) -> Result<Vec<VariationSelectorRecord>, 
     if record_count > MAX_CMAP_VARIATION_RECORDS {
         return Err(SfntError::MalformedCmap(14));
     }
-    let record_count = usize::try_from(record_count)
-        .map_err(|_| SfntError::ArithmeticOverflow)?;
+    let record_count = usize::try_from(record_count).map_err(|_| SfntError::ArithmeticOverflow)?;
     let records_end = checked_add(10, checked_mul(record_count, 11)?)?;
     reader.range(0, records_end)?;
 
@@ -2012,10 +1981,10 @@ fn parse_format14_cmap(subtable: &[u8]) -> Result<Vec<VariationSelectorRecord>, 
         } else {
             parse_non_default_uvs_mappings(&subtable[..length], non_default_offset)?
         };
-        let default_count = u32::try_from(default_ranges.len())
-            .map_err(|_| SfntError::ArithmeticOverflow)?;
-        let non_default_count = u32::try_from(non_default_mappings.len())
-            .map_err(|_| SfntError::ArithmeticOverflow)?;
+        let default_count =
+            u32::try_from(default_ranges.len()).map_err(|_| SfntError::ArithmeticOverflow)?;
+        let non_default_count =
+            u32::try_from(non_default_mappings.len()).map_err(|_| SfntError::ArithmeticOverflow)?;
         total_entries = total_entries
             .checked_add(default_count)
             .and_then(|value| value.checked_add(non_default_count))
@@ -2032,10 +2001,7 @@ fn parse_format14_cmap(subtable: &[u8]) -> Result<Vec<VariationSelectorRecord>, 
     Ok(records)
 }
 
-fn parse_default_uvs_ranges(
-    subtable: &[u8],
-    offset: u32,
-) -> Result<Vec<UnicodeRange>, SfntError> {
+fn parse_default_uvs_ranges(subtable: &[u8], offset: u32) -> Result<Vec<UnicodeRange>, SfntError> {
     let offset = usize::try_from(offset).map_err(|_| SfntError::ArithmeticOverflow)?;
     let reader = Reader::new(subtable);
     let count = reader.u32(offset)?;
@@ -2170,8 +2136,7 @@ impl<'a> Cmap<'a> {
     fn subtable(&self, index: u16) -> Result<&'a [u8], SfntError> {
         let offset = checked_add(4, checked_mul(usize::from(index), 8)?)?;
         let offset = Reader::new(self.bytes).u32(checked_add(offset, 4)?)?;
-        let offset_usize =
-            usize::try_from(offset).map_err(|_| SfntError::ArithmeticOverflow)?;
+        let offset_usize = usize::try_from(offset).map_err(|_| SfntError::ArithmeticOverflow)?;
         self.bytes
             .get(offset_usize..)
             .ok_or(SfntError::CmapSubtableOutOfBounds(offset))
@@ -2227,18 +2192,14 @@ fn lookup_format4(subtable: &[u8], codepoint: u32) -> Result<Option<u16>, SfntEr
         }
 
         let delta = reader.i16(checked_add(id_deltas, checked_mul(index, 2)?)?)?;
-        let range_offset_position =
-            checked_add(id_range_offsets, checked_mul(index, 2)?)?;
+        let range_offset_position = checked_add(id_range_offsets, checked_mul(index, 2)?)?;
         let range_offset = reader.u16(range_offset_position)?;
         if range_offset == 0 {
             return Ok(nonzero_glyph(add_delta(codepoint, delta)));
         }
 
         let glyph_offset = checked_add(
-            checked_add(
-                range_offset_position,
-                usize::from(range_offset),
-            )?,
+            checked_add(range_offset_position, usize::from(range_offset))?,
             checked_mul(usize::from(codepoint - start), 2)?,
         )?;
         let glyph = reader.u16(glyph_offset)?;
@@ -2355,20 +2316,12 @@ fn lookup_format14(
         }
 
         if non_default_offset != 0
-            && let Some(glyph) = lookup_non_default_uvs(
-                &subtable[..length],
-                non_default_offset,
-                codepoint,
-            )? {
+            && let Some(glyph) =
+                lookup_non_default_uvs(&subtable[..length], non_default_offset, codepoint)?
+        {
             return Ok(nonzero_glyph(glyph));
         }
-        if default_offset != 0
-            && is_default_uvs(
-                &subtable[..length],
-                default_offset,
-                codepoint,
-            )?
-        {
+        if default_offset != 0 && is_default_uvs(&subtable[..length], default_offset, codepoint)? {
             return Ok(base_glyph);
         }
         return Ok(None);
@@ -2394,10 +2347,7 @@ fn lookup_non_default_uvs(
 
     for index in 0..mappings {
         let record_offset = checked_add(
-            checked_add(
-                offset,
-                4,
-            )?,
+            checked_add(offset, 4)?,
             checked_mul(
                 usize::try_from(index).map_err(|_| SfntError::ArithmeticOverflow)?,
                 5,
@@ -2411,11 +2361,7 @@ fn lookup_non_default_uvs(
     Ok(None)
 }
 
-fn is_default_uvs(
-    subtable: &[u8],
-    offset: u32,
-    codepoint: u32,
-) -> Result<bool, SfntError> {
+fn is_default_uvs(subtable: &[u8], offset: u32, codepoint: u32) -> Result<bool, SfntError> {
     let offset = usize::try_from(offset).map_err(|_| SfntError::ArithmeticOverflow)?;
     let reader = Reader::new(subtable);
     let ranges = reader.u32(offset)?;
@@ -2479,7 +2425,9 @@ impl<'a> Reader<'a> {
     }
 
     fn range(&self, offset: usize, size: usize) -> Result<&'a [u8], SfntError> {
-        let end = offset.checked_add(size).ok_or(SfntError::ArithmeticOverflow)?;
+        let end = offset
+            .checked_add(size)
+            .ok_or(SfntError::ArithmeticOverflow)?;
         self.bytes
             .get(offset..end)
             .ok_or(SfntError::Truncated { offset, size })
@@ -2532,9 +2480,7 @@ fn validate_face_offset(reader: &Reader<'_>, offset: u32) -> Result<(), SfntErro
     if offset > reader.bytes.len() {
         return Err(SfntError::InvalidFaceOffset(offset as u32));
     }
-    reader
-        .range(offset, 12)
-        .map(|_| ())
+    reader.range(offset, 12).map(|_| ())
 }
 
 fn is_sfnt_signature(tag: Tag) -> bool {
@@ -2557,7 +2503,9 @@ pub(crate) fn fuzz_directory(data: &[u8]) {
         return;
     };
 
-    for tag in [*b"head", *b"maxp", *b"hhea", *b"hmtx", *b"cmap", *b"glyf", *b"loca", *b"CFF ", *b"CFF2"] {
+    for tag in [
+        *b"head", *b"maxp", *b"hhea", *b"hmtx", *b"cmap", *b"glyf", *b"loca", *b"CFF ", *b"CFF2",
+    ] {
         std::hint::black_box(face.table(tag));
     }
     let _ = std::hint::black_box(face.metrics());
@@ -2860,7 +2808,9 @@ pub(crate) mod tests {
         let mut offset = 1_u8;
         bytes.push(offset);
         for item in items {
-            offset = offset.checked_add(item.len() as u8).expect("test INDEX fits");
+            offset = offset
+                .checked_add(item.len() as u8)
+                .expect("test INDEX fits");
             bytes.push(offset);
         }
         for item in items {
@@ -2963,8 +2913,7 @@ pub(crate) mod tests {
         bytes[12..14].copy_from_slice(&1_u16.to_be_bytes());
         bytes[14..16].copy_from_slice(&18_u16.to_be_bytes());
         bytes[18..36].copy_from_slice(&[
-            0, b'T', 0, b'e', 0, b's', 0, b't', 0, b' ', 0, b'S', 0, b'a', 0, b'n', 0,
-            b's',
+            0, b'T', 0, b'e', 0, b's', 0, b't', 0, b' ', 0, b'S', 0, b'a', 0, b'n', 0, b's',
         ]);
         bytes
     }
@@ -3080,7 +3029,10 @@ pub(crate) mod tests {
 
         assert_eq!(first.bitmap, second.bitmap);
         assert_eq!((first.width, first.height), (second.width, second.height));
-        assert_eq!((first.offset_x, first.offset_y), (second.offset_x, second.offset_y));
+        assert_eq!(
+            (first.offset_x, first.offset_y),
+            (second.offset_x, second.offset_y)
+        );
         assert_eq!(state.outline_cache_len(), 1);
         assert_eq!(state.flattened_edge_cache_len(), 1);
     }
@@ -3137,8 +3089,14 @@ pub(crate) mod tests {
         assert_eq!(actual.len(), expected.len());
         for (actual, expected) in actual.iter().zip(expected.iter()) {
             assert_eq!(actual.bitmap, expected.bitmap);
-            assert_eq!((actual.width, actual.height), (expected.width, expected.height));
-            assert_eq!((actual.offset_x, actual.offset_y), (expected.offset_x, expected.offset_y));
+            assert_eq!(
+                (actual.width, actual.height),
+                (expected.width, expected.height)
+            );
+            assert_eq!(
+                (actual.offset_x, actual.offset_y),
+                (expected.offset_x, expected.offset_y)
+            );
             assert_eq!(actual.advance_width, expected.advance_width);
         }
     }
@@ -3213,8 +3171,14 @@ pub(crate) mod tests {
         let bytes = sfnt_with_cmap(&format12_and_format14_cmap());
         let face = SfntFace::from_bytes(&bytes, 0).expect("format 14 cmap should parse");
 
-        assert_eq!(face.glyph_index_with_variation(0x4e00, 0xfe00), Ok(Some(77)));
-        assert_eq!(face.glyph_index_with_variation(0x4e00, 0xfe01), Ok(Some(10)));
+        assert_eq!(
+            face.glyph_index_with_variation(0x4e00, 0xfe00),
+            Ok(Some(77))
+        );
+        assert_eq!(
+            face.glyph_index_with_variation(0x4e00, 0xfe01),
+            Ok(Some(10))
+        );
         assert!(face.cmap_cache.get().is_some());
     }
 
@@ -3275,22 +3239,14 @@ pub(crate) mod tests {
         let bytes = cjk_layout_font_for_test();
         let face = SfntFace::from_bytes(&bytes, 0).expect("CJK layout fixture must parse");
 
-        let chinese = super::shape_run_with_options(
-            &face,
-            "\u{4e00}",
-            Some(TextLanguage::Chinese),
-            false,
-        )
-        .expect("Chinese locl shaping should parse")
-        .expect("Chinese locl should claim the CJK run");
-        let japanese = super::shape_run_with_options(
-            &face,
-            "\u{4e00}",
-            Some(TextLanguage::Japanese),
-            false,
-        )
-        .expect("Japanese locl shaping should parse")
-        .expect("Japanese locl should claim the CJK run");
+        let chinese =
+            super::shape_run_with_options(&face, "\u{4e00}", Some(TextLanguage::Chinese), false)
+                .expect("Chinese locl shaping should parse")
+                .expect("Chinese locl should claim the CJK run");
+        let japanese =
+            super::shape_run_with_options(&face, "\u{4e00}", Some(TextLanguage::Japanese), false)
+                .expect("Japanese locl shaping should parse")
+                .expect("Japanese locl should claim the CJK run");
 
         assert_eq!(chinese.glyphs[0].glyph_id, 2);
         assert_eq!(japanese.glyphs[0].glyph_id, 3);
@@ -3403,13 +3359,10 @@ pub(crate) mod tests {
             .expect("vertical CJK metrics should claim the run");
 
         assert_eq!(shaped.glyphs.len(), 2);
-        assert!(shaped
-            .glyphs
-            .iter()
-            .all(|glyph| glyph.glyph_id == 4
-                && glyph.x_advance == 0
-                && glyph.y_advance == -800
-                && glyph.y_offset == -880));
+        assert!(shaped.glyphs.iter().all(|glyph| glyph.glyph_id == 4
+            && glyph.x_advance == 0
+            && glyph.y_advance == -800
+            && glyph.y_offset == -880));
         assert_eq!(shaped.glyphs[0].cluster, 0);
         assert_eq!(shaped.glyphs[1].cluster, 3);
 
@@ -3608,9 +3561,27 @@ pub(crate) mod tests {
         assert_eq!(outline.contours.len(), 1);
         let contour = outline.contours[0];
         assert_eq!(contour.end - contour.start, 3);
-        assert_eq!((outline.points[contour.start].x, outline.points[contour.start].y), (0.0, 0.0));
-        assert_eq!((outline.points[contour.start + 1].x, outline.points[contour.start + 1].y), (100.0, 0.0));
-        assert_eq!((outline.points[contour.start + 2].x, outline.points[contour.start + 2].y), (100.0, 100.0));
+        assert_eq!(
+            (
+                outline.points[contour.start].x,
+                outline.points[contour.start].y
+            ),
+            (0.0, 0.0)
+        );
+        assert_eq!(
+            (
+                outline.points[contour.start + 1].x,
+                outline.points[contour.start + 1].y
+            ),
+            (100.0, 0.0)
+        );
+        assert_eq!(
+            (
+                outline.points[contour.start + 2].x,
+                outline.points[contour.start + 2].y
+            ),
+            (100.0, 100.0)
+        );
     }
 
     #[test]
@@ -3649,9 +3620,8 @@ pub(crate) mod tests {
 
         let integer = super::rasterize::rasterize_font_glyph(&bytes, 0, 0, 10.0, 0, 0)
             .expect("the integer-size glyph should rasterize");
-        let fractional =
-            super::rasterize::rasterize_font_glyph(&bytes, 0, 0, 10.5, 0, 0)
-                .expect("the fractional-size glyph should rasterize");
+        let fractional = super::rasterize::rasterize_font_glyph(&bytes, 0, 0, 10.5, 0, 0)
+            .expect("the fractional-size glyph should rasterize");
 
         assert_eq!(integer.advance_width, 10.0);
         assert_eq!(fractional.advance_width, 10.5);
@@ -3673,12 +3643,10 @@ pub(crate) mod tests {
 
         let integer = super::rasterize::rasterize_font_glyph(&bytes, 0, 0, 10.0, 0, 0)
             .expect("the integer-position glyph should rasterize");
-        let fractional =
-            super::rasterize::rasterize_font_glyph(&bytes, 0, 0, 10.0, 4, 0)
-                .expect("the fractional-position glyph should rasterize");
-        let fractional_y =
-            super::rasterize::rasterize_font_glyph(&bytes, 0, 0, 10.0, 0, 4)
-                .expect("the fractional y-position glyph should rasterize");
+        let fractional = super::rasterize::rasterize_font_glyph(&bytes, 0, 0, 10.0, 4, 0)
+            .expect("the fractional-position glyph should rasterize");
+        let fractional_y = super::rasterize::rasterize_font_glyph(&bytes, 0, 0, 10.0, 0, 4)
+            .expect("the fractional y-position glyph should rasterize");
 
         assert_eq!(fractional.advance_width, integer.advance_width);
         assert_eq!(fractional.offset_x, -0.5);
@@ -3785,7 +3753,14 @@ pub(crate) mod tests {
         ]);
         let face = SfntFace::from_bytes(&bytes, 0).expect("short loca font should parse");
 
-        assert_eq!(face.outline(0).expect("outline should parse").unwrap().contours.len(), 1);
+        assert_eq!(
+            face.outline(0)
+                .expect("outline should parse")
+                .unwrap()
+                .contours
+                .len(),
+            1
+        );
     }
 
     #[test]
@@ -3806,8 +3781,20 @@ pub(crate) mod tests {
             .expect("composite glyph should have an outline");
 
         let contour = outline.contours[0];
-        assert_eq!((outline.points[contour.start].x, outline.points[contour.start].y), (10.0, 20.0));
-        assert_eq!((outline.points[contour.start + 1].x, outline.points[contour.start + 1].y), (110.0, 20.0));
+        assert_eq!(
+            (
+                outline.points[contour.start].x,
+                outline.points[contour.start].y
+            ),
+            (10.0, 20.0)
+        );
+        assert_eq!(
+            (
+                outline.points[contour.start + 1].x,
+                outline.points[contour.start + 1].y
+            ),
+            (110.0, 20.0)
+        );
 
         let metrics = face.metrics().expect("metrics should parse");
         let with_coordinates = face
@@ -3851,7 +3838,11 @@ pub(crate) mod tests {
             outline.commands.as_slice(),
             [
                 CffPathCommand::MoveTo { x: 0.0, y: 0.0 },
-                CffPathCommand::CurveTo { x: 100.0, y: 100.0, .. },
+                CffPathCommand::CurveTo {
+                    x: 100.0,
+                    y: 100.0,
+                    ..
+                },
                 CffPathCommand::Close,
             ]
         ));
@@ -3983,7 +3974,10 @@ pub(crate) mod tests {
 
         assert!(matches!(
             face.cff_outline(0),
-            Err(SfntError::CffSubroutineCycle { global: false, index: 0 })
+            Err(SfntError::CffSubroutineCycle {
+                global: false,
+                index: 0
+            })
         ));
     }
 
@@ -4015,8 +4009,14 @@ pub(crate) mod tests {
         let bytes = sfnt_with_tables(&[(*b"name", name.as_slice())]);
         let face = SfntFace::from_bytes(&bytes, 0).expect("name font should parse");
 
-        assert_eq!(face.name(1).expect("name should parse"), Some("Test Sans".to_owned()));
-        assert_eq!(face.family_name().expect("family name should parse"), Some("Test Sans".to_owned()));
+        assert_eq!(
+            face.name(1).expect("name should parse"),
+            Some("Test Sans".to_owned())
+        );
+        assert_eq!(
+            face.family_name().expect("family name should parse"),
+            Some("Test Sans".to_owned())
+        );
     }
 
     #[test]
@@ -4032,12 +4032,20 @@ pub(crate) mod tests {
         assert_eq!(face.design_weight(), Some(400));
         super::validate_font(bytes)
             .expect("checked-in face should satisfy registration validation");
-        assert!(face.family_name().expect("checked-in name should parse").is_some());
+        assert!(
+            face.family_name()
+                .expect("checked-in name should parse")
+                .is_some()
+        );
         let glyph_id = face
             .glyph_index('A' as u32)
             .expect("checked-in cmap should parse")
             .expect("A should be covered");
-        assert!(face.outline(glyph_id).expect("checked-in outline should parse").is_some());
+        assert!(
+            face.outline(glyph_id)
+                .expect("checked-in outline should parse")
+                .is_some()
+        );
         assert!(face.covers('A' as u32).expect("coverage should parse"));
     }
 
@@ -4065,24 +4073,23 @@ pub(crate) mod tests {
         cpal[14..18].copy_from_slice(&[0, 0, 255, 255]);
         cpal[18..22].copy_from_slice(&[0, 255, 0, 128]);
 
-        let bytes = sfnt_with_tables(&[(
-            *b"COLR",
-            colr.as_slice(),
-        ), (*b"CPAL", cpal.as_slice())]);
+        let bytes = sfnt_with_tables(&[(*b"COLR", colr.as_slice()), (*b"CPAL", cpal.as_slice())]);
         let face = SfntFace::from_bytes(&bytes, 0).expect("color face should parse");
 
         assert_eq!(
             face.color_layers(7).expect("COLR should parse"),
-            Some(&[
-                super::color::ColorLayer {
-                    glyph_id: 9,
-                    palette_index: 1,
-                },
-                super::color::ColorLayer {
-                    glyph_id: 10,
-                    palette_index: 0,
-                },
-            ][..])
+            Some(
+                &[
+                    super::color::ColorLayer {
+                        glyph_id: 9,
+                        palette_index: 1,
+                    },
+                    super::color::ColorLayer {
+                        glyph_id: 10,
+                        palette_index: 0,
+                    },
+                ][..]
+            )
         );
         assert_eq!(
             face.palette_color(0).expect("CPAL should parse"),
@@ -4119,17 +4126,19 @@ pub(crate) mod tests {
 
         let metrics = face.metrics().expect("private face metrics should parse");
         let mut cache = super::rasterize::GlyphRasterCache::default();
-        assert!(super::rasterize::rasterize_face_glyph(
-            &face,
-            &metrics,
-            0,
-            32.0,
-            0,
-            0,
-            super::super::glyph_rasterizer::NORMAL_GLYPH_WEIGHT,
-            &mut cache,
-        )
-        .is_none());
+        assert!(
+            super::rasterize::rasterize_face_glyph(
+                &face,
+                &metrics,
+                0,
+                32.0,
+                0,
+                0,
+                super::super::glyph_rasterizer::NORMAL_GLYPH_WEIGHT,
+                &mut cache,
+            )
+            .is_none()
+        );
     }
 
     #[test]
@@ -4161,17 +4170,19 @@ pub(crate) mod tests {
 
         let metrics = face.metrics().expect("private color metrics should parse");
         let mut cache = super::rasterize::GlyphRasterCache::default();
-        assert!(super::rasterize::rasterize_face_glyph(
-            &face,
-            &metrics,
-            0,
-            32.0,
-            0,
-            0,
-            super::super::glyph_rasterizer::NORMAL_GLYPH_WEIGHT,
-            &mut cache,
-        )
-        .is_none());
+        assert!(
+            super::rasterize::rasterize_face_glyph(
+                &face,
+                &metrics,
+                0,
+                32.0,
+                0,
+                0,
+                super::super::glyph_rasterizer::NORMAL_GLYPH_WEIGHT,
+                &mut cache,
+            )
+            .is_none()
+        );
     }
 
     #[test]
@@ -4227,13 +4238,18 @@ pub(crate) mod tests {
         .expect("COLR outline should rasterize");
 
         assert!(glyph.is_color);
-        assert_eq!(glyph.bitmap.len(), (glyph.width * glyph.height * 4) as usize);
+        assert_eq!(
+            glyph.bitmap.len(),
+            (glyph.width * glyph.height * 4) as usize
+        );
         assert!(glyph.bitmap.chunks_exact(4).any(|pixel| pixel[3] != 0));
-        assert!(glyph
-            .bitmap
-            .chunks_exact(4)
-            .filter(|pixel| pixel[3] != 0)
-            .all(|pixel| pixel[0] == 255 && pixel[1] == 0 && pixel[2] == 0));
+        assert!(
+            glyph
+                .bitmap
+                .chunks_exact(4)
+                .filter(|pixel| pixel[3] != 0)
+                .all(|pixel| pixel[0] == 255 && pixel[1] == 0 && pixel[2] == 0)
+        );
     }
 
     #[test]
@@ -4256,7 +4272,10 @@ pub(crate) mod tests {
             .expect("COLR outline should rasterize");
 
             assert!(glyph.is_color);
-            assert_eq!(glyph.bitmap.len(), (glyph.width * glyph.height * 4) as usize);
+            assert_eq!(
+                glyph.bitmap.len(),
+                (glyph.width * glyph.height * 4) as usize
+            );
             assert!(glyph.bitmap.chunks_exact(4).any(|pixel| pixel[3] != 0));
             (glyph.width, glyph.height, bitmap_fingerprint(&glyph.bitmap))
         });
@@ -4312,16 +4331,18 @@ pub(crate) mod tests {
         .expect("SVG glyph should rasterize");
 
         assert!(glyph.is_color);
-        assert_eq!(glyph.bitmap.len(), (glyph.width * glyph.height * 4) as usize);
-        assert!(glyph
-            .bitmap
-            .chunks_exact(4)
-            .any(|pixel| pixel[3] != 0));
-        assert!(glyph
-            .bitmap
-            .chunks_exact(4)
-            .filter(|pixel| pixel[3] != 0)
-            .all(|pixel| pixel[0] == 255 && pixel[1] == 0 && pixel[2] == 0));
+        assert_eq!(
+            glyph.bitmap.len(),
+            (glyph.width * glyph.height * 4) as usize
+        );
+        assert!(glyph.bitmap.chunks_exact(4).any(|pixel| pixel[3] != 0));
+        assert!(
+            glyph
+                .bitmap
+                .chunks_exact(4)
+                .filter(|pixel| pixel[3] != 0)
+                .all(|pixel| pixel[0] == 255 && pixel[1] == 0 && pixel[2] == 0)
+        );
     }
 
     #[test]
@@ -4486,11 +4507,8 @@ pub(crate) mod tests {
 
     #[test]
     fn shapes_latin_ligatures_and_pair_kerning_from_open_type_tables() {
-        let face = SfntFace::from_bytes(
-            include_bytes!("../../../fonts/GoogleSans-Regular.ttf"),
-            0,
-        )
-        .expect("the checked-in shaping fixture must parse");
+        let face = SfntFace::from_bytes(include_bytes!("../../../fonts/GoogleSans-Regular.ttf"), 0)
+            .expect("the checked-in shaping fixture must parse");
 
         let office = super::shape_latin_run(&face, "office")
             .expect("GSUB parsing should succeed")
@@ -4626,7 +4644,10 @@ pub(crate) mod tests {
                 .collect::<Vec<_>>(),
             vec![8, 3]
         );
-        assert_eq!((shaped.glyphs[0].x_offset, shaped.glyphs[0].y_offset), (200, 700));
+        assert_eq!(
+            (shaped.glyphs[0].x_offset, shaped.glyphs[0].y_offset),
+            (200, 700)
+        );
         assert_eq!(shaped.glyphs[0].x_advance, 0);
     }
 
@@ -4767,7 +4788,10 @@ pub(crate) mod tests {
                 .collect::<Vec<_>>(),
             vec![3, 2]
         );
-        assert_eq!((shaped.glyphs[1].x_offset, shaped.glyphs[1].y_offset), (100, 60));
+        assert_eq!(
+            (shaped.glyphs[1].x_offset, shaped.glyphs[1].y_offset),
+            (100, 60)
+        );
         assert_eq!(shaped.glyphs[0].x_advance, 700);
         assert_eq!(shaped.glyphs[1].x_advance, 600);
     }
@@ -4809,11 +4833,8 @@ pub(crate) mod tests {
 
     #[test]
     fn shapes_google_sans_devanagari_through_the_owned_path() {
-        let face = SfntFace::from_bytes(
-            include_bytes!("../../../fonts/GoogleSans-Regular.ttf"),
-            0,
-        )
-        .expect("Google Sans must parse");
+        let face = SfntFace::from_bytes(include_bytes!("../../../fonts/GoogleSans-Regular.ttf"), 0)
+            .expect("Google Sans must parse");
         let shaped = super::shape_run_with_options(&face, "कि", None, false)
             .expect("Google Sans Indic shaping should parse")
             .expect("Google Sans Devanagari should use the Aimer shaping seam");
@@ -4831,11 +4852,8 @@ pub(crate) mod tests {
 
     #[test]
     fn shapes_southeast_asian_runs_through_the_owned_path() {
-        let face = SfntFace::from_bytes(
-            include_bytes!("../../../fonts/GoogleSans-Regular.ttf"),
-            0,
-        )
-        .expect("Google Sans must parse");
+        let face = SfntFace::from_bytes(include_bytes!("../../../fonts/GoogleSans-Regular.ttf"), 0)
+            .expect("Google Sans must parse");
         let cases = [
             (
                 "สวัสดี",
@@ -4858,8 +4876,7 @@ pub(crate) mod tests {
             (
                 "សួស្តីពិភពលោក",
                 vec![
-                    3663, 3949, 3663, 3890, 3938, 3654, 3937, 3655, 3654, 3708, 3744,
-                    3632,
+                    3663, 3949, 3663, 3890, 3938, 3654, 3937, 3655, 3654, 3708, 3744, 3632,
                 ],
                 vec![903, 0, 903, 0, 0, 600, 0, 631, 600, 328, 1208, 604],
                 vec![
@@ -4880,8 +4897,7 @@ pub(crate) mod tests {
             (
                 "សួស្តី\u{200b}ពិភពលោក",
                 vec![
-                    3663, 3949, 3663, 3890, 3938, 1866, 3654, 3937, 3655, 3654, 3708, 3744,
-                    3632,
+                    3663, 3949, 3663, 3890, 3938, 1866, 3654, 3937, 3655, 3654, 3708, 3744, 3632,
                 ],
                 vec![903, 0, 903, 0, 0, 0, 600, 0, 631, 600, 328, 1208, 604],
                 vec![
@@ -4938,11 +4954,8 @@ pub(crate) mod tests {
 
     #[test]
     fn keeps_myanmar_on_compatibility_path_when_the_face_has_no_coverage() {
-        let face = SfntFace::from_bytes(
-            include_bytes!("../../../fonts/GoogleSans-Regular.ttf"),
-            0,
-        )
-        .expect("Google Sans must parse");
+        let face = SfntFace::from_bytes(include_bytes!("../../../fonts/GoogleSans-Regular.ttf"), 0)
+            .expect("Google Sans must parse");
         assert!(
             super::shape_run_with_options(&face, "မင်္ဂလာပါ", None, false)
                 .expect("missing Myanmar coverage should not be malformed")
@@ -5013,14 +5026,7 @@ pub(crate) mod tests {
     }
 
     fn arabic_gsub() -> Vec<u8> {
-        let feature_tags = [
-            *b"init",
-            *b"medi",
-            *b"fina",
-            *b"isol",
-            *b"rlig",
-            *b"calt",
-        ];
+        let feature_tags = [*b"init", *b"medi", *b"fina", *b"isol", *b"rlig", *b"calt"];
         let feature_lookups = [0_u16, 1, 2, 3, 4, 6];
         let mappings = [[(1_u16, 3_u16)], [(1, 5)], [(1, 4)], [(1, 6)]];
 
@@ -5350,7 +5356,10 @@ pub(crate) mod tests {
         let gsub = script_feature_gsub_with_lookups(
             *b"deva",
             *b"half",
-            &[(5, contextual_substitution()), (1, single_substitution(&[(1, 3)]))],
+            &[
+                (5, contextual_substitution()),
+                (1, single_substitution(&[(1, 3)])),
+            ],
             &[0],
         );
         sfnt_with_tables(&[
@@ -5474,8 +5483,7 @@ pub(crate) mod tests {
         feature_list[0..2].copy_from_slice(&1_u16.to_be_bytes());
         feature_list[2..6].copy_from_slice(&feature_tag);
         feature_list[6..8].copy_from_slice(&8_u16.to_be_bytes());
-        feature_list[10..12]
-            .copy_from_slice(&(feature_lookup_indices.len() as u16).to_be_bytes());
+        feature_list[10..12].copy_from_slice(&(feature_lookup_indices.len() as u16).to_be_bytes());
         for (index, lookup_index) in feature_lookup_indices.iter().enumerate() {
             let offset = 12 + index * 2;
             feature_list[offset..offset + 2].copy_from_slice(&lookup_index.to_be_bytes());
@@ -5570,8 +5578,7 @@ pub(crate) mod tests {
         vhea[4..6].copy_from_slice(&900_i16.to_be_bytes());
         vhea[6..8].copy_from_slice(&(-200_i16).to_be_bytes());
         vhea[8..10].copy_from_slice(&100_i16.to_be_bytes());
-        vhea[34..36]
-            .copy_from_slice(&(if include_vpal { 6_u16 } else { 3_u16 }).to_be_bytes());
+        vhea[34..36].copy_from_slice(&(if include_vpal { 6_u16 } else { 3_u16 }).to_be_bytes());
 
         let vertical_metrics = if include_vpal {
             vec![
@@ -5686,7 +5693,9 @@ pub(crate) mod tests {
     }
 
     fn coverage_offset_u16(offset: usize) -> [u8; 2] {
-        u16::try_from(offset).expect("fixture offset fits").to_be_bytes()
+        u16::try_from(offset)
+            .expect("fixture offset fits")
+            .to_be_bytes()
     }
 
     fn cjk_layout_gsub() -> Vec<u8> {
@@ -5737,7 +5746,7 @@ pub(crate) mod tests {
         script[14..16].copy_from_slice(
             &(u16::try_from(default_offset + default_language.len() + chinese_language.len())
                 .expect("fixture fits"))
-                .to_be_bytes(),
+            .to_be_bytes(),
         );
         script.extend_from_slice(&default_language);
         script.extend_from_slice(&chinese_language);

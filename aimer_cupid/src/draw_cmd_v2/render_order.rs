@@ -226,19 +226,17 @@ impl RenderWorkspace {
                 continue;
             };
 
-            let mut clip = parent.clip;
-            let mut clip_radius = parent.clip_radius;
-            if let Some(local_clip) = node.clip {
+            let mut clip = if node.escapes_clip { ClipState::Unclipped } else { parent.clip };
+            let mut clip_radius = if node.escapes_clip { [0.0; 4] } else { parent.clip_radius };
+            if !node.escapes_clip && let Some(local_clip) = node.clip {
                 let world_clip =
                     transform_rect(transform, local_clip.translated(origin.0, origin.1));
                 clip = clip.intersect(world_clip);
-                // The renderer takes radii from the innermost clip, so a clip
-                // owner with square corners resets an inherited radius.
                 if let Some(world_clip) = world_clip {
                     clip_radius = world_clip_radius(node.clip_radius, local_clip, world_clip);
                 }
             }
-            if let Some(local_clip) = node.animation_clip {
+            if !node.escapes_clip && let Some(local_clip) = node.animation_clip {
                 // An animation clip is placed before the animation's own
                 // transform, and only nodes that have one need this matrix.
                 let transform_before_animation = if node.presentation_transform.is_identity() {
@@ -250,10 +248,11 @@ impl RenderWorkspace {
                         .mul(&node.presentation_transform)
                         .mul(&Mat3::translate(-origin.0, -origin.1))
                 };
-                clip = clip.intersect(transform_rect(
+                let world_clip = transform_rect(
                     transform_before_animation,
                     local_clip.translated(origin.0, origin.1),
-                ));
+                );
+                clip = clip.intersect(world_clip);
             }
 
             self.states[index] = NodeFrameState {
@@ -290,11 +289,7 @@ impl RenderWorkspace {
         self.prepared_for = Some(revisions);
     }
 
-    fn collect(
-        &mut self,
-        tree: &DrawCommandList,
-        damage: Option<&[Rect]>,
-    ) -> Vec<RenderOp> {
+    fn collect(&mut self, tree: &DrawCommandList, damage: Option<&[Rect]>) -> Vec<RenderOp> {
         let topology = tree.topology();
         let mut output = Vec::with_capacity(self.output_hint);
         self.render_stack.clear();
@@ -320,9 +315,6 @@ impl RenderWorkspace {
             let Some(bounds) = state.bounds else {
                 continue;
             };
-            if matches!(state.clip, ClipState::Empty) {
-                continue;
-            }
             let Some(visible_subtree) = state.visible_subtree_bounds else {
                 continue;
             };
@@ -345,7 +337,16 @@ impl RenderWorkspace {
                     element: id,
                     bounds: visible_subtree,
                     opacity,
-                    clip: state.clip.as_option(),
+                    // Child draw items keep their individual container clips.
+                    // Applying an ancestor's clip to the whole opacity
+                    // group would clip an overflowing descendant again.
+                    clip: if tree.clip_escape_count != 0
+                        && state.clip.intersect_bounds(visible_subtree) != Some(visible_subtree)
+                    {
+                        None
+                    } else {
+                        state.clip.as_option()
+                    },
                 });
             }
 
@@ -371,8 +372,7 @@ impl RenderWorkspace {
             }
 
             if groups_opacity {
-                self.render_stack
-                    .push(RenderTraversal::EndOpacityGroup(id));
+                self.render_stack.push(RenderTraversal::EndOpacityGroup(id));
             }
             // A node without a clip may have children that extend beyond its bounds.
             let children = topology.children_of(index);
@@ -422,7 +422,11 @@ impl RenderTree {
     /// Plans every node after forgetting the geometry kept from earlier plans.
     #[cfg(test)]
     pub(super) fn render_all_from_scratch(&self) -> Vec<RenderOp> {
-        self.draw_cmd.borrow().render_workspace.borrow_mut().forget_geometry();
+        self.draw_cmd
+            .borrow()
+            .render_workspace
+            .borrow_mut()
+            .forget_geometry();
         self.render_all()
     }
 
@@ -430,9 +434,6 @@ impl RenderTree {
     pub fn render_pending(&self) -> RenderFrame {
         let damage = self.take_damage();
         let operations = self.render_order(&damage);
-        RenderFrame {
-            damage,
-            operations,
-        }
+        RenderFrame { damage, operations }
     }
 }

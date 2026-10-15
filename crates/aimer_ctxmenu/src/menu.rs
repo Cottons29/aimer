@@ -104,10 +104,12 @@ fn materialize_portable_context_menu(
     mut children: Vec<AnyWidget>,
 ) -> Result<AnyWidget, aimer_widget::portable::PortableMaterializeError> {
     if children.len() > 1 {
-        return Err(aimer_widget::portable::PortableMaterializeError::InvalidChildCount {
-            expected: 1,
-            actual: children.len(),
-        });
+        return Err(
+            aimer_widget::portable::PortableMaterializeError::InvalidChildCount {
+                expected: 1,
+                actual: children.len(),
+            },
+        );
     }
 
     let shape: ContextMenuShape = aimer_widget::portable::required_materialized_property(
@@ -343,7 +345,7 @@ impl ContextMenu {
         let anchor = self.anchor.clone();
         let placement = self.shape.placement(self.style.gap);
         let barrier_color = self.barrier_color;
-        let animation = self.animation;
+        let animation = self.animation.clone();
 
         let mut floating = Floating::new()
             .anchor(anchor)
@@ -363,7 +365,7 @@ impl ContextMenu {
         let mut rows = ContextMenuRows::new()
             .shape(self.shape)
             .style(self.style.clone())
-        .items(self.items.clone().into_vec())
+            .items(self.items.clone().into_vec())
             .dismiss_with(self.dismiss.clone())
             .dismiss_on_select(self.dismiss_on_select);
         if let Some(on_select) = &self.on_select {
@@ -542,10 +544,9 @@ mod tests {
 mod portable_tests {
     use aimer_container::ZeroSizedBox;
     use aimer_widget::portable::{
-        __anteros::WidgetDocumentView,
-        linked_portable_native_widget_registrations, PortableBuildContext, PortableLimits,
-        PortableNativeWidget, PortableWidgetLimits, PortableWidgetSchema, SourceFingerprint,
-        StableId128,
+        __anteros::WidgetDocumentView, PortableBuildContext, PortableLimits, PortableNativeWidget,
+        PortableWidgetLimits, PortableWidgetSchema, SourceFingerprint, StableId128,
+        linked_portable_native_widget_registrations,
     };
     use aimer_widget::{PortableWidget, Widget};
 
@@ -559,8 +560,7 @@ mod portable_tests {
         PortableBuildContext::new(
             7,
             11,
-            PortableWidgetLimits::new(16, 32, 16, 16, 2_048, 16_384)
-                .with_max_blob_bytes(8_192),
+            PortableWidgetLimits::new(16, 32, 16, 16, 2_048, 16_384).with_max_blob_bytes(8_192),
             PortableLimits::new(16, 512, 2_048, 8_192, 16_384),
         )
         .unwrap()
@@ -585,15 +585,21 @@ mod portable_tests {
 
         assert_eq!(node.children().count(), 1);
         assert_eq!(node.properties().count(), 5);
-        let materialized =
-            <ContextMenu as PortableNativeWidget>::materialize_widget(&view, node, vec![ZeroSizedBox.boxed()])
-                .unwrap();
+        let materialized = <ContextMenu as PortableNativeWidget>::materialize_widget(
+            &view,
+            node,
+            vec![ZeroSizedBox.boxed()],
+        )
+        .unwrap();
         assert_eq!(materialized.debug_name(), "ContextMenu");
 
         let schema = <ContextMenu as PortableWidgetSchema>::SCHEMA;
-        assert!(linked_portable_native_widget_registrations()
-            .iter()
-            .any(|registration| registration.supports(schema.widget().id(), schema.widget().min_version())));
+        assert!(
+            linked_portable_native_widget_registrations()
+                .iter()
+                .any(|registration| registration
+                    .supports(schema.widget().id(), schema.widget().min_version()))
+        );
     }
 
     #[test]
@@ -613,10 +619,12 @@ mod portable_tests {
                 node,
                 vec![ZeroSizedBox.boxed(), ZeroSizedBox.boxed()],
             ),
-            Err(aimer_widget::portable::PortableMaterializeError::InvalidChildCount {
-                expected: 1,
-                actual: 2,
-            })
+            Err(
+                aimer_widget::portable::PortableMaterializeError::InvalidChildCount {
+                    expected: 1,
+                    actual: 2,
+                }
+            )
         ));
     }
 }

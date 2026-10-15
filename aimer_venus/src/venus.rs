@@ -5,10 +5,10 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use crate::budget::{FrameBudget, FrameGovernor};
-use crate::poll_context::PollContext;
-use crate::scheduler::LocalScheduler;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::offload::{OffloadPool, Offloaded};
+use crate::poll_context::PollContext;
+use crate::scheduler::LocalScheduler;
 use crate::task::{Phase, ScopeId, TaskId, TaskScope};
 
 thread_local! {
@@ -424,10 +424,7 @@ mod tests {
         let built = order.clone();
         venus.drive_frame(|| built.borrow_mut().push("build"));
 
-        assert_eq!(
-            *order.borrow(),
-            vec!["frame", "microtask", "build", "idle"]
-        );
+        assert_eq!(*order.borrow(), vec!["frame", "microtask", "build", "idle"]);
     }
 
     #[test]
@@ -440,7 +437,9 @@ mod tests {
         let task = spawn_local(async move { flag.set(true) });
 
         assert!(task.is_some());
-        Venus::current().expect("an installed runtime").run_microtasks();
+        Venus::current()
+            .expect("an installed runtime")
+            .run_microtasks();
         assert!(ran.get());
 
         Venus::uninstall();

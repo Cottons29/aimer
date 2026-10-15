@@ -84,16 +84,11 @@ pub mod render_ctx {
             }
 
             let window_owner = Arc::new(window);
-            let (backend, surface) = OpenGlBackend::new_windowed(
-                window_owner,
-                (size.width, size.height),
-            )
-            .map_err(|error| error.to_string())?;
-            let renderer = RendererImpl::with_antialiasing(
-                &backend,
-                surface.format(),
-                self.antialiasing,
-            );
+            let (backend, surface) =
+                OpenGlBackend::new_windowed(window_owner, (size.width, size.height))
+                    .map_err(|error| error.to_string())?;
+            let renderer =
+                RendererImpl::with_antialiasing(&backend, surface.format(), self.antialiasing);
 
             self.backend = Some(backend);
             self.surface = Some(surface);
@@ -120,7 +115,10 @@ pub mod render_ctx {
         }
 
         /// Records and presents a full-damage frame.
-        pub fn render_frame(&mut self, draw_fn: impl FnOnce(&CupidCanvas, u32, u32)) -> PresentOutcome {
+        pub fn render_frame(
+            &mut self,
+            draw_fn: impl FnOnce(&CupidCanvas, u32, u32),
+        ) -> PresentOutcome {
             self.render_frame_packet(|canvas, width, height| {
                 draw_fn(canvas, width, height);
                 (1.0, DamageSet::full(width, height))
@@ -139,7 +137,10 @@ pub mod render_ctx {
         }
 
         /// Records a full-damage frame without acquiring a drawable.
-        pub fn build_frame(&mut self, draw_fn: impl FnOnce(&CupidCanvas, u32, u32)) -> Option<Frame> {
+        pub fn build_frame(
+            &mut self,
+            draw_fn: impl FnOnce(&CupidCanvas, u32, u32),
+        ) -> Option<Frame> {
             self.build_frame_packet(|canvas, width, height| {
                 draw_fn(canvas, width, height);
                 (1.0, DamageSet::full(width, height))
@@ -208,7 +209,9 @@ pub mod render_ctx {
         }
 
         pub(crate) fn worker_max_dimension(&self) -> u32 {
-            self.backend.as_ref().map_or(u32::MAX, |backend| backend.limits().max_texture_dimension_2d)
+            self.backend.as_ref().map_or(u32::MAX, |backend| {
+                backend.limits().max_texture_dimension_2d
+            })
         }
 
         pub(crate) fn present_worker_packet(&mut self, packet: &FramePacket) -> bool {

@@ -6,12 +6,10 @@
 
 use super::glyph_rasterizer::{GlyphRasterizer, RasterizedGlyph};
 use super::text_layout::{
-    FontMetrics, ShapedText, TextLayoutOptions, layout_paragraph_with_shaper,
-    layout_shaped_text, shape_text_styled,
+    FontMetrics, ShapedText, TextLayoutOptions, layout_paragraph_with_shaper, layout_shaped_text,
+    shape_text_styled,
 };
-use crate::font::{
-    FontFamily, FontRegistration, FontRegistry, FontStyle, FontWeight,
-};
+use crate::font::{FontFamily, FontRegistration, FontRegistry, FontStyle, FontWeight};
 
 const CJK_FONT: &[u8] = include_bytes!("../../../fonts/NotoSansJP-VariableFont_wght.ttf");
 const LATIN_FONT: &[u8] = include_bytes!("../../../fonts/JetBrainsMono-Regular.ttf");
@@ -173,58 +171,22 @@ fn phase0_golden_snapshot() {
             ("A".to_owned(), 0, 1, 9_600, 9, 12, 0, 0),
             ("i".to_owned(), 0, 255, 9_600, 8, 13, 1_000, 0),
             ("m".to_owned(), 0, 282, 9_600, 9, 9, 0, 0),
-            (
-                "e".to_owned(),
-                0,
-                225,
-                9_600,
-                8,
-                10,
-                1_000,
-                -1_000,
-            ),
+            ("e".to_owned(), 0, 225, 9_600, 8, 10, 1_000, -1_000,),
             ("r".to_owned(), 0, 320, 9_600, 8, 9, 1_000, 0),
         ]
     );
     assert_eq!(
         shaped_snapshot(&cjk, latin_font_id, cjk_font_id),
         vec![
-            (
-                "あ".to_owned(),
-                1,
-                1_203,
-                16_000,
-                14,
-                14,
-                1_000,
-                -1_000,
-            ),
+            ("あ".to_owned(), 1, 1_203, 16_000, 14, 14, 1_000, -1_000,),
             ("你".to_owned(), 1, 2_578, 16_000, 16, 16, 0, -2_000),
         ]
     );
     assert_eq!(
         shaped_snapshot(&combining, latin_font_id, cjk_font_id),
         vec![
-            (
-                "e\u{301}".to_owned(),
-                0,
-                225,
-                9_600,
-                8,
-                10,
-                1_000,
-                -1_000,
-            ),
-            (
-                "e\u{301}".to_owned(),
-                0,
-                1_643,
-                0,
-                4,
-                3,
-                -6_000,
-                10_000,
-            ),
+            ("e\u{301}".to_owned(), 0, 225, 9_600, 8, 10, 1_000, -1_000,),
+            ("e\u{301}".to_owned(), 0, 1_643, 0, 4, 3, -6_000, 10_000,),
         ]
     );
     assert_eq!(
@@ -237,25 +199,11 @@ fn phase0_golden_snapshot() {
     );
     assert_eq!(
         glyph_snapshot(&latin_bitmap),
-        (
-            9,
-            12,
-            0,
-            0,
-            9_600,
-            7_064_966_629_923_364_211,
-        )
+        (9, 12, 0, 0, 9_600, 7_064_966_629_923_364_211,)
     );
     assert_eq!(
         glyph_snapshot(&cjk_bitmap),
-        (
-            14,
-            14,
-            1_000,
-            -1_000,
-            16_000,
-            9_874_997_834_247_042_479,
-        )
+        (14, 14, 1_000, -1_000, 16_000, 9_874_997_834_247_042_479,)
     );
     assert_eq!(
         latin_layout
@@ -266,12 +214,7 @@ fn phase0_golden_snapshot() {
             (0, -12_000, 9, 12),
             (10_600, -13_000, 8, 13),
             (19_200, -9_000, 9, 9),
-            (
-                29_800,
-                -9_000,
-                8,
-                10,
-            ),
+            (29_800, -9_000, 8, 10,),
             (39_400, -9_000, 8, 9),
         ]
     );
@@ -289,8 +232,13 @@ fn phase0_golden_snapshot() {
     assert_eq!(
         rtl.glyphs
             .iter()
-            .map(|glyph| (glyph.glyph_id, milli(glyph.x), milli(glyph.y), milli(glyph.advance)))
-        .collect::<Vec<_>>(),
+            .map(|glyph| (
+                glyph.glyph_id,
+                milli(glyph.x),
+                milli(glyph.y),
+                milli(glyph.advance)
+            ))
+            .collect::<Vec<_>>(),
         vec![
             (2_176, 3_250, 1_500, 11_440),
             (2_153, 14_690, 1_500, 3_936),
@@ -301,7 +249,11 @@ fn phase0_golden_snapshot() {
     assert_eq!(
         rtl.lines
             .iter()
-            .map(|line| (line.text_range.clone(), milli(line.baseline), milli(line.width)))
+            .map(|line| (
+                line.text_range.clone(),
+                milli(line.baseline),
+                milli(line.width)
+            ))
             .collect::<Vec<_>>(),
         vec![(0..8, 1_500, 37_616)]
     );
@@ -317,7 +269,11 @@ fn phase0_golden_snapshot() {
         clipped
             .lines
             .iter()
-            .map(|line| (line.text_range.clone(), line.glyph_range.clone(), milli(line.baseline)))
+            .map(|line| (
+                line.text_range.clone(),
+                line.glyph_range.clone(),
+                milli(line.baseline)
+            ))
             .collect::<Vec<_>>(),
         vec![(0..2, 0..2, 0), (3..7, 2..2, 18_000)]
     );
@@ -328,19 +284,17 @@ fn phase0_golden_snapshot() {
             warm_bitmap_bytes,
             rasterizer.cached_glyph_count(),
         ),
-        (
-            1,
-            0,
-            1_338,
-            11,
-        )
+        (1, 0, 1_338, 11,)
     );
     assert_eq!(combining.clusters.len(), 1);
     assert_eq!(mixed.clusters.len(), 3);
     assert_eq!(mixed_layout.len(), 3);
     assert_eq!(rtl.lines.len(), 1);
     assert_eq!(clipped.lines.len(), 2);
-    assert_eq!(clipped.lines[1].glyph_range.start, clipped.lines[1].glyph_range.end);
+    assert_eq!(
+        clipped.lines[1].glyph_range.start,
+        clipped.lines[1].glyph_range.end
+    );
     assert!(latin_layout.iter().all(|glyph| glyph.y.is_finite()));
     assert!(mixed_layout.iter().all(|glyph| glyph.y.is_finite()));
 }

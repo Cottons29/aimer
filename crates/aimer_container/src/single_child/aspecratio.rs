@@ -239,7 +239,6 @@ impl Drawable for RawAspectRatio {
         };
         self.child.sync_paint_geometry(&child_ctx);
     }
-
 }
 
 impl LayoutElement for RawAspectRatio {
@@ -330,8 +329,8 @@ mod tests {
 #[cfg(all(test, feature = "portable-guest"))]
 mod portable_tests {
     use super::{AspectRatio, RatioOption};
-    use aimer_widget::portable::{PortableValue, PortableWidgetSchema};
     use aimer_widget::RequiredChild;
+    use aimer_widget::portable::{PortableValue, PortableWidgetSchema};
 
     #[test]
     fn aspect_ratio_schema_reflects_both_layout_controls() {
@@ -342,9 +341,18 @@ mod portable_tests {
             "aimer.widget:aimer_container::single_child::AspectRatio"
         );
         assert_eq!(schema.properties().len(), 2);
-        assert_eq!(schema.properties()[0].canonical_name(), "aimer.property:aimer_container::single_child::AspectRatio:aspect_ratio");
-        assert_eq!(schema.properties()[1].canonical_name(), "aimer.property:aimer_container::single_child::AspectRatio:ratio_option");
-        assert_eq!(schema.children(), aimer_anteros::ChildCardinality::exactly(1));
+        assert_eq!(
+            schema.properties()[0].canonical_name(),
+            "aimer.property:aimer_container::single_child::AspectRatio:aspect_ratio"
+        );
+        assert_eq!(
+            schema.properties()[1].canonical_name(),
+            "aimer.property:aimer_container::single_child::AspectRatio:ratio_option"
+        );
+        assert_eq!(
+            schema.children(),
+            aimer_anteros::ChildCardinality::exactly(1)
+        );
         assert_eq!(
             <RatioOption as PortableValue>::SCHEMA.canonical_name(),
             "aimer.value:aimer_container::single_child::RatioOption"

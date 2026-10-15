@@ -1,8 +1,8 @@
 use std::rc::Rc;
 
 use aimer_rubick::ShareRef;
-use aimer_widget::base::BuildContext;
 use aimer_widget::AnyWidget;
+use aimer_widget::base::BuildContext;
 
 use crate::Document;
 
@@ -198,13 +198,14 @@ pub trait CustomInline: 'static {
 pub(crate) type TypedCustomBlockBuilder = Rc<dyn Fn(&CustomBlockData, &BuildContext) -> AnyWidget>;
 
 /// A typed inline callback erased at the renderer boundary.
-pub(crate) type TypedCustomInlineBuilder = Rc<dyn Fn(&CustomInlineData, &BuildContext) -> AnyWidget>;
+pub(crate) type TypedCustomInlineBuilder =
+    Rc<dyn Fn(&CustomInlineData, &BuildContext) -> AnyWidget>;
 
 #[cfg(test)]
 mod tests {
     use aimer_text::Text;
-    use aimer_widget::base::BuildContext;
     use aimer_widget::Widget;
+    use aimer_widget::base::BuildContext;
 
     use super::{CustomBlock, CustomBlockInput, CustomInline};
     use crate::{Document, MarkdownError};

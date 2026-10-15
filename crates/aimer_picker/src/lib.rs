@@ -1,13 +1,13 @@
 //! Platform-neutral picker models for dates, times, colors, and overlay
 //! dismissal.
 
-mod date;
 mod calendar;
 mod color;
+mod date;
 mod datetime;
 mod overlay;
-mod picker;
 mod paint;
+mod picker;
 mod semantics;
 mod theme;
 mod widgets;
@@ -24,13 +24,11 @@ pub use calendar::{
     Calendar, CalendarCell, CalendarCellId, CalendarError, CalendarNavigation, DateRangePolicy,
     DateSelection, DateSelectionMode, RangeOrderPolicy,
 };
-pub use color::{
-    ColorChannel, ColorError, ColorKey, ColorPicker, Hsva, Rgba, Swatch, SwatchId,
-};
+pub use color::{ColorChannel, ColorError, ColorKey, ColorPicker, Hsva, Rgba, Swatch, SwatchId};
 pub use date::{Date, DateBounds, DateError, Month, Weekday};
 pub use datetime::{
-    DateTime, DateTimeError, DateTimePicker, DateTimePickerError, DateTimePickerPolicy,
-    DateTimeBounds, TimeOfDay, TimeError, TimePicker, TimePickerError, TimeZonePolicy,
+    DateTime, DateTimeBounds, DateTimeError, DateTimePicker, DateTimePickerError,
+    DateTimePickerPolicy, TimeError, TimeOfDay, TimePicker, TimePickerError, TimeZonePolicy,
 };
 pub use overlay::{
     CancelReason, FocusRestorer, FocusTarget, OverlayAnchor, OverlayConsumer, OverlayRequest,
@@ -44,8 +42,8 @@ pub use semantics::{
 pub use widgets::{
     CalendarSelectionCallback, CalendarView, CalendarViewState, ColorPickerView,
     ColorPickerViewState, ColorSelectionCallback, DatePickerView, DatePickerViewState,
-    DateSelectionCallback, DateTimePickerView, DateTimePickerViewState,
-    DateTimeSelectionCallback, TimePickerView, TimePickerViewState, TimeSelectionCallback,
+    DateSelectionCallback, DateTimePickerView, DateTimePickerViewState, DateTimeSelectionCallback,
+    TimePickerView, TimePickerViewState, TimeSelectionCallback,
 };
 
 #[cfg(test)]
@@ -93,14 +91,20 @@ mod tests {
         let mut session = PickerSession::new(11_u8);
         session.open();
         session.set_draft(22).unwrap();
-        assert_eq!(session.cancel(CancelReason::Escape).unwrap(), PickerOutcome::Cancelled {
-            reason: CancelReason::Escape,
-            value: 11,
-        });
+        assert_eq!(
+            session.cancel(CancelReason::Escape).unwrap(),
+            PickerOutcome::Cancelled {
+                reason: CancelReason::Escape,
+                value: 11,
+            }
+        );
         assert_eq!(session.committed(), &11);
         assert!(!session.is_open());
 
-        let mut overlay = RecordingOverlay { presented: None, dismissed: None };
+        let mut overlay = RecordingOverlay {
+            presented: None,
+            dismissed: None,
+        };
         let request = OverlayRequest::new(OverlayAnchor::new(3), true);
         let picker_overlay = PickerOverlay::present(&mut overlay, request, FocusTarget::new(99));
         assert_eq!(overlay.presented, Some(request));
@@ -121,20 +125,40 @@ mod tests {
         let mut calendar = Calendar::try_new(focused, bounds, mode).unwrap();
 
         let key_before_navigation = CalendarCellId::from_date(focused);
-        assert!(calendar.cells().iter().any(|cell| cell.id() == key_before_navigation));
+        assert!(
+            calendar
+                .cells()
+                .iter()
+                .any(|cell| cell.id() == key_before_navigation)
+        );
         assert_eq!(calendar.navigate(CalendarNavigation::NextMonth), true);
         assert_eq!(calendar.focused_date(), Date::try_new(2024, 6, 15).unwrap());
         assert_eq!(CalendarCellId::from_date(focused).date(), focused);
-        assert!(calendar.cells().iter().all(|cell| cell.id() == CalendarCellId::from_date(cell.date())));
+        assert!(
+            calendar
+                .cells()
+                .iter()
+                .all(|cell| cell.id() == CalendarCellId::from_date(cell.date()))
+        );
 
-        assert_eq!(calendar.select(Date::try_new(2024, 5, 15).unwrap()).unwrap(), DateSelection::Range {
-            start: Some(Date::try_new(2024, 5, 15).unwrap()),
-            end: None,
-        });
-        assert_eq!(calendar.select(Date::try_new(2024, 5, 10).unwrap()).unwrap(), DateSelection::Range {
-            start: Some(minimum),
-            end: Some(Date::try_new(2024, 5, 15).unwrap()),
-        });
+        assert_eq!(
+            calendar
+                .select(Date::try_new(2024, 5, 15).unwrap())
+                .unwrap(),
+            DateSelection::Range {
+                start: Some(Date::try_new(2024, 5, 15).unwrap()),
+                end: None,
+            }
+        );
+        assert_eq!(
+            calendar
+                .select(Date::try_new(2024, 5, 10).unwrap())
+                .unwrap(),
+            DateSelection::Range {
+                start: Some(minimum),
+                end: Some(Date::try_new(2024, 5, 15).unwrap()),
+            }
+        );
         assert!(matches!(
             calendar.select(Date::try_new(2024, 6, 21).unwrap()),
             Err(CalendarError::OutOfBounds(_))
@@ -152,16 +176,31 @@ mod tests {
         picker.set_steps(30, 10).unwrap();
         picker.handle_key(ColorChannel::Hue, ColorKey::End).unwrap();
         assert_eq!(picker.draft().hue(), 360);
-        picker.handle_key(ColorChannel::Hue, ColorKey::Increase).unwrap();
+        picker
+            .handle_key(ColorChannel::Hue, ColorKey::Increase)
+            .unwrap();
         assert_eq!(picker.draft().hue(), 360);
-        picker.handle_key(ColorChannel::Hue, ColorKey::Decrease).unwrap();
+        picker
+            .handle_key(ColorChannel::Hue, ColorKey::Decrease)
+            .unwrap();
         assert_eq!(picker.draft().hue(), 330);
 
-        let disabled = Swatch::new(SwatchId::new(1), Hsva::try_new(120, 100, 100, 100).unwrap(), true);
-        let enabled = Swatch::new(SwatchId::new(2), Hsva::try_new(240, 100, 100, 100).unwrap(), false);
+        let disabled = Swatch::new(
+            SwatchId::new(1),
+            Hsva::try_new(120, 100, 100, 100).unwrap(),
+            true,
+        );
+        let enabled = Swatch::new(
+            SwatchId::new(2),
+            Hsva::try_new(240, 100, 100, 100).unwrap(),
+            false,
+        );
         picker.add_swatch(disabled).unwrap();
         picker.add_swatch(enabled).unwrap();
-        assert_eq!(picker.select_swatch(SwatchId::new(1)), Err(ColorError::DisabledSwatch(SwatchId::new(1))));
+        assert_eq!(
+            picker.select_swatch(SwatchId::new(1)),
+            Err(ColorError::DisabledSwatch(SwatchId::new(1)))
+        );
         picker.select_swatch(SwatchId::new(2)).unwrap();
         assert_eq!(picker.draft().hue(), 240);
 
@@ -190,7 +229,10 @@ mod tests {
         picker.open();
         assert!(!picker.navigate(CalendarNavigation::NextMonth).unwrap());
         picker.select(minimum).unwrap();
-        assert_eq!(picker.confirm().unwrap(), PickerOutcome::Confirmed(DateSelection::Single(Some(minimum))));
+        assert_eq!(
+            picker.confirm().unwrap(),
+            PickerOutcome::Confirmed(DateSelection::Single(Some(minimum)))
+        );
         assert_eq!(picker.selection(), DateSelection::Single(Some(minimum)));
     }
 
@@ -204,7 +246,8 @@ mod tests {
         assert!(TimeZonePolicy::fixed_offset(1_440).is_err());
 
         let minimum = DateTime::try_new(date, TimeOfDay::midnight(), zone).unwrap();
-        let maximum = DateTime::try_new(date, TimeOfDay::try_new(23, 59, 59, 0).unwrap(), zone).unwrap();
+        let maximum =
+            DateTime::try_new(date, TimeOfDay::try_new(23, 59, 59, 0).unwrap(), zone).unwrap();
         let policy = DateTimePickerPolicy::try_new(zone, Some(minimum), Some(maximum)).unwrap();
         assert!(DateTimePickerPolicy::try_new(other_zone, Some(minimum), None).is_err());
 

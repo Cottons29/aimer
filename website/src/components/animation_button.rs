@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use aimer::animation::{Animatable, Curve, ImplicitAnimatedBuilder, Rgba};
+use aimer::animation::{Animatable, curves, ImplicitAnimatedBuilder, Rgba};
 use aimer::input::button::Button;
 use aimer::input::callback::Callback;
 use aimer::style::{
@@ -171,7 +171,7 @@ impl AnimatedPlatformButtonListState {
                 let animated_surface = ImplicitAnimatedBuilder::new(
                     platform_button_animation_target(is_selected),
                     PLATFORM_BUTTON_TRANSITION_DURATION,
-                    Curve::FastOutSlowIn,
+                    curves::FAST_OUT_SLOW_IN,
                     move |progress| {
                         // debug!(
                         //     "platform: {label}, selected: {is_selected}, progress: {progress:?}"

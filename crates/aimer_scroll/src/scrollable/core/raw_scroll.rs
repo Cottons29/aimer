@@ -1,10 +1,10 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use aimer_widget::InteractionBounds;
 use aimer_attribute::BoxConstraint;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
+use aimer_widget::InteractionBounds;
 use aimer_widget::base::*;
 use aimer_widget::{
     AnyElement, Element, EventDispatcher, Rebuildable, element_tree_generation,
@@ -400,7 +400,6 @@ impl<E: Element> RawScrollableContainer<E> {
         let ((_, width), (_, height)) = self.cached_extents(ctx);
         (width, height)
     }
-
 }
 
 #[cfg(test)]
@@ -566,7 +565,6 @@ mod tests {
         fn update(&self, _ctx: &BuildContext) {
             self.draws.set(self.draws.get() + 1);
         }
-
     }
 
     impl Rebuildable for DrawingChild {}
@@ -597,7 +595,6 @@ mod tests {
         fn update(&self, _ctx: &BuildContext) {
             self.size.set(self.refined_size);
         }
-
     }
 
     impl Rebuildable for RefiningChild {}
@@ -633,7 +630,6 @@ mod tests {
                 .set(Some(ctx.canvas.get_transform_translation().1));
             self.size.set(self.refined_size);
         }
-
     }
 
     impl Rebuildable for RefiningPaintChild {}
@@ -1088,7 +1084,10 @@ mod tests {
         assert_eq!(scrollable.content_size(&ctx).height, 400.0);
         assert_eq!(measures.get(), 1);
 
-        scrollable.ctrl.scroll_offset.set(Vec2d { x: 0.0, y: -80.0 });
+        scrollable
+            .ctrl
+            .scroll_offset
+            .set(Vec2d { x: 0.0, y: -80.0 });
 
         assert_eq!(scrollable.content_size(&ctx).height, 400.0);
         assert_eq!(scrollable.computed_size(&ctx).height, 100.0);
@@ -1114,10 +1113,7 @@ mod tests {
             width: 100.0,
             height: 350.0,
         }));
-        let ctrl = Rc::new(ScrollState::for_test_at(Vec2d {
-            x: 0.0,
-            y: -250.0,
-        }));
+        let ctrl = Rc::new(ScrollState::for_test_at(Vec2d { x: 0.0, y: -250.0 }));
         let ctx = drawing_context(Some((0.0, 0.0, 100.0, 100.0)));
 
         refining_scrollable(
@@ -1156,10 +1152,7 @@ mod tests {
             width: 100.0,
             height: 350.0,
         }));
-        let ctrl = Rc::new(ScrollState::for_test_at(Vec2d {
-            x: 0.0,
-            y: -250.0,
-        }));
+        let ctrl = Rc::new(ScrollState::for_test_at(Vec2d { x: 0.0, y: -250.0 }));
         let ctx = drawing_context(Some((0.0, 0.0, 100.0, 100.0)));
 
         refining_scrollable(
@@ -1202,10 +1195,7 @@ mod tests {
             height: 350.0,
         }));
         let painted_y = Rc::new(Cell::new(None));
-        let ctrl = Rc::new(ScrollState::for_test_at(Vec2d {
-            x: 0.0,
-            y: -250.0,
-        }));
+        let ctrl = Rc::new(ScrollState::for_test_at(Vec2d { x: 0.0, y: -250.0 }));
         let ctx = drawing_context(Some((0.0, 0.0, 100.0, 100.0)));
 
         RawScrollableContainer {
@@ -1266,20 +1256,14 @@ mod tests {
     async fn prepares_a_viewport_dependent_child_before_measuring_its_extent() {
         let prepared = Rc::new(Cell::new(false));
         let measured_before_prepare = Rc::new(Cell::new(0));
-        let mut state = ScrollState::for_test_at(Vec2d {
-            x: 0.0,
-            y: -250.0,
-        });
+        let mut state = ScrollState::for_test_at(Vec2d { x: 0.0, y: -250.0 });
         state.axis = crate::ScrollAxis::Vertical;
         state.cached_content_size.set(ResolvedSize {
             width: 100.0,
             height: 350.0,
         });
         state.cached_content_size_valid.set(true);
-        state.cached_max_scroll.set(Vec2d {
-            x: 0.0,
-            y: 250.0,
-        });
+        state.cached_max_scroll.set(Vec2d { x: 0.0, y: 250.0 });
         state.last_scale.set(1.0);
         let ctrl = Rc::new(state);
         let scrollable = RawScrollableContainer {
@@ -1326,10 +1310,7 @@ mod tests {
             height: 350.0,
         }));
         let painted_y = Rc::new(Cell::new(None));
-        let ctrl = Rc::new(ScrollState::for_test_at(Vec2d {
-            x: 0.0,
-            y: -250.0,
-        }));
+        let ctrl = Rc::new(ScrollState::for_test_at(Vec2d { x: 0.0, y: -250.0 }));
         let ctx = drawing_context(Some((0.0, 0.0, 100.0, 100.0)));
 
         RawScrollableContainer {
@@ -1451,10 +1432,13 @@ mod tests {
     /// the outer viewport.
     #[tokio::test]
     async fn a_horizontal_scrollable_wraps_its_height_when_the_cross_axis_is_unbounded() {
-        let mut scrollable = sized_scrollable(crate::ScrollAxis::Horizontal, ResolvedSize {
-            width: 300.0,
-            height: 120.0,
-        });
+        let mut scrollable = sized_scrollable(
+            crate::ScrollAxis::Horizontal,
+            ResolvedSize {
+                width: 300.0,
+                height: 120.0,
+            },
+        );
         scrollable.horizontal_bar_height = 10.0;
 
         let canvas = {
@@ -1481,18 +1465,24 @@ mod tests {
         };
 
         assert_eq!(scrollable.viewport_size(&ctx), (500.0, 120.0));
-        assert_eq!(scrollable.computed_size(&ctx), ResolvedSize {
-            width: 500.0,
-            height: 130.0,
-        });
+        assert_eq!(
+            scrollable.computed_size(&ctx),
+            ResolvedSize {
+                width: 500.0,
+                height: 130.0,
+            }
+        );
     }
 
     #[tokio::test]
     async fn a_vertical_scrollable_wraps_its_width_when_the_cross_axis_is_unbounded() {
-        let mut scrollable = sized_scrollable(crate::ScrollAxis::Vertical, ResolvedSize {
-            width: 300.0,
-            height: 120.0,
-        });
+        let mut scrollable = sized_scrollable(
+            crate::ScrollAxis::Vertical,
+            ResolvedSize {
+                width: 300.0,
+                height: 120.0,
+            },
+        );
         scrollable.vertical_bar_width = 12.0;
 
         let canvas = {
@@ -1519,10 +1509,13 @@ mod tests {
         };
 
         assert_eq!(scrollable.viewport_size(&ctx), (300.0, 400.0));
-        assert_eq!(scrollable.computed_size(&ctx), ResolvedSize {
-            width: 312.0,
-            height: 400.0,
-        });
+        assert_eq!(
+            scrollable.computed_size(&ctx),
+            ResolvedSize {
+                width: 312.0,
+                height: 400.0,
+            }
+        );
     }
 
     /// A container laid out over the top-left 100x100 corner, wrapping a child
@@ -1581,20 +1574,20 @@ mod tests {
             max_height: 160.0,
         };
 
-        assert_eq!(scrollable.computed_size(&ctx), ResolvedSize {
-            width: 200.0,
-            height: 160.0,
-        });
+        assert_eq!(
+            scrollable.computed_size(&ctx),
+            ResolvedSize {
+                width: 200.0,
+                height: 160.0,
+            }
+        );
     }
 
     #[tokio::test]
     async fn a_flex_assigned_constraint_shrinks_the_scrollable_viewport() {
         let mut ctrl = ScrollState::for_test_at(Vec2d::default());
         ctrl.scroll_bar_placement = crate::ScrollBarPlacement::Inline;
-        let mut scrollable = capturing_scrollable(
-            Rc::new(Cell::new(0)),
-            Rc::new(ctrl),
-        );
+        let mut scrollable = capturing_scrollable(Rc::new(Cell::new(0)), Rc::new(ctrl));
         scrollable.viewport_w = 800.0;
         scrollable.viewport_h = 600.0;
         scrollable.vertical_bar_width = 12.0;
@@ -1623,20 +1616,20 @@ mod tests {
         };
 
         assert_eq!(scrollable.viewport_size(&ctx), (308.0, 180.0));
-        assert_eq!(scrollable.computed_size(&ctx), ResolvedSize {
-            width: 320.0,
-            height: 180.0,
-        });
+        assert_eq!(
+            scrollable.computed_size(&ctx),
+            ResolvedSize {
+                width: 320.0,
+                height: 180.0,
+            }
+        );
     }
 
     #[tokio::test]
     async fn a_retained_scrollable_expands_when_the_parent_constraint_grows() {
         let mut ctrl = ScrollState::for_test_at(Vec2d::default());
         ctrl.scroll_bar_placement = crate::ScrollBarPlacement::Inline;
-        let mut scrollable = capturing_scrollable(
-            Rc::new(Cell::new(0)),
-            Rc::new(ctrl),
-        );
+        let mut scrollable = capturing_scrollable(Rc::new(Cell::new(0)), Rc::new(ctrl));
         scrollable.viewport_w = 320.0;
         scrollable.viewport_h = 180.0;
         scrollable.vertical_bar_width = 12.0;
@@ -1674,10 +1667,13 @@ mod tests {
         ctx.box_constraint.max_height = 360.0;
 
         assert_eq!(scrollable.viewport_size(&ctx), (628.0, 360.0));
-        assert_eq!(scrollable.computed_size(&ctx), ResolvedSize {
-            width: 640.0,
-            height: 360.0,
-        });
+        assert_eq!(
+            scrollable.computed_size(&ctx),
+            ResolvedSize {
+                width: 640.0,
+                height: 360.0,
+            }
+        );
     }
 
     // A rebuild triggered by the press itself — a `Button` inside the list
@@ -1711,7 +1707,11 @@ mod tests {
             pointer.id,
         )));
 
-        assert_eq!(events.get(), 2, "the child must hear the release it is owed");
+        assert_eq!(
+            events.get(),
+            2,
+            "the child must hear the release it is owed"
+        );
         assert_eq!(up.capture_request(), CaptureRequest::Release(pointer));
     }
 
@@ -1759,7 +1759,10 @@ mod tests {
         let bounds = InteractionBounds::new();
         bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
         let scrollable = RawScrollableContainer {
-            child: HoverChild { hovered: hovered.clone() }.boxed(),
+            child: HoverChild {
+                hovered: hovered.clone(),
+            }
+            .boxed(),
             ctrl: Rc::new(ScrollState::for_test_at(Vec2d::default())),
             vertical_scroll_bar: None,
             horizontal_scroll_bar: None,
@@ -1771,15 +1774,16 @@ mod tests {
             event_dispatcher: RefCell::new(EventDispatcher::new()),
             layout_cache: Default::default(),
         };
-        let pointer = |x: f32, y: f32| {
-            PointerInfo::mouse(Vec2d { x, y }, PointerButton::Primary)
-        };
+        let pointer = |x: f32, y: f32| PointerInfo::mouse(Vec2d { x, y }, PointerButton::Primary);
 
         let _ = scrollable.on_event(&ElementEvent::PointerMove(pointer(50.0, 50.0)));
         assert!(hovered.get(), "the pointer over the content must hover it");
 
         let _ = scrollable.on_event(&ElementEvent::PointerMove(pointer(104.0, 50.0)));
-        assert!(!hovered.get(), "the content stayed hovered after the pointer left the viewport");
+        assert!(
+            !hovered.get(),
+            "the content stayed hovered after the pointer left the viewport"
+        );
 
         // Further moves outside have nothing left to release.
         let _ = scrollable.on_event(&ElementEvent::PointerMove(pointer(110.0, 50.0)));

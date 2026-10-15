@@ -281,9 +281,7 @@ mod tests {
 
     use crate::font::{FontFamily, FontStyle, FontWeight};
     use crate::pipeline::text_pipeline::cache_key::span_layout_keys_with_writing_mode;
-    use crate::pipeline::text_pipeline::text_layout::{
-        TextHorizontalAlign, TextWritingMode,
-    };
+    use crate::pipeline::text_pipeline::text_layout::{TextHorizontalAlign, TextWritingMode};
     use crate::utilities::Rgba8;
 
     use super::{CachedTextPaint, TextPaintCache, TextPaintCacheKey};

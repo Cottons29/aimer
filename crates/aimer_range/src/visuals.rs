@@ -1,9 +1,9 @@
 //! Composable visual parts used by [`Slider`](super::Slider) controls.
 
 use aimer_attribute::{Dimension, ResolvedSize, Size, Vec2d};
-use aimer_widget::InteractionBounds;
 use aimer_canvas::Canvas;
 use aimer_cupid::utilities::{Color as V2Color, Rect};
+use aimer_widget::InteractionBounds;
 use aimer_widget::base::{BuildContext, Color};
 use aimer_widget::{
     AnyElement, Drawable, Element, EventElement, LayoutElement, PortableWidget, Rebuildable,
@@ -29,7 +29,10 @@ impl SliderTrack {
 
 impl Widget for SliderTrack {
     fn to_element(self, _ctx: &BuildContext) -> AnyElement {
-        RawSliderTrack { bounds: InteractionBounds::new() }.boxed()
+        RawSliderTrack {
+            bounds: InteractionBounds::new(),
+        }
+        .boxed()
     }
 
     fn debug_name(&self) -> &'static str {
@@ -74,7 +77,9 @@ impl Drawable for RawSliderTrack {
     }
 
     #[inline]
-    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+    fn retained_v2_interaction_disagreement(
+        &self,
+    ) -> Option<aimer_widget::InteractionDisagreement> {
         self.bounds.disagreement("SliderTrack")
     }
 
@@ -118,14 +123,12 @@ impl LayoutElement for RawSliderTrack {
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         ResolvedSize {
-            width: ctx.box_constraint.max_width.clamp(
-                ctx.box_constraint.min_width,
-                ctx.box_constraint.max_width,
-            ),
-            height: (4.0 * ctx.scale.max(0.0)).clamp(
-                ctx.box_constraint.min_height,
-                ctx.box_constraint.max_height,
-            ),
+            width: ctx
+                .box_constraint
+                .max_width
+                .clamp(ctx.box_constraint.min_width, ctx.box_constraint.max_width),
+            height: (4.0 * ctx.scale.max(0.0))
+                .clamp(ctx.box_constraint.min_height, ctx.box_constraint.max_height),
         }
     }
 
@@ -289,7 +292,9 @@ impl Drawable for RawSliderThumb {
     }
 
     #[inline]
-    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+    fn retained_v2_interaction_disagreement(
+        &self,
+    ) -> Option<aimer_widget::InteractionDisagreement> {
         self.bounds.disagreement("SliderThumb")
     }
 
@@ -313,11 +318,7 @@ impl Drawable for RawSliderThumb {
             .local_size(ctx)
             .expect("SliderThumb v2 support must be checked before painting");
         let (red, green, blue, alpha) = self.color.to_rgba();
-        let radius = self
-            .radius
-            .max(0.0)
-            .min(width / 2.0)
-            .min(height / 2.0);
+        let radius = self.radius.max(0.0).min(width / 2.0).min(height / 2.0);
         let canvas = Canvas::of(ctx);
         canvas.fill_rect_styled(
             Rect::new(0.0, 0.0, width, height),
@@ -500,7 +501,9 @@ impl Drawable for RawSliderTrail {
     }
 
     #[inline]
-    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+    fn retained_v2_interaction_disagreement(
+        &self,
+    ) -> Option<aimer_widget::InteractionDisagreement> {
         self.bounds.disagreement("SliderTrail")
     }
 
@@ -534,11 +537,7 @@ impl Drawable for RawSliderTrail {
         let width = size.width / ctx.scale;
         let height = size.height / ctx.scale;
         let (red, green, blue, alpha) = self.color.to_rgba();
-        let radius = self
-            .radius
-            .max(0.0)
-            .min(width / 2.0)
-            .min(height / 2.0);
+        let radius = self.radius.max(0.0).min(width / 2.0).min(height / 2.0);
         let canvas = Canvas::of(ctx);
         canvas.fill_rect_styled(
             Rect::new(0.0, 0.0, width, height),

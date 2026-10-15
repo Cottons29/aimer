@@ -4,9 +4,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use aimer_cupid::font::{FontStyle, TextLanguage};
-use aimer_cupid::text_layout::{
-    CaretGeometry, SelectionRect, TextInteractionLayout,
-};
+use aimer_cupid::text_layout::{CaretGeometry, SelectionRect, TextInteractionLayout};
 use aimer_style::{TextAlign, TextTransform};
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -163,9 +161,10 @@ impl EditableGeometry {
         if let Some(caret) = layout.caret_geometry(byte) {
             return Some(caret);
         }
-        let cluster = layout.clusters.iter().find(|cluster| {
-            cluster.text_range.start < byte && byte < cluster.text_range.end
-        })?;
+        let cluster = layout
+            .clusters
+            .iter()
+            .find(|cluster| cluster.text_range.start < byte && byte < cluster.text_range.end)?;
         let edge = if byte - cluster.text_range.start <= cluster.text_range.end - byte {
             cluster.text_range.start
         } else {
@@ -179,7 +178,9 @@ impl EditableGeometry {
     pub(crate) fn hit_test(&self, x: f32, y: f32) -> Option<usize> {
         let layout = self.interaction.as_ref()?;
         let byte = layout.hit_test(x, y)?;
-        Some(grapheme_count(&self.display[..byte.min(self.display.len())]))
+        Some(grapheme_count(
+            &self.display[..byte.min(self.display.len())],
+        ))
     }
 
     /// Returns canonical selection rectangles for displayed grapheme offsets.
@@ -188,9 +189,7 @@ impl EditableGeometry {
         let Some(layout) = self.interaction.as_ref() else {
             return Vec::new();
         };
-        layout.selection_rects(
-            self.display_byte_offset(start)..self.display_byte_offset(end),
-        )
+        layout.selection_rects(self.display_byte_offset(start)..self.display_byte_offset(end))
     }
 
     /// Maps a displayed grapheme range to its source byte range.
@@ -222,8 +221,10 @@ impl EditableGeometry {
     /// Returns the visual line containing an editing cursor offset.
     #[inline]
     pub(crate) fn line_for_offset(&self, offset: usize) -> usize {
-        self.caret_geometry(offset)
-            .map_or_else(|| self.visual_lines.len().saturating_sub(1), |caret| caret.line_index)
+        self.caret_geometry(offset).map_or_else(
+            || self.visual_lines.len().saturating_sub(1),
+            |caret| caret.line_index,
+        )
     }
 }
 
@@ -335,14 +336,11 @@ pub(crate) fn wrap_visual_lines(
     lines
 }
 
-pub(crate) fn vertical_target(
-    lines: &[VisualLine],
-    current: usize,
-    direction: isize,
-) -> usize {
-    let Some(line_index) = lines.iter().position(|line| {
-        current >= line.grapheme_start && current <= line.grapheme_end
-    }) else {
+pub(crate) fn vertical_target(lines: &[VisualLine], current: usize, direction: isize) -> usize {
+    let Some(line_index) = lines
+        .iter()
+        .position(|line| current >= line.grapheme_start && current <= line.grapheme_end)
+    else {
         return current;
     };
     let target_index = line_index.saturating_add_signed(direction);
@@ -423,13 +421,7 @@ mod tests {
 
         let first = cache.resolve(key, build);
         let second = cache.resolve(key, build);
-        let changed = cache.resolve(
-            EditableGeometryKey {
-                revision: 4,
-                ..key
-            },
-            build,
-        );
+        let changed = cache.resolve(EditableGeometryKey { revision: 4, ..key }, build);
 
         assert!(std::rc::Rc::ptr_eq(&first, &second));
         assert!(!std::rc::Rc::ptr_eq(&second, &changed));

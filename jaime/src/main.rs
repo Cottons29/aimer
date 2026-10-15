@@ -1,70 +1,79 @@
 #![allow(dead_code, clippy::main_recursion)]
 
-mod animated;
-mod animated_theme;
-mod async_builder;
 mod accessibility_example;
+mod align_example;
 mod animatable_example;
+mod animated;
 mod animated_layout_example;
+mod animated_theme;
 mod assets_media_example;
-mod color_sync;
+mod async_builder;
+mod backdrop_filter_example;
 mod collapsible_list_example;
-pub mod custom_text_field_caret_example;
-mod custom_shape_example;
+mod container_transform_example;
+mod color_sync;
 mod custom_animated_theme;
 mod custom_font;
-mod drag_and_drop;
+mod custom_shape_example;
+pub mod custom_text_field_caret_example;
 mod data_view_example;
 mod dnd_completion_example;
+mod drag_and_drop;
 mod feedback_example;
 pub mod file_drop_zone;
 mod floating;
 mod focus_node_example;
 mod form_example;
 mod glass_liquid_example;
-mod backdrop_filter_example;
-mod magnification_example;
 mod http_request_button;
 mod i18n_example;
 mod justify_content_example;
+mod light_edge_example;
+mod liquid_tab_bar_example;
 mod loading_animation;
+mod lucide_icons_example;
+mod magnification_example;
 mod markdown_example;
 mod modal;
+mod multi_decoration_box_example;
 mod navigation_example;
+mod navigation_transitions_example;
 mod overflow_behavior_example;
 mod panic_recovery;
 mod picker_example;
 mod range_controls_example;
 mod resizable_example;
-mod storage_example;
 pub mod routing;
+mod routing_context_example;
 mod selectable_text;
+mod selection_controls_example;
 mod showcase;
 mod starter;
+mod stack_positioned_example;
 pub mod stateful;
 mod stateful_2;
+mod storage_example;
 mod style_tokens_example;
-mod svg_test;
 mod svg_example;
+mod svg_test;
 mod system_theme;
 mod test_animation;
-mod theme;
-mod routing_context_example;
-mod selection_controls_example;
 pub mod text_area_example;
 pub mod text_field_example;
 mod text_properties_example;
+mod theme;
+mod tween_keyframe_example;
 mod window_example;
 
-use std::cell::UnsafeCell;
+use aimer::input::TextEditingController;
+use aimer::input::input::{InputType, TextField};
+use aimer::native::macos_windowing::MacosWindowing;
+use aimer::share::{ShareRef, Shared};
 #[allow(unused_imports)]
 use aimer::style::*;
 #[allow(unused_imports)]
 use aimer::*;
-use aimer::input::input::{InputType, TextField};
-use aimer::input::TextEditingController;
-use aimer::native::macos_windowing::MacosWindowing;
-use aimer::share::{ShareRef, Shared};
+use std::cell::UnsafeCell;
 
 // this is the entry point of the app
 #[aimer::main]
@@ -355,23 +364,20 @@ mod text_editing_example_tests {
     }
 }
 
-
-fn moew(){
-    
+fn moew() {
     struct DrawCommand;
     struct DrawList(UnsafeCell<Vec<DrawCommand>>);
-    struct DrawCommandList{
-        cmds: Vec<DrawList>
+    struct DrawCommandList {
+        cmds: Vec<DrawList>,
     }
 
-    struct CurrentBuildContext{
-        draw_cmd: Shared<DrawCommandList>
+    struct CurrentBuildContext {
+        draw_cmd: Shared<DrawCommandList>,
     }
 
     struct CanvasInstance {
-        draw_list: Shared<DrawList>
+        draw_list: Shared<DrawList>,
     }
-
 }
 
 /// Select the native profiler path without rebuilding the application.
@@ -381,7 +387,10 @@ fn render_mode_from_args() -> aimer::RenderMode {
         let mut args = std::env::args().skip(1);
         while let Some(arg) = args.next() {
             if arg == "--render-mode" {
-                return match args.next().as_deref() {
+                return match args
+                    .next()
+                    .as_deref()
+                {
                     Some("inline") => aimer::RenderMode::Inline,
                     Some("threaded") => aimer::RenderMode::Threaded,
                     _ => panic!("--render-mode requires inline or threaded"),

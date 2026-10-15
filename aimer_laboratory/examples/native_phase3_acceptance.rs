@@ -20,17 +20,17 @@ use std::process::Command;
 use std::rc::Rc;
 use std::time::Instant;
 
+use aimer::frame_stats::{FrameBreakdown, FrameContentStats, FrameRequestStats};
+use aimer::modal::ModalHost;
 use aimer::quiver::winit::{
     dpi::{PhysicalPosition, PhysicalSize},
     event::{DeviceId, MouseScrollDelta, TouchPhase, WindowEvent},
 };
-use aimer::frame_stats::{FrameBreakdown, FrameContentStats, FrameRequestStats};
 use aimer::{
-    AimerApp, AnyElement, AnyWidget, BuildContext, Color, Column, Dimension, Drawable,
-    Element, EventElement, HeadlessOptions, LayoutElement, Rebuildable, ResolvedSize, Size,
-    Vec2d, VisitorElement, Widget,
+    AimerApp, AnyElement, AnyWidget, BuildContext, Color, Column, Dimension, Drawable, Element,
+    EventElement, HeadlessOptions, LayoutElement, Rebuildable, ResolvedSize, Size, Vec2d,
+    VisitorElement, Widget,
 };
-use aimer::modal::ModalHost;
 
 const FRAME_WIDTH: u32 = 1_150;
 const FRAME_HEIGHT: u32 = 800;
@@ -124,7 +124,14 @@ impl Drawable for StaticProbeElement {
 /// Records the probe's 1000 x 32 band into the element's own retained list.
 fn probe_fill(ctx: &BuildContext, color: Color) {
     let canvas = aimer::canvas::Canvas::of(ctx);
-    canvas.fill_color_rect(Vec2d::ZERO, ResolvedSize { width: 1_000.0, height: 32.0 }, color);
+    canvas.fill_color_rect(
+        Vec2d::ZERO,
+        ResolvedSize {
+            width: 1_000.0,
+            height: 32.0,
+        },
+        color,
+    );
     canvas.finish();
 }
 
@@ -210,16 +217,16 @@ impl Rebuildable for DynamicProbeElement {}
 
 fn static_page(rows: usize, offset: usize) -> AnyWidget {
     Column::new()
-        .children((0..rows).map(|index| StaticProbeWidget { index: index + offset }))
+        .children((0..rows).map(|index| StaticProbeWidget {
+            index: index + offset,
+        }))
         .boxed()
 }
 
 fn dynamic_page() -> AnyWidget {
     let draws = Rc::new(Cell::new(0));
     let mut children = Vec::with_capacity(STATIC_PREFIX_ROWS + DYNAMIC_SUFFIX_ROWS);
-    children.extend(
-        (0..STATIC_PREFIX_ROWS).map(|index| StaticProbeWidget { index }.boxed()),
-    );
+    children.extend((0..STATIC_PREFIX_ROWS).map(|index| StaticProbeWidget { index }.boxed()));
     children.extend((0..DYNAMIC_SUFFIX_ROWS).map(|index| {
         DynamicProbeWidget {
             index,
@@ -238,9 +245,7 @@ fn scrollable_page(child: AnyWidget) -> AnyWidget {
         .boxed()
 }
 
-fn headless(
-    child: AnyWidget,
-) -> aimer::HeadlessAimerApp<ModalHost<AnyWidget>> {
+fn headless(child: AnyWidget) -> aimer::HeadlessAimerApp<ModalHost<AnyWidget>> {
     AimerApp::start_headless_with(
         scrollable_page(child),
         HeadlessOptions {
@@ -380,7 +385,9 @@ fn measure_workload(name: &str, build: impl Fn() -> AnyWidget) {
         let start = Instant::now();
         black_box(&mut app);
         app.render_frame();
-        settled.frame_times_us.push(start.elapsed().as_secs_f64() * 1e6);
+        settled
+            .frame_times_us
+            .push(start.elapsed().as_secs_f64() * 1e6);
         settled.frames += 1;
     }
     settled.pending_after_limit = app.take_redraw_request();

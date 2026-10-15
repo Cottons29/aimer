@@ -6,7 +6,10 @@ fn main() -> Result<(), V2RenderError> {
 
     println!("Initial count: {}", simulation.count());
     println!("Child-sized event bounds: {:?}", simulation.event_bounds()?);
-    println!("Multi-child row bounds: {:?}", simulation.counter_row_bounds()?);
+    println!(
+        "Multi-child row bounds: {:?}",
+        simulation.counter_row_bounds()?
+    );
     print_revisions(&simulation, &elements)?;
 
     let _ = simulation.dispatch_pointer_down((100.0, 100.0))?;
@@ -15,9 +18,18 @@ fn main() -> Result<(), V2RenderError> {
         .expect("the point is inside the counter text bounds");
 
     println!("\nAfter state update: count = {}", simulation.count());
-    println!("Child bounds after layout: {:?}", simulation.event_bounds()?);
-    println!("Multi-child row bounds: {:?}", simulation.counter_row_bounds()?);
-    println!("Handled pointer events: {}", simulation.handled_pointer_events());
+    println!(
+        "Child bounds after layout: {:?}",
+        simulation.event_bounds()?
+    );
+    println!(
+        "Multi-child row bounds: {:?}",
+        simulation.counter_row_bounds()?
+    );
+    println!(
+        "Handled pointer events: {}",
+        simulation.handled_pointer_events()
+    );
     println!("Damage: {:?}", frame.damage);
     print_revisions(&simulation, &elements)?;
 

@@ -1,18 +1,22 @@
+use crate::{
+    BorderRadius, BorderSlice, BorderStyle, BoxBorder, BoxDecoration, BoxOutline, BoxShadow,
+    ShadowSide,
+};
+use aimer_attribute::Dimension;
+use aimer_color::prelude::Color;
 use aimer_widget::portable::__anteros::{
     BOX_DECORATION_VALUE_MAXIMUM_ENCODED_BYTES, BOX_DECORATION_VALUE_NAME,
-    BOX_DECORATION_VALUE_VERSION, PropertyId, PropertyValue, ValueSchemaMetadata, WidgetDocumentView,
-};
-use aimer_widget::portable::{
-    PortableMaterializeError, PortableMaterializeProperty, PortableProperty,
-    PortablePropertyReflection,
+    BOX_DECORATION_VALUE_VERSION, PropertyId, PropertyValue, ValueSchemaMetadata,
+    WidgetDocumentView,
 };
 #[cfg(feature = "portable-guest")]
 use aimer_widget::portable::{
     PortableBuildContext, PortableBuildError, PortableEncodeProperty, PortableWidgetResource,
 };
-use crate::{BorderSlice, BorderStyle, BoxBorder, BoxDecoration, BoxOutline, BorderRadius, BoxShadow, ShadowSide};
-use aimer_attribute::Dimension;
-use aimer_color::prelude::Color;
+use aimer_widget::portable::{
+    PortableMaterializeError, PortableMaterializeProperty, PortableProperty,
+    PortablePropertyReflection,
+};
 
 // Preserve the version-one codec and canonical identity across the crate move.
 const BOX_DECORATION_WIRE_VERSION: u8 = 1;
@@ -473,4 +477,3 @@ impl<'a> WireReader<'a> {
         }
     }
 }
-

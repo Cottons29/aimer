@@ -3,21 +3,28 @@ use std::ffi::{CString, c_void};
 use std::rc::Rc;
 
 use crate::backend::{
-    BackendError, BindingType, BindGroupLayoutEntry, BlendFactor, BlendOperation, BlendState,
-    CompareFunction, DepthBiasState, Extent3d, Face, FrontFace, GpuRenderPass, IndexFormat,
-    LoadOp, Origin3d, PolygonMode, PrimitiveState, PrimitiveTopology, RenderPassDescriptor,
-    RenderPipelineDescriptor, StencilOperation, StencilState, TextureAspect, TextureDimension,
-    TexelCopyBufferLayout, VertexAttribute, VertexFormat, VertexStepMode,
+    BackendError, BindGroupLayoutEntry, BindingType, BlendFactor, BlendOperation, BlendState,
+    CompareFunction, DepthBiasState, Extent3d, Face, FrontFace, GpuRenderPass, IndexFormat, LoadOp,
+    Origin3d, PolygonMode, PrimitiveState, PrimitiveTopology, RenderPassDescriptor,
+    RenderPipelineDescriptor, StencilOperation, StencilState, TexelCopyBufferLayout, TextureAspect,
+    TextureDimension, VertexAttribute, VertexFormat, VertexStepMode,
 };
 
 use super::gl;
-use super::{FramebufferKey, OpenGlBackend, OpenGlBuffer, OpenGlShared, OpenGlTexture, OpenGlTextureFormat, OpenGlTextureView, OpenGlViewTarget};
+use super::{
+    FramebufferKey, OpenGlBackend, OpenGlBuffer, OpenGlShared, OpenGlTexture, OpenGlTextureFormat,
+    OpenGlTextureView, OpenGlViewTarget,
+};
 
 const BINDINGS_PER_GROUP: u32 = 16;
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) enum ShaderResource {
-    UniformBlock { group: u32, binding: u32, name: String },
+    UniformBlock {
+        group: u32,
+        binding: u32,
+        name: String,
+    },
     Sampler {
         texture_group: u32,
         texture_binding: u32,
@@ -25,7 +32,11 @@ pub(super) enum ShaderResource {
         sampler_binding: u32,
         name: String,
     },
-    Texture { group: u32, binding: u32, name: String },
+    Texture {
+        group: u32,
+        binding: u32,
+        name: String,
+    },
 }
 
 pub struct OpenGlShaderModule(pub(super) Rc<OpenGlShaderModuleInner>);
@@ -67,12 +78,32 @@ pub(super) enum OpenGlCommand {
     BeginPass(OpenGlPassSetup),
     EndPass(Vec<(u32, u32, u32, (u32, u32))>),
     SetPipeline(OpenGlRenderPipeline),
-    SetBindGroup { index: u32, group: OpenGlBindGroup, dynamic_offsets: Vec<u32> },
-    SetVertexBuffer { slot: u32, buffer: OpenGlBuffer, offset: u64 },
+    SetBindGroup {
+        index: u32,
+        group: OpenGlBindGroup,
+        dynamic_offsets: Vec<u32>,
+    },
+    SetVertexBuffer {
+        slot: u32,
+        buffer: OpenGlBuffer,
+        offset: u64,
+    },
     SetIndexBuffer(OpenGlIndexBuffer),
-    SetScissor { x: u32, y: u32, width: u32, height: u32 },
-    Draw { vertices: std::ops::Range<u32>, instances: std::ops::Range<u32> },
-    DrawIndexed { indices: std::ops::Range<u32>, base_vertex: i32, instances: std::ops::Range<u32> },
+    SetScissor {
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+    },
+    Draw {
+        vertices: std::ops::Range<u32>,
+        instances: std::ops::Range<u32>,
+    },
+    DrawIndexed {
+        indices: std::ops::Range<u32>,
+        base_vertex: i32,
+        instances: std::ops::Range<u32>,
+    },
     CopyBufferToTexture {
         buffer: OpenGlBuffer,
         texture: super::OpenGlTexture,
@@ -131,16 +162,25 @@ pub(super) struct OpenGlExecutorPass {
 
 impl Drop for OpenGlRenderPass<'_> {
     fn drop(&mut self) {
-        self.encoder.commands.push(OpenGlCommand::EndPass(std::mem::take(&mut self.resolve)));
+        self.encoder
+            .commands
+            .push(OpenGlCommand::EndPass(std::mem::take(&mut self.resolve)));
     }
 }
 
 impl GpuRenderPass<OpenGlBackend> for OpenGlRenderPass<'_> {
     fn set_pipeline(&mut self, pipeline: &OpenGlRenderPipeline) {
-        self.encoder.commands.push(OpenGlCommand::SetPipeline(pipeline.clone()));
+        self.encoder
+            .commands
+            .push(OpenGlCommand::SetPipeline(pipeline.clone()));
     }
 
-    fn set_bind_group(&mut self, index: u32, bind_group: &OpenGlBindGroup, dynamic_offsets: &[u32]) {
+    fn set_bind_group(
+        &mut self,
+        index: u32,
+        bind_group: &OpenGlBindGroup,
+        dynamic_offsets: &[u32],
+    ) {
         self.encoder.commands.push(OpenGlCommand::SetBindGroup {
             index,
             group: bind_group.clone(),
@@ -157,23 +197,42 @@ impl GpuRenderPass<OpenGlBackend> for OpenGlRenderPass<'_> {
     }
 
     fn set_index_buffer(&mut self, buffer: &OpenGlBuffer, format: IndexFormat, offset: u64) {
-        self.encoder.commands.push(OpenGlCommand::SetIndexBuffer(OpenGlIndexBuffer {
-            _buffer: buffer.clone(),
-            format,
-            offset,
-        }));
+        self.encoder
+            .commands
+            .push(OpenGlCommand::SetIndexBuffer(OpenGlIndexBuffer {
+                _buffer: buffer.clone(),
+                format,
+                offset,
+            }));
     }
 
     fn set_scissor_rect(&mut self, x: u32, y: u32, width: u32, height: u32) {
-        self.encoder.commands.push(OpenGlCommand::SetScissor { x, y, width, height });
+        self.encoder.commands.push(OpenGlCommand::SetScissor {
+            x,
+            y,
+            width,
+            height,
+        });
     }
 
     fn draw(&mut self, vertices: std::ops::Range<u32>, instances: std::ops::Range<u32>) {
-        self.encoder.commands.push(OpenGlCommand::Draw { vertices, instances });
+        self.encoder.commands.push(OpenGlCommand::Draw {
+            vertices,
+            instances,
+        });
     }
 
-    fn draw_indexed(&mut self, indices: std::ops::Range<u32>, base_vertex: i32, instances: std::ops::Range<u32>) {
-        self.encoder.commands.push(OpenGlCommand::DrawIndexed { indices, base_vertex, instances });
+    fn draw_indexed(
+        &mut self,
+        indices: std::ops::Range<u32>,
+        base_vertex: i32,
+        instances: std::ops::Range<u32>,
+    ) {
+        self.encoder.commands.push(OpenGlCommand::DrawIndexed {
+            indices,
+            base_vertex,
+            instances,
+        });
     }
 }
 
@@ -191,28 +250,123 @@ pub(super) fn submit_encoder(shared: &Rc<OpenGlShared>, commands: Vec<OpenGlComm
                 execute_resolves(shared, &resolve);
                 drop(ended_pass);
             }
-            OpenGlCommand::SetPipeline(pipeline) => pass.as_mut().expect("OpenGL pipeline set outside render pass").set_pipeline(&pipeline),
-            OpenGlCommand::SetBindGroup { index, group, dynamic_offsets } => pass.as_mut().expect("OpenGL bind group set outside render pass").set_bind_group(index, &group, &dynamic_offsets),
-            OpenGlCommand::SetVertexBuffer { slot, buffer, offset } => pass.as_mut().expect("OpenGL vertex buffer set outside render pass").set_vertex_buffer(slot, &buffer, offset),
-            OpenGlCommand::SetIndexBuffer(index) => pass.as_mut().expect("OpenGL index buffer set outside render pass").index = Some(index),
-            OpenGlCommand::SetScissor { x, y, width, height } => pass.as_mut().expect("OpenGL scissor set outside render pass").set_scissor_rect(x, y, width, height),
-            OpenGlCommand::Draw { vertices, instances } => pass.as_mut().expect("OpenGL draw outside render pass").draw(vertices, instances),
-            OpenGlCommand::DrawIndexed { indices, base_vertex, instances } => pass.as_mut().expect("OpenGL indexed draw outside render pass").draw_indexed(indices, base_vertex, instances),
-            OpenGlCommand::CopyBufferToTexture { buffer, texture, mip_level, origin, aspect, layout, extent } => {
-                assert!(pass.is_none(), "OpenGL texture copy recorded inside a render pass");
-                super::trait_impl::execute_copy_buffer_to_texture(shared, &buffer, &texture, mip_level, origin, aspect, layout, extent);
+            OpenGlCommand::SetPipeline(pipeline) => pass
+                .as_mut()
+                .expect("OpenGL pipeline set outside render pass")
+                .set_pipeline(&pipeline),
+            OpenGlCommand::SetBindGroup {
+                index,
+                group,
+                dynamic_offsets,
+            } => pass
+                .as_mut()
+                .expect("OpenGL bind group set outside render pass")
+                .set_bind_group(index, &group, &dynamic_offsets),
+            OpenGlCommand::SetVertexBuffer {
+                slot,
+                buffer,
+                offset,
+            } => pass
+                .as_mut()
+                .expect("OpenGL vertex buffer set outside render pass")
+                .set_vertex_buffer(slot, &buffer, offset),
+            OpenGlCommand::SetIndexBuffer(index) => {
+                pass.as_mut()
+                    .expect("OpenGL index buffer set outside render pass")
+                    .index = Some(index)
             }
-            OpenGlCommand::CopyTextureToTexture { source, source_mip, source_origin, source_aspect, destination, destination_mip, destination_origin, destination_aspect, extent } => {
-                assert!(pass.is_none(), "OpenGL texture copy recorded inside a render pass");
-                super::trait_impl::execute_copy_texture_to_texture(shared, &source, source_mip, source_origin, source_aspect, &destination, destination_mip, destination_origin, destination_aspect, extent);
+            OpenGlCommand::SetScissor {
+                x,
+                y,
+                width,
+                height,
+            } => pass
+                .as_mut()
+                .expect("OpenGL scissor set outside render pass")
+                .set_scissor_rect(x, y, width, height),
+            OpenGlCommand::Draw {
+                vertices,
+                instances,
+            } => pass
+                .as_mut()
+                .expect("OpenGL draw outside render pass")
+                .draw(vertices, instances),
+            OpenGlCommand::DrawIndexed {
+                indices,
+                base_vertex,
+                instances,
+            } => pass
+                .as_mut()
+                .expect("OpenGL indexed draw outside render pass")
+                .draw_indexed(indices, base_vertex, instances),
+            OpenGlCommand::CopyBufferToTexture {
+                buffer,
+                texture,
+                mip_level,
+                origin,
+                aspect,
+                layout,
+                extent,
+            } => {
+                assert!(
+                    pass.is_none(),
+                    "OpenGL texture copy recorded inside a render pass"
+                );
+                super::trait_impl::execute_copy_buffer_to_texture(
+                    shared, &buffer, &texture, mip_level, origin, aspect, layout, extent,
+                );
             }
-            OpenGlCommand::CopyTextureToBuffer { texture, mip_level, origin, aspect, buffer, layout, extent } => {
-                assert!(pass.is_none(), "OpenGL readback recorded inside a render pass");
-                super::trait_impl::execute_copy_texture_to_buffer(shared, &texture, mip_level, origin, aspect, &buffer, layout, extent);
+            OpenGlCommand::CopyTextureToTexture {
+                source,
+                source_mip,
+                source_origin,
+                source_aspect,
+                destination,
+                destination_mip,
+                destination_origin,
+                destination_aspect,
+                extent,
+            } => {
+                assert!(
+                    pass.is_none(),
+                    "OpenGL texture copy recorded inside a render pass"
+                );
+                super::trait_impl::execute_copy_texture_to_texture(
+                    shared,
+                    &source,
+                    source_mip,
+                    source_origin,
+                    source_aspect,
+                    &destination,
+                    destination_mip,
+                    destination_origin,
+                    destination_aspect,
+                    extent,
+                );
+            }
+            OpenGlCommand::CopyTextureToBuffer {
+                texture,
+                mip_level,
+                origin,
+                aspect,
+                buffer,
+                layout,
+                extent,
+            } => {
+                assert!(
+                    pass.is_none(),
+                    "OpenGL readback recorded inside a render pass"
+                );
+                super::trait_impl::execute_copy_texture_to_buffer(
+                    shared, &texture, mip_level, origin, aspect, &buffer, layout, extent,
+                );
             }
         }
     }
-    assert!(pass.is_none(), "OpenGL command encoder ended inside a render pass");
+    assert!(
+        pass.is_none(),
+        "OpenGL command encoder ended inside a render pass"
+    );
     unsafe { (shared.gl.flush)() };
 }
 
@@ -255,9 +409,16 @@ fn execute_resolves(shared: &Rc<OpenGlShared>, resolve: &[(u32, u32, u32, (u32, 
         shared.bind_framebuffer(gl::DRAW_FRAMEBUFFER, *draw);
         unsafe {
             (shared.gl.blit_framebuffer)(
-                0, 0, size.0 as i32, size.1 as i32,
-                0, 0, size.0 as i32, size.1 as i32,
-                gl::COLOR_BUFFER_BIT, gl::NEAREST,
+                0,
+                0,
+                size.0 as i32,
+                size.1 as i32,
+                0,
+                0,
+                size.0 as i32,
+                size.1 as i32,
+                gl::COLOR_BUFFER_BIT,
+                gl::NEAREST,
             );
         }
     }
@@ -274,29 +435,40 @@ impl GpuRenderPass<OpenGlBackend> for OpenGlExecutorPass {
         unsafe {
             (shared.gl.front_face)(match state.primitive.front_face {
                 FrontFace::Ccw => gl::CCW,
-                FrontFace::Cw => gl::CW
+                FrontFace::Cw => gl::CW,
             });
             if let Some(face) = state.primitive.cull_mode {
                 shared.set_capability(gl::CULL_FACE, true);
                 (shared.gl.cull_face)(match face {
                     Face::Front => gl::FRONT,
-                    Face::Back => gl::BACK
+                    Face::Back => gl::BACK,
                 });
             } else {
                 shared.set_capability(gl::CULL_FACE, false);
             }
-            (shared.gl.polygon_mode)(gl::FRONT_AND_BACK, match state.primitive.polygon_mode {
-                PolygonMode::Fill => gl::FILL,
-                PolygonMode::Line => gl::LINE,
-                PolygonMode::Point => gl::POINT,
-            });
+            (shared.gl.polygon_mode)(
+                gl::FRONT_AND_BACK,
+                match state.primitive.polygon_mode {
+                    PolygonMode::Fill => gl::FILL,
+                    PolygonMode::Line => gl::LINE,
+                    PolygonMode::Point => gl::POINT,
+                },
+            );
             if let Some(blend) = &state.blend {
                 shared.set_capability(gl::BLEND, true);
-                if matches!(blend.color.src_factor, BlendFactor::Constant | BlendFactor::OneMinusConstant)
-                    || matches!(blend.color.dst_factor, BlendFactor::Constant | BlendFactor::OneMinusConstant)
-                    || matches!(blend.alpha.src_factor, BlendFactor::Constant | BlendFactor::OneMinusConstant)
-                    || matches!(blend.alpha.dst_factor, BlendFactor::Constant | BlendFactor::OneMinusConstant)
-                {
+                if matches!(
+                    blend.color.src_factor,
+                    BlendFactor::Constant | BlendFactor::OneMinusConstant
+                ) || matches!(
+                    blend.color.dst_factor,
+                    BlendFactor::Constant | BlendFactor::OneMinusConstant
+                ) || matches!(
+                    blend.alpha.src_factor,
+                    BlendFactor::Constant | BlendFactor::OneMinusConstant
+                ) || matches!(
+                    blend.alpha.dst_factor,
+                    BlendFactor::Constant | BlendFactor::OneMinusConstant
+                ) {
                     (shared.gl.blend_color)(0.0, 0.0, 0.0, 0.0);
                 }
                 (shared.gl.blend_func_separate)(
@@ -313,16 +485,36 @@ impl GpuRenderPass<OpenGlBackend> for OpenGlExecutorPass {
                 shared.set_capability(gl::BLEND, false);
             }
             let mask = state.write_mask;
-            (shared.gl.color_mask_i)(0, mask.red.into(), mask.green.into(), mask.blue.into(), mask.alpha.into());
+            (shared.gl.color_mask_i)(
+                0,
+                mask.red.into(),
+                mask.green.into(),
+                mask.blue.into(),
+                mask.alpha.into(),
+            );
             if let Some(depth) = &state.depth {
                 shared.set_capability(gl::DEPTH_TEST, true);
                 (shared.gl.depth_mask)(depth.depth_write_enabled.into());
                 (shared.gl.depth_func)(compare_function(depth.depth_compare));
                 shared.set_capability(gl::STENCIL_TEST, true);
                 for face in [gl::FRONT, gl::BACK] {
-                    let stencil = if face == gl::FRONT { depth.stencil.front } else { depth.stencil.back };
-                    (shared.gl.stencil_func_separate)(face, compare_function(stencil.compare), 0, depth.stencil.read_mask);
-                    (shared.gl.stencil_op_separate)(face, stencil_operation(stencil.fail_op), stencil_operation(stencil.depth_fail_op), stencil_operation(stencil.pass_op));
+                    let stencil = if face == gl::FRONT {
+                        depth.stencil.front
+                    } else {
+                        depth.stencil.back
+                    };
+                    (shared.gl.stencil_func_separate)(
+                        face,
+                        compare_function(stencil.compare),
+                        0,
+                        depth.stencil.read_mask,
+                    );
+                    (shared.gl.stencil_op_separate)(
+                        face,
+                        stencil_operation(stencil.fail_op),
+                        stencil_operation(stencil.depth_fail_op),
+                        stencil_operation(stencil.pass_op),
+                    );
                     (shared.gl.stencil_mask_separate)(face, depth.stencil.write_mask);
                 }
                 if depth.bias.constant != 0 || depth.bias.slope_scale != 0.0 {
@@ -352,7 +544,12 @@ impl GpuRenderPass<OpenGlBackend> for OpenGlExecutorPass {
         self.pipeline = Some(pipeline.clone());
     }
 
-    fn set_bind_group(&mut self, index: u32, bind_group: &OpenGlBindGroup, dynamic_offsets: &[u32]) {
+    fn set_bind_group(
+        &mut self,
+        index: u32,
+        bind_group: &OpenGlBindGroup,
+        dynamic_offsets: &[u32],
+    ) {
         let Some(pipeline) = self.pipeline.as_ref() else {
             panic!("OpenGL bind group set before a render pipeline");
         };
@@ -361,42 +558,84 @@ impl GpuRenderPass<OpenGlBackend> for OpenGlExecutorPass {
         let _ = shared.context.make_current();
         for entry in &bind_group.0.layout.0.entries {
             let dynamic_offset = match &entry.ty {
-                BindingType::Buffer { has_dynamic_offset: true, .. } => {
-                    let offset = *dynamic_offsets.get(dynamic_index).expect("missing OpenGL dynamic offset");
+                BindingType::Buffer {
+                    has_dynamic_offset: true,
+                    ..
+                } => {
+                    let offset = *dynamic_offsets
+                        .get(dynamic_index)
+                        .expect("missing OpenGL dynamic offset");
                     dynamic_index += 1;
                     offset as u64
                 }
                 _ => 0,
             };
-            let resource = bind_group.0.resources.get(&entry.binding)
+            let resource = bind_group
+                .0
+                .resources
+                .get(&entry.binding)
                 .unwrap_or_else(|| panic!("missing OpenGL bind-group binding {}", entry.binding));
             match resource {
                 OpenGlBoundResource::Buffer(buffer) => {
-                    if let Some(block) = pipeline.0.uniform_blocks.iter().find(|block| block.group == index && block.binding == entry.binding) {
+                    if let Some(block) = pipeline
+                        .0
+                        .uniform_blocks
+                        .iter()
+                        .find(|block| block.group == index && block.binding == entry.binding)
+                    {
                         let size = buffer.0.size.saturating_sub(dynamic_offset);
-                        shared.bind_uniform_buffer(block.binding_point, buffer.0.raw, dynamic_offset as isize, size as isize);
+                        shared.bind_uniform_buffer(
+                            block.binding_point,
+                            buffer.0.raw,
+                            dynamic_offset as isize,
+                            size as isize,
+                        );
                     }
                 }
                 OpenGlBoundResource::BufferRange(buffer, offset, size) => {
-                    if let Some(block) = pipeline.0.uniform_blocks.iter().find(|block| block.group == index && block.binding == entry.binding) {
-                        shared.bind_uniform_buffer(block.binding_point, buffer.0.raw, (offset + dynamic_offset) as isize, *size as isize);
+                    if let Some(block) = pipeline
+                        .0
+                        .uniform_blocks
+                        .iter()
+                        .find(|block| block.group == index && block.binding == entry.binding)
+                    {
+                        shared.bind_uniform_buffer(
+                            block.binding_point,
+                            buffer.0.raw,
+                            (offset + dynamic_offset) as isize,
+                            *size as isize,
+                        );
                     }
                 }
                 OpenGlBoundResource::TextureView(view) => {
-                    if let Some(mapping) = pipeline.0.textures.iter().find(|mapping| mapping.group == index && mapping.binding == entry.binding) {
+                    if let Some(mapping) =
+                        pipeline.0.textures.iter().find(|mapping| {
+                            mapping.group == index && mapping.binding == entry.binding
+                        })
+                    {
                         if let OpenGlViewTarget::Texture { texture, .. } = &view.0.target {
-                            shared.bind_texture(mapping.texture_unit, texture.0.target, texture.0.raw);
+                            shared.bind_texture(
+                                mapping.texture_unit,
+                                texture.0.target,
+                                texture.0.raw,
+                            );
                         }
                     }
                 }
                 OpenGlBoundResource::Sampler(sampler) => {
-                    if let Some(mapping) = pipeline.0.samplers.iter().find(|mapping| mapping.sampler_group == index && mapping.sampler_binding == entry.binding) {
+                    if let Some(mapping) = pipeline.0.samplers.iter().find(|mapping| {
+                        mapping.sampler_group == index && mapping.sampler_binding == entry.binding
+                    }) {
                         shared.bind_sampler(mapping.texture_unit, sampler.0.raw);
                     }
                 }
             }
         }
-        assert_eq!(dynamic_index, dynamic_offsets.len(), "too many OpenGL dynamic offsets");
+        assert_eq!(
+            dynamic_index,
+            dynamic_offsets.len(),
+            "too many OpenGL dynamic offsets"
+        );
         shared.active_texture(0);
     }
 
@@ -407,20 +646,26 @@ impl GpuRenderPass<OpenGlBackend> for OpenGlExecutorPass {
         let Some(Some(layout)) = pipeline.0.vertex_slots.get(slot as usize) else {
             return;
         };
-        self.vertex_buffers.resize(pipeline.0.vertex_slots.len(), None);
+        self.vertex_buffers
+            .resize(pipeline.0.vertex_slots.len(), None);
         self.vertex_buffers[slot as usize] = Some((buffer.clone(), offset));
         bind_vertex_buffer(&self.shared, layout, buffer, offset);
     }
 
     fn set_index_buffer(&mut self, buffer: &OpenGlBuffer, index_format: IndexFormat, offset: u64) {
         unsafe { (self.shared.gl.bind_buffer)(gl::ELEMENT_ARRAY_BUFFER, buffer.0.raw) };
-        self.index = Some(OpenGlIndexBuffer { _buffer: buffer.clone(), format: index_format, offset });
+        self.index = Some(OpenGlIndexBuffer {
+            _buffer: buffer.clone(),
+            format: index_format,
+            offset,
+        });
     }
 
     fn set_scissor_rect(&mut self, x: u32, y: u32, width: u32, height: u32) {
         let gl_y = self.extent.1.saturating_sub(y.saturating_add(height));
         self.shared.set_capability(gl::SCISSOR_TEST, true);
-        self.shared.set_scissor(x as i32, gl_y as i32, width as i32, height as i32);
+        self.shared
+            .set_scissor(x as i32, gl_y as i32, width as i32, height as i32);
     }
 
     fn draw(&mut self, vertices: std::ops::Range<u32>, instances: std::ops::Range<u32>) {
@@ -438,7 +683,12 @@ impl GpuRenderPass<OpenGlBackend> for OpenGlExecutorPass {
         }
     }
 
-    fn draw_indexed(&mut self, indices: std::ops::Range<u32>, base_vertex: i32, instances: std::ops::Range<u32>) {
+    fn draw_indexed(
+        &mut self,
+        indices: std::ops::Range<u32>,
+        base_vertex: i32,
+        instances: std::ops::Range<u32>,
+    ) {
         let Some(pipeline) = self.pipeline.as_ref() else {
             panic!("OpenGL indexed draw called before a render pipeline");
         };
@@ -463,10 +713,18 @@ impl GpuRenderPass<OpenGlBackend> for OpenGlExecutorPass {
 
 impl OpenGlExecutorPass {
     fn apply_instance_base(&self, first_instance: u32) {
-        if first_instance == 0 { return; }
-        let Some(pipeline) = self.pipeline.as_ref() else { return; };
+        if first_instance == 0 {
+            return;
+        }
+        let Some(pipeline) = self.pipeline.as_ref() else {
+            return;
+        };
         for (slot, bound) in self.vertex_buffers.iter().enumerate() {
-            let (Some((buffer, offset)), Some(Some(layout))) = (bound, pipeline.0.vertex_slots.get(slot)) else { continue; };
+            let (Some((buffer, offset)), Some(Some(layout))) =
+                (bound, pipeline.0.vertex_slots.get(slot))
+            else {
+                continue;
+            };
             if layout.step_mode == VertexStepMode::Instance {
                 let advanced = offset.saturating_add(first_instance as u64 * layout.stride);
                 bind_vertex_buffer(&self.shared, layout, buffer, advanced);
@@ -475,7 +733,12 @@ impl OpenGlExecutorPass {
     }
 }
 
-fn bind_vertex_buffer(shared: &OpenGlShared, layout: &VertexBufferSlot, buffer: &OpenGlBuffer, base_offset: u64) {
+fn bind_vertex_buffer(
+    shared: &OpenGlShared,
+    layout: &VertexBufferSlot,
+    buffer: &OpenGlBuffer,
+    base_offset: u64,
+) {
     unsafe { (shared.gl.bind_buffer)(gl::ARRAY_BUFFER, buffer.0.raw) };
     for attribute in &layout.attributes {
         let (components, format, normalized, integer) = vertex_format(attribute.format);
@@ -483,11 +746,27 @@ fn bind_vertex_buffer(shared: &OpenGlShared, layout: &VertexBufferSlot, buffer: 
         unsafe {
             (shared.gl.enable_vertex_attrib_array)(attribute.shader_location);
             if integer {
-                (shared.gl.vertex_attrib_i_pointer)(attribute.shader_location, components, format, layout.stride as i32, offset as usize as *const c_void);
+                (shared.gl.vertex_attrib_i_pointer)(
+                    attribute.shader_location,
+                    components,
+                    format,
+                    layout.stride as i32,
+                    offset as usize as *const c_void,
+                );
             } else {
-                (shared.gl.vertex_attrib_pointer)(attribute.shader_location, components, format, normalized.into(), layout.stride as i32, offset as usize as *const c_void);
+                (shared.gl.vertex_attrib_pointer)(
+                    attribute.shader_location,
+                    components,
+                    format,
+                    normalized.into(),
+                    layout.stride as i32,
+                    offset as usize as *const c_void,
+                );
             }
-            (shared.gl.vertex_attrib_divisor)(attribute.shader_location, u32::from(layout.step_mode == VertexStepMode::Instance));
+            (shared.gl.vertex_attrib_divisor)(
+                attribute.shader_location,
+                u32::from(layout.step_mode == VertexStepMode::Instance),
+            );
         }
     }
 }
@@ -499,40 +778,66 @@ pub(super) fn begin_render_pass<'a>(
 ) -> Result<OpenGlRenderPass<'a>, BackendError> {
     let framebuffer = framebuffer_for_pass(shared, desc)?;
     let mut resolve = Vec::new();
-    let mut keepalive: Vec<OpenGlTextureView> = desc.color_attachments.iter().map(|color| color.view.clone()).collect();
+    let mut keepalive: Vec<OpenGlTextureView> = desc
+        .color_attachments
+        .iter()
+        .map(|color| color.view.clone())
+        .collect();
     for (index, color) in desc.color_attachments.iter().enumerate() {
         if let Some(target) = color.resolve_target {
             let draw = framebuffer_for_view(shared, target, gl::COLOR_ATTACHMENT0)?;
-            resolve.push((framebuffer.framebuffer, draw.framebuffer, index as u32, framebuffer.size));
+            resolve.push((
+                framebuffer.framebuffer,
+                draw.framebuffer,
+                index as u32,
+                framebuffer.size,
+            ));
             keepalive.push(target.clone());
         }
     }
     if let Some(depth) = &desc.depth_stencil_attachment {
         keepalive.push(depth.view.clone());
     }
-    let clear_colors = desc.color_attachments.iter().map(|color| match color.ops.load {
-        LoadOp::Load => None,
-        LoadOp::Clear(clear) => Some([clear[0] as f32, clear[1] as f32, clear[2] as f32, clear[3] as f32]),
-    }).collect();
-    let clear_depth = desc.depth_stencil_attachment.as_ref().and_then(|depth| depth.depth_ops)
+    let clear_colors = desc
+        .color_attachments
+        .iter()
+        .map(|color| match color.ops.load {
+            LoadOp::Load => None,
+            LoadOp::Clear(clear) => Some([
+                clear[0] as f32,
+                clear[1] as f32,
+                clear[2] as f32,
+                clear[3] as f32,
+            ]),
+        })
+        .collect();
+    let clear_depth = desc
+        .depth_stencil_attachment
+        .as_ref()
+        .and_then(|depth| depth.depth_ops)
         .and_then(|ops| match ops.load {
             LoadOp::Load => None,
-            LoadOp::Clear(depth) => Some(depth)
+            LoadOp::Clear(depth) => Some(depth),
         });
-    let clear_stencil = desc.depth_stencil_attachment.as_ref().and_then(|depth| depth.stencil_ops)
+    let clear_stencil = desc
+        .depth_stencil_attachment
+        .as_ref()
+        .and_then(|depth| depth.stencil_ops)
         .and_then(|ops| match ops.load {
             LoadOp::Load => None,
-            LoadOp::Clear(stencil) => Some(stencil as i32)
+            LoadOp::Clear(stencil) => Some(stencil as i32),
         });
-    encoder.commands.push(OpenGlCommand::BeginPass(OpenGlPassSetup {
-        framebuffer: framebuffer.framebuffer,
-        size: framebuffer.size,
-        is_default: framebuffer.is_default,
-        clear_colors,
-        clear_depth,
-        clear_stencil,
-        _attachments: keepalive.clone(),
-    }));
+    encoder
+        .commands
+        .push(OpenGlCommand::BeginPass(OpenGlPassSetup {
+            framebuffer: framebuffer.framebuffer,
+            size: framebuffer.size,
+            is_default: framebuffer.is_default,
+            clear_colors,
+            clear_depth,
+            clear_stencil,
+            _attachments: keepalive.clone(),
+        }));
     Ok(OpenGlRenderPass {
         encoder,
         resolve,
@@ -579,16 +884,33 @@ pub(super) fn framebuffer_for_pass(
     let extent = extent.unwrap_or((1, 1));
     if has_surface {
         if !color_attachments.is_empty() {
-            return Err(backend_error("begin_render_pass", "cannot mix default-framebuffer and texture attachments"));
+            return Err(backend_error(
+                "begin_render_pass",
+                "cannot mix default-framebuffer and texture attachments",
+            ));
         }
         if desc.color_attachments.len() > 1 {
-            return Err(backend_error("begin_render_pass", "the default framebuffer has one color attachment"));
+            return Err(backend_error(
+                "begin_render_pass",
+                "the default framebuffer has one color attachment",
+            ));
         }
-        return Ok(FramebufferInfo { framebuffer: 0, size: extent, is_default: true });
+        return Ok(FramebufferInfo {
+            framebuffer: 0,
+            size: extent,
+            is_default: true,
+        });
     }
-    let key = FramebufferKey { attachments: color_attachments, color_count: draw_buffers.len() };
+    let key = FramebufferKey {
+        attachments: color_attachments,
+        color_count: draw_buffers.len(),
+    };
     let framebuffer = create_or_get_framebuffer(shared, key, &attachments, &draw_buffers)?;
-    Ok(FramebufferInfo { framebuffer, size: extent, is_default: false })
+    Ok(FramebufferInfo {
+        framebuffer,
+        size: extent,
+        is_default: false,
+    })
 }
 
 pub(super) fn framebuffer_for_view(
@@ -597,17 +919,33 @@ pub(super) fn framebuffer_for_view(
     attachment: u32,
 ) -> Result<FramebufferInfo, BackendError> {
     let Some((key, size, gl_attachment)) = texture_attachment(view, attachment)? else {
-        return Ok(FramebufferInfo { framebuffer: 0, size: view.gl_view_size(), is_default: true });
+        return Ok(FramebufferInfo {
+            framebuffer: 0,
+            size: view.gl_view_size(),
+            is_default: true,
+        });
     };
-    let color_attachment = attachment >= gl::COLOR_ATTACHMENT0 && attachment < gl::COLOR_ATTACHMENT0 + 16;
-    let draw_buffers = if color_attachment { vec![attachment] } else { Vec::new() };
+    let color_attachment =
+        attachment >= gl::COLOR_ATTACHMENT0 && attachment < gl::COLOR_ATTACHMENT0 + 16;
+    let draw_buffers = if color_attachment {
+        vec![attachment]
+    } else {
+        Vec::new()
+    };
     let framebuffer = create_or_get_framebuffer(
         shared,
-        FramebufferKey { attachments: vec![key], color_count: draw_buffers.len() },
+        FramebufferKey {
+            attachments: vec![key],
+            color_count: draw_buffers.len(),
+        },
         &[gl_attachment],
         &draw_buffers,
     )?;
-    Ok(FramebufferInfo { framebuffer, size, is_default: false })
+    Ok(FramebufferInfo {
+        framebuffer,
+        size,
+        is_default: false,
+    })
 }
 
 fn texture_attachment(
@@ -616,11 +954,19 @@ fn texture_attachment(
 ) -> Result<Option<((u32, u32, u32, i32), (u32, u32), (u32, u32, u32, i32))>, BackendError> {
     match &view.0.target {
         OpenGlViewTarget::Surface { .. } => Ok(None),
-        OpenGlViewTarget::Texture { texture, level, layer } => {
+        OpenGlViewTarget::Texture {
+            texture,
+            level,
+            layer,
+        } => {
             let layer_index = layer.map_or(-1, |layer| layer as i32);
             let key = (attachment, texture.0.raw, *level, layer_index);
             let extent = view.gl_view_size();
-            Ok(Some((key, extent, (attachment, texture.0.raw, *level, layer_index))))
+            Ok(Some((
+                key,
+                extent,
+                (attachment, texture.0.raw, *level, layer_index),
+            )))
         }
     }
 }
@@ -640,9 +986,20 @@ fn create_or_get_framebuffer(
         shared.bind_framebuffer(gl::FRAMEBUFFER, framebuffer);
         for (attachment, texture, level, layer) in attachments {
             if *layer >= 0 {
-                (shared.gl.framebuffer_texture_layer)(gl::FRAMEBUFFER, *attachment, *texture, *level as i32, *layer);
+                (shared.gl.framebuffer_texture_layer)(
+                    gl::FRAMEBUFFER,
+                    *attachment,
+                    *texture,
+                    *level as i32,
+                    *layer,
+                );
             } else {
-                (shared.gl.framebuffer_texture)(gl::FRAMEBUFFER, *attachment, *texture, *level as i32);
+                (shared.gl.framebuffer_texture)(
+                    gl::FRAMEBUFFER,
+                    *attachment,
+                    *texture,
+                    *level as i32,
+                );
             }
         }
         if !draw_buffers.is_empty() {
@@ -657,16 +1014,28 @@ fn create_or_get_framebuffer(
     if status != gl::FRAMEBUFFER_COMPLETE {
         shared.invalidate_framebuffer(framebuffer);
         unsafe { (shared.gl.delete_framebuffers)(1, &framebuffer) };
-        return Err(backend_error("create_framebuffer", format!("framebuffer status {status:#x}")));
+        return Err(backend_error(
+            "create_framebuffer",
+            format!("framebuffer status {status:#x}"),
+        ));
     }
-    shared.framebuffer_cache.borrow_mut().insert(key, framebuffer);
+    shared
+        .framebuffer_cache
+        .borrow_mut()
+        .insert(key, framebuffer);
     Ok(framebuffer)
 }
 
-fn check_attachment_size(size: &mut Option<(u32, u32)>, next: (u32, u32)) -> Result<(), BackendError> {
+fn check_attachment_size(
+    size: &mut Option<(u32, u32)>,
+    next: (u32, u32),
+) -> Result<(), BackendError> {
     if let Some(current) = size {
         if *current != next {
-            return Err(backend_error("begin_render_pass", "OpenGL framebuffer attachment extents differ"));
+            return Err(backend_error(
+                "begin_render_pass",
+                "OpenGL framebuffer attachment extents differ",
+            ));
         }
     } else {
         *size = Some(next);
@@ -699,18 +1068,27 @@ impl OpenGlShaderModule {
             operation: "create_shader_module",
             message: format!("{label} is not UTF-8 GLSL package data: {error}"),
         })?;
-        let (vertex_source, fragment_source, resources) = parse_shader_package(source).map_err(|error| BackendError {
-            operation: "create_shader_module",
-            message: format!("{label}: {error}"),
-        })?;
-        shared.context.make_current().map_err(|error| BackendError {
-            operation: "create_shader_module",
-            message: error,
-        })?;
+        let (vertex_source, fragment_source, resources) =
+            parse_shader_package(source).map_err(|error| BackendError {
+                operation: "create_shader_module",
+                message: format!("{label}: {error}"),
+            })?;
+        shared
+            .context
+            .make_current()
+            .map_err(|error| BackendError {
+                operation: "create_shader_module",
+                message: error,
+            })?;
         let vertex = if vertex_source.is_empty() {
             None
         } else {
-            Some(compile_shader(&shared.gl, gl::VERTEX_SHADER, vertex_source, label)?)
+            Some(compile_shader(
+                &shared.gl,
+                gl::VERTEX_SHADER,
+                vertex_source,
+                label,
+            )?)
         };
         let fragment = if fragment_source.is_empty() {
             None
@@ -758,24 +1136,45 @@ fn parse_shader_package(source: &str) -> Result<(&str, &str, Vec<ShaderResource>
         let parts: Vec<_> = line.split_whitespace().collect();
         let resource = match parts.as_slice() {
             ["UBO", group, binding, name] => ShaderResource::UniformBlock {
-                group: group.parse().map_err(|_| format!("invalid UBO group in `{line}`"))?,
-                binding: binding.parse().map_err(|_| format!("invalid UBO binding in `{line}`"))?,
+                group: group
+                    .parse()
+                    .map_err(|_| format!("invalid UBO group in `{line}`"))?,
+                binding: binding
+                    .parse()
+                    .map_err(|_| format!("invalid UBO binding in `{line}`"))?,
                 name: (*name).to_owned(),
             },
             ["TEXTURE", group, binding, name] => ShaderResource::Texture {
-                group: group.parse().map_err(|_| format!("invalid texture group in `{line}`"))?,
-                binding: binding.parse().map_err(|_| format!("invalid texture binding in `{line}`"))?,
+                group: group
+                    .parse()
+                    .map_err(|_| format!("invalid texture group in `{line}`"))?,
+                binding: binding
+                    .parse()
+                    .map_err(|_| format!("invalid texture binding in `{line}`"))?,
                 name: (*name).to_owned(),
             },
-            ["SAMPLER", texture_group, texture_binding, sampler_group, sampler_binding, name] => {
-                ShaderResource::Sampler {
-                    texture_group: texture_group.parse().map_err(|_| format!("invalid texture group in `{line}`"))?,
-                    texture_binding: texture_binding.parse().map_err(|_| format!("invalid texture binding in `{line}`"))?,
-                    sampler_group: sampler_group.parse().map_err(|_| format!("invalid sampler group in `{line}`"))?,
-                    sampler_binding: sampler_binding.parse().map_err(|_| format!("invalid sampler binding in `{line}`"))?,
-                    name: (*name).to_owned(),
-                }
-            }
+            [
+                "SAMPLER",
+                texture_group,
+                texture_binding,
+                sampler_group,
+                sampler_binding,
+                name,
+            ] => ShaderResource::Sampler {
+                texture_group: texture_group
+                    .parse()
+                    .map_err(|_| format!("invalid texture group in `{line}`"))?,
+                texture_binding: texture_binding
+                    .parse()
+                    .map_err(|_| format!("invalid texture binding in `{line}`"))?,
+                sampler_group: sampler_group
+                    .parse()
+                    .map_err(|_| format!("invalid sampler group in `{line}`"))?,
+                sampler_binding: sampler_binding
+                    .parse()
+                    .map_err(|_| format!("invalid sampler binding in `{line}`"))?,
+                name: (*name).to_owned(),
+            },
             _ => return Err(format!("invalid GLSL resource metadata `{line}`")),
         };
         resources.push(resource);
@@ -836,7 +1235,14 @@ fn shader_log(gl: &gl::GlFns, shader: u32) -> String {
     unsafe { (gl.get_shader_i)(shader, gl::INFO_LOG_LENGTH, &mut length) };
     let mut bytes = vec![0_u8; length.max(1) as usize];
     let mut written = 0;
-    unsafe { (gl.get_shader_info_log)(shader, bytes.len() as i32, &mut written, bytes.as_mut_ptr().cast()) };
+    unsafe {
+        (gl.get_shader_info_log)(
+            shader,
+            bytes.len() as i32,
+            &mut written,
+            bytes.as_mut_ptr().cast(),
+        )
+    };
     bytes.truncate(written.max(0) as usize);
     String::from_utf8_lossy(&bytes).into_owned()
 }
@@ -846,7 +1252,14 @@ fn program_log(gl: &gl::GlFns, program: u32) -> String {
     unsafe { (gl.get_program_i)(program, gl::INFO_LOG_LENGTH, &mut length) };
     let mut bytes = vec![0_u8; length.max(1) as usize];
     let mut written = 0;
-    unsafe { (gl.get_program_info_log)(program, bytes.len() as i32, &mut written, bytes.as_mut_ptr().cast()) };
+    unsafe {
+        (gl.get_program_info_log)(
+            program,
+            bytes.len() as i32,
+            &mut written,
+            bytes.as_mut_ptr().cast(),
+        )
+    };
     bytes.truncate(written.max(0) as usize);
     String::from_utf8_lossy(&bytes).into_owned()
 }
@@ -951,30 +1364,84 @@ pub(super) fn create_render_pipeline(
     desc: &RenderPipelineDescriptor<OpenGlBackend>,
 ) -> Result<OpenGlRenderPipeline, BackendError> {
     if desc.primitive.conservative || desc.primitive.unclipped_depth {
-        return Err(backend_error("create_render_pipeline", "conservative rasterization and unclipped depth are not supported by OpenGL 3.3"));
+        return Err(backend_error(
+            "create_render_pipeline",
+            "conservative rasterization and unclipped depth are not supported by OpenGL 3.3",
+        ));
     }
-    if desc.fragment.as_ref().is_some_and(|fragment| fragment.targets.iter().flatten().count() > 1) {
-        return Err(backend_error("create_render_pipeline", "multiple color targets are not supported by the OpenGL 3.3 backend"));
+    if desc
+        .fragment
+        .as_ref()
+        .is_some_and(|fragment| fragment.targets.iter().flatten().count() > 1)
+    {
+        return Err(backend_error(
+            "create_render_pipeline",
+            "multiple color targets are not supported by the OpenGL 3.3 backend",
+        ));
     }
-    if desc.vertex.buffers.iter().flatten().flat_map(|layout| layout.attributes)
+    if desc
+        .vertex
+        .buffers
+        .iter()
+        .flatten()
+        .flat_map(|layout| layout.attributes)
         .any(|attribute| attribute.shader_location >= shared.max_vertex_attributes)
     {
-        return Err(backend_error("create_render_pipeline", "vertex attribute location exceeds the OpenGL limit"));
+        return Err(backend_error(
+            "create_render_pipeline",
+            "vertex attribute location exceeds the OpenGL limit",
+        ));
     }
-    if desc.layout.is_some_and(|layout| layout.0.groups.iter().flat_map(|group| &group.0.entries).any(|entry| {
-        matches!(entry.ty, crate::backend::BindingType::Buffer { ty: crate::backend::BufferBindingType::Storage | crate::backend::BufferBindingType::ReadOnlyStorage, .. } | crate::backend::BindingType::StorageTexture { .. })
-    })) {
-        return Err(backend_error("create_render_pipeline", "storage buffers and storage textures require OpenGL 4.3 or an extension"));
+    if desc.layout.is_some_and(|layout| {
+        layout
+            .0
+            .groups
+            .iter()
+            .flat_map(|group| &group.0.entries)
+            .any(|entry| {
+                matches!(
+                    entry.ty,
+                    crate::backend::BindingType::Buffer {
+                        ty: crate::backend::BufferBindingType::Storage
+                            | crate::backend::BufferBindingType::ReadOnlyStorage,
+                        ..
+                    } | crate::backend::BindingType::StorageTexture { .. }
+                )
+            })
+    }) {
+        return Err(backend_error(
+            "create_render_pipeline",
+            "storage buffers and storage textures require OpenGL 4.3 or an extension",
+        ));
     }
-    shared.context.make_current().map_err(|message| backend_error("create_render_pipeline", message))?;
+    shared
+        .context
+        .make_current()
+        .map_err(|message| backend_error("create_render_pipeline", message))?;
     let program = unsafe { (shared.gl.create_program)() };
     if program == 0 {
-        return Err(backend_error("create_render_pipeline", "glCreateProgram returned zero"));
+        return Err(backend_error(
+            "create_render_pipeline",
+            "glCreateProgram returned zero",
+        ));
     }
     unsafe {
-        (shared.gl.attach_shader)(program, desc.vertex.module.0.vertex.ok_or_else(|| backend_error("create_render_pipeline", "vertex module has no vertex stage"))?);
+        (shared.gl.attach_shader)(
+            program,
+            desc.vertex.module.0.vertex.ok_or_else(|| {
+                backend_error(
+                    "create_render_pipeline",
+                    "vertex module has no vertex stage",
+                )
+            })?,
+        );
         if let Some(fragment) = &desc.fragment {
-            let shader = fragment.module.0.fragment.ok_or_else(|| backend_error("create_render_pipeline", "fragment module has no fragment stage"))?;
+            let shader = fragment.module.0.fragment.ok_or_else(|| {
+                backend_error(
+                    "create_render_pipeline",
+                    "fragment module has no fragment stage",
+                )
+            })?;
             (shared.gl.attach_shader)(program, shader);
         }
         (shared.gl.link_program)(program);
@@ -994,37 +1461,81 @@ pub(super) fn create_render_pipeline(
     };
     if vertex_array == 0 {
         unsafe { (shared.gl.delete_program)(program) };
-        return Err(backend_error("create_render_pipeline", "glGenVertexArrays returned zero"));
+        return Err(backend_error(
+            "create_render_pipeline",
+            "glGenVertexArrays returned zero",
+        ));
     }
 
     let mut uniform_blocks = Vec::new();
     let mut sampler_resources = BTreeSet::new();
     let mut texture_resources = BTreeSet::new();
-    for module in std::iter::once(&desc.vertex.module.0).chain(desc.fragment.iter().map(|fragment| &fragment.module.0)) {
+    for module in std::iter::once(&desc.vertex.module.0)
+        .chain(desc.fragment.iter().map(|fragment| &fragment.module.0))
+    {
         for resource in &module.resources {
             match resource {
-                ShaderResource::UniformBlock { group, binding, name } => {
-                    let block_name = CString::new(name.as_str()).map_err(|error| backend_error("create_render_pipeline", error.to_string()))?;
-                    let block_index = unsafe { (shared.gl.get_uniform_block_index)(program, block_name.as_ptr()) };
+                ShaderResource::UniformBlock {
+                    group,
+                    binding,
+                    name,
+                } => {
+                    let block_name = CString::new(name.as_str()).map_err(|error| {
+                        backend_error("create_render_pipeline", error.to_string())
+                    })?;
+                    let block_index = unsafe {
+                        (shared.gl.get_uniform_block_index)(program, block_name.as_ptr())
+                    };
                     if block_index != gl::INVALID_INDEX {
-                        let binding_point = group.saturating_mul(BINDINGS_PER_GROUP).saturating_add(*binding);
+                        let binding_point = group
+                            .saturating_mul(BINDINGS_PER_GROUP)
+                            .saturating_add(*binding);
                         if binding_point >= shared.max_uniform_buffer_bindings {
                             unsafe {
                                 (shared.gl.delete_program)(program);
                                 (shared.gl.delete_vertex_arrays)(1, &vertex_array);
                             }
-                            return Err(backend_error("create_render_pipeline", "uniform-buffer binding exceeds the OpenGL limit"));
+                            return Err(backend_error(
+                                "create_render_pipeline",
+                                "uniform-buffer binding exceeds the OpenGL limit",
+                            ));
                         }
-                        unsafe { (shared.gl.uniform_block_binding)(program, block_index, binding_point) };
-                        if !uniform_blocks.iter().any(|known: &UniformBlockBinding| known.group == *group && known.binding == *binding && known.binding_point == binding_point) {
-                            uniform_blocks.push(UniformBlockBinding { group: *group, binding: *binding, binding_point });
+                        unsafe {
+                            (shared.gl.uniform_block_binding)(program, block_index, binding_point)
+                        };
+                        if !uniform_blocks.iter().any(|known: &UniformBlockBinding| {
+                            known.group == *group
+                                && known.binding == *binding
+                                && known.binding_point == binding_point
+                        }) {
+                            uniform_blocks.push(UniformBlockBinding {
+                                group: *group,
+                                binding: *binding,
+                                binding_point,
+                            });
                         }
                     }
                 }
-                ShaderResource::Sampler { texture_group, texture_binding, sampler_group, sampler_binding, name } => {
-                    sampler_resources.insert((*texture_group, *texture_binding, *sampler_group, *sampler_binding, name.clone()));
+                ShaderResource::Sampler {
+                    texture_group,
+                    texture_binding,
+                    sampler_group,
+                    sampler_binding,
+                    name,
+                } => {
+                    sampler_resources.insert((
+                        *texture_group,
+                        *texture_binding,
+                        *sampler_group,
+                        *sampler_binding,
+                        name.clone(),
+                    ));
                 }
-                ShaderResource::Texture { group, binding, name } => {
+                ShaderResource::Texture {
+                    group,
+                    binding,
+                    name,
+                } => {
                     texture_resources.insert((*group, *binding, name.clone()));
                 }
             }
@@ -1034,24 +1545,42 @@ pub(super) fn create_render_pipeline(
     let mut samplers = Vec::new();
     let mut textures = Vec::new();
     let mut next_unit = 0_u32;
-    for (texture_group, texture_binding, sampler_group, sampler_binding, name) in sampler_resources {
+    for (texture_group, texture_binding, sampler_group, sampler_binding, name) in sampler_resources
+    {
         if next_unit >= shared.max_texture_units {
             unsafe {
                 (shared.gl.delete_program)(program);
                 (shared.gl.delete_vertex_arrays)(1, &vertex_array);
             }
-            return Err(backend_error("create_render_pipeline", "sampler count exceeds the OpenGL texture-unit limit"));
+            return Err(backend_error(
+                "create_render_pipeline",
+                "sampler count exceeds the OpenGL texture-unit limit",
+            ));
         }
-        let uniform_name = CString::new(name.as_str()).map_err(|error| backend_error("create_render_pipeline", error.to_string()))?;
+        let uniform_name = CString::new(name.as_str())
+            .map_err(|error| backend_error("create_render_pipeline", error.to_string()))?;
         let location = unsafe { (shared.gl.get_uniform_location)(program, uniform_name.as_ptr()) };
         if location >= 0 {
-            samplers.push(SamplerBinding { sampler_group, sampler_binding, texture_unit: next_unit, uniform_location: location });
-            textures.push(TextureBinding { group: texture_group, binding: texture_binding, texture_unit: next_unit, uniform_location: location });
+            samplers.push(SamplerBinding {
+                sampler_group,
+                sampler_binding,
+                texture_unit: next_unit,
+                uniform_location: location,
+            });
+            textures.push(TextureBinding {
+                group: texture_group,
+                binding: texture_binding,
+                texture_unit: next_unit,
+                uniform_location: location,
+            });
             next_unit += 1;
         }
     }
     for (group, binding, name) in texture_resources {
-        if textures.iter().any(|texture| texture.group == group && texture.binding == binding) {
+        if textures
+            .iter()
+            .any(|texture| texture.group == group && texture.binding == binding)
+        {
             continue;
         }
         if next_unit >= shared.max_texture_units {
@@ -1059,12 +1588,21 @@ pub(super) fn create_render_pipeline(
                 (shared.gl.delete_program)(program);
                 (shared.gl.delete_vertex_arrays)(1, &vertex_array);
             }
-            return Err(backend_error("create_render_pipeline", "texture count exceeds the OpenGL texture-unit limit"));
+            return Err(backend_error(
+                "create_render_pipeline",
+                "texture count exceeds the OpenGL texture-unit limit",
+            ));
         }
-        let uniform_name = CString::new(name.as_str()).map_err(|error| backend_error("create_render_pipeline", error.to_string()))?;
+        let uniform_name = CString::new(name.as_str())
+            .map_err(|error| backend_error("create_render_pipeline", error.to_string()))?;
         let location = unsafe { (shared.gl.get_uniform_location)(program, uniform_name.as_ptr()) };
         if location >= 0 {
-            textures.push(TextureBinding { group, binding, texture_unit: next_unit, uniform_location: location });
+            textures.push(TextureBinding {
+                group,
+                binding,
+                texture_unit: next_unit,
+                uniform_location: location,
+            });
             next_unit += 1;
         }
     }
@@ -1079,14 +1617,21 @@ pub(super) fn create_render_pipeline(
     }
     shared.use_program(0);
 
-    let vertex_slots = desc.vertex.buffers.iter().map(|slot| {
-        slot.as_ref().map(|layout| VertexBufferSlot {
-            stride: layout.array_stride,
-            step_mode: layout.step_mode,
-            attributes: layout.attributes.to_vec(),
+    let vertex_slots = desc
+        .vertex
+        .buffers
+        .iter()
+        .map(|slot| {
+            slot.as_ref().map(|layout| VertexBufferSlot {
+                stride: layout.array_stride,
+                step_mode: layout.step_mode,
+                attributes: layout.attributes.to_vec(),
+            })
         })
-    }).collect();
-    let (blend, write_mask) = desc.fragment.as_ref()
+        .collect();
+    let (blend, write_mask) = desc
+        .fragment
+        .as_ref()
         .and_then(|fragment| fragment.targets.iter().flatten().next())
         .map(|target| (target.blend.clone(), target.write_mask))
         .unwrap_or((None, crate::backend::ColorWriteMask::ALL));
@@ -1114,7 +1659,10 @@ pub(super) fn create_render_pipeline(
 }
 
 fn backend_error(operation: &'static str, message: impl Into<String>) -> BackendError {
-    BackendError { operation, message: message.into() }
+    BackendError {
+        operation,
+        message: message.into(),
+    }
 }
 
 pub(super) struct FramebufferInfo {
@@ -1132,19 +1680,47 @@ pub(super) fn format_info(format: OpenGlTextureFormat) -> (u32, u32, u32, usize)
         OpenGlTextureFormat::Bgra8Unorm => (gl::RGBA8, gl::BGRA, gl::UNSIGNED_BYTE, 4),
         OpenGlTextureFormat::Bgra8UnormSrgb => (gl::SRGB8_ALPHA8, gl::BGRA, gl::UNSIGNED_BYTE, 4),
         OpenGlTextureFormat::Rgba16Float => (gl::RGBA16F, gl::RGBA, gl::HALF_FLOAT, 8),
-        OpenGlTextureFormat::Depth16Unorm => (gl::DEPTH_COMPONENT16, gl::DEPTH_COMPONENT, gl::UNSIGNED_SHORT, 2),
-        OpenGlTextureFormat::Depth24Plus => (gl::DEPTH_COMPONENT24, gl::DEPTH_COMPONENT, gl::UNSIGNED_INT, 4),
-        OpenGlTextureFormat::Depth24PlusStencil8 => (gl::DEPTH24_STENCIL8, gl::DEPTH_STENCIL, gl::UNSIGNED_INT_24_8, 4),
-        OpenGlTextureFormat::Depth32Float => (gl::DEPTH_COMPONENT32F, gl::DEPTH_COMPONENT, gl::FLOAT, 4),
+        OpenGlTextureFormat::Depth16Unorm => (
+            gl::DEPTH_COMPONENT16,
+            gl::DEPTH_COMPONENT,
+            gl::UNSIGNED_SHORT,
+            2,
+        ),
+        OpenGlTextureFormat::Depth24Plus => (
+            gl::DEPTH_COMPONENT24,
+            gl::DEPTH_COMPONENT,
+            gl::UNSIGNED_INT,
+            4,
+        ),
+        OpenGlTextureFormat::Depth24PlusStencil8 => (
+            gl::DEPTH24_STENCIL8,
+            gl::DEPTH_STENCIL,
+            gl::UNSIGNED_INT_24_8,
+            4,
+        ),
+        OpenGlTextureFormat::Depth32Float => {
+            (gl::DEPTH_COMPONENT32F, gl::DEPTH_COMPONENT, gl::FLOAT, 4)
+        }
     }
 }
 
-pub(super) fn sampler_filter(filter: crate::backend::FilterMode, mip: crate::backend::FilterMode) -> u32 {
+pub(super) fn sampler_filter(
+    filter: crate::backend::FilterMode,
+    mip: crate::backend::FilterMode,
+) -> u32 {
     match (filter, mip) {
-        (crate::backend::FilterMode::Nearest, crate::backend::FilterMode::Nearest) => gl::NEAREST_MIPMAP_NEAREST,
-        (crate::backend::FilterMode::Linear, crate::backend::FilterMode::Nearest) => gl::LINEAR_MIPMAP_NEAREST,
-        (crate::backend::FilterMode::Nearest, crate::backend::FilterMode::Linear) => gl::NEAREST_MIPMAP_LINEAR,
-        (crate::backend::FilterMode::Linear, crate::backend::FilterMode::Linear) => gl::LINEAR_MIPMAP_LINEAR,
+        (crate::backend::FilterMode::Nearest, crate::backend::FilterMode::Nearest) => {
+            gl::NEAREST_MIPMAP_NEAREST
+        }
+        (crate::backend::FilterMode::Linear, crate::backend::FilterMode::Nearest) => {
+            gl::LINEAR_MIPMAP_NEAREST
+        }
+        (crate::backend::FilterMode::Nearest, crate::backend::FilterMode::Linear) => {
+            gl::NEAREST_MIPMAP_LINEAR
+        }
+        (crate::backend::FilterMode::Linear, crate::backend::FilterMode::Linear) => {
+            gl::LINEAR_MIPMAP_LINEAR
+        }
     }
 }
 

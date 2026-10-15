@@ -26,20 +26,33 @@ impl Widget for Layout {
                             .handle_thickness(14.0)
                             .handle_outset(12.0)
                             .direction(Direction::RIGHT)
-                            .child(SizedBox::new().width(Dimension::Px(WIDTH)).height(Dimension::Px(400.0)).color(Color::Rgb(40, 30, 30))),
+                            .child(
+                                SizedBox::new()
+                                    .width(Dimension::Px(WIDTH))
+                                    .height(Dimension::Px(400.0))
+                                    .color(Color::Rgb(40, 30, 30)),
+                            ),
                     )
                     .boxed(),
                 aimer_flex::Expanded::new()
-                    .child(Scrollable::new().child(Column::new().children(
-                        (0..8)
-                            .map(|_| {
-                                aimer_container::Container::new()
-                                    .padding(aimer_style::LayoutSpacing::all(4))
-                                    .child(SizedBox::new().height(Dimension::Px(60.0)).color(Color::Rgb(20, 20, 20)))
-                                    .boxed()
-                            })
-                            .collect::<Vec<_>>(),
-                    )))
+                    .child(
+                        Scrollable::new().child(
+                            Column::new().children(
+                                (0..8)
+                                    .map(|_| {
+                                        aimer_container::Container::new()
+                                            .padding(aimer_style::LayoutSpacing::all(4))
+                                            .child(
+                                                SizedBox::new()
+                                                    .height(Dimension::Px(60.0))
+                                                    .color(Color::Rgb(20, 20, 20)),
+                                            )
+                                            .boxed()
+                                    })
+                                    .collect::<Vec<_>>(),
+                            ),
+                        ),
+                    )
                     .boxed(),
             ])
             .to_element(ctx)
@@ -64,7 +77,10 @@ fn find<'a>(element: &'a dyn Element, name: &str) -> Option<&'a dyn Element> {
 /// The width the resizable itself reports.
 fn panel_width(app: &HeadlessAimerApp<impl Widget + 'static>) -> f32 {
     let root = app.app.widget_root.as_ref().unwrap().as_ref();
-    match find(root, "Resizable").and_then(|resizable| resizable.size()).map(|size| size.width) {
+    match find(root, "Resizable")
+        .and_then(|resizable| resizable.size())
+        .map(|size| size.width)
+    {
         Some(Dimension::Px(width)) => width,
         _ => f32::NAN,
     }
@@ -93,14 +109,20 @@ fn card_left_edge(app: &HeadlessAimerApp<impl Widget + 'static>) -> Option<f32> 
 
 #[test]
 fn the_pane_beside_a_dragged_panel_follows_it_on_every_frame() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     let mut app = AimerApp::start_headless_with(
         Layout,
-        HeadlessOptions { size: PhysicalSize::new(800, 400), scale_factor: 1.0 },
+        HeadlessOptions {
+            size: PhysicalSize::new(800, 400),
+            scale_factor: 1.0,
+        },
     );
     let at = |app: &mut HeadlessAimerApp<_>, x: f64| {
         app.send_window_event(WindowEvent::CursorMoved {
-            device_id: DeviceId::dummy(), position: PhysicalPosition::new(x, 200.0),
+            device_id: DeviceId::dummy(),
+            position: PhysicalPosition::new(x, 200.0),
         });
         app.pump_frames(1);
     };
@@ -108,7 +130,9 @@ fn the_pane_beside_a_dragged_panel_follows_it_on_every_frame() {
     app.pump_frames(3);
     at(&mut app, f64::from(WIDTH) - 2.0);
     app.send_window_event(WindowEvent::MouseInput {
-        device_id: DeviceId::dummy(), state: ElementState::Pressed, button: MouseButton::Left,
+        device_id: DeviceId::dummy(),
+        state: ElementState::Pressed,
+        button: MouseButton::Left,
     });
     app.pump_frames(1);
 
@@ -131,7 +155,9 @@ fn the_pane_beside_a_dragged_panel_follows_it_on_every_frame() {
     );
 
     app.send_window_event(WindowEvent::MouseInput {
-        device_id: DeviceId::dummy(), state: ElementState::Released, button: MouseButton::Left,
+        device_id: DeviceId::dummy(),
+        state: ElementState::Released,
+        button: MouseButton::Left,
     });
     app.pump_frames(2);
 }

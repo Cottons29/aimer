@@ -1,10 +1,10 @@
 use std::time::Duration;
 
 use aimer::console::debug;
+use aimer::input::button::Button;
 use aimer::macros::widget;
 use aimer::style::*;
 use aimer::*;
-use aimer::input::button::Button;
 
 #[derive(Clone, Copy, Debug, PartialEq, Theme)]
 struct MyTheme {
@@ -98,7 +98,7 @@ impl State<CustomAnimatedThemeExample> for CustomAnimatedThemeExampleState {
                 MyTheme::light()
             })
             .duration(Duration::from_millis(500))
-            .curve(Curve::EaseInOut)
+            .curve(curves::EASE_IN_OUT)
             .child(CustomThemedPanel::new(self.is_dark, self.updater))
     }
 }
@@ -119,7 +119,9 @@ impl CustomThemedPanel {
 impl StatelessWidget for CustomThemedPanel {
     fn build(&self, ctx: &BuildContext) -> impl Widget {
         let theme = MyTheme::of(ctx);
-        let panel_width = ctx.copied::<MyTheme>().panel_width;
+        let panel_width = ctx
+            .copied::<MyTheme>()
+            .panel_width;
         let updater = self.updater;
         let background = Color::Rgba(
             theme.background_red,
@@ -135,45 +137,63 @@ impl StatelessWidget for CustomThemedPanel {
         );
         let accent = Color::Rgba(theme.accent_red, theme.accent_green, theme.accent_blue, 255);
 
-        Container::new().color(background).child(
-            Column::new()
-                .horizontal_alignment(BoxAlignment::Center)
-                .vertical_alignment(BoxAlignment::Center)
-                .children([
-                    Text::new("Derived custom AnimatedTheme")
-                        .text_style(TextStyle::new().font_size(26).color(foreground))
-                        .boxed(),
-                    SizedBox::new().height(24).boxed(),
-                    Text::new("Color channels, width, and radius interpolate together.")
-                        .text_style(TextStyle::new().font_size(14).color(foreground))
-                        .boxed(),
-                    SizedBox::new().height(32).boxed(),
-                    Container::new()
-                        .width(Dimension::Px(panel_width))
-                        .height(Dimension::Px(56.0))
-                        .child(
-                            Button::new()
-                                .on_press(move || {
-                                    debug!("custom theme button pressed");
-                                    updater.set_state(|state| state.is_dark = !state.is_dark);
-                                })
-                                .decoration(
-                                    BoxDecoration::new()
-                                        .background_color(accent)
-                                        .border_radius(theme.button_radius),
-                                )
-                                .child(
-                                    Text::new(if self.is_dark {
-                                        "Switch to custom light theme"
-                                    } else {
-                                        "Switch to custom dark theme"
+        Container::new()
+            .color(background)
+            .child(
+                Column::new()
+                    .horizontal_alignment(BoxAlignment::Center)
+                    .vertical_alignment(BoxAlignment::Center)
+                    .children([
+                        Text::new("Derived custom AnimatedTheme")
+                            .text_style(
+                                TextStyle::new()
+                                    .font_size(26)
+                                    .color(foreground),
+                            )
+                            .boxed(),
+                        SizedBox::new()
+                            .height(24)
+                            .boxed(),
+                        Text::new("Color channels, width, and radius interpolate together.")
+                            .text_style(
+                                TextStyle::new()
+                                    .font_size(14)
+                                    .color(foreground),
+                            )
+                            .boxed(),
+                        SizedBox::new()
+                            .height(32)
+                            .boxed(),
+                        Container::new()
+                            .width(Dimension::Px(panel_width))
+                            .height(Dimension::Px(56.0))
+                            .child(
+                                Button::new()
+                                    .on_press(move || {
+                                        debug!("custom theme button pressed");
+                                        updater.set_state(|state| state.is_dark = !state.is_dark);
                                     })
-                                    .text_align(TextAlign::MidCenter)
-                                    .text_style(TextStyle::new().font_size(16).color(background)),
-                                ),
-                        )
-                        .boxed(),
-                ]),
-        )
+                                    .decoration(
+                                        BoxDecoration::new()
+                                            .background_color(accent)
+                                            .border_radius(theme.button_radius),
+                                    )
+                                    .child(
+                                        Text::new(if self.is_dark {
+                                            "Switch to custom light theme"
+                                        } else {
+                                            "Switch to custom dark theme"
+                                        })
+                                        .text_align(TextAlign::MidCenter)
+                                        .text_style(
+                                            TextStyle::new()
+                                                .font_size(16)
+                                                .color(background),
+                                        ),
+                                    ),
+                            )
+                            .boxed(),
+                    ]),
+            )
     }
 }

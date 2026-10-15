@@ -1,4 +1,4 @@
-use std::cell::UnsafeCell;
+use std::cell::{Cell, UnsafeCell};
 use std::rc::Rc;
 
 use aimer_attribute::BoxConstraint;
@@ -7,6 +7,7 @@ use aimer_macro::{LayoutElement, Rebuildable};
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
     AnyElement, AnyWidget, Drawable, Element, EventElement, LayoutElement, VisitorElement, Widget,
+    pointer_occluded_at, request_pointer_view_frame,
 };
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
@@ -117,14 +118,19 @@ impl Stack {
     }
 }
 
-impl<W: Widget+ 'static> Widget for Stack<W> {
+impl<W: Widget + 'static> Widget for Stack<W> {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
-        let children = self.children.into_iter().map(|c| c.to_element(ctx)).collect();
+        let children = self
+            .children
+            .into_iter()
+            .map(|c| c.to_element(ctx))
+            .collect();
         RawStackElement {
             children,
             direction: self.direction,
             paint_order: UnsafeCell::new(None),
             hit_test_index: UnsafeCell::new(None),
+            pointer_covered: Cell::new(false),
         }
         .boxed()
     }
@@ -162,8 +168,7 @@ impl CachedHitTestIndex {
         } else {
             let bin = ((y - self.min_y) / self.bin_height)
                 .floor()
-                .clamp(0.0, (HIT_TEST_BIN_COUNT - 1) as f32)
-                as usize;
+                .clamp(0.0, (HIT_TEST_BIN_COUNT - 1) as f32) as usize;
             let start = self.offsets[bin];
             let end = self.offsets[bin + 1];
             &self.children[start..end]
@@ -179,9 +184,74 @@ pub struct RawStackElement {
     pub direction: StackDirection,
     paint_order: UnsafeCell<Option<CachedChildOrder>>,
     hit_test_index: UnsafeCell<Option<CachedHitTestIndex>>,
+    /// Whether the last pointer hit test found a layer covering the pointer, so
+    /// a change can ask for the frame on which the layers below find out.
+    pointer_covered: Cell<bool>,
 }
 
+/// Where a layer that something above it covers is told the cursor is.
+///
+/// A region decides its hover from the cursor it is given while painting, so
+/// handing a covered layer a cursor that is nowhere ends a hover it should not
+/// hold and keeps it from starting one.
+const COVERED_CURSOR: Vec2d = Vec2d {
+    x: -1.0e9,
+    y: -1.0e9,
+};
+
 impl RawStackElement {
+    /// Whether a higher layer covering the pointer hides the lower ones from it.
+    ///
+    /// Reverse order paints against the order layers are hit-tested in, so the
+    /// layer drawn on top is not the one a pointer would reach; there is no
+    /// covering to speak of there.
+    #[inline]
+    fn layers_cover_each_other(&self) -> bool {
+        self.direction != StackDirection::Reverse
+    }
+
+    /// How many of `topmost_first` a pointer at `pos` may reach: everything up
+    /// to and including the first layer that covers it.
+    ///
+    /// Only the layers above that one are scanned, so a stack whose layers do
+    /// not cover the pointer costs one bounds check per layer.
+    fn reachable_layers(
+        &self,
+        topmost_first: impl Iterator<Item = usize>,
+        total: usize,
+        pos: Vec2d,
+    ) -> usize {
+        if !self.layers_cover_each_other() || !pos.x.is_finite() || !pos.y.is_finite() {
+            return total;
+        }
+        for (count, index) in topmost_first.enumerate() {
+            if pointer_occluded_at(self.children[index].as_ref(), pos) {
+                return count + 1;
+            }
+        }
+        total
+    }
+
+    /// Records whether the pointer is covered, asking for a frame when that
+    /// changes: the layers below only learn of it while they paint.
+    #[inline]
+    fn note_pointer_covered(&self, covered: bool) {
+        if self.pointer_covered.replace(covered) != covered {
+            request_pointer_view_frame();
+        }
+    }
+
+    /// Rank, in ascending layer order, of the topmost layer covering `cursor`.
+    /// Layers of lower rank are painted under it and must not see the cursor.
+    fn covering_rank(&self, sorted: &[usize], cursor: Vec2d) -> Option<usize> {
+        if !self.layers_cover_each_other() || !cursor.x.is_finite() || !cursor.y.is_finite() {
+            return None;
+        }
+        (0..sorted.len())
+            .rev()
+            .find(|&rank| pointer_occluded_at(self.children[sorted[rank]].as_ref(), cursor))
+    }
+
     fn child_context<'a>(&self, ctx: &BuildContext<'a>) -> BuildContext<'a> {
         let content_size = self.content_size(ctx);
         let mut child_ctx = ctx.clone();
@@ -276,9 +346,7 @@ impl RawStackElement {
         for &index in sorted.iter() {
             let bounds = self.children[index]
                 .pos_start_end()
-                .filter(|(start, end)| {
-                    start.y.is_finite() && end.y.is_finite() && start.y <= end.y
-                })
+                .filter(|(start, end)| start.y.is_finite() && end.y.is_finite() && start.y <= end.y)
                 .map(|(start, end)| (start.y, end.y));
             if let Some((start_y, end_y)) = bounds {
                 min_y = min_y.min(start_y);
@@ -298,12 +366,10 @@ impl RawStackElement {
         let bin_range = |start_y: f32, end_y: f32| {
             let first_bin = ((start_y - min_y) / bin_height)
                 .floor()
-                .clamp(0.0, (HIT_TEST_BIN_COUNT - 1) as f32)
-                as usize;
+                .clamp(0.0, (HIT_TEST_BIN_COUNT - 1) as f32) as usize;
             let last_bin = ((end_y - min_y) / bin_height)
                 .floor()
-                .clamp(0.0, (HIT_TEST_BIN_COUNT - 1) as f32)
-                as usize;
+                .clamp(0.0, (HIT_TEST_BIN_COUNT - 1) as f32) as usize;
             (first_bin, last_bin)
         };
         let mut estimated_entries = 0usize;
@@ -316,40 +382,36 @@ impl RawStackElement {
                 estimated_entries = estimated_entries.saturating_add(entries);
             }
         }
-        let dense = !span_is_indexable
-            || estimated_entries > child_count.saturating_mul(4);
-        let (offsets, indexed_children, outside): (Vec<usize>, Vec<usize>, Vec<usize>) =
-            if dense {
-                (vec![0; HIT_TEST_BIN_COUNT + 1], Vec::new(), Vec::new())
-            } else {
-                let mut bins: Vec<Vec<usize>> = (0..HIT_TEST_BIN_COUNT)
-                    .map(|_| Vec::new())
-                    .collect();
-                let mut outside = Vec::new();
+        let dense = !span_is_indexable || estimated_entries > child_count.saturating_mul(4);
+        let (offsets, indexed_children, outside): (Vec<usize>, Vec<usize>, Vec<usize>) = if dense {
+            (vec![0; HIT_TEST_BIN_COUNT + 1], Vec::new(), Vec::new())
+        } else {
+            let mut bins: Vec<Vec<usize>> = (0..HIT_TEST_BIN_COUNT).map(|_| Vec::new()).collect();
+            let mut outside = Vec::new();
 
-                for &index in sorted.iter().rev() {
-                    if let Some((start_y, end_y)) = bounds_by_child[index] {
-                        let (first_bin, last_bin) = bin_range(start_y, end_y);
-                        for bin in first_bin..=last_bin {
-                            bins[bin].push(index);
-                        }
-                    } else {
-                        outside.push(index);
-                        for bin in &mut bins {
-                            bin.push(index);
-                        }
+            for &index in sorted.iter().rev() {
+                if let Some((start_y, end_y)) = bounds_by_child[index] {
+                    let (first_bin, last_bin) = bin_range(start_y, end_y);
+                    for bin in first_bin..=last_bin {
+                        bins[bin].push(index);
+                    }
+                } else {
+                    outside.push(index);
+                    for bin in &mut bins {
+                        bin.push(index);
                     }
                 }
+            }
 
-                let mut offsets = Vec::with_capacity(HIT_TEST_BIN_COUNT + 1);
-                let mut indexed_children = Vec::with_capacity(estimated_entries);
-                offsets.push(0);
-                for bin in bins {
-                    indexed_children.extend(bin);
-                    offsets.push(indexed_children.len());
-                }
-                (offsets, indexed_children, outside)
-            };
+            let mut offsets = Vec::with_capacity(HIT_TEST_BIN_COUNT + 1);
+            let mut indexed_children = Vec::with_capacity(estimated_entries);
+            offsets.push(0);
+            for bin in bins {
+                indexed_children.extend(bin);
+                offsets.push(indexed_children.len());
+            }
+            (offsets, indexed_children, outside)
+        };
 
         let slot = unsafe { &mut *self.hit_test_index.get() };
         *slot = Some(CachedHitTestIndex {
@@ -379,6 +441,9 @@ impl RawStackElement {
                 .and_then(|index| index.candidates(pos.y))
         };
         if let Some(candidates) = candidates {
+            let reachable = self.reachable_layers(candidates.iter().copied(), candidates.len(), pos);
+            self.note_pointer_covered(reachable < candidates.len());
+            let candidates = &candidates[..reachable];
             if reversed {
                 for &index in candidates {
                     visitor(self.children[index].as_ref());
@@ -392,12 +457,15 @@ impl RawStackElement {
         }
 
         let sorted = self.sorted_child_indices();
+        let reachable = self.reachable_layers(sorted.iter().rev().copied(), sorted.len(), pos);
+        self.note_pointer_covered(reachable < sorted.len());
+        let reachable = &sorted[sorted.len() - reachable..];
         if reversed {
-            for &index in sorted.iter().rev() {
+            for &index in reachable.iter().rev() {
                 visitor(self.children[index].as_ref());
             }
         } else {
-            for &index in sorted.iter() {
+            for &index in reachable.iter() {
                 visitor(self.children[index].as_ref());
             }
         }
@@ -436,6 +504,7 @@ impl Drawable for RawStackElement {
                 max_height: content_size.height,
             },
             visible_rect: ctx.visible_rect,
+            paint_background: ctx.paint_background,
             window: ctx.window.clone(),
             #[cfg(not(target_arch = "wasm32"))]
             async_handle: ctx.async_handle.clone(),
@@ -443,42 +512,52 @@ impl Drawable for RawStackElement {
         };
 
         let sorted_children = self.sorted_child_indices();
+        let covering = self.covering_rank(&sorted_children, ctx.cursor_pos);
+        let covered_ctx = covering.map(|_| BuildContext {
+            cursor_pos: COVERED_CURSOR,
+            ..child_ctx.clone()
+        });
+        let child_ctx_for = |rank: usize| match (&covered_ctx, covering) {
+            (Some(covered), Some(covering)) if rank < covering => covered,
+            _ => &child_ctx,
+        };
 
         if self.direction == StackDirection::Reverse {
-            for &index in sorted_children.iter().rev() {
-                self.children[index].update(&child_ctx);
+            for (rank, &index) in sorted_children.iter().enumerate().rev() {
+                self.children[index].update(child_ctx_for(rank));
             }
         } else {
-            for &index in sorted_children.iter() {
-                self.children[index].update(&child_ctx);
+            for (rank, &index) in sorted_children.iter().enumerate() {
+                self.children[index].update(child_ctx_for(rank));
             }
         }
     }
 
     fn sync_paint_geometry(&self, ctx: &BuildContext) {
         self.invalidate_hit_test_index();
-        let Some(child_ctx) = self.retained_child_context(ctx) else {
-            let child_ctx = self.child_context(ctx);
-            let sorted_children = self.sorted_child_indices();
-            if self.direction == StackDirection::Reverse {
-                for &index in sorted_children.iter().rev() {
-                    self.children[index].sync_paint_geometry(&child_ctx);
-                }
-            } else {
-                for &index in sorted_children.iter() {
-                    self.children[index].sync_paint_geometry(&child_ctx);
-                }
-            }
-            return;
-        };
+        let child_ctx = self
+            .retained_child_context(ctx)
+            .unwrap_or_else(|| self.child_context(ctx));
         let sorted_children = self.sorted_child_indices();
+        // A region decides its hover from the cursor it is handed here, so a
+        // layer under a covering one is handed none: it stops being hovered
+        // beneath a bar the pointer is on, and does not start.
+        let covering = self.covering_rank(&sorted_children, ctx.cursor_pos);
+        let covered_ctx = covering.map(|_| BuildContext {
+            cursor_pos: COVERED_CURSOR,
+            ..child_ctx.clone()
+        });
+        let child_ctx_for = |rank: usize| match (&covered_ctx, covering) {
+            (Some(covered), Some(covering)) if rank < covering => covered,
+            _ => &child_ctx,
+        };
         if self.direction == StackDirection::Reverse {
-            for &index in sorted_children.iter().rev() {
-                self.children[index].sync_paint_geometry(&child_ctx);
+            for (rank, &index) in sorted_children.iter().enumerate().rev() {
+                self.children[index].sync_paint_geometry(child_ctx_for(rank));
             }
         } else {
-            for &index in sorted_children.iter() {
-                self.children[index].sync_paint_geometry(&child_ctx);
+            for (rank, &index) in sorted_children.iter().enumerate() {
+                self.children[index].sync_paint_geometry(child_ctx_for(rank));
             }
         }
     }
@@ -491,10 +570,7 @@ impl VisitorElement for RawStackElement {
         }
     }
 
-    fn visit_retained_v2_children<'a>(
-        &'a self,
-        visitor: &mut dyn FnMut(usize, &'a dyn Element),
-    ) {
+    fn visit_retained_v2_children<'a>(&'a self, visitor: &mut dyn FnMut(usize, &'a dyn Element)) {
         let sorted_children = self.sorted_child_indices();
         if self.direction == StackDirection::Reverse {
             for &index in sorted_children.iter().rev() {
@@ -529,6 +605,22 @@ impl EventElement for RawStackElement {
         }
     }
 
+    /// Visits the event children in ascending layer order, the order they are
+    /// hit-tested in.
+    ///
+    /// The indexed event tree is built from this view and offers a press to its
+    /// last child first. In retained child order that would be whichever layer
+    /// was listed last, not the one painted on top, so a full-area `Scrollable`
+    /// listed after a floating bar would take the press and capture the finger
+    /// before the bar's button ever saw it. The `IndexedHitTestBoundary` role
+    /// requires the hit-test view to be a subset of this one in the same order.
+    #[inline]
+    fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        for &index in self.sorted_child_indices().iter() {
+            visitor(self.children[index].as_ref());
+        }
+    }
+
     /// Offer the topmost layer first, matching paint order.
     ///
     /// Position-based dispatch walks the child list in reverse, so visiting
@@ -556,11 +648,7 @@ impl EventElement for RawStackElement {
     /// Uses the retained y index when it can reject enough siblings; otherwise
     /// preserves the exact painted traversal.
     #[inline]
-    fn hit_test_children_at<'a>(
-        &'a self,
-        pos: Vec2d,
-        visitor: &mut dyn FnMut(&'a dyn Element),
-    ) {
+    fn hit_test_children_at<'a>(&'a self, pos: Vec2d, visitor: &mut dyn FnMut(&'a dyn Element)) {
         self.visit_indexed(pos, false, visitor);
     }
 
@@ -573,7 +661,6 @@ impl EventElement for RawStackElement {
     ) {
         self.visit_indexed(pos, true, visitor);
     }
-
 }
 
 #[cfg(test)]
@@ -609,10 +696,14 @@ mod tests {
     struct BoundedElement {
         layer: u32,
         name: &'static str,
-        bounds: Rc<Cell<Option<(
-            aimer_attribute::position::Vec2d,
-            aimer_attribute::position::Vec2d,
-        )>>>,
+        bounds: Rc<
+            Cell<
+                Option<(
+                    aimer_attribute::position::Vec2d,
+                    aimer_attribute::position::Vec2d,
+                )>,
+            >,
+        >,
     }
 
     impl Drawable for BoundedElement {
@@ -655,6 +746,7 @@ mod tests {
             direction: StackDirection::Normal,
             paint_order: UnsafeCell::new(None),
             hit_test_index: UnsafeCell::new(None),
+            pointer_covered: Cell::new(false),
         };
 
         let first = stack.sorted_child_indices();
@@ -665,21 +757,46 @@ mod tests {
     }
 
     #[test]
+    fn event_children_follow_layer_order_while_structure_keeps_list_order() {
+        let stack = RawStackElement {
+            children: vec![
+                BoundedElement { layer: 3, name: "top", bounds: Rc::new(Cell::new(None)) }.boxed(),
+                BoundedElement { layer: 1, name: "bottom", bounds: Rc::new(Cell::new(None)) }
+                    .boxed(),
+                BoundedElement { layer: 2, name: "middle", bounds: Rc::new(Cell::new(None)) }
+                    .boxed(),
+            ],
+            direction: StackDirection::Normal,
+            paint_order: UnsafeCell::new(None),
+            hit_test_index: UnsafeCell::new(None),
+            pointer_covered: Cell::new(false),
+        };
+
+        let mut events = Vec::new();
+        stack.event_children(&mut |child| events.push(child.debug_name()));
+        let mut structure = Vec::new();
+        stack.structural_children(&mut |child| structure.push(child.debug_name()));
+
+        assert_eq!(events, ["bottom", "middle", "top"]);
+        assert_eq!(structure, ["top", "bottom", "middle"]);
+    }
+
+    #[test]
     fn indexed_hit_test_keeps_topmost_order_and_unknown_bounds() {
         let mut children = vec![
             BoundedElement {
                 layer: 1,
                 name: "outside",
-                    bounds: Rc::new(Cell::new(Some((
-                        aimer_attribute::position::Vec2d { x: 20.0, y: 20.0 },
-                        aimer_attribute::position::Vec2d { x: 30.0, y: 30.0 },
-                    )))),
+                bounds: Rc::new(Cell::new(Some((
+                    aimer_attribute::position::Vec2d { x: 20.0, y: 20.0 },
+                    aimer_attribute::position::Vec2d { x: 30.0, y: 30.0 },
+                )))),
             }
             .boxed(),
             BoundedElement {
                 layer: 3,
                 name: "unknown",
-                    bounds: Rc::new(Cell::new(None)),
+                bounds: Rc::new(Cell::new(None)),
             }
             .boxed(),
             BoundedElement {
@@ -711,6 +828,7 @@ mod tests {
             direction: StackDirection::Normal,
             paint_order: UnsafeCell::new(None),
             hit_test_index: UnsafeCell::new(None),
+            pointer_covered: Cell::new(false),
         };
 
         stack.ensure_hit_test_index();
@@ -757,6 +875,7 @@ mod tests {
             direction: StackDirection::Normal,
             paint_order: UnsafeCell::new(None),
             hit_test_index: UnsafeCell::new(None),
+            pointer_covered: Cell::new(false),
         };
 
         let mut names = Vec::new();
@@ -771,16 +890,16 @@ mod tests {
         )));
         assert_eq!(
             stack.children[0].pos_start_end(),
-            Some((
-                Vec2d { x: 20.0, y: 20.0 },
-                Vec2d { x: 30.0, y: 30.0 },
-            ))
+            Some((Vec2d { x: 20.0, y: 20.0 }, Vec2d { x: 30.0, y: 30.0 },))
         );
         stack.invalidate_hit_test_index();
         stack.ensure_hit_test_index();
         let cached = unsafe { &*stack.hit_test_index.get() };
         assert_eq!(
-            (cached.as_ref().unwrap().min_y, cached.as_ref().unwrap().max_y),
+            (
+                cached.as_ref().unwrap().min_y,
+                cached.as_ref().unwrap().max_y
+            ),
             (20.0, 101.0)
         );
         names.clear();
@@ -789,5 +908,4 @@ mod tests {
         });
         assert!(names.is_empty());
     }
-
 }

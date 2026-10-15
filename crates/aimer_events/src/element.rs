@@ -84,6 +84,46 @@ pub enum ElementEvent {
         /// this to `false`. Mouse-wheel input is never a direct manipulation.
         is_direct_manipulation: bool,
     },
+    /// A pinch recognized by the platform rather than from raw contacts: the
+    /// trackpad's magnify gesture on macOS, or the emulated zoom of
+    /// `ctrl` + wheel where the platform has no such gesture.
+    ///
+    /// Like [`Self::Scroll`] it is routed by hit test at `pos`, the cursor.
+    Pinch {
+        /// Where the gesture is anchored, in logical window coordinates.
+        pos: Vec2d,
+        /// The fractional change in scale since the previous event: `0.1` grows
+        /// the content by 10 %, `-0.1` shrinks it by 10 %. Never `NaN`.
+        delta: f32,
+        phase: TouchPhase,
+    },
+    /// A rotation recognized by the platform, such as the trackpad's two-finger
+    /// twist on macOS.
+    Rotate {
+        /// Where the gesture is anchored, in logical window coordinates.
+        pos: Vec2d,
+        /// The change since the previous event, in radians. Positive is
+        /// **clockwise** on screen — the direction of increasing angle in a
+        /// y-down coordinate system — which is the opposite of winit's
+        /// counterclockwise convention; the platform layer flips it.
+        delta: f32,
+        phase: TouchPhase,
+    },
+    /// A multi-finger pan recognized by the platform, such as an N-finger pan
+    /// on iOS.
+    Pan {
+        /// Where the gesture is anchored, in logical window coordinates.
+        pos: Vec2d,
+        /// The change since the previous event, in logical pixels.
+        delta: Vec2d,
+        phase: TouchPhase,
+    },
+    /// The platform's smart-zoom gesture: a two-finger double tap on a macOS
+    /// trackpad, conventionally toggling between fitted and actual size.
+    SmartZoom {
+        /// Where the gesture is anchored, in logical window coordinates.
+        pos: Vec2d,
+    },
     /// A character was typed (text input).
     CharInput {
         ch: char,
@@ -182,7 +222,10 @@ pub enum ElementEvent {
     /// It carries no position: by the time an element learns it was left, the
     /// pointer is somewhere else entirely, and the only useful answer is "not
     /// here".
-    DragLeave { source: PointerSource, id: u64 },
+    DragLeave {
+        source: PointerSource,
+        id: u64,
+    },
 
     /// A drag was released at `pos`, over the element receiving this.
     DragDrop {

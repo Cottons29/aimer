@@ -31,7 +31,10 @@ pub struct Announcement {
 
 impl Announcement {
     /// Creates an announcement with a default priority based on its kind.
-    pub fn try_new(kind: AnnouncementKind, text: impl Into<String>) -> Result<Self, AnnouncementError> {
+    pub fn try_new(
+        kind: AnnouncementKind,
+        text: impl Into<String>,
+    ) -> Result<Self, AnnouncementError> {
         let priority = match kind {
             AnnouncementKind::ValidationError => AnnouncementPriority::Assertive,
             AnnouncementKind::Loading | AnnouncementKind::Status => AnnouncementPriority::Polite,
@@ -56,7 +59,10 @@ impl Announcement {
                 maximum: MAX_ANNOUNCEMENT_CHARS,
             });
         }
-        if text.chars().any(|character| character == '\0' || character.is_control() && character != '\n') {
+        if text
+            .chars()
+            .any(|character| character == '\0' || character.is_control() && character != '\n')
+        {
             return Err(AnnouncementError::ContainsControlCharacter);
         }
         Ok(Self {

@@ -126,7 +126,8 @@ impl RetainedChild {
     /// count: the address is the element's identity.
     #[inline]
     pub fn retained_address(&self) -> Option<*const ()> {
-        self.0.with_element(|element| element.map(AnyElement::address))
+        self.0
+            .with_element(|element| element.map(AnyElement::address))
     }
 
     /// Returns the retained child's diagnostic name.

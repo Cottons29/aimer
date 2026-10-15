@@ -2,24 +2,39 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::rc::Rc;
 
-use aimer_cupid::draw_cmd::DrawCommand;
 use super::*;
 use crate::SizedBox;
+use aimer_cupid::draw_cmd::DrawCommand;
 use aimer_widget::base::WindowHandle;
 use aimer_widget::{Drawable, EventElement, LayoutElement, Rebuildable, VisitorElement};
 
 #[tokio::test]
 async fn container_accepts_a_backdrop_decoration_without_changing_layout() {
-    use aimer_decoration::BackdropFilter;
     use aimer_cupid::material::{MaterialKind, MaterialRequest};
+    use aimer_decoration::BackdropFilter;
 
     let ctx = context();
-    let element = Container::new().width(80).height(40)
+    let element = Container::new()
+        .width(80)
+        .height(40)
         .decoration(BackdropFilter::new().blur_radius(12.0))
         .padding(LayoutSpacing::all(3))
-        .child(SizedBox::new()).to_element(&ctx);
-    assert_eq!(element.computed_size(&ctx), ResolvedSize { width: 80.0, height: 40.0 });
-    assert_eq!(element.content_size(&ctx), ResolvedSize { width: 74.0, height: 34.0 });
+        .child(SizedBox::new())
+        .to_element(&ctx);
+    assert_eq!(
+        element.computed_size(&ctx),
+        ResolvedSize {
+            width: 80.0,
+            height: 40.0
+        }
+    );
+    assert_eq!(
+        element.content_size(&ctx),
+        ResolvedSize {
+            width: 74.0,
+            height: 34.0
+        }
+    );
     let commands = record_local_v2(&element, &ctx);
     let [aimer_cupid::draw_cmd_v2::DrawCommand::DrawCustom { data, .. }] = commands.as_ref() else {
         panic!("the container must record one backdrop filter");
@@ -28,7 +43,10 @@ async fn container_accepts_a_backdrop_decoration_without_changing_layout() {
     assert_eq!(request.kind, MaterialKind::BackdropFilter);
     assert_eq!(request.bounds, [0.0, 0.0, 80.0, 40.0]);
     assert_eq!(request.blur_radius, 12.0);
-    assert_eq!(element.event_tree_role(), aimer_widget::EventTreeRole::Transparent);
+    assert_eq!(
+        element.event_tree_role(),
+        aimer_widget::EventTreeRole::Transparent
+    );
 }
 
 struct DrawProbe {
@@ -55,7 +73,6 @@ struct PaintStableProbe;
 
 impl Drawable for PaintStableProbe {
     fn update(&self, _ctx: &BuildContext) {}
-
 }
 
 impl EventElement for PaintStableProbe {}
@@ -80,9 +97,10 @@ async fn retained_container_paint_includes_its_decoration() {
 
     let commands = record_local_v2(&element, &ctx);
 
-    assert!(commands
-        .iter()
-        .any(|command| matches!(command, aimer_cupid::draw_cmd_v2::DrawCommand::FillRect { .. })));
+    assert!(commands.iter().any(|command| matches!(
+        command,
+        aimer_cupid::draw_cmd_v2::DrawCommand::FillRect { .. }
+    )));
     assert!(
         inner.draw_list().commands().is_empty(),
         "the canvas itself is not painted"
@@ -214,12 +232,8 @@ async fn margin_keeps_outline_and_border_inside_the_decorated_box() {
         max_width: 200.0,
         max_height: 160.0,
     };
-    let border = BorderSlice::new()
-        .style(BorderStyle::Solid)
-        .stroke(4.0);
-    let outline = BorderSlice::new()
-        .style(BorderStyle::Solid)
-        .stroke(6.0);
+    let border = BorderSlice::new().style(BorderStyle::Solid).stroke(4.0);
+    let outline = BorderSlice::new().style(BorderStyle::Solid).stroke(6.0);
 
     let element = Container::new()
         .margin(LayoutSpacing::all(30))
@@ -242,12 +256,21 @@ async fn margin_keeps_outline_and_border_inside_the_decorated_box() {
     element.update(&ctx);
 
     let commands = inner.draw_list();
-    assert!(matches!(commands.commands().first(), Some(DrawCommand::PushTransform { .. })));
-    let margin_transform = commands.commands().get(1).and_then(|command| match command {
-        DrawCommand::SetTransform { matrix } => Some(*matrix),
-        _ => None,
-    });
-    assert_eq!(margin_transform.map(|matrix| matrix.cols[2]), Some([30.0, 30.0, 1.0]));
+    assert!(matches!(
+        commands.commands().first(),
+        Some(DrawCommand::PushTransform { .. })
+    ));
+    let margin_transform = commands
+        .commands()
+        .get(1)
+        .and_then(|command| match command {
+            DrawCommand::SetTransform { matrix } => Some(*matrix),
+            _ => None,
+        });
+    assert_eq!(
+        margin_transform.map(|matrix| matrix.cols[2]),
+        Some([30.0, 30.0, 1.0])
+    );
 
     // The decorated box is recorded in the node's own list, offset by the
     // margin, so the margin itself is never filled.
@@ -265,7 +288,11 @@ async fn margin_keeps_outline_and_border_inside_the_decorated_box() {
         fill.expect("the decorated container should record one fill rectangle");
     // The list is relative to the node, which starts at the outline's outer edge
     // (6 px outside the box), so the box lies margin plus outline inside it.
-    assert_eq!((fill.x, fill.y), (36.0, 36.0), "the box starts after the margin and the outline's reach");
+    assert_eq!(
+        (fill.x, fill.y),
+        (36.0, 36.0),
+        "the box starts after the margin and the outline's reach"
+    );
     assert_eq!((fill.width, fill.height), (140.0, 100.0));
     assert_eq!(border_width, [4.0; 4]);
     assert_eq!(outline_width, [6.0; 4]);
@@ -404,14 +431,21 @@ fn unbounded_container(max_width: f32, max_height: f32) -> UnboundedProbe {
 async fn an_auto_height_container_in_a_scroll_view_paints_locally() {
     // A scrollable offers an unbounded height as `f32::MAX`.
     let probe = unbounded_container(400.0, f32::MAX);
-    assert!(probe.can_paint, "an unbounded axis must not force the legacy path");
+    assert!(
+        probe.can_paint,
+        "an unbounded axis must not force the legacy path"
+    );
 
     // The render tree gets finite, sane rectangles: `f32::MAX` doubles to
     // infinity when scaled to device pixels.
     let clip = probe.clip.expect("the child is clipped");
     assert!(clip.width.is_finite() && clip.height.is_finite());
     assert!(clip.height <= LOCAL_V2_CONTAINER_EXTENT_LIMIT, "{clip:?}");
-    assert!(probe.outsets.is_some_and(|outsets| outsets.iter().all(|v| v.is_finite())));
+    assert!(
+        probe
+            .outsets
+            .is_some_and(|outsets| outsets.iter().all(|v| v.is_finite()))
+    );
 }
 
 #[tokio::test]
@@ -560,7 +594,10 @@ async fn converting_a_decorated_container_adds_no_allocation() {
 #[test]
 fn a_container_element_fits_a_pooled_block() {
     eprintln!("Container Size : {}", size_of::<Container>());
-    eprintln!("Container element size: {}", size_of::<RawContainer<AnyElement>>());
+    eprintln!(
+        "Container element size: {}",
+        size_of::<RawContainer<AnyElement>>()
+    );
 
     assert!(
         size_of::<RawContainer<AnyElement>>() <= 512,
@@ -577,7 +614,11 @@ struct CustomDecoration {
 
 impl Decoration for CustomDecoration {
     fn paint(&self, canvas: &aimer_canvas::Canvas, origin: Vec2d, size: ResolvedSize, _scale: f32) {
-        let color = if self.revision.get() == 0 { Color::RED } else { Color::BLUE };
+        let color = if self.revision.get() == 0 {
+            Color::RED
+        } else {
+            Color::BLUE
+        };
         canvas.fill_color_rect(origin, size, color);
     }
 
@@ -600,16 +641,37 @@ async fn custom_decoration_geometry_is_applied_in_logical_pixels_through_trait_o
     let (mut ctx, _) = recording_context();
     ctx.scale = 2.0;
     let decoration: Rc<dyn Decoration> = Rc::new(CustomDecoration {
-        insets: [2.0, 4.0, 6.0, 8.0], clip: Some([5.0, 6.0, 7.0, 8.0]),
+        insets: [2.0, 4.0, 6.0, 8.0],
+        clip: Some([5.0, 6.0, 7.0, 8.0]),
         revision: Rc::new(Cell::new(0)),
     });
-    let element = Container::new().decoration(decoration).width(80).height(40)
-        .margin(LayoutSpacing::all(5)).padding(LayoutSpacing::all(3))
-        .child(SizedBox::new().width(24).height(12)).to_element(&ctx);
-    assert_eq!(element.computed_size(&ctx), ResolvedSize { width: 180.0, height: 100.0 });
-    assert_eq!(element.content_size(&ctx), ResolvedSize { width: 132.0, height: 44.0 });
+    let element = Container::new()
+        .decoration(decoration)
+        .width(80)
+        .height(40)
+        .margin(LayoutSpacing::all(5))
+        .padding(LayoutSpacing::all(3))
+        .child(SizedBox::new().width(24).height(12))
+        .to_element(&ctx);
+    assert_eq!(
+        element.computed_size(&ctx),
+        ResolvedSize {
+            width: 180.0,
+            height: 100.0
+        }
+    );
+    assert_eq!(
+        element.content_size(&ctx),
+        ResolvedSize {
+            width: 132.0,
+            height: 44.0
+        }
+    );
     element.visit_children(&mut |child| {
-        assert_eq!(element.retained_v2_child_clip_radius(&ctx, child), [5.0, 6.0, 7.0, 8.0]);
+        assert_eq!(
+            element.retained_v2_child_clip_radius(&ctx, child),
+            [5.0, 6.0, 7.0, 8.0]
+        );
         let (bounds, clip) = element.retained_v2_child_geometry(&ctx, child).unwrap();
         assert_eq!(bounds, Rect::new(10.0, 12.0, 24.0, 12.0));
         assert_eq!(clip, Some(Rect::new(-3.0, -3.0, 72.0, 28.0)));
@@ -621,14 +683,28 @@ async fn custom_decoration_revisions_refresh_paint_and_invalid_insets_are_saniti
     let (ctx, _) = recording_context();
     let revision = Rc::new(Cell::new(0));
     let decoration: Box<dyn Decoration> = Box::new(CustomDecoration {
-        insets: [f32::NAN, -1.0, f32::INFINITY, 3.0], clip: None,
+        insets: [f32::NAN, -1.0, f32::INFINITY, 3.0],
+        clip: None,
         revision: revision.clone(),
     });
-    let element = Container::new().decoration(decoration).width(80).height(40)
-        .child(SizedBox::new()).to_element(&ctx);
-    assert_eq!(element.content_size(&ctx), ResolvedSize { width: 80.0, height: 37.0 });
+    let element = Container::new()
+        .decoration(decoration)
+        .width(80)
+        .height(40)
+        .child(SizedBox::new())
+        .to_element(&ctx);
+    assert_eq!(
+        element.content_size(&ctx),
+        ResolvedSize {
+            width: 80.0,
+            height: 37.0
+        }
+    );
     element.visit_children(&mut |child| {
-        assert_eq!(element.retained_v2_child_geometry(&ctx, child).unwrap().1, None);
+        assert_eq!(
+            element.retained_v2_child_geometry(&ctx, child).unwrap().1,
+            None
+        );
     });
     record_local_v2(&element, &ctx);
     assert!(!element.local_v2_paint_needs_recording(&ctx));
@@ -637,8 +713,10 @@ async fn custom_decoration_revisions_refresh_paint_and_invalid_insets_are_saniti
         assert!(element.local_v2_paint_needs_recording(&ctx));
         let commands = record_local_v2(&element, &ctx);
         let expected = if next == 0 { (255, 0) } else { (0, 255) };
-        assert!(matches!(commands.as_ref(), [aimer_cupid::draw_cmd_v2::DrawCommand::FillRect { color, .. }]
-            if (color.r, color.b) == expected));
+        assert!(
+            matches!(commands.as_ref(), [aimer_cupid::draw_cmd_v2::DrawCommand::FillRect { color, .. }]
+            if (color.r, color.b) == expected)
+        );
         assert!(!element.local_v2_paint_needs_recording(&ctx));
     }
 }
@@ -647,18 +725,35 @@ async fn custom_decoration_revisions_refresh_paint_and_invalid_insets_are_saniti
 async fn decoration_method_preserves_box_borders_clipping_and_fallback_color() {
     let (mut ctx, _) = recording_context();
     ctx.scale = 2.0;
-    let element = Container::new().width(80).height(40).color(Color::BLUE)
-        .decoration(BoxDecoration::new().border_radius(12)
-            .border(BoxBorder::all(BorderSlice::new().style(BorderStyle::Solid).stroke(4))))
-        .child(SizedBox::new()).to_element(&ctx);
-    assert_eq!(element.content_size(&ctx), ResolvedSize { width: 144.0, height: 64.0 });
+    let element = Container::new()
+        .width(80)
+        .height(40)
+        .color(Color::BLUE)
+        .decoration(
+            BoxDecoration::new()
+                .border_radius(12)
+                .border(BoxBorder::all(
+                    BorderSlice::new().style(BorderStyle::Solid).stroke(4),
+                )),
+        )
+        .child(SizedBox::new())
+        .to_element(&ctx);
+    assert_eq!(
+        element.content_size(&ctx),
+        ResolvedSize {
+            width: 144.0,
+            height: 64.0
+        }
+    );
     element.visit_children(&mut |child| {
         assert_eq!(element.retained_v2_child_clip_radius(&ctx, child), [8.0; 4]);
     });
     let commands = record_local_v2(&element, &ctx);
-    assert!(matches!(commands.as_ref(), [aimer_cupid::draw_cmd_v2::DrawCommand::FillRect {
+    assert!(
+        matches!(commands.as_ref(), [aimer_cupid::draw_cmd_v2::DrawCommand::FillRect {
         color, border_radius, border_width, ..
-    }] if color.b == 255 && color.a == 255 && *border_radius == [12.0; 4] && *border_width == [4.0; 4]));
+    }] if color.b == 255 && color.a == 255 && *border_radius == [12.0; 4] && *border_width == [4.0; 4])
+    );
     assert_eq!(element.event_tree_role(), EventTreeRole::IndexedTarget);
 }
 
@@ -667,14 +762,27 @@ async fn generic_decoration_conversion_and_retained_checks_allocate_nothing_afte
     use aimer_decoration::Magnification;
     let (ctx, _) = recording_context();
     for _ in 0..4 {
-        drop(Container::new().decoration(Magnification::new()).width(80).height(40)
-            .child(SizedBox::new()).to_element(&ctx));
+        drop(
+            Container::new()
+                .decoration(Magnification::new())
+                .width(80)
+                .height(40)
+                .child(SizedBox::new())
+                .to_element(&ctx),
+        );
     }
     let before = allocations();
-    let element = Container::new().decoration(Magnification::new()).width(80).height(40)
-        .child(SizedBox::new()).to_element(&ctx);
+    let element = Container::new()
+        .decoration(Magnification::new())
+        .width(80)
+        .height(40)
+        .child(SizedBox::new())
+        .to_element(&ctx);
     let building = allocations() - before;
-    assert_eq!(building, 0, "concrete decorations must remain in pooled element storage");
+    assert_eq!(
+        building, 0,
+        "concrete decorations must remain in pooled element storage"
+    );
     record_local_v2(&element, &ctx);
     let before = allocations();
     let unchanged = (0..1_024).all(|_| !element.local_v2_paint_needs_recording(&ctx));

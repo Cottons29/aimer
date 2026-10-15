@@ -48,21 +48,31 @@ impl MagnificationStyle {
 
     /// Returns the stable flag bits.
     #[inline]
-    pub const fn bits(self) -> u32 { self.0 }
+    pub const fn bits(self) -> u32 {
+        self.0
+    }
 
     /// Reconstructs flags, returning `None` if any bit is unknown.
     #[inline]
     pub const fn from_bits(bits: u32) -> Option<Self> {
-        if bits & !Self::ALL.0 == 0 { Some(Self(bits)) } else { None }
+        if bits & !Self::ALL.0 == 0 {
+            Some(Self(bits))
+        } else {
+            None
+        }
     }
 
     /// Returns whether every flag in `other` is present.
     #[inline]
-    pub const fn contains(self, other: Self) -> bool { self.0 & other.0 == other.0 }
+    pub const fn contains(self, other: Self) -> bool {
+        self.0 & other.0 == other.0
+    }
 
     /// Returns whether no flags are present.
     #[inline]
-    pub const fn is_empty(self) -> bool { self.0 == 0 }
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
 
     pub(crate) fn axes(self) -> [f32; 2] {
         match self.0 & (Self::HORIZONTAL.0 | Self::VERTICAL.0) {
@@ -78,37 +88,52 @@ impl MagnificationStyle {
             (false, true) => 1.0,
             _ => 0.5,
         };
-        [coordinate(Self::LEFT, Self::RIGHT), coordinate(Self::TOP, Self::BOTTOM)]
+        [
+            coordinate(Self::LEFT, Self::RIGHT),
+            coordinate(Self::TOP, Self::BOTTOM),
+        ]
     }
 }
 
 impl Default for MagnificationStyle {
     #[inline]
-    fn default() -> Self { Self::DEFAULT }
+    fn default() -> Self {
+        Self::DEFAULT
+    }
 }
 
 impl BitOr for MagnificationStyle {
     type Output = Self;
     #[inline]
-    fn bitor(self, rhs: Self) -> Self { Self(self.0 | rhs.0) }
+    fn bitor(self, rhs: Self) -> Self {
+        Self(self.0 | rhs.0)
+    }
 }
 impl BitOrAssign for MagnificationStyle {
     #[inline]
-    fn bitor_assign(&mut self, rhs: Self) { self.0 |= rhs.0; }
+    fn bitor_assign(&mut self, rhs: Self) {
+        self.0 |= rhs.0;
+    }
 }
 impl BitAnd for MagnificationStyle {
     type Output = Self;
     #[inline]
-    fn bitand(self, rhs: Self) -> Self { Self(self.0 & rhs.0) }
+    fn bitand(self, rhs: Self) -> Self {
+        Self(self.0 & rhs.0)
+    }
 }
 impl BitAndAssign for MagnificationStyle {
     #[inline]
-    fn bitand_assign(&mut self, rhs: Self) { self.0 &= rhs.0; }
+    fn bitand_assign(&mut self, rhs: Self) {
+        self.0 &= rhs.0;
+    }
 }
 impl Not for MagnificationStyle {
     type Output = Self;
     #[inline]
-    fn not(self) -> Self { Self(!self.0 & Self::ALL.0) }
+    fn not(self) -> Self {
+        Self(!self.0 & Self::ALL.0)
+    }
 }
 
 #[cfg(test)]
@@ -137,9 +162,14 @@ mod tests {
         assert_eq!(S::HORIZONTAL.axes(), [1.0, 0.0]);
         assert_eq!(S::VERTICAL.axes(), [0.0, 1.0]);
         assert_eq!((S::HORIZONTAL | S::VERTICAL).axes(), [1.0, 1.0]);
-        for (style, anchor) in [(S::NONE, [0.5, 0.5]), (S::LEFT | S::TOP, [0.0, 0.0]),
-            (S::RIGHT | S::BOTTOM, [1.0, 1.0]), (S::LEFT | S::RIGHT | S::TOP, [0.5, 0.0]),
-            (S::BOTTOM | S::TOP | S::LEFT, [0.0, 0.5]), (S::ALL, [0.5, 0.5])] {
+        for (style, anchor) in [
+            (S::NONE, [0.5, 0.5]),
+            (S::LEFT | S::TOP, [0.0, 0.0]),
+            (S::RIGHT | S::BOTTOM, [1.0, 1.0]),
+            (S::LEFT | S::RIGHT | S::TOP, [0.5, 0.0]),
+            (S::BOTTOM | S::TOP | S::LEFT, [0.0, 0.5]),
+            (S::ALL, [0.5, 0.5]),
+        ] {
             assert_eq!(style.anchor(), anchor);
         }
     }

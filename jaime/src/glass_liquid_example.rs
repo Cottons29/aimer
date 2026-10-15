@@ -4,14 +4,14 @@
 //! their public builders and keeps the bounded fallback available when Cupid
 //! cannot capture the current backdrop.
 
+use aimer::input::button::Button;
 use aimer::macros::widget;
 use aimer::style::{BoxDecoration, FontWeight, LayoutSpacing, Spacing, TextAlign, TextStyle};
-use aimer::input::button::Button;
 use aimer::{
-    AimerApp, AnyWidget, BoxAlignment, BuildContext, Colors, Column, Container,
-    CustomShape, Dimension, FillStyle, Glass, Liquid, MaterialMotionPolicy, Positioned, Row,
-    ShapeColor, ShapeFit, ShapePath, ShapePathBuilder, Stack, State, StateUpdater, StatefulWidget,
-    Text, Widget, ZeroSizedBox,
+    AimerApp, AnyWidget, BoxAlignment, BuildContext, Colors, Column, Container, CustomShape,
+    Dimension, FillStyle, Glass, Liquid, MaterialMotionPolicy, Positioned, Row, ShapeColor,
+    ShapeFit, ShapePath, ShapePathBuilder, Stack, State, StateUpdater, StatefulWidget, Text,
+    Widget, ZeroSizedBox,
 };
 
 const SURFACE_WIDTH: f32 = 720.0;
@@ -160,7 +160,7 @@ impl State<GlassLiquidExample> for GlassLiquidExampleState {
             .elevation(1.0)
             // .contrast(0.9)
             .border_color(aimer::Color::Rgba(198, 238, 255, 214))
-            // .corner_radius(22.0)
+            // .border_radius(22.0)
             .quality(3)
             .child(GlassLiquidExample::card(
                 "Glass",

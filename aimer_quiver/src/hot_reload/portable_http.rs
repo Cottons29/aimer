@@ -3,10 +3,9 @@ use std::io::Read;
 use aimer_anteros::{
     CapabilityDecoder, CapabilityDescriptor, CapabilityEncoder, CapabilityError,
     CapabilityGeneration, CapabilityLimits, CapabilityProvider, CapabilityRegistry,
-    CapabilityResult, CapabilityStagingClass,
-    PORTABLE_HTTP_CAPABILITY_ABI_MAJOR, PORTABLE_HTTP_MAX_REQUEST_BYTES,
-    PORTABLE_HTTP_MAX_RESPONSE_BYTES, PORTABLE_HTTP_METHOD_GET, portable_http_capability_id,
-    portable_http_contract_fingerprint, portable_http_max_body_bytes,
+    CapabilityResult, CapabilityStagingClass, PORTABLE_HTTP_CAPABILITY_ABI_MAJOR,
+    PORTABLE_HTTP_MAX_REQUEST_BYTES, PORTABLE_HTTP_MAX_RESPONSE_BYTES, PORTABLE_HTTP_METHOD_GET,
+    portable_http_capability_id, portable_http_contract_fingerprint, portable_http_max_body_bytes,
 };
 
 /// Registers the bounded HTTP provider available to generated portable guests.
@@ -58,7 +57,8 @@ impl CapabilityProvider for PortableHttpProvider {
             return Err(CapabilityError::LimitExceeded);
         }
 
-        let mut encoder = CapabilityEncoder::new(response_limit.min(PORTABLE_HTTP_MAX_RESPONSE_BYTES));
+        let mut encoder =
+            CapabilityEncoder::new(response_limit.min(PORTABLE_HTTP_MAX_RESPONSE_BYTES));
         encoder.write_u16(status)?;
         encoder.write_bytes(&body)?;
         Ok(encoder.into_bytes())

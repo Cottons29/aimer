@@ -7,11 +7,11 @@ use aimer_events::pointer::PointerSource;
 use aimer_widget::base::{Color, WindowHandle};
 use aimer_widget::{FocusNode, PointerKey, claim_pointer, is_pointer_claimed, release_pointer};
 
+use crate::TextSource;
 use crate::selection::handles::HandleSide;
 use crate::selection::selectable::{Selectable, SelectionCoordinator};
 use crate::selection::ui::SelectionUi;
 use crate::selection::{PointSelection, SelectionPoint, SelectionState};
-use crate::TextSource;
 
 /// A participant's registration inside a [`SelectionSession`].
 ///
@@ -340,7 +340,9 @@ impl SelectionSession {
             if range.is_empty() {
                 continue;
             }
-            let Some(bounds) = slot.geometry().and_then(|geometry| geometry.painted_bounds())
+            let Some(bounds) = slot
+                .geometry()
+                .and_then(|geometry| geometry.painted_bounds())
             else {
                 continue;
             };
@@ -746,9 +748,9 @@ mod tests {
     use aimer_widget::base::{Color, WindowHandle};
 
     use super::{SelectionSession, SelectionSlot};
+    use crate::TextSource;
     use crate::selection::selectable::{SelectionCoordinator, TextGeometry};
     use crate::selection::{SelectionPoint, TextHitRegion};
-    use crate::TextSource;
 
     const SELECTION_COLOR: Color = Color::Rgba(51, 153, 255, 96);
 
@@ -1085,7 +1087,8 @@ mod tests {
         let window = window();
         let coordinator = Rc::new(SelectionCoordinator::default());
         let region = SelectionSession::new(window.clone(), coordinator.clone(), SELECTION_COLOR);
-        let standalone = SelectionSession::new(window.clone(), coordinator.clone(), SELECTION_COLOR);
+        let standalone =
+            SelectionSession::new(window.clone(), coordinator.clone(), SELECTION_COLOR);
         let (_region_geometry, region_slot) = participant(&region, &window, "region", 0.0);
         let (_alone_geometry, alone_slot) = participant(&standalone, &window, "alone", 40.0);
         region_slot.stamp();
@@ -1101,7 +1104,9 @@ mod tests {
         assert!(!region.is_focused());
         assert_eq!(alone_slot.selected_range(), Some(0..5));
         assert!(Rc::ptr_eq(
-            &coordinator.current().expect("a session holds the selection"),
+            &coordinator
+                .current()
+                .expect("a session holds the selection"),
             &standalone
         ));
 

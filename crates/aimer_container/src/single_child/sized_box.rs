@@ -3,13 +3,11 @@ use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_cupid::draw_cmd_v2::Rect;
 use aimer_macro::{PortableWidget, Rebuildable};
 use aimer_widget::base::{Color, *};
+#[cfg(feature = "portable-guest")]
+use aimer_widget::portable::{PortableBuildContext, PortableBuildError, SourceFingerprint};
 use aimer_widget::{
     AnyElement, AnyWidget, Drawable, Element, EventElement, EventTreeRole, LayoutCache,
     LayoutElement, VisitorElement, Widget,
-};
-#[cfg(feature = "portable-guest")]
-use aimer_widget::portable::{
-    PortableBuildContext, PortableBuildError, SourceFingerprint,
 };
 
 use crate::ZeroSizedBox;
@@ -222,7 +220,10 @@ impl<E: Element> Drawable for RawSizedBox<E> {
         let (red, green, blue, alpha) = self.color.to_rgba();
         if alpha != 0 {
             // SizedBox layout sizes are device-scaled; v2 commands use local logical pixels.
-            canvas.fill_rect(Rect::new(0.0, 0.0, width, height), [red, green, blue, alpha]);
+            canvas.fill_rect(
+                Rect::new(0.0, 0.0, width, height),
+                [red, green, blue, alpha],
+            );
         }
         canvas.finish();
     }
@@ -250,7 +251,10 @@ impl<E: Element> LayoutElement for RawSizedBox<E> {
     }
 
     fn is_layout_stable(&self) -> bool {
-        matches!((self.width, self.height), (Dimension::Px(_), Dimension::Px(_)))
+        matches!(
+            (self.width, self.height),
+            (Dimension::Px(_), Dimension::Px(_))
+        )
     }
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
@@ -269,6 +273,7 @@ impl<E: Element> LayoutElement for RawSizedBox<E> {
             cursor_pos: ctx.cursor_pos,
             box_constraint: ctx.box_constraint,
             visible_rect: ctx.visible_rect,
+            paint_background: ctx.paint_background,
             window: ctx.window.clone(),
             #[cfg(not(target_arch = "wasm32"))]
             async_handle: ctx.async_handle.clone(),
@@ -313,7 +318,6 @@ impl<E: Element> LayoutElement for RawSizedBox<E> {
         self.cache.invalidate();
         self.child.invalidate_layout();
     }
-
 }
 
 #[cfg(test)]
@@ -322,7 +326,9 @@ mod tests {
     use std::rc::Rc;
 
     use super::*;
-    use aimer_cupid::draw_cmd_v2::{DrawCommand, Rect as RenderRect, RenderPaintSource, RenderTree};
+    use aimer_cupid::draw_cmd_v2::{
+        DrawCommand, Rect as RenderRect, RenderPaintSource, RenderTree,
+    };
     use aimer_widget::base::WindowHandle;
     use aimer_widget::{Drawable, EventElement, EventTreeRole, Rebuildable, VisitorElement};
 
@@ -431,7 +437,9 @@ mod tests {
         let draws = Rc::new(Cell::new(0));
         let ctx = context();
         let element = SizedBox::new()
-            .child(DrawChild { draws: draws.clone() })
+            .child(DrawChild {
+                draws: draws.clone(),
+            })
             .to_element(&ctx);
 
         element.update(&ctx);
@@ -504,7 +512,10 @@ mod tests {
 
         assert_eq!(tree.draw_list_revision(background_node).unwrap(), 2);
         assert_eq!(tree.draw_list_revision(sibling_node).unwrap(), 1);
-        assert_eq!(tree.take_damage(), vec![RenderRect::new(0.0, 0.0, 24.0, 12.0)]);
+        assert_eq!(
+            tree.take_damage(),
+            vec![RenderRect::new(0.0, 0.0, 24.0, 12.0)]
+        );
     }
 
     #[tokio::test]
@@ -520,14 +531,14 @@ mod tests {
 mod portable_tests {
     use super::*;
     use aimer_anteros::{
-        PropertyValue, Version, WidgetDocumentView, WidgetProperty, PROPERTY_SIZED_BOX_HEIGHT,
-        PROPERTY_SIZED_BOX_WIDTH, WIDGET_SIZED_BOX,
+        PROPERTY_SIZED_BOX_HEIGHT, PROPERTY_SIZED_BOX_WIDTH, PropertyValue, Version,
+        WIDGET_SIZED_BOX, WidgetDocumentView, WidgetProperty,
     };
+    use aimer_widget::PortableWidget;
     use aimer_widget::portable::{
         PortableBuildContext, PortableBuildError, PortableLimits, PortableWidgetLimits,
         PortableWidgetResource, PortableWidgetSchema, SourceFingerprint, StableId128,
     };
-    use aimer_widget::PortableWidget;
 
     fn source(value: u8) -> SourceFingerprint {
         SourceFingerprint::new(StableId128::from_bytes([value; 16]))
@@ -538,13 +549,8 @@ mod portable_tests {
     }
 
     fn context(limits: PortableWidgetLimits) -> PortableBuildContext {
-        PortableBuildContext::new(
-            7,
-            11,
-            limits,
-            PortableLimits::new(8, 16, 64, 128, 1_024),
-        )
-        .unwrap()
+        PortableBuildContext::new(7, 11, limits, PortableLimits::new(8, 16, 64, 128, 1_024))
+            .unwrap()
     }
 
     #[test]
@@ -583,7 +589,8 @@ mod portable_tests {
             node.properties().collect::<Vec<_>>(),
             vec![
                 WidgetProperty::new(PROPERTY_SIZED_BOX_WIDTH, PropertyValue::BlobRef(0)).optional(),
-                WidgetProperty::new(PROPERTY_SIZED_BOX_HEIGHT, PropertyValue::BlobRef(1)).optional(),
+                WidgetProperty::new(PROPERTY_SIZED_BOX_HEIGHT, PropertyValue::BlobRef(1))
+                    .optional(),
             ]
         );
         assert_eq!(view.blob(0), Some(&[1, 1, 0, 0, 0, 66][..]));

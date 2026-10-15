@@ -278,7 +278,12 @@ pub(crate) fn allocate_rubick(class: u8, layout: Layout) -> NonNull<u8> {
 
     // SAFETY: the block layout includes a correctly aligned header at its
     // start, and the header is initialized before the payload is written.
-    unsafe { block.cast::<HeapHeader>().as_ptr().write(HeapHeader { origin }) };
+    unsafe {
+        block
+            .cast::<HeapHeader>()
+            .as_ptr()
+            .write(HeapHeader { origin })
+    };
     block
 }
 

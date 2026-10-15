@@ -108,8 +108,10 @@ pub fn attach_window_to_active_scene(window: &Window) {
         if !space.is_null() {
             #[allow(unexpected_cfgs)]
             let bounds: CGRect = msg_send![space, bounds];
-            if bounds.size.width.is_finite() && bounds.size.height.is_finite()
-                && bounds.size.width > 0.0 && bounds.size.height > 0.0
+            if bounds.size.width.is_finite()
+                && bounds.size.height.is_finite()
+                && bounds.size.width > 0.0
+                && bounds.size.height > 0.0
             {
                 #[allow(unexpected_cfgs)]
                 let _: () = msg_send![ui_window, setFrame: bounds];

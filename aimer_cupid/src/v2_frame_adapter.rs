@@ -3,12 +3,8 @@
 
 use crate::damage_region::{DamageRect, DamageSet};
 use crate::draw_cmd::{DrawCommand as LegacyDrawCommand, DrawList as LegacyDrawList};
-use crate::draw_cmd_v2::{
-    DrawCommand as V2DrawCommand, Rect, RenderFrame, RenderItem, RenderOp,
-};
-use crate::frame::{
-    Frame, FramePacket, FrameRenderMetadata, RetainedRenderPlan, RetainedV2Item,
-};
+use crate::draw_cmd_v2::{DrawCommand as V2DrawCommand, Rect, RenderFrame, RenderItem, RenderOp};
+use crate::frame::{Frame, FramePacket, FrameRenderMetadata, RetainedRenderPlan, RetainedV2Item};
 use crate::utilities::Mat3;
 
 /// Failures while building a retained render plan from a v2 render frame.
@@ -179,14 +175,9 @@ impl FramePacket {
                     opacity,
                     ..
                 } => {
-                    let device_bounds = logical_damage_to_device(
-                        *bounds,
-                        scale,
-                        width,
-                        height,
-                        operation_index,
-                    )?
-                    .unwrap_or(DamageRect::new(0, 0, 0, 0));
+                    let device_bounds =
+                        logical_damage_to_device(*bounds, scale, width, height, operation_index)?
+                            .unwrap_or(DamageRect::new(0, 0, 0, 0));
                     opacity_groups.push((element.get(), device_bounds));
                     operations.push(RetainedRenderPlan::opacity_group_begin_operation(
                         element.get(),
@@ -240,8 +231,12 @@ fn item_device_bounds(
         bounds = Rect::new(left, top, (right - left).max(0.0), (bottom - top).max(0.0));
     }
     let scale = f64::from(scale);
-    let left = (f64::from(bounds.x) * scale).floor().clamp(0.0, f64::from(target_width));
-    let top = (f64::from(bounds.y) * scale).floor().clamp(0.0, f64::from(target_height));
+    let left = (f64::from(bounds.x) * scale)
+        .floor()
+        .clamp(0.0, f64::from(target_width));
+    let top = (f64::from(bounds.y) * scale)
+        .floor()
+        .clamp(0.0, f64::from(target_height));
     let right = ((f64::from(bounds.x) + f64::from(bounds.width)) * scale)
         .ceil()
         .clamp(0.0, f64::from(target_width));
@@ -253,12 +248,7 @@ fn item_device_bounds(
     }
     let x = left as u32;
     let y = top as u32;
-    Some(DamageRect::new(
-        x,
-        y,
-        right as u32 - x,
-        bottom as u32 - y,
-    ))
+    Some(DamageRect::new(x, y, right as u32 - x, bottom as u32 - y))
 }
 
 /// Checks `render_frame` and maps its logical damage to device pixels.
@@ -378,7 +368,9 @@ fn logical_damage_to_device(
     let target_right = f64::from(target_width);
     let target_bottom = f64::from(target_height);
     let left = (f64::from(rect.x) * scale).floor().clamp(0.0, target_right);
-    let top = (f64::from(rect.y) * scale).floor().clamp(0.0, target_bottom);
+    let top = (f64::from(rect.y) * scale)
+        .floor()
+        .clamp(0.0, target_bottom);
     let right = ((f64::from(rect.x) + f64::from(rect.width)) * scale)
         .ceil()
         .clamp(0.0, target_right);
@@ -409,7 +401,11 @@ fn valid_rect(rect: Rect) -> bool {
 }
 
 fn valid_transform(transform: Mat3) -> bool {
-    transform.cols.iter().flatten().all(|value| value.is_finite())
+    transform
+        .cols
+        .iter()
+        .flatten()
+        .all(|value| value.is_finite())
 }
 
 /// Lowers one retained item's local list into the renderer's command
@@ -425,7 +421,12 @@ pub(crate) fn lower_retained_v2_commands(
     if !valid_rect(item.bounds)
         || !item.origin.0.is_finite()
         || !item.origin.1.is_finite()
-        || !item.transform.cols.iter().flatten().all(|value| value.is_finite())
+        || !item
+            .transform
+            .cols
+            .iter()
+            .flatten()
+            .all(|value| value.is_finite())
         || item.clip.is_some_and(|clip| !valid_rect(clip))
     {
         return Err(V2FrameAdapterError::InvalidRenderItemGeometry { element });
@@ -436,6 +437,7 @@ pub(crate) fn lower_retained_v2_commands(
     let origin_transform = Mat3::scale(scale, scale)
         .mul(&item.transform)
         .mul(&Mat3::translate(item.origin.0, item.origin.1));
+    let text_scale = scale * node_text_scale(&item.transform);
     let mut output = LegacyDrawList::new();
     output.save();
     if let Some(clip) = item.clip {
@@ -461,7 +463,7 @@ pub(crate) fn lower_retained_v2_commands(
             V2DrawCommand::DrawImageWithResource { rect, resource } => {
                 output.draw_image_with_resource(rect, resource);
             }
-            command => output.push(lower_command(command, origin_transform, scale)),
+            command => output.push(lower_command(command, origin_transform, text_scale)),
         }
     }
 
@@ -474,6 +476,32 @@ pub(crate) fn lower_retained_v2_commands(
     Ok(output.take_commands_for_composition())
 }
 
+/// The factor by which a node's transform enlarges glyphs.
+///
+/// The renderer maps a text request's position through the current transform
+/// but takes its font size and layout bounds as given, so a scaled node has to
+/// scale them before lowering. A uniform scale is exact; a non-uniform one
+/// (a stretching transition) cannot be expressed by a glyph, so the geometric
+/// mean keeps the text proportional to the area it occupies. A degenerate
+/// transform (zero, negative or non-finite scale) leaves the text unscaled
+/// rather than collapsing it. Returns exactly `1.0` for a pure translation, so
+/// unscaled nodes lower to the same sizes as before.
+#[inline]
+fn node_text_scale(transform: &Mat3) -> f32 {
+    let x = transform.cols[0][0].hypot(transform.cols[0][1]);
+    let y = transform.cols[1][0].hypot(transform.cols[1][1]);
+    let scale = (x * y).sqrt();
+    if scale.is_finite() && scale > 0.0 && transform.cols[0][0] * transform.cols[1][1]
+        - transform.cols[0][1] * transform.cols[1][0] > 0.0
+    {
+        scale
+    } else {
+        1.0
+    }
+}
+
+/// Lowers one retained command. `scale` converts logical to device pixels for
+/// text; the renderer applies `origin` to positions and geometry itself.
 fn lower_command(command: V2DrawCommand, origin: Mat3, scale: f32) -> LegacyDrawCommand {
     match command {
         V2DrawCommand::FillRect {
@@ -572,7 +600,10 @@ fn lower_command(command: V2DrawCommand, origin: Mat3, scale: f32) -> LegacyDraw
             destination,
             overrides,
         },
-        V2DrawCommand::DrawCustom { pipeline_name, data } => LegacyDrawCommand::Custom {
+        V2DrawCommand::DrawCustom {
+            pipeline_name,
+            data,
+        } => LegacyDrawCommand::Custom {
             pipeline_name: pipeline_name.to_string(),
             data: Box::new(data.to_vec()),
         },
@@ -619,12 +650,17 @@ fn lower_command(command: V2DrawCommand, origin: Mat3, scale: f32) -> LegacyDraw
 mod rounded_clip_tests;
 
 #[cfg(test)]
+mod text_scale_tests;
+
+#[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
     use crate::damage_region::{DamageRect, DamageSet};
     use crate::draw_cmd::{DrawCommand as LegacyDrawCommand, DrawList as LegacyDrawList};
-    use crate::draw_cmd_v2::{DrawCommand, Rect, RenderFrame, RenderOp, RenderPaintSource, RenderTree};
+    use crate::draw_cmd_v2::{
+        DrawCommand, Rect, RenderFrame, RenderOp, RenderPaintSource, RenderTree,
+    };
     use crate::frame::{
         Frame, FramePacket, FrameRenderMetadata, RetainedRenderOperationKind, RetainedV2Item,
     };
@@ -706,7 +742,12 @@ mod tests {
                 draw_glyphs: true,
             },
         ];
-        tree.context(child).unwrap().begin_recording().unwrap().commit(commands).unwrap();
+        tree.context(child)
+            .unwrap()
+            .begin_recording()
+            .unwrap()
+            .commit(commands)
+            .unwrap();
 
         let packet = FramePacket::from_v2_direct_with_frame(
             RenderFrame {
@@ -719,7 +760,10 @@ mod tests {
         .unwrap();
 
         assert_eq!((packet.frame().width, packet.frame().height), (128, 128));
-        assert_eq!(packet.metadata().damage().regions(), &[DamageRect::new(3, 4, 7, 9)]);
+        assert_eq!(
+            packet.metadata().damage().regions(),
+            &[DamageRect::new(3, 4, 7, 9)]
+        );
         assert_eq!(packet.metadata().surface_identity(), 7);
 
         // The plan keeps each local list as recorded; lowering is what the
@@ -736,19 +780,26 @@ mod tests {
             })
             .flatten()
             .collect::<Vec<_>>();
-        let transform = commands.iter().find_map(|command| match command {
-            LegacyDrawCommand::SetTransform { matrix }
-                if matrix.transform_point(0.0, 0.0) == (22.5, 39.0) =>
-            {
-                Some(matrix)
-            }
-            _ => None,
-        }).expect("element origin transform");
+        let transform = commands
+            .iter()
+            .find_map(|command| match command {
+                LegacyDrawCommand::SetTransform { matrix }
+                    if matrix.transform_point(0.0, 0.0) == (22.5, 39.0) =>
+                {
+                    Some(matrix)
+                }
+                _ => None,
+            })
+            .expect("element origin transform");
         assert_eq!(transform.transform_point(0.0, 0.0), (22.5, 39.0));
-        let local_transform = commands.iter().filter_map(|command| match command {
-            LegacyDrawCommand::SetTransform { matrix } => Some(matrix),
-            _ => None,
-        }).nth(2).expect("composed local transform");
+        let local_transform = commands
+            .iter()
+            .filter_map(|command| match command {
+                LegacyDrawCommand::SetTransform { matrix } => Some(matrix),
+                _ => None,
+            })
+            .nth(2)
+            .expect("composed local transform");
         assert_eq!(local_transform.transform_point(0.0, 0.0), (25.5, 43.5));
         assert!(commands.iter().any(|command| matches!(
             command,
@@ -900,7 +951,11 @@ mod tests {
             "group damage outside the children only replays the parent list"
         );
         let revisions = [root, first, second].map(|node| {
-            packet.render_plan().unwrap().local_v2_revision(node).unwrap()
+            packet
+                .render_plan()
+                .unwrap()
+                .local_v2_revision(node)
+                .unwrap()
         });
         let _ = tree.take_damage();
         tree.set_opacity(root, 0.25).unwrap();
@@ -1061,18 +1116,29 @@ mod tests {
         let widened = FramePacket::full_target_if_damage_promotes(&large, 1.0, 10, 10)
             .expect("two thirds of the target promotes to a full repaint");
         assert_eq!(widened, Rect::new(0.0, 0.0, 10.0, 10.0));
-        assert!(FramePacket::from_v2_direct(
-            RenderFrame { damage: vec![widened], operations: Vec::new() },
-            FrameRenderMetadata::new(1.0, 0, 0, 0, 0, DamageSet::new(10, 10)),
-        )
-        .is_ok());
+        assert!(
+            FramePacket::from_v2_direct(
+                RenderFrame {
+                    damage: vec![widened],
+                    operations: Vec::new()
+                },
+                FrameRenderMetadata::new(1.0, 0, 0, 0, 0, DamageSet::new(10, 10)),
+            )
+            .is_ok()
+        );
 
         let small = [Rect::new(0.0, 0.0, 4.0, 4.0)];
-        assert_eq!(FramePacket::full_target_if_damage_promotes(&small, 1.0, 10, 10), None);
+        assert_eq!(
+            FramePacket::full_target_if_damage_promotes(&small, 1.0, 10, 10),
+            None
+        );
         let scaled = FramePacket::full_target_if_damage_promotes(&large, 2.0, 20, 20)
             .expect("the same fraction promotes on a scaled target");
         assert_eq!(scaled, Rect::new(0.0, 0.0, 10.0, 10.0));
-        assert_eq!(FramePacket::full_target_if_damage_promotes(&large, 0.0, 10, 10), None);
+        assert_eq!(
+            FramePacket::full_target_if_damage_promotes(&large, 0.0, 10, 10),
+            None
+        );
     }
 
     #[test]
@@ -1113,7 +1179,10 @@ mod tests {
         };
 
         assert_eq!(pipeline_name, "test.pipeline");
-        assert_eq!(data.downcast_ref::<Vec<u8>>().unwrap().as_slice(), payload.as_ref());
+        assert_eq!(
+            data.downcast_ref::<Vec<u8>>().unwrap().as_slice(),
+            payload.as_ref()
+        );
     }
 
     fn record_commands(
@@ -1164,14 +1233,23 @@ mod tests {
     fn textures_drawn_directly_by_planned_items_are_referenced_by_the_frame() {
         let tree = RenderTree::new();
         let root = tree.add_root(Rect::new(0.0, 0.0, 64.0, 64.0)).unwrap();
-        let child = tree.add_child(root, Rect::new(0.0, 0.0, 32.0, 32.0)).unwrap();
+        let child = tree
+            .add_child(root, Rect::new(0.0, 0.0, 32.0, 32.0))
+            .unwrap();
         record_commands(&tree, root, vec![image(5), image(5)]);
-        record_commands(&tree, child, vec![fill(Color::rgba8(1, 2, 3, 255)), image(9)]);
+        record_commands(
+            &tree,
+            child,
+            vec![fill(Color::rgba8(1, 2, 3, 255)), image(9)],
+        );
 
         let packet = packet_for(&tree);
 
         // Repeats collapse: the frame references a texture once.
-        assert_eq!(packet.frame().draw_list.referenced_texture_ids(), vec![5, 9]);
+        assert_eq!(
+            packet.frame().draw_list.referenced_texture_ids(),
+            vec![5, 9]
+        );
     }
 
     #[test]
@@ -1180,7 +1258,13 @@ mod tests {
         let root = tree.add_root(Rect::new(0.0, 0.0, 64.0, 64.0)).unwrap();
         record_commands(&tree, root, vec![fill(Color::rgba8(1, 2, 3, 255))]);
 
-        assert!(packet_for(&tree).frame().draw_list.referenced_texture_ids().is_empty());
+        assert!(
+            packet_for(&tree)
+                .frame()
+                .draw_list
+                .referenced_texture_ids()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -1188,13 +1272,25 @@ mod tests {
         let tree = RenderTree::new();
         let root = tree.add_root(Rect::new(0.0, 0.0, 64.0, 64.0)).unwrap();
         record_commands(&tree, root, vec![image(5), image(6)]);
-        assert_eq!(packet_for(&tree).frame().draw_list.referenced_texture_ids(), vec![5, 6]);
+        assert_eq!(
+            packet_for(&tree).frame().draw_list.referenced_texture_ids(),
+            vec![5, 6]
+        );
 
         record_commands(&tree, root, vec![image(6), image(7)]);
-        assert_eq!(packet_for(&tree).frame().draw_list.referenced_texture_ids(), vec![6, 7]);
+        assert_eq!(
+            packet_for(&tree).frame().draw_list.referenced_texture_ids(),
+            vec![6, 7]
+        );
 
         record_commands(&tree, root, vec![fill(Color::rgba8(9, 9, 9, 255))]);
-        assert!(packet_for(&tree).frame().draw_list.referenced_texture_ids().is_empty());
+        assert!(
+            packet_for(&tree)
+                .frame()
+                .draw_list
+                .referenced_texture_ids()
+                .is_empty()
+        );
     }
 
     fn record_fill(tree: &RenderTree, node: crate::draw_cmd_v2::RenderNodeId, color: Color) {

@@ -1,0 +1,35 @@
+{
+  "$schema": "../icon.schema.json",
+  "contributors": [
+    "karsa-mistmere",
+    "jguddas",
+    "ericfennis"
+  ],
+  "use-cases": [
+    "Representing weapons or melee attacks in games",
+    "Indicating combat abilities in character interfaces",
+    "Showing fantasy or medieval equipment in inventories",
+    "Marking offensive actions in strategy tools"
+  ],
+  "tags": [
+    "battle",
+    "challenge",
+    "combat",
+    "duel",
+    "fantasy",
+    "game",
+    "knight",
+    "melee",
+    "medieval",
+    "offense",
+    "rpg",
+    "sharp",
+    "weapon",
+    "war",
+    "warrior"
+  ],
+  "categories": [
+    "gaming",
+    "tools"
+  ]
+}

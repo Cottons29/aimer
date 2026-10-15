@@ -1,0 +1,25 @@
+{
+  "$schema": "../icon.schema.json",
+  "contributors": [
+    "colebemis",
+    "csandman",
+    "ericfennis",
+    "karsa-mistmere",
+    "jguddas"
+  ],
+  "use-cases": [],
+  "tags": [
+    "trolley",
+    "cart",
+    "basket",
+    "e-commerce",
+    "store",
+    "purchase",
+    "products",
+    "items",
+    "ingredients"
+  ],
+  "categories": [
+    "shopping"
+  ]
+}

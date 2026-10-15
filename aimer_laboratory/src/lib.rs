@@ -69,9 +69,9 @@
 
 mod element;
 pub mod experiment;
-mod widget;
 pub mod new_event_tree;
 pub mod v2_render;
+mod widget;
 
 pub use crate::element::{AnyElement, Element};
 pub use crate::widget::Widget;

@@ -14,8 +14,7 @@ const COLD_BATCH_SIZE: usize = 16;
 const PARALLEL_WORKERS: usize = 4;
 const SAMPLE: &str =
     "Aimer shapes styled text into glyph runs before wrapping and painting the markdown document. ";
-const UNICODE_SAMPLE: &str =
-    "éclair سلام नमस्ते שלום 你好世界 សួស្តី العربية עברית ";
+const UNICODE_SAMPLE: &str = "éclair سلام नमस्ते שלום 你好世界 សួស្តី العربية עברית ";
 
 fn benchmark(iterations: usize, mut operation: impl FnMut()) -> Duration {
     let start = Instant::now();
@@ -188,7 +187,11 @@ fn main() {
     let cold_parallel_average = average(cold_parallel, iterations);
     let cold_speedup = cold_serial_average.as_secs_f64() / cold_parallel_average.as_secs_f64();
 
-    let profile = if cfg!(debug_assertions) { "debug" } else { "release" };
+    let profile = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    };
     println!(
         "{profile} text shaping benchmark: {} characters, {iterations} iterations",
         text.chars().count()

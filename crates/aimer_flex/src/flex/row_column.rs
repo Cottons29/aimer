@@ -35,10 +35,7 @@ use crate::flex::{BoxAlignment, FlexDirection, JustifyContent, OverflowBehavior}
 ///                 ]);
 /// ```
 #[derive(PortableWidget)]
-#[portable_widget(
-    id = "aimer_flex::flex::Column",
-    schema_only
-)]
+#[portable_widget(id = "aimer_flex::flex::Column", schema_only)]
 pub struct Column<W = RequiredChild> {
     #[portable_optional]
     vertical_alignment: BoxAlignment,
@@ -236,10 +233,7 @@ impl<W: Widget + 'static> Widget for Column<W> {
 /// clipping. Unlike [`Column`], an empty `Row::new()` is already a valid erased
 /// widget and supports incremental insertion.
 #[derive(PortableWidget)]
-#[portable_widget(
-    id = "aimer_flex::flex::Row",
-    schema_only
-)]
+#[portable_widget(id = "aimer_flex::flex::Row", schema_only)]
 pub struct Row<W: Widget + 'static = AnyWidget> {
     #[portable_optional]
     vertical_alignment: BoxAlignment,
@@ -350,7 +344,6 @@ impl Row {
     /// ```
     #[inline]
     pub fn list<T>(self, items: impl IntoIterator<Item = T>) -> FlexList<T> {
-
         FlexList::new(
             FlexDirection::Row,
             self.vertical_alignment,
@@ -501,10 +494,9 @@ mod tests {
             PROPERTY_COLUMN_GAPS, PROPERTY_COLUMN_HORIZONTAL_ALIGNMENT,
             PROPERTY_COLUMN_JUSTIFY_CONTENT, PROPERTY_COLUMN_OVERFLOW,
             PROPERTY_COLUMN_VERTICAL_ALIGNMENT, PROPERTY_ROW_GAPS,
-            PROPERTY_ROW_HORIZONTAL_ALIGNMENT, PROPERTY_ROW_JUSTIFY_CONTENT,
-            PROPERTY_ROW_OVERFLOW, PROPERTY_ROW_VERTICAL_ALIGNMENT, PROPERTY_SIZED_BOX_WIDTH,
-            PropertyValue, Version, WIDGET_COLUMN, WIDGET_ROW, WIDGET_SIZED_BOX,
-            WidgetDocumentView, WidgetProperty,
+            PROPERTY_ROW_HORIZONTAL_ALIGNMENT, PROPERTY_ROW_JUSTIFY_CONTENT, PROPERTY_ROW_OVERFLOW,
+            PROPERTY_ROW_VERTICAL_ALIGNMENT, PROPERTY_SIZED_BOX_WIDTH, PropertyValue, Version,
+            WIDGET_COLUMN, WIDGET_ROW, WIDGET_SIZED_BOX, WidgetDocumentView, WidgetProperty,
         };
         use aimer_widget::base::BuildContext;
         use aimer_widget::portable::{
@@ -514,9 +506,7 @@ mod tests {
         };
         use aimer_widget::{AnyElement, Key, PortableWidget, Widget};
 
-        use super::{
-            BoxAlignment, Column, JustifyContent, LayoutSpacing, OverflowBehavior, Row,
-        };
+        use super::{BoxAlignment, Column, JustifyContent, LayoutSpacing, OverflowBehavior, Row};
 
         const SCHEMA_V1: Version = Version::new(1, 0);
 
@@ -554,7 +544,6 @@ mod tests {
             fn to_element(self, _ctx: &BuildContext) -> AnyElement {
                 panic!("portable test leaf must not enter native construction")
             }
-
         }
 
         impl PortableWidget for PortableLeaf {
@@ -567,10 +556,7 @@ mod tests {
                 let properties: Vec<_> = self
                     .width
                     .map(|width| {
-                        WidgetProperty::new(
-                            PROPERTY_SIZED_BOX_WIDTH,
-                            PropertyValue::F64(width),
-                        )
+                        WidgetProperty::new(PROPERTY_SIZED_BOX_WIDTH, PropertyValue::F64(width))
                     })
                     .into_iter()
                     .collect();
@@ -590,13 +576,8 @@ mod tests {
         }
 
         fn context(limits: PortableWidgetLimits) -> PortableBuildContext {
-            PortableBuildContext::new(
-                7,
-                11,
-                limits,
-                PortableLimits::new(8, 16, 64, 128, 1_024),
-            )
-            .unwrap()
+            PortableBuildContext::new(7, 11, limits, PortableLimits::new(8, 16, 64, 128, 1_024))
+                .unwrap()
         }
 
         fn limits() -> PortableWidgetLimits {
@@ -623,7 +604,8 @@ mod tests {
             let seen_sources = Rc::new(RefCell::new(Vec::new()));
             let child_key = Key::fixed([0x31; 16]);
             let mut ctx = context(limits());
-            let root = Column::new().children([
+            let root = Column::new()
+                .children([
                     PortableLeaf::new(Rc::clone(&seen_sources)).keyed(child_key.clone()),
                     PortableLeaf::new(Rc::clone(&seen_sources)),
                 ])
@@ -641,7 +623,10 @@ mod tests {
             assert_eq!(view.root_node(), 2);
             assert_eq!(view.node_count(), 3);
             assert_eq!(view.node(0).unwrap().widget_type(), WIDGET_SIZED_BOX);
-            assert_eq!(view.node(0).unwrap().key().unwrap().as_bytes(), &keyed_slot.to_bytes());
+            assert_eq!(
+                view.node(0).unwrap().key().unwrap().as_bytes(),
+                &keyed_slot.to_bytes()
+            );
             assert_eq!(view.node(1).unwrap().widget_type(), WIDGET_SIZED_BOX);
             let root = view.node(2).unwrap();
             assert_eq!(root.widget_type(), WIDGET_COLUMN);
@@ -726,11 +711,8 @@ mod tests {
                 .unwrap();
             let column_document = column_context.finish_document(column).unwrap();
             let column_bytes = column_document.encode().unwrap();
-            let column_view = WidgetDocumentView::decode(
-                &column_bytes,
-                column_document.model_limits(),
-            )
-            .unwrap();
+            let column_view =
+                WidgetDocumentView::decode(&column_bytes, column_document.model_limits()).unwrap();
             let column = column_view.node(0).unwrap();
             assert_eq!(column.properties().count(), 5);
             assert!(column.properties().any(|property| {
@@ -765,11 +747,8 @@ mod tests {
                 .unwrap();
             let row_document = row_context.finish_document(row).unwrap();
             let row_bytes = row_document.encode().unwrap();
-            let row_view = WidgetDocumentView::decode(
-                &row_bytes,
-                row_document.model_limits(),
-            )
-            .unwrap();
+            let row_view =
+                WidgetDocumentView::decode(&row_bytes, row_document.model_limits()).unwrap();
             let row = row_view.node(0).unwrap();
             assert!(row.properties().any(|property| {
                 property.property_id() == PROPERTY_ROW_VERTICAL_ALIGNMENT

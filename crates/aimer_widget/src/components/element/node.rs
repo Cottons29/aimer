@@ -111,7 +111,8 @@ impl<E: Element + 'static> ElementNode<E> {
                 || take_local_paint_invalidated(self.id.get())
                 || self.element.local_v2_paint_needs_recording(ctx))
         {
-            let _ = scope.tree.invalidate_paint(render_node);
+            // Recorded again, and damaged only if the picture turns out to differ.
+            let _ = scope.tree.refresh_paint(render_node);
         }
         let needs_recording = source == RenderPaintSource::Unresolved
             || scope.tree.needs_recording(render_node).unwrap_or(true);
@@ -659,6 +660,16 @@ impl<E: Element + 'static> EventElement for ElementNode<E> {
         self.element.has_overlapping_hit_targets()
     }
 
+    #[inline]
+    fn occludes_pointer_at(&self, pos: Vec2d) -> bool {
+        self.element.occludes_pointer_at(pos)
+    }
+
+    #[inline]
+    fn occlusion_children_at<'a>(&'a self, pos: Vec2d, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        self.element.occlusion_children_at(pos, visitor);
+    }
+
 }
 
 impl<E: Element + 'static> Drawable for ElementNode<E> {
@@ -1023,6 +1034,16 @@ impl EventElement for AnyElement {
         self.as_ref().has_overlapping_hit_targets()
     }
 
+    #[inline]
+    fn occludes_pointer_at(&self, pos: Vec2d) -> bool {
+        self.as_ref().occludes_pointer_at(pos)
+    }
+
+    #[inline]
+    fn occlusion_children_at<'a>(&'a self, pos: Vec2d, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        self.as_ref().occlusion_children_at(pos, visitor);
+    }
+
 }
 
 impl Drawable for AnyElement {
@@ -1343,6 +1364,16 @@ impl EventElement for Box<dyn Element> {
     #[inline]
     fn has_overlapping_hit_targets(&self) -> bool {
         self.as_ref().has_overlapping_hit_targets()
+    }
+
+    #[inline]
+    fn occludes_pointer_at(&self, pos: Vec2d) -> bool {
+        self.as_ref().occludes_pointer_at(pos)
+    }
+
+    #[inline]
+    fn occlusion_children_at<'a>(&'a self, pos: Vec2d, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        self.as_ref().occlusion_children_at(pos, visitor);
     }
 
 }

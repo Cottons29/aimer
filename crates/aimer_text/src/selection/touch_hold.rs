@@ -438,7 +438,10 @@ mod tests {
         let now = AnimInstant::now();
         gate.press(pointer(0), 3, at(10.0, 10.0), at(0.0, 0.0), now);
 
-        assert_eq!(gate.poll(pointer(0), at(10.0, 10.0), now), TouchHold::Waiting);
+        assert_eq!(
+            gate.poll(pointer(0), at(10.0, 10.0), now),
+            TouchHold::Waiting
+        );
     }
 
     #[test]
@@ -461,8 +464,14 @@ mod tests {
         gate.press(pointer(0), 3, at(10.0, 10.0), at(0.0, 0.0), now);
         let later = now + TOUCH_SELECTION_HOLD;
 
-        assert_eq!(gate.poll(pointer(0), at(10.0, 10.0), later), TouchHold::Entered(3));
-        assert_eq!(gate.poll(pointer(0), at(10.0, 10.0), later), TouchHold::Idle);
+        assert_eq!(
+            gate.poll(pointer(0), at(10.0, 10.0), later),
+            TouchHold::Entered(3)
+        );
+        assert_eq!(
+            gate.poll(pointer(0), at(10.0, 10.0), later),
+            TouchHold::Idle
+        );
     }
 
     #[test]

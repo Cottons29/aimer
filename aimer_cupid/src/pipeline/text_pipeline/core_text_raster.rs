@@ -48,6 +48,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use crate::text_pipeline::font_resolver::mapped_font_file;
+use crate::text_pipeline::glyph_rasterizer::RasterizedGlyph;
 use objc2_core_foundation::{CFDictionary, CFNumber, CFRetained, CFString, CFURL, CGPoint, CGRect};
 use objc2_core_graphics::{
     CGBitmapContextCreate, CGBitmapContextGetBytesPerRow, CGColorSpace, CGContext, CGGlyph,
@@ -58,8 +60,6 @@ use objc2_core_text::{
     kCTFontNameAttribute, kCTFontVariationAxisDefaultValueKey, kCTFontVariationAxisIdentifierKey,
     kCTFontVariationAxisMaximumValueKey, kCTFontVariationAxisMinimumValueKey,
 };
-use crate::text_pipeline::font_resolver::mapped_font_file;
-use crate::text_pipeline::glyph_rasterizer::RasterizedGlyph;
 
 /// Point size used when only a yes/no answer about a glyph is needed.
 ///
@@ -126,10 +126,16 @@ thread_local! {
 pub(crate) fn draws_glyph(path: &Path, collection_index: u32, glyph_id: u16) -> bool {
     // Emptiness does not depend on the weight a glyph is drawn at, so the
     // probe always asks for the neutral one and shares its font.
-    with_font(path, collection_index, PROBE_FONT_SIZE, NORMAL_TEXT_WEIGHT, |font| {
-        let bounds = glyph_bounds(font, glyph_id)?;
-        (bounds.size.width > 0.0 && bounds.size.height > 0.0).then_some(())
-    })
+    with_font(
+        path,
+        collection_index,
+        PROBE_FONT_SIZE,
+        NORMAL_TEXT_WEIGHT,
+        |font| {
+            let bounds = glyph_bounds(font, glyph_id)?;
+            (bounds.size.width > 0.0 && bounds.size.height > 0.0).then_some(())
+        },
+    )
     .is_some()
 }
 
@@ -190,12 +196,7 @@ fn glyph_bounds(font: &CTFont, glyph_id: u16) -> Option<CGRect> {
     // null for `bounding_rects` requests only the overall rectangle, which is
     // the return value.
     let bounds = unsafe {
-        font.bounding_rects_for_glyphs(
-            CTFontOrientation::Default,
-            glyphs,
-            std::ptr::null_mut(),
-            1,
-        )
+        font.bounding_rects_for_glyphs(CTFontOrientation::Default, glyphs, std::ptr::null_mut(), 1)
     };
     (bounds.size.width.is_finite()
         && bounds.size.height.is_finite()
@@ -216,7 +217,10 @@ fn pixel_box(bounds: CGRect) -> Option<(f32, f32, u32, u32)> {
 
     let width = (right.ceil() - left) as i64;
     let height = (top.ceil() - bottom) as i64;
-    if width <= 0 || height <= 0 || width > MAX_GLYPH_EXTENT as i64 || height > MAX_GLYPH_EXTENT as i64
+    if width <= 0
+        || height <= 0
+        || width > MAX_GLYPH_EXTENT as i64
+        || height > MAX_GLYPH_EXTENT as i64
     {
         return None;
     }
@@ -435,7 +439,12 @@ fn with_font<T>(
     if font_size <= 0.0 {
         return None;
     }
-    let key = (path.to_path_buf(), collection_index, (font_size * 10.0) as u32, weight);
+    let key = (
+        path.to_path_buf(),
+        collection_index,
+        (font_size * 10.0) as u32,
+        weight,
+    );
     FONT_CACHE.with_borrow_mut(|cache| {
         let font = cache
             .entry(key)
@@ -574,19 +583,17 @@ mod tests {
             '吗',
             crate::text_pipeline::font_resolver::REGULAR_WEIGHT,
         )
-            .into_iter()
-            .find_map(|path| {
-                let data = mapped_font_file(&path)?;
-                (0..64).find_map(|index| {
-                    let face = crate::text_pipeline::aimer_font::SfntFace::from_bytes(
-                        data.as_ref(),
-                        index,
-                    )
-                    .ok()?;
-                    let glyph_id = face.glyph_index('吗' as u32).ok().flatten()?;
-                    (glyph_id != 0).then_some((path.clone(), index, glyph_id))
-                })
+        .into_iter()
+        .find_map(|path| {
+            let data = mapped_font_file(&path)?;
+            (0..64).find_map(|index| {
+                let face =
+                    crate::text_pipeline::aimer_font::SfntFace::from_bytes(data.as_ref(), index)
+                        .ok()?;
+                let glyph_id = face.glyph_index('吗' as u32).ok().flatten()?;
+                (glyph_id != 0).then_some((path.clone(), index, glyph_id))
             })
+        })
     }
 
     // A glyph whose row is not a whole number of alignment units is the case
@@ -671,8 +678,7 @@ mod tests {
             simplified_chinese_face().expect("Apple platforms always carry a Chinese face");
         let descriptor = face_descriptor(&path, index).expect("the face has a descriptor");
         // SAFETY: a null matrix requests the identity transform.
-        let unpinned =
-            unsafe { CTFont::with_font_descriptor(&descriptor, 64.0, std::ptr::null()) };
+        let unpinned = unsafe { CTFont::with_font_descriptor(&descriptor, 64.0, std::ptr::null()) };
         let Some((minimum, default, _)) = weight_axis_range(&unpinned) else {
             return; // A static face has no heavier default to pin down.
         };
@@ -681,10 +687,22 @@ mod tests {
         }
 
         let default_ink = ink(&unpinned, glyph_id);
-        let glyph = rasterize_glyph(&path, index, glyph_id, 64.0, NORMAL_TEXT_WEIGHT, false, 64.0)
-            .expect("the platform must draw the face");
-        let pinned_ink =
-            glyph.bitmap.iter().map(|coverage| *coverage as f64).sum::<f64>() / 255.0;
+        let glyph = rasterize_glyph(
+            &path,
+            index,
+            glyph_id,
+            64.0,
+            NORMAL_TEXT_WEIGHT,
+            false,
+            64.0,
+        )
+        .expect("the platform must draw the face");
+        let pinned_ink = glyph
+            .bitmap
+            .iter()
+            .map(|coverage| *coverage as f64)
+            .sum::<f64>()
+            / 255.0;
 
         assert!(
             pinned_ink < default_ink * 0.95,
@@ -712,7 +730,12 @@ mod tests {
         let coverage = |weight: u16| {
             let glyph = rasterize_glyph(&path, index, glyph_id, 64.0, weight, false, 64.0)
                 .expect("the platform must draw the face");
-            glyph.bitmap.iter().map(|coverage| *coverage as f64).sum::<f64>() / 255.0
+            glyph
+                .bitmap
+                .iter()
+                .map(|coverage| *coverage as f64)
+                .sum::<f64>()
+                / 255.0
         };
 
         let light = coverage(300);
@@ -754,8 +777,16 @@ mod tests {
             "{path:?}#{index} glyph {glyph_id} reported as undrawable"
         );
 
-        let glyph = rasterize_glyph(&path, index, glyph_id, 32.0, NORMAL_TEXT_WEIGHT, false, 32.0)
-            .expect("the platform must draw a face it reports as drawable");
+        let glyph = rasterize_glyph(
+            &path,
+            index,
+            glyph_id,
+            32.0,
+            NORMAL_TEXT_WEIGHT,
+            false,
+            32.0,
+        )
+        .expect("the platform must draw a face it reports as drawable");
         assert!(!glyph.is_color);
         assert_eq!(glyph.bitmap.len(), (glyph.width * glyph.height) as usize);
         assert!(
@@ -763,7 +794,12 @@ mod tests {
             "the coverage mask is blank"
         );
         // An ideograph is roughly square and fills its em box.
-        assert!(glyph.width >= 16 && glyph.height >= 16, "{}x{}", glyph.width, glyph.height);
+        assert!(
+            glyph.width >= 16 && glyph.height >= 16,
+            "{}x{}",
+            glyph.width,
+            glyph.height
+        );
     }
 
     #[test]
@@ -772,9 +808,9 @@ mod tests {
             '😀',
             crate::text_pipeline::font_resolver::REGULAR_WEIGHT,
         )
-            .into_iter()
-            .next()
-            .expect("emoji resolve to a font file");
+        .into_iter()
+        .next()
+        .expect("emoji resolve to a font file");
         let data = mapped_font_file(&path).expect("the emoji file is readable");
         let face = crate::text_pipeline::aimer_font::SfntFace::from_bytes(data.as_ref(), 0)
             .expect("the emoji file holds a face");
@@ -787,7 +823,10 @@ mod tests {
             .expect("the platform must draw color emoji");
 
         assert!(glyph.is_color);
-        assert_eq!(glyph.bitmap.len(), (glyph.width * glyph.height * 4) as usize);
+        assert_eq!(
+            glyph.bitmap.len(),
+            (glyph.width * glyph.height * 4) as usize
+        );
         assert!(
             glyph.bitmap.chunks_exact(4).any(|pixel| pixel[3] > 0),
             "the emoji artwork is fully transparent"
@@ -809,10 +848,26 @@ mod tests {
         let (path, index, glyph_id) =
             simplified_chinese_face().expect("Apple platforms always carry a Chinese face");
 
-        let small = rasterize_glyph(&path, index, glyph_id, 16.0, NORMAL_TEXT_WEIGHT, false, 16.0)
-            .expect("drawn");
-        let large = rasterize_glyph(&path, index, glyph_id, 64.0, NORMAL_TEXT_WEIGHT, false, 64.0)
-            .expect("drawn");
+        let small = rasterize_glyph(
+            &path,
+            index,
+            glyph_id,
+            16.0,
+            NORMAL_TEXT_WEIGHT,
+            false,
+            16.0,
+        )
+        .expect("drawn");
+        let large = rasterize_glyph(
+            &path,
+            index,
+            glyph_id,
+            64.0,
+            NORMAL_TEXT_WEIGHT,
+            false,
+            64.0,
+        )
+        .expect("drawn");
 
         assert!(
             large.width > small.width && large.height > small.height,
@@ -829,8 +884,16 @@ mod tests {
         let (path, index, glyph_id) =
             simplified_chinese_face().expect("Apple platforms always carry a Chinese face");
 
-        let glyph = rasterize_glyph(&path, index, glyph_id, 24.0, NORMAL_TEXT_WEIGHT, false, 17.5)
-            .expect("drawn");
+        let glyph = rasterize_glyph(
+            &path,
+            index,
+            glyph_id,
+            24.0,
+            NORMAL_TEXT_WEIGHT,
+            false,
+            17.5,
+        )
+        .expect("drawn");
 
         assert_eq!(glyph.advance_width, 17.5);
     }
@@ -858,13 +921,16 @@ mod tests {
 
     #[test]
     fn un_premultiply_preserves_vector_boundaries_and_incomplete_pixels() {
-        let pixels = [17, 99, 231, 0, 64, 32, 16, 128,
-            1, 128, 255, 255, 255, 13, 7, 1];
+        let pixels = [
+            17, 99, 231, 0, 64, 32, 16, 128, 1, 128, 255, 255, 255, 13, 7, 1,
+        ];
         let mut bitmap = pixels.repeat(5);
         bitmap.extend_from_slice(&[11, 22, 33]);
         un_premultiply(&mut bitmap);
-        let mut expected = [17, 99, 231, 0, 128, 64, 32, 128,
-            1, 128, 255, 255, 255, 255, 255, 1].repeat(5);
+        let mut expected = [
+            17, 99, 231, 0, 128, 64, 32, 128, 1, 128, 255, 255, 255, 255, 255, 1,
+        ]
+        .repeat(5);
         expected.extend_from_slice(&[11, 22, 33]);
         assert_eq!(bitmap, expected);
     }

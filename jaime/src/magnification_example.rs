@@ -9,8 +9,9 @@ use aimer::style::{
     Stroke, TextStyle,
 };
 use aimer::{
-    AimerApp, AnyWidget, BuildContext, ChildBuilder, Column, Container, DecorationBox, Magnification,
-    MagnificationStyle as Style, Positioned, Row, Stack, State, StateUpdater, StatefulWidget, Text, Widget,
+    AimerApp, AnyWidget, BorderRadius, BuildContext, ChildBuilder, Column, Container, Decoration,
+    DecorationBox, Magnification, MagnificationStyle as Style, Positioned, Row, Stack, State, StateUpdater,
+    StatefulWidget, Text, Widget,
 };
 
 /// Starts the standalone magnification example.
@@ -151,14 +152,15 @@ impl State<MagnificationExample> for MagnificationExampleState {
                                 .top(92)
                                 .child(
                                     DecorationBox::new()
-                                        .decoration(
+                                        .decoration(vec![
+                                            BorderRadius::from(16.0).notype(),
                                             Magnification::new()
                                                 .style(self.style)
                                                 .bulge(self.bulge as f32)
                                                 .zoom(self.zoom as f32)
                                                 .thickness(self.thickness as f32)
-                                                .corner_radius(16.0),
-                                        )
+                                                .notype(),
+                                        ])
                                         .child(
                                             self.foreground
                                                 .clone(),
@@ -172,27 +174,51 @@ impl State<MagnificationExample> for MagnificationExampleState {
     }
 }
 
-fn effect_checkbox(label: &'static str, flag: Style, style: Style, updater: StateUpdater<MagnificationExampleState>) -> AnyWidget {
+fn effect_checkbox(
+    label: &'static str,
+    flag: Style,
+    style: Style,
+    updater: StateUpdater<MagnificationExampleState>,
+) -> AnyWidget {
     Checkbox::new()
         .with_label(label)
-        .with_value(if style.contains(flag) { CheckboxValue::Checked } else { CheckboxValue::Unchecked })
-        .on_change(move |value| updater.set_state(move |state| {
-            if value == CheckboxValue::Checked { state.style |= flag; }
-            else { state.style &= !flag; }
-        }))
+        .with_value(if style.contains(flag) {
+            CheckboxValue::Checked
+        } else {
+            CheckboxValue::Unchecked
+        })
+        .on_change(move |value| {
+            updater.set_state(move |state| {
+                if value == CheckboxValue::Checked {
+                    state.style |= flag;
+                } else {
+                    state.style &= !flag;
+                }
+            })
+        })
         .boxed()
 }
 
-fn style_select(label: &'static str, mask: Style, choices: [(&'static str, Style); 3], style: Style,
-    updater: StateUpdater<MagnificationExampleState>) -> AnyWidget {
-    Container::new().width(200).child(
-        Select::new()
-            .try_options(choices.map(|(label, value)| ChoiceOption::new(label, label, value)))
-            .expect("magnification choices have unique keys")
-            .with_label(label)
-            .with_selected(Some(style & mask))
-            .on_change(move |value| updater.set_state(move |state| state.style = (state.style & !mask) | value)),
-    ).boxed()
+fn style_select(
+    label: &'static str,
+    mask: Style,
+    choices: [(&'static str, Style); 3],
+    style: Style,
+    updater: StateUpdater<MagnificationExampleState>,
+) -> AnyWidget {
+    Container::new()
+        .width(200)
+        .child(
+            Select::new()
+                .try_options(choices.map(|(label, value)| ChoiceOption::new(label, label, value)))
+                .expect("magnification choices have unique keys")
+                .with_label(label)
+                .with_selected(Some(style & mask))
+                .on_change(move |value| {
+                    updater.set_state(move |state| state.style = (state.style & !mask) | value)
+                }),
+        )
+        .boxed()
 }
 
 const TEXT_ITEMS: &[&str] = &[

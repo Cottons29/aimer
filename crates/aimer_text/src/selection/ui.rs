@@ -314,7 +314,10 @@ impl SelectionSession {
 ///
 /// Returns [`Some`] when the knobs or the callout took the event, in which case
 /// the caller must return that result unchanged and do nothing else.
-pub(crate) fn intercept(session: &Rc<SelectionSession>, event: &ElementEvent) -> Option<EventResult> {
+pub(crate) fn intercept(
+    session: &Rc<SelectionSession>,
+    event: &ElementEvent,
+) -> Option<EventResult> {
     // The callout itself is not consulted here: it is a modal, so the host
     // offers it every event before the tree and dismisses it on an outside
     // press. What is left is the knobs, which live in the text's own layer.
@@ -416,7 +419,6 @@ pub(crate) fn open_context_menu(
     true
 }
 
-
 /// Keeps an open pill over the selection it belongs to.
 ///
 /// Called once per frame, from the same place as [`paint_handles`]: a knob drag
@@ -507,7 +509,11 @@ pub(crate) fn hit_bounds_with_handles(
 ///
 /// The layer covers the window from its origin, so a knob's absolute logical
 /// bounds are already the coordinates it is recorded at.
-fn paint_handles(ctx: &BuildContext, canvas: &aimer_canvas::Canvas, session: &Rc<SelectionSession>) {
+fn paint_handles(
+    ctx: &BuildContext,
+    canvas: &aimer_canvas::Canvas,
+    session: &Rc<SelectionSession>,
+) {
     let Some((start, end)) = session.handle_circles() else {
         return;
     };
@@ -583,7 +589,11 @@ mod tests {
         PointerKey::new(PointerSource::Touch, 0)
     }
 
-    fn select(session: &Rc<SelectionSession>, slot: &Rc<SelectionSlot>, range: std::ops::Range<usize>) {
+    fn select(
+        session: &Rc<SelectionSession>,
+        slot: &Rc<SelectionSlot>,
+        range: std::ops::Range<usize>,
+    ) {
         session.begin_range(
             SelectionPoint::new(Rc::clone(slot), range.start),
             SelectionPoint::new(Rc::clone(slot), range.end),
@@ -655,7 +665,10 @@ mod tests {
 
         track_handles(&session);
 
-        assert!(!OverlayLayer::is_installed(), "a mouse selection grows none");
+        assert!(
+            !OverlayLayer::is_installed(),
+            "a mouse selection grows none"
+        );
     }
 
     #[test]
@@ -770,7 +783,9 @@ mod tests {
         let (session, slot, _geometry) = session();
         select(&session, &slot, 2..5);
 
-        let (start, end) = session.handle_circles().expect("a touch selection has knobs");
+        let (start, end) = session
+            .handle_circles()
+            .expect("a touch selection has knobs");
 
         assert_eq!(start.center_x, 20.0);
         assert_eq!(end.center_x, 50.0);
@@ -838,7 +853,10 @@ mod tests {
     #[test]
     fn a_mouse_selection_grows_no_knobs() {
         let (session, slot, _geometry) = session();
-        session.begin(SelectionPoint::new(Rc::clone(&slot), 2), PointerKey::new(PointerSource::Mouse, 0));
+        session.begin(
+            SelectionPoint::new(Rc::clone(&slot), 2),
+            PointerKey::new(PointerSource::Mouse, 0),
+        );
         session.extend_to_position(55.0, 108.0, PointerKey::new(PointerSource::Mouse, 0));
 
         assert!(session.handle_circles().is_none());
@@ -859,7 +877,13 @@ mod tests {
         select(&session, &slot, 2..5);
 
         let (_, end) = session.handle_circles().expect("knobs");
-        assert!(intercept(&session, &press(end.center_x, end.center_y, PointerSource::Touch)).is_some());
+        assert!(
+            intercept(
+                &session,
+                &press(end.center_x, end.center_y, PointerSource::Touch)
+            )
+            .is_some()
+        );
         assert!(intercept(&session, &moved(85.0, 108.0, PointerSource::Touch)).is_some());
 
         assert_eq!(slot.selected_range(), Some(2..9));
@@ -871,7 +895,13 @@ mod tests {
         select(&session, &slot, 2..5);
 
         let (start, _) = session.handle_circles().expect("knobs");
-        assert!(intercept(&session, &press(start.center_x, start.center_y, PointerSource::Touch)).is_some());
+        assert!(
+            intercept(
+                &session,
+                &press(start.center_x, start.center_y, PointerSource::Touch)
+            )
+            .is_some()
+        );
         assert!(intercept(&session, &moved(2.0, 108.0, PointerSource::Touch)).is_some());
 
         assert_eq!(slot.selected_range(), Some(0..5));
@@ -890,7 +920,10 @@ mod tests {
         let (session, slot, _geometry) = session();
         select(&session, &slot, 2..5);
         let (_, end) = session.handle_circles().expect("knobs");
-        intercept(&session, &press(end.center_x, end.center_y, PointerSource::Touch));
+        intercept(
+            &session,
+            &press(end.center_x, end.center_y, PointerSource::Touch),
+        );
 
         let other = ElementEvent::PointerMove(PointerInfo::new(
             Vec2d { x: 85.0, y: 108.0 },
@@ -908,7 +941,10 @@ mod tests {
         let (session, slot, _geometry) = session();
         select(&session, &slot, 2..5);
         let (_, end) = session.handle_circles().expect("knobs");
-        intercept(&session, &press(end.center_x, end.center_y, PointerSource::Touch));
+        intercept(
+            &session,
+            &press(end.center_x, end.center_y, PointerSource::Touch),
+        );
         assert!(!session.ui.is_menu_open(), "grabbing hides it");
 
         intercept(&session, &moved(85.0, 108.0, PointerSource::Touch));
@@ -1020,7 +1056,10 @@ mod tests {
         session.ui.show_menu();
         // The pill is centred on its anchor, and the anchor covers the knob:
         // its centre is the caret the selection starts at.
-        assert_eq!(session.ui.menu_anchor_bounds().map(anchor_center_x), Some(20.0));
+        assert_eq!(
+            session.ui.menu_anchor_bounds().map(anchor_center_x),
+            Some(20.0)
+        );
 
         // The callout stays up while the selection under it grows, which is
         // exactly what `Select All` from it does.
@@ -1032,7 +1071,10 @@ mod tests {
             session.menu_anchor(),
             "the pill moves with the selection rather than staying behind"
         );
-        assert_eq!(session.ui.menu_anchor_bounds().map(anchor_center_x), Some(0.0));
+        assert_eq!(
+            session.ui.menu_anchor_bounds().map(anchor_center_x),
+            Some(0.0)
+        );
         assert_eq!(slot.selected_range(), Some(0..10));
     }
 

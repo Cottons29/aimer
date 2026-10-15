@@ -2,15 +2,15 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use aimer_attribute::BoxConstraint;
+use aimer_attribute::size::ResolvedSize;
 use aimer_container::{Container, SizedBox};
 use aimer_events::element::ElementEvent;
 use aimer_events::pointer::{PointerButton, PointerInfo};
-use aimer_attribute::size::ResolvedSize;
 use aimer_flex::{Column, Row};
-use aimer_text::Text;
 use aimer_selection::{
     Autocomplete, Checkbox, CheckboxValue, ChoiceOption, Radio, RadioGroup, Select, Switch,
 };
+use aimer_text::Text;
 use aimer_widget::base::{BuildContext, WindowHandle};
 use aimer_widget::{
     Drawable, EventDispatcher, LayoutElement, PortableWidget, State, StatefulWidget,
@@ -126,7 +126,11 @@ async fn radio_group_builds_exclusive_options_with_stable_keys() {
 /// that a `Dimension::Auto` container fills regardless of its content, which
 /// would hide a shrink-to-fit regression instead of catching it.
 fn column_wrapped_height(ctx: &BuildContext, widget: impl Widget + 'static) -> f32 {
-    Column::new().children([widget.boxed()]).to_element(ctx).layout(ctx).height
+    Column::new()
+        .children([widget.boxed()])
+        .to_element(ctx)
+        .layout(ctx)
+        .height
 }
 
 #[tokio::test]
@@ -328,10 +332,7 @@ async fn checkbox_can_build_a_custom_box_tick_and_label_composition() {
 async fn checkbox_can_wrap_an_explicit_widget_child() {
     let ctx = context();
     let element = Checkbox::new()
-        .child(
-            Row::new()
-                .children([Text::new("□").boxed(), Text::new("Accept").boxed()]),
-        )
+        .child(Row::new().children([Text::new("□").boxed(), Text::new("Accept").boxed()]))
         .to_element(&ctx);
 
     let size = element.layout(&ctx);
@@ -364,5 +365,8 @@ async fn checkbox_custom_composition_receives_the_controlled_value_after_rebuild
     );
     state.build(&ctx).to_element(&ctx);
 
-    assert_eq!(values.borrow().as_slice(), &[CheckboxValue::Unchecked, CheckboxValue::Checked]);
+    assert_eq!(
+        values.borrow().as_slice(),
+        &[CheckboxValue::Unchecked, CheckboxValue::Checked]
+    );
 }

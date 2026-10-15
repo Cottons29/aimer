@@ -127,12 +127,9 @@ impl BlogStore {
     /// Returns a message when `index` is not a valid blog index, when a blog id
     /// is malformed or repeated, when required metadata is blank, or when an
     /// indexed blog has no markdown in `documents`.
-    pub fn from_sources(
-        index: &str,
-        documents: &[(&str, &'static str)],
-    ) -> Result<Self, String> {
-        let mut blogs: Vec<BlogSummary> =
-            serde_json::from_str(index).map_err(|error| format!("blog index is invalid: {error}"))?;
+    pub fn from_sources(index: &str, documents: &[(&str, &'static str)]) -> Result<Self, String> {
+        let mut blogs: Vec<BlogSummary> = serde_json::from_str(index)
+            .map_err(|error| format!("blog index is invalid: {error}"))?;
 
         blogs.sort_by(|left, right| {
             right
@@ -243,7 +240,10 @@ async fn not_found() -> Response {
 /// Wraps an already encoded JSON document in a `200 OK` response.
 fn json_response(body: Bytes) -> Response {
     (
-        [(header::CONTENT_TYPE, HeaderValue::from_static("application/json"))],
+        [(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/json"),
+        )],
         body,
     )
         .into_response()

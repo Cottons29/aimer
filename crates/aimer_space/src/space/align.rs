@@ -8,6 +8,8 @@ use aimer_widget::{
     AnyElement, AnyWidget, Drawable, Element, LayoutElement, RequiredChild, VisitorElement, Widget,
 };
 
+use super::hug::hugged_size;
+
 pub type Alignment = TextAlign;
 
 /// Positions a single child within the space supplied by its parent.
@@ -138,7 +140,7 @@ impl RawAlign {
         {
             return None;
         }
-        let child_size = self.child.computed_size(ctx);
+        let child_size = hugged_size(&*self.child, ctx);
         let (offset_x, offset_y) = alignment_offset(self.alignment, ctx.parent_size, child_size);
         if !child_size.width.is_finite()
             || !child_size.height.is_finite()
@@ -165,7 +167,13 @@ impl RawAlign {
                 .map(|(x, y, width, height)| (x - offset_x, y - offset_y, width, height)),
             ..ctx.clone()
         };
-        Some((Vec2d { x: offset_x, y: offset_y }, child_ctx))
+        Some((
+            Vec2d {
+                x: offset_x,
+                y: offset_y,
+            },
+            child_ctx,
+        ))
     }
 }
 
@@ -232,7 +240,7 @@ impl Drawable for RawAlign {
     }
 
     fn update(&self, ctx: &BuildContext) {
-        let child_size = self.child.computed_size(ctx);
+        let child_size = hugged_size(&*self.child, ctx);
         let (offset_x, offset_y) = alignment_offset(self.alignment, ctx.parent_size, child_size);
         let child_constraint = BoxConstraint {
             min_width: 0.0,
@@ -279,7 +287,6 @@ impl Drawable for RawAlign {
         self.child.sync_paint_geometry(&child_ctx);
         ctx.canvas.restore();
     }
-
 }
 
 impl LayoutElement for RawAlign {

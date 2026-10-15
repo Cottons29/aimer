@@ -21,8 +21,8 @@ use std::time::{Duration, Instant};
 use aimer_cupid::AntiAlias;
 use aimer_cupid::backend::wgpu::WgpuBackend;
 use aimer_cupid::font::{FontFamily, FontStyle};
-use aimer_cupid::text_pipeline::{TextDrawRequest, TextOverflowMode, TextPipelineV2};
 use aimer_cupid::text_layout::TextHorizontalAlign;
+use aimer_cupid::text_pipeline::{TextDrawRequest, TextOverflowMode, TextPipelineV2};
 use aimer_cupid::utilities::Rgba8;
 use aimer_utils::SyncFuture;
 

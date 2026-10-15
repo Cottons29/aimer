@@ -108,10 +108,9 @@ impl ApplicationHandler for MetalDemo {
         let surface = MetalSurface::new(&backend, layer, SURFACE_FORMAT);
         let size = window.inner_size();
         surface.layer().setContentsScale(window.scale_factor());
-        surface.layer().setDrawableSize(CGSize::new(
-            f64::from(size.width),
-            f64::from(size.height),
-        ));
+        surface
+            .layer()
+            .setDrawableSize(CGSize::new(f64::from(size.width), f64::from(size.height)));
 
         self.renderer = Some(RendererImpl::new(&backend, SURFACE_FORMAT));
         self.backend = Some(backend);

@@ -10,13 +10,13 @@
 
 use super::super::{FontMetrics, SfntError, SfntFace};
 use super::{
-    apply_gsub_single_at, apply_gsub_subtable, apply_gpos, checked_add, context,
-    relative_offset, read_u16, read_u32, slice_from, AimerShapedRun, Gdef, LayoutGlyph,
-    LayoutState, LayoutTableState, Tag, ABVM_TAG, BLWM_TAG, DEVA2_TAG, DEVA_TAG, GPOS_TAG,
-    GSUB_TAG, INDIC_GPOS_FEATURE_TAGS, INDIC_GSUB_FEATURE_TAGS, KERN_TAG, MARK_TAG, MKMK_TAG,
-    MAX_EXTENSION_DEPTH, MLYM2_TAG, MLYM_TAG, ORYA2_TAG, ORYA_TAG, TELU2_TAG, TELU_TAG,
-    KNDA2_TAG, KNDA_TAG, BENG2_TAG, BENG_TAG, GURU2_TAG, GURU_TAG, GUJR2_TAG, GUJR_TAG,
-    SINH_TAG, TAML2_TAG, TAML_TAG,
+    ABVM_TAG, AimerShapedRun, BENG_TAG, BENG2_TAG, BLWM_TAG, DEVA_TAG, DEVA2_TAG, GPOS_TAG,
+    GSUB_TAG, GUJR_TAG, GUJR2_TAG, GURU_TAG, GURU2_TAG, Gdef, INDIC_GPOS_FEATURE_TAGS,
+    INDIC_GSUB_FEATURE_TAGS, KERN_TAG, KNDA_TAG, KNDA2_TAG, LayoutGlyph, LayoutState,
+    LayoutTableState, MARK_TAG, MAX_EXTENSION_DEPTH, MKMK_TAG, MLYM_TAG, MLYM2_TAG, ORYA_TAG,
+    ORYA2_TAG, SINH_TAG, TAML_TAG, TAML2_TAG, TELU_TAG, TELU2_TAG, Tag, apply_gpos,
+    apply_gsub_single_at, apply_gsub_subtable, checked_add, context, read_u16, read_u32,
+    relative_offset, slice_from,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -73,11 +73,11 @@ fn feature_script_tag(
     script: IndicScript,
     feature_tag: Tag,
 ) -> Option<Tag> {
-    script
-        .tags()
-        .iter()
-        .copied()
-        .find(|script_tag| !layout.feature_lookups_with_language(*script_tag, None, &[feature_tag]).is_empty())
+    script.tags().iter().copied().find(|script_tag| {
+        !layout
+            .feature_lookups_with_language(*script_tag, None, &[feature_tag])
+            .is_empty()
+    })
 }
 
 /// Returns the single Indic script carried by a run, allowing only neutral
@@ -225,35 +225,37 @@ pub(super) fn shape_run_with_layout(
     // Keep this map before visual reordering; it also preserves the first
     // source codepoint for the Khmer composite glyph's duplicate cluster.
     let reordered = reorder_prebase_matras(&mut scratch.items, script);
-    scratch.glyphs.extend(scratch.items.drain(..).map(|(_, glyph)| glyph));
-    let Some((gsub_supported, gsub_changed)) =
-        apply_indic_gsub(
-            face,
-            metrics,
-            &mut scratch.glyphs,
-            &mut scratch.context_candidates,
-            &layout.gdef,
-            layout,
-            script,
-        )?
+    scratch
+        .glyphs
+        .extend(scratch.items.drain(..).map(|(_, glyph)| glyph));
+    let Some((gsub_supported, gsub_changed)) = apply_indic_gsub(
+        face,
+        metrics,
+        &mut scratch.glyphs,
+        &mut scratch.context_candidates,
+        &layout.gdef,
+        layout,
+        script,
+    )?
     else {
         return Ok(None);
     };
     let source_codepoints = &scratch.source_codepoints;
     let shaped_glyphs = &scratch.glyphs;
     scratch.codepoints.clear();
-    scratch.codepoints.extend(shaped_glyphs.iter().map(|glyph| {
-        super::source_codepoint_for_cluster(source_codepoints, glyph.cluster)
-    }));
-    let Some((gpos_supported, gpos_changed)) =
-        apply_indic_gpos(
-            face,
-            &mut scratch.glyphs,
-            &scratch.codepoints,
-            &layout.gdef,
-            layout,
-            script,
-        )?
+    scratch.codepoints.extend(
+        shaped_glyphs
+            .iter()
+            .map(|glyph| super::source_codepoint_for_cluster(source_codepoints, glyph.cluster)),
+    );
+    let Some((gpos_supported, gpos_changed)) = apply_indic_gpos(
+        face,
+        &mut scratch.glyphs,
+        &scratch.codepoints,
+        &layout.gdef,
+        layout,
+        script,
+    )?
     else {
         return Ok(None);
     };
@@ -283,7 +285,12 @@ fn normalize_indic_clusters(
     script: IndicScript,
 ) -> Result<(), SfntError> {
     for mark_index in 0..glyphs.len() {
-        if !is_mark(gdef, glyphs[mark_index].glyph_id, codepoints[mark_index], script)? {
+        if !is_mark(
+            gdef,
+            glyphs[mark_index].glyph_id,
+            codepoints[mark_index],
+            script,
+        )? {
             continue;
         }
         if let Some(base_index) = indic_base_index(glyphs, codepoints, gdef, script, mark_index)? {
@@ -306,9 +313,7 @@ fn reorder_prebase_matras(items: &mut Vec<(char, LayoutGlyph)>, script: IndicScr
             break;
         }
         let mut segment_end = segment_start + 1;
-        while segment_end < items.len()
-            && is_indic_script_codepoint(script, items[segment_end].0)
-        {
+        while segment_end < items.len() && is_indic_script_codepoint(script, items[segment_end].0) {
             segment_end += 1;
         }
 
@@ -377,11 +382,7 @@ fn is_indic_base(script: IndicScript, codepoint: char) -> bool {
         && !is_join_control(codepoint)
 }
 
-fn is_linked_to_previous(
-    items: &[(char, LayoutGlyph)],
-    script: IndicScript,
-    index: usize,
-) -> bool {
+fn is_linked_to_previous(items: &[(char, LayoutGlyph)], script: IndicScript, index: usize) -> bool {
     let mut previous = index;
     while let Some(candidate) = previous.checked_sub(1) {
         if is_join_control(items[candidate].0) {
@@ -456,9 +457,8 @@ fn apply_indic_gsub(
         for lookup in lookups {
             match lookup.execution_type {
                 1 => {
-                    changed |= apply_single_lookup(
-                        face, metrics, advances, glyphs, gdef, layout, lookup,
-                    )?;
+                    changed |=
+                        apply_single_lookup(face, metrics, advances, glyphs, gdef, layout, lookup)?;
                 }
                 2 => {
                     changed |= apply_multiple_lookup(face, advances, glyphs, layout, lookup)?;
@@ -469,9 +469,8 @@ fn apply_indic_gsub(
                     )?;
                 }
                 7 => {
-                    changed |= apply_single_lookup(
-                        face, metrics, advances, glyphs, gdef, layout, lookup,
-                    )?;
+                    changed |=
+                        apply_single_lookup(face, metrics, advances, glyphs, gdef, layout, lookup)?;
                     changed |= apply_multiple_lookup(face, advances, glyphs, layout, lookup)?;
                     changed |= apply_ligature_lookup(
                         face, metrics, advances, glyphs, gdef, layout, lookup,
@@ -703,11 +702,7 @@ pub(super) fn multiple_substitution_for_glyph(
             )?;
             let mut replacements = Vec::with_capacity(glyph_count);
             for index in 0..glyph_count {
-                replacements.push(read_u16(
-                    subtable,
-                    glyph_data + index * 2,
-                    GSUB_TAG,
-                )?);
+                replacements.push(read_u16(subtable, glyph_data + index * 2, GSUB_TAG)?);
             }
             Ok(Some(replacements))
         }
@@ -796,11 +791,10 @@ fn apply_indic_gpos(
     }
 
     if has_mark {
-        let Some(mark_changed) = apply_indic_mark_positioning(
-            face, glyphs, codepoints, gdef, layout, script,
-        )?
+        let Some(mark_changed) =
+            apply_indic_mark_positioning(face, glyphs, codepoints, gdef, layout, script)?
         else {
-        return Ok(None);
+            return Ok(None);
         };
         changed |= mark_changed;
     }
@@ -842,7 +836,12 @@ fn apply_indic_mark_positioning(
     let table = layout.table(face)?;
     let mut changed = false;
     for mark_index in 0..glyphs.len() {
-        if !is_mark(gdef, glyphs[mark_index].glyph_id, codepoints[mark_index], script)? {
+        if !is_mark(
+            gdef,
+            glyphs[mark_index].glyph_id,
+            codepoints[mark_index],
+            script,
+        )? {
             continue;
         }
         let Some(base_index) = indic_base_index(glyphs, codepoints, gdef, script, mark_index)?
@@ -858,13 +857,7 @@ fn apply_indic_mark_positioning(
         if mark_to_mark {
             for lookup in mark_to_mark_lookups {
                 if apply_indic_mark_lookup(
-                    table,
-                    glyphs,
-                    gdef,
-                    lookup,
-                    mark_index,
-                    base_index,
-                    true,
+                    table, glyphs, gdef, lookup, mark_index, base_index, true,
                 )? {
                     changed = true;
                     break;
@@ -875,13 +868,7 @@ fn apply_indic_mark_positioning(
             for feature_tag in base_feature_tags {
                 for lookup in feature_lookups(layout, script, feature_tag) {
                     if apply_indic_mark_lookup(
-                        table,
-                        glyphs,
-                        gdef,
-                        lookup,
-                        mark_index,
-                        base_index,
-                        false,
+                        table, glyphs, gdef, lookup, mark_index, base_index, false,
                     )? {
                         changed = true;
                         attached = true;
@@ -922,10 +909,8 @@ fn apply_indic_mark_lookup(
             .and_then(Option::as_ref)
         {
             if compiled.is_mark_to_mark() == mark_to_mark {
-                compiled.mark_adjustment(
-                    glyphs[mark_index].glyph_id,
-                    glyphs[base_index].glyph_id,
-                )?
+                compiled
+                    .mark_adjustment(glyphs[mark_index].glyph_id, glyphs[base_index].glyph_id)?
             } else {
                 None
             }
@@ -986,7 +971,12 @@ fn indic_base_index(
             if !is_indic_script_codepoint(script, codepoints[candidate]) {
                 break;
             }
-            if !is_mark(gdef, glyphs[candidate].glyph_id, codepoints[candidate], script)? {
+            if !is_mark(
+                gdef,
+                glyphs[candidate].glyph_id,
+                codepoints[candidate],
+                script,
+            )? {
                 return Ok(Some(candidate));
             }
         }
@@ -995,7 +985,12 @@ fn indic_base_index(
         if !is_indic_script_codepoint(script, codepoints[candidate]) {
             break;
         }
-        if !is_mark(gdef, glyphs[candidate].glyph_id, codepoints[candidate], script)? {
+        if !is_mark(
+            gdef,
+            glyphs[candidate].glyph_id,
+            codepoints[candidate],
+            script,
+        )? {
             return Ok(Some(candidate));
         }
     }
@@ -1004,7 +999,12 @@ fn indic_base_index(
             if !is_indic_script_codepoint(script, codepoints[candidate]) {
                 break;
             }
-            if !is_mark(gdef, glyphs[candidate].glyph_id, codepoints[candidate], script)? {
+            if !is_mark(
+                gdef,
+                glyphs[candidate].glyph_id,
+                codepoints[candidate],
+                script,
+            )? {
                 return Ok(Some(candidate));
             }
         }

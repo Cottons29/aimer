@@ -71,7 +71,10 @@ const TAB_WIDTH: usize = 4;
 /// so the caret run computed from the returned column lands under the same
 /// characters no matter how the source was indented.
 fn dedent_source_line(source_line: &str, column: u32) -> (String, u32) {
-    let indent = source_line.chars().take_while(char::is_ascii_whitespace).count();
+    let indent = source_line
+        .chars()
+        .take_while(char::is_ascii_whitespace)
+        .count();
     let width: usize = source_line
         .chars()
         .take(indent)

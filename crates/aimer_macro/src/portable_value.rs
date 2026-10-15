@@ -1,8 +1,8 @@
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
-    Data, DataEnum, DataStruct, DeriveInput, Fields, GenericArgument, Ident, Index, LitInt,
-    LitStr, Member, PathArguments, Type, parse_quote,
+    Data, DataEnum, DataStruct, DeriveInput, Fields, GenericArgument, Ident, Index, LitInt, LitStr,
+    Member, PathArguments, Type, parse_quote,
 };
 
 #[derive(Clone)]
@@ -48,7 +48,14 @@ pub(crate) fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
     let max_value_bytes = options.max_value_bytes;
     let max_reconstruction_work = options.max_reconstruction_work;
     let canonical_name = options.canonical_name.as_ref().map_or_else(
-        || quote!(concat!("aimer.value:", module_path!(), "::", stringify!(#name))),
+        || {
+            quote!(concat!(
+                "aimer.value:",
+                module_path!(),
+                "::",
+                stringify!(#name)
+            ))
+        },
         |value| quote!(#value),
     );
     let schema = quote! {
@@ -83,9 +90,11 @@ pub(crate) fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
     let field_types = fields
         .iter()
         .map(|field| field.ty.clone())
-        .chain(variants.iter().flat_map(|variant| {
-            variant.fields.iter().map(|field| field.ty.clone())
-        }))
+        .chain(
+            variants
+                .iter()
+                .flat_map(|variant| variant.fields.iter().map(|field| field.ty.clone())),
+        )
         .collect::<Vec<_>>();
     reject_raw_unordered_collections(&field_types)?;
 
@@ -108,10 +117,7 @@ pub(crate) fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
             parse_quote!(#ty: ::aimer_widget::portable::PortableDecode),
         ]
     });
-    let (impl_generics, _type_generics, where_clause) = generics_with_bounds(
-        &input,
-        both_bounds,
-    );
+    let (impl_generics, _type_generics, where_clause) = generics_with_bounds(&input, both_bounds);
     let field_metadata = fields.iter().map(|field| {
         let name = &field.name;
         let order = field.order;
@@ -220,9 +226,7 @@ fn codec_impl(
 ) -> TokenStream {
     let (impl_generics, type_generics, where_clause) = generics_with_bounds(
         input,
-        field_types
-            .iter()
-            .map(|ty| parse_quote!(#ty: #trait_path)),
+        field_types.iter().map(|ty| parse_quote!(#ty: #trait_path)),
     );
     let name = &input.ident;
     quote! {
@@ -500,7 +504,10 @@ fn enum_variants(data: &DataEnum, _type_name: &Ident) -> syn::Result<Vec<Variant
         });
     }
     for (index, variant) in variants.iter().enumerate() {
-        if variants[..index].iter().any(|other| other.tag == variant.tag) {
+        if variants[..index]
+            .iter()
+            .any(|other| other.tag == variant.tag)
+        {
             return Err(syn::Error::new_spanned(
                 &variant.ident,
                 "PortableValue enum discriminant tags must be unique",
@@ -530,14 +537,23 @@ fn field_spec(
 }
 
 fn source_order_bindings(fields: &[FieldSpec]) -> Vec<&Ident> {
-    let mut bindings = fields.iter().map(|field| (field.index, &field.binding)).collect::<Vec<_>>();
+    let mut bindings = fields
+        .iter()
+        .map(|field| (field.index, &field.binding))
+        .collect::<Vec<_>>();
     bindings.sort_unstable_by_key(|(index, _)| *index);
     bindings.into_iter().map(|(_, binding)| binding).collect()
 }
 
-fn validate_field_order(mut fields: Vec<FieldSpec>, type_name: &Ident) -> syn::Result<Vec<FieldSpec>> {
+fn validate_field_order(
+    mut fields: Vec<FieldSpec>,
+    type_name: &Ident,
+) -> syn::Result<Vec<FieldSpec>> {
     for (index, field) in fields.iter().enumerate() {
-        if fields[..index].iter().any(|other| other.order == field.order) {
+        if fields[..index]
+            .iter()
+            .any(|other| other.order == field.order)
+        {
             return Err(syn::Error::new_spanned(
                 type_name,
                 "PortableValue field orders must be unique",
@@ -578,7 +594,10 @@ fn field_metadata(
         })?;
     }
     if name.is_empty() {
-        return Err(syn::Error::new(proc_macro2::Span::call_site(), "PortableValue field name must not be empty"));
+        return Err(syn::Error::new(
+            proc_macro2::Span::call_site(),
+            "PortableValue field name must not be empty",
+        ));
     }
     Ok((name, order))
 }
@@ -710,7 +729,10 @@ fn value_options(input: &DeriveInput) -> syn::Result<ValueOptions> {
 fn parse_version(value: &LitStr) -> syn::Result<(u16, u16)> {
     let version = value.value();
     let Some((major, minor)) = version.split_once('.') else {
-        return Err(syn::Error::new_spanned(value, "version must be `major.minor`"));
+        return Err(syn::Error::new_spanned(
+            value,
+            "version must be `major.minor`",
+        ));
     };
     let major = major
         .parse()

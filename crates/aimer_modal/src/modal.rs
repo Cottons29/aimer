@@ -14,8 +14,8 @@ use aimer_widget::{
     RequiredChild, VisitorElement, Widget,
 };
 
-use crate::animated_content::wrap_animated_content;
 use crate::ModalAnimation;
+use crate::animated_content::wrap_animated_content;
 use crate::host::{self, ModalHandle, ModalId, ModalTimeline};
 use crate::paint::{contains, overlay_child_context};
 
@@ -30,13 +30,13 @@ use crate::paint::{contains, overlay_child_context};
 /// ```rust
 /// use std::time::Duration;
 ///
-/// use aimer_animation::Curve;
+/// use aimer_animation::curves;
 /// use aimer_container::SizedBox;
 /// use aimer_modal::{Modal, ModalAnimation};
 ///
 /// let handle =
 ///     Modal::new().animation(ModalAnimation::new().enter_duration(Duration::from_millis(200))
-///                                                 .enter_curve(Curve::EaseOut))
+///                                                 .enter_curve(curves::EASE_OUT))
 ///                 .child(SizedBox::new().width(320).height(180))
 ///                 .show();
 ///
@@ -132,7 +132,7 @@ impl<W: Widget + 'static> Modal<W> {
     /// Calls made before the first application frame are queued and presented
     /// as soon as the root host is built.
     pub fn show(self) -> ModalHandle {
-        let animation = self.animation;
+        let animation = self.animation.clone();
         host::show(
             animation,
             Box::new(move |ctx, id, timeline| self.to_raw_element(ctx, Some(id), timeline)),
@@ -151,13 +151,15 @@ impl<W: Widget + 'static> Modal<W> {
             .to_element(ctx);
         let barrier = wrap_animated_content(
             barrier,
-            (self.barrier_color.to_rgba().3 != 0).then_some(self.animation).flatten(),
+            (self.barrier_color.to_rgba().3 != 0)
+                .then(|| self.animation.clone())
+                .flatten(),
             timeline.clone(),
             false,
         );
         let child = wrap_animated_content(
             self.child.to_element(ctx),
-            self.animation,
+            self.animation.clone(),
             timeline.clone(),
             true,
         );
@@ -175,7 +177,7 @@ impl<W: Widget + 'static> Modal<W> {
 
     #[cfg(test)]
     pub(crate) fn animation_config(&self) -> Option<ModalAnimation> {
-        self.animation
+        self.animation.clone()
     }
 
     #[cfg(test)]
@@ -380,10 +382,7 @@ impl VisitorElement for RawModal {
         visitor(self.child.as_ref());
     }
 
-    fn visit_retained_v2_children<'a>(
-        &'a self,
-        visitor: &mut dyn FnMut(usize, &'a dyn Element),
-    ) {
+    fn visit_retained_v2_children<'a>(&'a self, visitor: &mut dyn FnMut(usize, &'a dyn Element)) {
         visitor(0, self.barrier.as_ref());
         visitor(1, self.child.as_ref());
     }

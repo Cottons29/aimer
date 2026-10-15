@@ -30,6 +30,8 @@ objc2-app-kit = { workspace = true, features = [
     "std",
     "NSButton",
     "NSControl",
+    # `NSView` and `NSWindow` are only defined when `NSResponder` is enabled.
+    "NSResponder",
     "NSView",
     "NSWindow",
 ] }

@@ -14,7 +14,11 @@ fn decoration(focused: bool) -> BoxDecoration {
             BorderSlice::new()
                 .style(BorderStyle::Solid)
                 .stroke(Stroke::Px(3.0))
-                .color(if focused { Color::BLUE } else { Color::Transparent }),
+                .color(if focused {
+                    Color::BLUE
+                } else {
+                    Color::Transparent
+                }),
         ))
 }
 
@@ -32,7 +36,11 @@ impl StatefulWidget for Boxes {
     type State = BoxesState;
 
     fn create_state(self) -> BoxesState {
-        BoxesState { node: self.node, focused: false, updater: StateUpdater::empty() }
+        BoxesState {
+            node: self.node,
+            focused: false,
+            updater: StateUpdater::empty(),
+        }
     }
 }
 
@@ -61,7 +69,9 @@ impl State<Boxes> for BoxesState {
 
 impl Widget for Boxes {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
-        StatefulElement::new_with_name(self, ctx, "Boxes", None).0.boxed()
+        StatefulElement::new_with_name(self, ctx, "Boxes", None)
+            .0
+            .boxed()
     }
 }
 impl aimer_widget::PortableWidget for Boxes {}
@@ -81,31 +91,53 @@ fn containers<W: Widget + 'static>(
 
 #[test]
 fn gaining_focus_repaints_the_box_decoration() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     let node = FocusNode::new();
-    let mut app = AimerApp::start_headless_with(Boxes { node: node.clone() }, HeadlessOptions {
-        size: PhysicalSize::new(300, 300), scale_factor: 1.0,
-    });
+    let mut app = AimerApp::start_headless_with(
+        Boxes { node: node.clone() },
+        HeadlessOptions {
+            size: PhysicalSize::new(300, 300),
+            scale_factor: 1.0,
+        },
+    );
     app.pump_frames(3);
     let revisions = |app: &HeadlessAimerApp<_>| {
         let mut nodes = Vec::new();
-        containers(app.app.widget_root.as_ref().unwrap().as_ref(), app, &mut nodes);
-        nodes.iter().map(|n| app.app.render_tree().draw_list_revision(*n).unwrap()).collect::<Vec<_>>()
+        containers(
+            app.app.widget_root.as_ref().unwrap().as_ref(),
+            app,
+            &mut nodes,
+        );
+        nodes
+            .iter()
+            .map(|n| app.app.render_tree().draw_list_revision(*n).unwrap())
+            .collect::<Vec<_>>()
     };
     let before = revisions(&app);
-    assert!(!before.is_empty(), "the decorated container has a render node");
+    assert!(
+        !before.is_empty(),
+        "the decorated container has a render node"
+    );
 
     app.send_window_event(WindowEvent::CursorMoved {
-        device_id: DeviceId::dummy(), position: PhysicalPosition::new(20.0, 20.0),
+        device_id: DeviceId::dummy(),
+        position: PhysicalPosition::new(20.0, 20.0),
     });
     for state in [ElementState::Pressed, ElementState::Released] {
         app.send_window_event(WindowEvent::MouseInput {
-            device_id: DeviceId::dummy(), state, button: winit::event::MouseButton::Left,
+            device_id: DeviceId::dummy(),
+            state,
+            button: winit::event::MouseButton::Left,
         });
     }
     app.pump_frames(5);
 
     assert!(node.has_focus());
     let after = revisions(&app);
-    assert_ne!(before, after, "focus must re-record the decoration: {before:?} vs {after:?}");
+    assert_ne!(
+        before, after,
+        "focus must re-record the decoration: {before:?} vs {after:?}"
+    );
 }

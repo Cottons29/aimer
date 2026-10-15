@@ -3,31 +3,28 @@ use std::rc::Rc;
 
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
-use aimer_widget::InteractionBounds;
 use aimer_events::element::{ElementEvent, KeyAction, Modifiers, NamedKey, ScrollDeltaKind};
 use aimer_events::pointer::{PointerButton, PointerInfo};
 use aimer_modal::{
     Anchor, AnchorHandle, Floating, FloatingAlign, FloatingSide, ModalController, OverflowPolicy,
 };
 use aimer_style::ThemeTokens;
+use aimer_widget::InteractionBounds;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
-    AnyElement, Drawable, Element, EventElement, EventResult, FocusNode, LayoutElement,
-    PointerKey, PortableWidget, Rebuildable, State, StatefulElement, StatefulWidget, StateUpdater,
+    AnyElement, Drawable, Element, EventElement, EventResult, FocusNode, LayoutElement, PointerKey,
+    PortableWidget, Rebuildable, State, StateUpdater, StatefulElement, StatefulWidget,
     VisitorElement, Widget,
 };
 
-use crate::{
-    TimeOfDay, TimePicker, PickerOutcome, PICKER_FIELD_HEIGHT,
-    PICKER_FOOTER_HEIGHT,
-};
+use crate::{PICKER_FIELD_HEIGHT, PICKER_FOOTER_HEIGHT, PickerOutcome, TimeOfDay, TimePicker};
 
 use super::time_wheel::{
-    self, column_at, row_at, scroll_steps, time_from_drag, time_from_row,
-    time_from_scroll_steps, TimeWheelDrag,
+    self, TimeWheelDrag, column_at, row_at, scroll_steps, time_from_drag, time_from_row,
+    time_from_scroll_steps,
 };
-use super::{paint, theme};
 use super::widget_helpers::{default_time_picker, format_time};
+use super::{paint, theme};
 
 /// A callback invoked after a standalone time picker confirms a value.
 pub type TimeSelectionCallback = Rc<dyn Fn(TimeOfDay)>;
@@ -167,7 +164,10 @@ impl StatefulWidget for TimePickerView {
             anchor: AnchorHandle::new(),
             overlay_active: Cell::new(false),
         });
-        TimePickerViewState { model: self, runtime }
+        TimePickerViewState {
+            model: self,
+            runtime,
+        }
     }
 }
 
@@ -196,7 +196,9 @@ impl State<TimePickerView> for TimePickerViewState {
 
 impl Widget for TimePickerView {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
-        StatefulElement::new_with_name(self, ctx, "TimePickerView", None).0.boxed()
+        StatefulElement::new_with_name(self, ctx, "TimePickerView", None)
+            .0
+            .boxed()
     }
 
     fn debug_name(&self) -> &'static str {
@@ -258,7 +260,11 @@ struct RawTimePicker {
 
 impl RawTimePicker {
     fn layout_height(&self) -> f32 {
-        if self.popup { self.height } else { PICKER_FIELD_HEIGHT }
+        if self.popup {
+            self.height
+        } else {
+            PICKER_FIELD_HEIGHT
+        }
     }
 
     fn hit_test(&self, x: f32, y: f32) -> bool {
@@ -320,7 +326,11 @@ impl RawTimePicker {
         self.finish_cancel(super::super::CancelReason::OutsideClick, false)
     }
 
-    fn finish_cancel(&self, reason: super::super::CancelReason, dismiss_overlay: bool) -> EventResult {
+    fn finish_cancel(
+        &self,
+        reason: super::super::CancelReason,
+        dismiss_overlay: bool,
+    ) -> EventResult {
         if self.runtime.picker.borrow_mut().cancel(reason).is_ok() {
             let has_overlay = self.runtime.overlay_active.replace(false);
             self.runtime.drag.replace(None);
@@ -341,7 +351,12 @@ impl RawTimePicker {
         }
     }
 
-    fn begin_drag(&self, pointer: &aimer_events::pointer::PointerInfo, x: f32, y: f32) -> EventResult {
+    fn begin_drag(
+        &self,
+        pointer: &aimer_events::pointer::PointerInfo,
+        x: f32,
+        y: f32,
+    ) -> EventResult {
         let Some(bounds) = self.bounds.get_bounds() else {
             return EventResult::ignored();
         };
@@ -448,12 +463,7 @@ impl RawTimePicker {
         let column = self.runtime.active_column.get();
         let next = {
             let picker = self.runtime.picker.borrow();
-            time_from_scroll_steps(
-                picker.draft(),
-                column,
-                steps,
-                self.use_24_hours,
-            )
+            time_from_scroll_steps(picker.draft(), column, steps, self.use_24_hours)
         };
         next.map_or_else(|| EventResult::consumed(), |time| self.set_time(time))
     }
@@ -641,7 +651,9 @@ impl Drawable for RawTimePicker {
     }
 
     #[inline]
-    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+    fn retained_v2_interaction_disagreement(
+        &self,
+    ) -> Option<aimer_widget::InteractionDisagreement> {
         self.bounds.disagreement("RawTimePicker")
     }
 

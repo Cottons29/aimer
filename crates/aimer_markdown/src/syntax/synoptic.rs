@@ -202,7 +202,11 @@ mod tests {
         for span in highlight(code, Some("markdown")) {
             let (start, end) = span.range();
             assert!(start <= end, "{span:?}");
-            assert!(end as usize <= code.len(), "{span:?} in {} bytes", code.len());
+            assert!(
+                end as usize <= code.len(),
+                "{span:?} in {} bytes",
+                code.len()
+            );
         }
     }
 

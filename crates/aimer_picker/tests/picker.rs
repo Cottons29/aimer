@@ -156,12 +156,7 @@ fn date_picker_overlay_keeps_the_draft_when_escape_dismissal_is_disabled() {
 
     picker.select(maximum).unwrap();
     assert_eq!(
-        picker.cancel_with_overlay(
-            &mut overlay,
-            CancelReason::Escape,
-            &mut host,
-            &mut focus,
-        ),
+        picker.cancel_with_overlay(&mut overlay, CancelReason::Escape, &mut host, &mut focus,),
         Err(DatePickerError::DismissalNotAllowed(CancelReason::Escape))
     );
     assert!(picker.is_open());
@@ -208,7 +203,8 @@ fn date_picker_overlay_does_not_close_on_an_incomplete_range_confirmation() {
         end: None,
     };
     let request = OverlayRequest::new(OverlayAnchor::new(8), true);
-    let mut picker = DatePicker::try_range(selection, bounds, DateRangePolicy::inclusive()).unwrap();
+    let mut picker =
+        DatePicker::try_range(selection, bounds, DateRangePolicy::inclusive()).unwrap();
     let mut host = RecordingHost::default();
     let mut overlay = picker
         .open_with_overlay(&mut host, request, FocusTarget::new(100))
@@ -269,7 +265,9 @@ fn date_picker_exposes_disabled_dates_through_its_calendar_policy() {
     picker.open();
     assert_eq!(
         picker.select(disabled),
-        Err(DatePickerError::Calendar(CalendarError::DisabledDate(disabled)))
+        Err(DatePickerError::Calendar(CalendarError::DisabledDate(
+            disabled
+        )))
     );
     assert_eq!(picker.draft(), DateSelection::Single(Some(initial)));
 }

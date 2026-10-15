@@ -14,7 +14,6 @@ mod ios_haptic;
 #[cfg(all(target_arch = "wasm32", not(aimer_portable_guest)))]
 mod web_haptic;
 
-
 #[cfg(target_os = "ios")]
 use ios_haptic as ios;
 
@@ -171,10 +170,7 @@ impl Haptics {
 pub struct NativeHapticsProvider;
 
 impl aimer_haptics::HapticFeedback for NativeHapticsProvider {
-    fn trigger(
-        &self,
-        kind: aimer_haptics::HapticKind,
-    ) -> aimer_anteros::CapabilityResult<()> {
+    fn trigger(&self, kind: aimer_haptics::HapticKind) -> aimer_anteros::CapabilityResult<()> {
         #[cfg(target_os = "ios")]
         {
             use aimer_haptics::HapticKind;
@@ -198,12 +194,10 @@ impl aimer_haptics::HapticFeedback for NativeHapticsProvider {
     }
 }
 
-
-
 #[cfg(all(test, not(target_os = "ios")))]
 mod capability_tests {
-    use aimer_haptics::{HapticFeedback, HapticKind};
     use aimer_anteros::CapabilityError;
+    use aimer_haptics::{HapticFeedback, HapticKind};
 
     use super::NativeHapticsProvider;
 
@@ -224,4 +218,3 @@ mod capability_tests {
         }
     }
 }
-

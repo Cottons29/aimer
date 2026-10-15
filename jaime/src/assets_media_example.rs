@@ -43,7 +43,10 @@ impl AssetLoadOperation for ExampleOperation {
 }
 
 impl AssetResolver for ExampleResolver {
-    fn start(&self, _request: &AssetRequest) -> Result<Box<dyn AssetLoadOperation>, aimer::AssetError> {
+    fn start(
+        &self,
+        _request: &AssetRequest,
+    ) -> Result<Box<dyn AssetLoadOperation>, aimer::AssetError> {
         let data = AssetData::new(b"<svg viewBox='0 0 16 16'/ >".to_vec()).with_metadata(
             AssetMetadata::new(Some("image/svg+xml"), Some(16), Some(16), false),
         );
@@ -111,7 +114,9 @@ impl AssetsMediaExample {
         let handle = manager
             .preload(AssetRequest::new(asset))
             .expect("the example source passes the default policy");
-        manager.poll(handle).expect("the example resolver is deterministic");
+        manager
+            .poll(handle)
+            .expect("the example resolver is deterministic");
 
         let icon = Icon::new(IconSource::glyph("Symbols", '✓'))
             .size(24.0)
@@ -136,15 +141,20 @@ impl AssetsMediaExample {
 
     /// Builds the model-only state asserted by the integration test.
     pub fn snapshot(&self) -> AssetsMediaSnapshot {
-        let asset_is_ready = matches!(self.manager.status(self.handle), Ok(LoadState::Ready { .. }));
-        let icon = self.icon.resolve(IconContext::new(
-            IconTheme::Dark,
-            IconDirection::Ltr,
-            false,
-        ));
+        let asset_is_ready = matches!(
+            self.manager
+                .status(self.handle),
+            Ok(LoadState::Ready { .. })
+        );
+        let icon = self
+            .icon
+            .resolve(IconContext::new(IconTheme::Dark, IconDirection::Ltr, false));
         AssetsMediaSnapshot {
             asset_is_ready,
-            cache_entries: self.manager.cache_stats().entries(),
+            cache_entries: self
+                .manager
+                .cache_stats()
+                .entries(),
             icon_size: icon.size().round() as u32,
             media_is_unsupported: matches!(
                 self.media.state(),
@@ -163,15 +173,15 @@ impl Default for AssetsMediaExample {
 impl Widget for AssetsMediaExample {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
         let snapshot = self.snapshot();
-        let icon = self.icon.resolve(IconContext::new(
-            IconTheme::Dark,
-            IconDirection::Ltr,
-            false,
-        ));
+        let icon = self
+            .icon
+            .resolve(IconContext::new(IconTheme::Dark, IconDirection::Ltr, false));
         Container::new()
             .child(
                 Column::new().children([
-                    Text::new("Assets and optional media").wrapped().boxed(),
+                    Text::new("Assets and optional media")
+                        .wrapped()
+                        .boxed(),
                     Text::new(format!(
                         "Preload/cache: ready={}, entries={}",
                         snapshot.asset_is_ready(),
@@ -182,7 +192,8 @@ impl Widget for AssetsMediaExample {
                     Text::new(format!(
                         "Icon: glyph at {}px, tint={:?}",
                         icon.size(),
-                        icon.tint().map(IconTint::channels)
+                        icon.tint()
+                            .map(IconTint::channels)
                     ))
                     .wrapped()
                     .boxed(),

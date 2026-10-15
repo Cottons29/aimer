@@ -144,7 +144,10 @@ mod tests {
         for travel in [-500.0, -1.0, 0.0, 1.0, 500.0] {
             let window = cache_window(100.0, VIEWPORT, travel);
 
-            assert!(window.start <= 100.0, "culling visible content shows blanks");
+            assert!(
+                window.start <= 100.0,
+                "culling visible content shows blanks"
+            );
             assert!(window.start + window.extent >= 100.0 + VIEWPORT);
         }
     }
@@ -225,9 +228,12 @@ mod tests {
     fn a_degenerate_viewport_is_not_a_negative_window() {
         let window = cache_window(0.0, -10.0, f32::NAN);
 
-        assert_eq!(window, CacheWindow {
-            start: 0.0,
-            extent: 0.0
-        });
+        assert_eq!(
+            window,
+            CacheWindow {
+                start: 0.0,
+                extent: 0.0
+            }
+        );
     }
 }

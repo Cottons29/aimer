@@ -189,11 +189,7 @@ fn normalize_node(node: &SemanticNode) -> Option<SemanticNode> {
         SemanticBehavior::Normal => {
             let mut normalized = node.clone();
             normalized.behavior = SemanticBehavior::Normal;
-            normalized.children = node
-                .children()
-                .iter()
-                .filter_map(normalize_node)
-                .collect();
+            normalized.children = node.children().iter().filter_map(normalize_node).collect();
             Some(normalized)
         }
         SemanticBehavior::Merge => Some(merge_node(node)),
@@ -210,12 +206,7 @@ fn merge_node(node: &SemanticNode) -> SemanticNode {
     let mut actions = Vec::new();
     for child in node.children() {
         if let Some(normalized) = normalize_node(child) {
-            collect_merge_contributions(
-                &normalized,
-                &mut names,
-                &mut descriptions,
-                &mut actions,
-            );
+            collect_merge_contributions(&normalized, &mut names, &mut descriptions, &mut actions);
         }
     }
 
@@ -267,7 +258,13 @@ fn write_canonical_node(node: &SemanticNode, output: &mut String) {
     if !output.is_empty() {
         output.push('\n');
     }
-    write!(output, "id={};role={};", node.id().get(), node.role().canonical_name()).unwrap();
+    write!(
+        output,
+        "id={};role={};",
+        node.id().get(),
+        node.role().canonical_name()
+    )
+    .unwrap();
     write_optional(output, "name", node.name());
     write_optional(output, "description", node.description());
     write_optional(output, "value", node.value());

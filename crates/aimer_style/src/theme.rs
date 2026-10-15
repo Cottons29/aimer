@@ -3,12 +3,12 @@ use aimer_color::prelude::Color;
 use aimer_provider::{
     PortableProviderCodec, PortableProviderCodecError, ProviderContext, Snapshot,
 };
+use aimer_widget::Brightness;
+use aimer_widget::base::BuildContext;
 use aimer_widget::portable::__anteros::{
     THEME_DATA_VALUE_MAXIMUM_ENCODED_BYTES, THEME_DATA_VALUE_NAME, THEME_DATA_VALUE_VERSION,
     ValueSchemaMetadata, Version,
 };
-use aimer_widget::Brightness;
-use aimer_widget::base::BuildContext;
 use std::any::type_name;
 
 /// Semantic colors used by themed widgets.
@@ -466,7 +466,9 @@ mod tests {
             let _ = ThemeData::of(&context);
         }))
         .expect_err("a theme lookup without a provider should panic");
-        let site = watch.take_site().expect("the panic site should be recorded");
+        let site = watch
+            .take_site()
+            .expect("the panic site should be recorded");
         let message = payload
             .downcast_ref::<String>()
             .expect("the diagnostic should be an owned message");

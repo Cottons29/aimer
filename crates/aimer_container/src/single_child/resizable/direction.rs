@@ -1,4 +1,6 @@
-use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Not, Sub, SubAssign};
+use std::ops::{
+    BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Not, Sub, SubAssign,
+};
 
 use aimer_macro::PortableValue;
 
@@ -80,9 +82,8 @@ impl Direction {
     /// The four edges, without any corner.
     pub const EDGES: Self = Self(Self::LEFT.0 | Self::RIGHT.0 | Self::TOP.0 | Self::BOTTOM.0);
     /// The four corners, without any edge.
-    pub const CORNERS: Self = Self(
-        Self::TOP_LEFT.0 | Self::TOP_RIGHT.0 | Self::BOTTOM_LEFT.0 | Self::BOTTOM_RIGHT.0,
-    );
+    pub const CORNERS: Self =
+        Self(Self::TOP_LEFT.0 | Self::TOP_RIGHT.0 | Self::BOTTOM_LEFT.0 | Self::BOTTOM_RIGHT.0);
     /// Every side that changes the width: both vertical edges and all four
     /// corners.
     pub const HORIZONTAL: Self = Self(Self::LEFT.0 | Self::RIGHT.0 | Self::CORNERS.0);
@@ -371,7 +372,11 @@ mod tests {
         assert!(sides.contains(Direction::BOTTOM_EDGES));
         assert!(sides.contains(Direction::LEFT | Direction::RIGHT));
         assert!(!sides.intersects(Direction::TOP_EDGES));
-        assert_eq!(!sides, Direction::TOP_EDGES, "the complement is what was cut");
+        assert_eq!(
+            !sides,
+            Direction::TOP_EDGES,
+            "the complement is what was cut"
+        );
     }
 
     #[test]

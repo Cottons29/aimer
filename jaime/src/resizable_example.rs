@@ -208,7 +208,11 @@ impl ResizableShowcaseState {
                                 BorderSlice::new()
                                     .stroke(Dimension::Px(2.0))
                                     .style(BorderStyle::Solid)
-                                    .color(app_theme.primary_color.with_alpha(0.70)),
+                                    .color(
+                                        app_theme
+                                            .primary_color
+                                            .with_alpha(0.70),
+                                    ),
                             )),
                     )
                     .child(
@@ -254,7 +258,11 @@ impl ResizableShowcaseState {
                             .border(BoxBorder::all(
                                 BorderSlice::new()
                                     .stroke(Dimension::Px(2.0))
-                                    .color(app_theme.primary_color.lighten(0.12)),
+                                    .color(
+                                        app_theme
+                                            .primary_color
+                                            .lighten(0.12),
+                                    ),
                             )),
                     )
                     .child(

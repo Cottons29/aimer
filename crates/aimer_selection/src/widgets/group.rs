@@ -14,8 +14,7 @@ use crate::events::{ControlAction, InputEvent, is_activation_key};
 use crate::{Autocomplete, ChoiceOption, Key, RadioGroup, Select};
 
 use super::chrome::{
-    control_shell, error_text, indicator, labeled_option_row, labeled_row, tokens,
-    wrap_interactive,
+    control_shell, error_text, indicator, labeled_option_row, labeled_row, tokens, wrap_interactive,
 };
 
 /// Retained state for a [`RadioGroup`] widget.
@@ -68,14 +67,7 @@ impl<T: Clone + PartialEq + 'static> State<RadioGroup<T>> for RadioGroupState<T>
                 let disabled = option.disabled() || self.control.interaction_state().disabled();
                 let visual = labeled_row(
                     &tokens,
-                    indicator(
-                        &tokens,
-                        selected,
-                        tokens.shape.pill,
-                        false,
-                        false,
-                        disabled,
-                    ),
+                    indicator(&tokens, selected, tokens.shape.pill, false, false, disabled),
                     Some(option.label()),
                     disabled,
                 );
@@ -265,7 +257,9 @@ impl<T: Clone + PartialEq + 'static> State<Select<T>> for SelectState<T> {
             children.push(
                 Column::new()
                     .horizontal_alignment(BoxAlignment::Start)
-                    .gaps(LayoutSpacing::all(Spacing::Px(tokens.spacing.x_small as u32)))
+                    .gaps(LayoutSpacing::all(Spacing::Px(
+                        tokens.spacing.x_small as u32,
+                    )))
                     .children(options)
                     .boxed(),
             );
@@ -278,7 +272,9 @@ impl<T: Clone + PartialEq + 'static> State<Select<T>> for SelectState<T> {
             self.control.interaction_state().error(),
             Column::new()
                 .horizontal_alignment(BoxAlignment::Start)
-                .gaps(LayoutSpacing::all(Spacing::Px(tokens.spacing.x_small as u32)))
+                .gaps(LayoutSpacing::all(Spacing::Px(
+                    tokens.spacing.x_small as u32,
+                )))
                 .children(children)
                 .boxed(),
         );
@@ -522,13 +518,16 @@ impl<T: Clone + PartialEq + 'static> State<Autocomplete<T>> for AutocompleteStat
             self.control.interaction_state().pressed(),
             self.control.interaction_state().disabled(),
             None,
-            Container::new().child(
-                Column::new()
-                    .horizontal_alignment(BoxAlignment::Start)
-                    .gaps(LayoutSpacing::all(Spacing::Px(tokens.spacing.x_small as u32)))
-                    .children(children),
-            )
-            .boxed(),
+            Container::new()
+                .child(
+                    Column::new()
+                        .horizontal_alignment(BoxAlignment::Start)
+                        .gaps(LayoutSpacing::all(Spacing::Px(
+                            tokens.spacing.x_small as u32,
+                        )))
+                        .children(children),
+                )
+                .boxed(),
         );
         let updater = self.updater;
         wrap_interactive(
@@ -565,11 +564,7 @@ impl<T: Clone + PartialEq + 'static> State<Autocomplete<T>> for AutocompleteStat
                     if is_activation_key(key)
                         || matches!(
                             key,
-                            Key::ArrowDown
-                                | Key::ArrowUp
-                                | Key::Escape
-                                | Key::Home
-                                | Key::End
+                            Key::ArrowDown | Key::ArrowUp | Key::Escape | Key::Home | Key::End
                         )
                     {
                         updater.set_state(move |state| {

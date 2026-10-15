@@ -7,8 +7,8 @@ use aimer::quiver::winit::dpi::PhysicalPosition;
 use aimer::quiver::winit::event::{DeviceId, WindowEvent};
 use aimer::{
     AimerApp, AnyElement, AnyWidget, BuildContext, Column, Drawable, EventElement, EventResult,
-    EventTreeRole, LayoutElement, Rebuildable, ScrollAxis, ScrollController,
-    Scrollable, SizedBox, Vec2d, VisitorElement, Widget,
+    EventTreeRole, LayoutElement, Rebuildable, ScrollAxis, ScrollController, Scrollable, SizedBox,
+    Vec2d, VisitorElement, Widget,
 };
 
 struct PointerMoveProbe {
@@ -80,7 +80,10 @@ fn scrolling_reconciles_stationary_mouse_hover_through_the_child_dispatcher() {
     );
     let mut app = AimerApp::start_headless(page);
     app.render_frame();
-    assert!(controller.max_extent().y > 0.0, "the page must be scrollable");
+    assert!(
+        controller.max_extent().y > 0.0,
+        "the page must be scrollable"
+    );
 
     app.send_window_event(WindowEvent::CursorMoved {
         device_id: DeviceId::dummy(),
@@ -94,7 +97,11 @@ fn scrolling_reconciles_stationary_mouse_hover_through_the_child_dispatcher() {
     controller.jump_to(Vec2d { x: 0.0, y: 24.0 });
     app.render_frame();
 
-    assert_ne!(controller.offset().y, 0.0, "the wheel must move the content");
+    assert_ne!(
+        controller.offset().y,
+        0.0,
+        "the wheel must move the content"
+    );
     assert!(
         moves.get() > moves_before_scroll,
         "scroll movement should reconcile the child pointer hit path"

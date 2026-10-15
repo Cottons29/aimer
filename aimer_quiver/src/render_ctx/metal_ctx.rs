@@ -1,4 +1,7 @@
-#[cfg(all(not(target_arch = "wasm32"),any(target_os = "macos", target_os = "ios")))]
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    any(target_os = "macos", target_os = "ios")
+))]
 pub mod render_ctx {
     use aimer_cupid::AntiAlias;
     use aimer_cupid::backend::GpuBackend;
@@ -9,9 +12,9 @@ pub mod render_ctx {
     use aimer_cupid::renderer::RendererImpl;
     #[cfg(target_os = "macos")]
     use objc2_app_kit::NSView;
-    use objc2_core_foundation::CGSize;
     #[cfg(any(target_os = "ios", test))]
     use objc2_core_foundation::CGRect;
+    use objc2_core_foundation::CGSize;
     use objc2_metal::MTLPixelFormat;
     use objc2_quartz_core::CAMetalLayer;
     #[cfg(any(target_os = "ios", test))]
@@ -185,11 +188,8 @@ pub mod render_ctx {
             configure_surface(&surface, window, surface_size.size);
             #[cfg(target_os = "macos")]
             crate::ffi_utils::macos_surface::enable_transactional_surface_presentation(window);
-            let renderer = RendererImpl::with_antialiasing(
-                &backend,
-                SURFACE_FORMAT,
-                self.antialiasing,
-            );
+            let renderer =
+                RendererImpl::with_antialiasing(&backend, SURFACE_FORMAT, self.antialiasing);
 
             self.backend = Some(backend);
             self.surface = Some(surface);
@@ -344,7 +344,9 @@ pub mod render_ctx {
                     return false;
                 };
                 let Some(update) = configure_uikit_surface(
-                    surface, window, PhysicalSize::new(frame.width, frame.height),
+                    surface,
+                    window,
+                    PhysicalSize::new(frame.width, frame.height),
                 ) else {
                     return false;
                 };
@@ -409,13 +411,20 @@ pub mod render_ctx {
             #[cfg(target_os = "macos")]
             {
                 let Some(window) = self.window else { return };
-                let Ok(handle) = window.window_handle() else { return };
-                let RawWindowHandle::AppKit(handle) = handle.as_raw() else { return };
+                let Ok(handle) = window.window_handle() else {
+                    return;
+                };
+                let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+                    return;
+                };
                 // SAFETY: the inline context owns the layer on its UI thread;
                 // winit keeps the view alive for the retained window's lifetime.
                 let view = unsafe { &*handle.ns_view.as_ptr().cast::<NSView>() };
                 let owned: &objc2_quartz_core::CALayer = surface.layer();
-                if view.layer().is_some_and(|layer| std::ptr::eq(&*layer, owned)) {
+                if view
+                    .layer()
+                    .is_some_and(|layer| std::ptr::eq(&*layer, owned))
+                {
                     view.setLayer(None);
                     view.setWantsLayer(false);
                 }
@@ -441,16 +450,20 @@ pub mod render_ctx {
         // SAFETY: Winit owns this UIView for the window's lifetime, and the
         // inline Metal presenter runs on winit's main event-loop thread.
         let view = unsafe { &*uikit_handle.ui_view.as_ptr().cast::<UIView>() };
-        configure_uikit_layer(surface.layer(), view.bounds(), view.contentScaleFactor(), size)
+        configure_uikit_layer(
+            surface.layer(),
+            view.bounds(),
+            view.contentScaleFactor(),
+            size,
+        )
     }
 
     #[cfg(target_os = "macos")]
     fn configure_surface(surface: &MetalSurface, window: &Window, size: PhysicalSize<u32>) {
         surface.layer().setContentsScale(window.scale_factor());
-        surface.layer().setDrawableSize(CGSize::new(
-            f64::from(size.width),
-            f64::from(size.height),
-        ));
+        surface
+            .layer()
+            .setDrawableSize(CGSize::new(f64::from(size.width), f64::from(size.height)));
     }
 
     // The guard spans layer configuration, drawable acquisition, encoding and
@@ -493,10 +506,14 @@ pub mod render_ctx {
         size: PhysicalSize<u32>,
     ) -> Option<SurfaceTransaction<'_>> {
         let viewport = bounds.size;
-        if !viewport.width.is_finite() || viewport.width <= 0.0
-            || !viewport.height.is_finite() || viewport.height <= 0.0
-            || !scale.is_finite() || scale <= 0.0
-            || winit::dpi::LogicalSize::new(viewport.width, viewport.height).to_physical(scale) != size
+        if !viewport.width.is_finite()
+            || viewport.width <= 0.0
+            || !viewport.height.is_finite()
+            || viewport.height <= 0.0
+            || !scale.is_finite()
+            || scale <= 0.0
+            || winit::dpi::LogicalSize::new(viewport.width, viewport.height).to_physical(scale)
+                != size
         {
             return None;
         }
@@ -504,7 +521,11 @@ pub mod render_ctx {
         // disabled. Keep it at the UIView's current bounds throughout resize.
         CATransaction::begin();
         let transaction = SurfaceTransaction {
-            layer, bounds, scale, size, _thread: std::marker::PhantomData,
+            layer,
+            bounds,
+            scale,
+            size,
+            _thread: std::marker::PhantomData,
         };
         CATransaction::setDisableActions(true);
         // UIKit commits its window geometry through Core Animation. Present
@@ -537,7 +558,12 @@ pub mod render_ctx {
             let next = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(140.0, 100.0));
             // Acquiring a drawable can fail during resize. Merely requesting
             // a new drawable must not resize the image still on screen.
-            drop(configure_uikit_layer(&layer, next, 2.0, PhysicalSize::new(280, 200)));
+            drop(configure_uikit_layer(
+                &layer,
+                next,
+                2.0,
+                PhysicalSize::new(280, 200),
+            ));
             assert_eq!(layer.frame(), previous);
         }
 
@@ -548,7 +574,12 @@ pub mod render_ctx {
             let previous = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(100.0, 80.0));
             layer.setFrame(previous);
             let next = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(140.0, 100.0));
-            drop(configure_uikit_layer(&layer, next, 2.0, PhysicalSize::new(200, 160)));
+            drop(configure_uikit_layer(
+                &layer,
+                next,
+                2.0,
+                PhysicalSize::new(200, 160),
+            ));
             assert_eq!(layer.frame(), previous);
             assert_eq!(layer.drawableSize(), previous_drawable_size);
         }
@@ -570,13 +601,20 @@ pub mod render_ctx {
             let layer = CAMetalLayer::new();
             let previous = layer.frame();
             for (width, height, scale) in [
-                (0.0, 100.0, 2.0), (140.0, 0.0, 2.0),
-                (-140.0, 100.0, 2.0), (f64::NAN, 100.0, 2.0),
-                (140.0, f64::INFINITY, 2.0), (140.0, 100.0, 0.0),
-                (140.0, 100.0, f64::NAN), (140.0, 100.0, f64::INFINITY),
+                (0.0, 100.0, 2.0),
+                (140.0, 0.0, 2.0),
+                (-140.0, 100.0, 2.0),
+                (f64::NAN, 100.0, 2.0),
+                (140.0, f64::INFINITY, 2.0),
+                (140.0, 100.0, 0.0),
+                (140.0, 100.0, f64::NAN),
+                (140.0, 100.0, f64::INFINITY),
             ] {
                 let bounds = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(width, height));
-                assert!(configure_uikit_layer(&layer, bounds, scale, PhysicalSize::new(280, 200)).is_none());
+                assert!(
+                    configure_uikit_layer(&layer, bounds, scale, PhysicalSize::new(280, 200))
+                        .is_none()
+                );
                 assert_eq!(layer.frame(), previous);
             }
         }
@@ -590,7 +628,8 @@ pub mod render_ctx {
                     CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(width, height)),
                     2.0,
                     PhysicalSize::new((width * 2.0) as u32, (height * 2.0) as u32),
-                ).expect("matching viewport");
+                )
+                .expect("matching viewport");
                 // SAFETY: QuartzCore exports this immutable gravity constant.
                 assert_eq!(&*layer.contentsGravity(), unsafe { kCAGravityTopLeft });
             }
@@ -606,14 +645,21 @@ pub mod render_ctx {
                 CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(512.0, 384.0)),
                 2.0,
                 PhysicalSize::new(1024, 768),
-            ).expect("matching viewport");
+            )
+            .expect("matching viewport");
             let open_during_presentation = CATransaction::disableActions();
             drop(update);
             let restored_after_presentation = !CATransaction::disableActions();
             CATransaction::commit();
 
-            assert!(open_during_presentation, "geometry must not commit before presentation");
-            assert!(restored_after_presentation, "the caller's transaction must be restored");
+            assert!(
+                open_during_presentation,
+                "geometry must not commit before presentation"
+            );
+            assert!(
+                restored_after_presentation,
+                "the caller's transaction must be restored"
+            );
         }
 
         #[test]
@@ -629,13 +675,20 @@ pub mod render_ctx {
             ] {
                 let bounds = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(width, height));
                 let size = PhysicalSize::new((width * scale) as u32, (height * scale) as u32);
-                let update = configure_uikit_layer(&layer, bounds, scale, size).expect("matching viewport");
+                let update =
+                    configure_uikit_layer(&layer, bounds, scale, size).expect("matching viewport");
                 update.apply_geometry();
 
-                assert!(layer.presentsWithTransaction(), "resize must present with UIKit's transaction");
+                assert!(
+                    layer.presentsWithTransaction(),
+                    "resize must present with UIKit's transaction"
+                );
                 assert_eq!(layer.frame(), bounds);
                 assert_eq!(layer.contentsScale(), scale);
-                assert_eq!(layer.drawableSize(), CGSize::new(size.width.into(), size.height.into()));
+                assert_eq!(
+                    layer.drawableSize(),
+                    CGSize::new(size.width.into(), size.height.into())
+                );
             }
         }
     }

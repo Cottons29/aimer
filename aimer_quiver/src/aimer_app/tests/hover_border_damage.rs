@@ -18,41 +18,61 @@ impl Widget for Cards {
             aimer_container::Container::new()
                 .margin(aimer_style::LayoutSpacing::all(12))
                 .child(
-                    aimer_container::Container::new().height(160).width(Dimension::Auto).child(
-                        aimer_input::button::Button::new()
-                            .decoration(
-                                BoxDecoration::new()
-                                    .background_color(Color::Rgb(30, 20, 20))
-                                    .border_radius(8)
-                                    .border(BoxBorder::all(
-                                        BorderSlice::new().style(BorderStyle::Dotted).stroke(2).color(Color::Rgb(60, 40, 40)),
-                                    )),
-                            )
-                            .hover_decoration(
-                                BoxDecoration::new()
-                                    .background_color(Color::Rgb(60, 30, 25))
-                                    .border_radius(8)
-                                    .border(BoxBorder::all(
-                                        BorderSlice::new().style(BorderStyle::Solid).stroke(2).color(Color::Rgb(240, 100, 70)),
-                                    )),
-                            )
-                            .child(SizedBox::new().width(Dimension::Auto).height(Dimension::Px(100.0))),
-                    ),
+                    aimer_container::Container::new()
+                        .height(160)
+                        .width(Dimension::Auto)
+                        .child(
+                            aimer_input::button::Button::new()
+                                .decoration(
+                                    BoxDecoration::new()
+                                        .background_color(Color::Rgb(30, 20, 20))
+                                        .border_radius(8)
+                                        .border(BoxBorder::all(
+                                            BorderSlice::new()
+                                                .style(BorderStyle::Dotted)
+                                                .stroke(2)
+                                                .color(Color::Rgb(60, 40, 40)),
+                                        )),
+                                )
+                                .hover_decoration(
+                                    BoxDecoration::new()
+                                        .background_color(Color::Rgb(60, 30, 25))
+                                        .border_radius(8)
+                                        .border(BoxBorder::all(
+                                            BorderSlice::new()
+                                                .style(BorderStyle::Solid)
+                                                .stroke(2)
+                                                .color(Color::Rgb(240, 100, 70)),
+                                        )),
+                                )
+                                .child(
+                                    SizedBox::new()
+                                        .width(Dimension::Auto)
+                                        .height(Dimension::Px(100.0)),
+                                ),
+                        ),
                 )
                 .boxed()
         };
-        Column::new().children(vec![card(), card(), card(), card()]).to_element(ctx)
+        Column::new()
+            .children(vec![card(), card(), card(), card()])
+            .to_element(ctx)
     }
 }
 impl aimer_widget::PortableWidget for Cards {}
 
-fn decoration_nodes<W: Widget + 'static>(root: &dyn Element, app: &HeadlessAimerApp<W>, out: &mut Vec<aimer_cupid::draw_cmd_v2::RenderNodeId>) {
+fn decoration_nodes<W: Widget + 'static>(
+    root: &dyn Element,
+    app: &HeadlessAimerApp<W>,
+    out: &mut Vec<aimer_cupid::draw_cmd_v2::RenderNodeId>,
+) {
     if root.debug_name() == "Container" {
-        if let Some(node) = app.app.render_node_for_element(root.id()) { out.push(node); }
+        if let Some(node) = app.app.render_node_for_element(root.id()) {
+            out.push(node);
+        }
     }
     root.visit_children(&mut |child| decoration_nodes(child, app, out));
 }
-
 
 /// The part of the window a node's own fill covers, in logical pixels.
 fn painted_fill<W: Widget + 'static>(
@@ -77,9 +97,16 @@ fn painted_fill<W: Widget + 'static>(
     }
 }
 
-fn covers(damage: &aimer_cupid::damage_region::DamageSet, rect: aimer_cupid::utilities::Rect, scale: f32) -> bool {
+fn covers(
+    damage: &aimer_cupid::damage_region::DamageSet,
+    rect: aimer_cupid::utilities::Rect,
+    scale: f32,
+) -> bool {
     let (left, top) = ((rect.x * scale).floor(), (rect.y * scale).floor());
-    let (right, bottom) = (((rect.x + rect.width) * scale).ceil(), ((rect.y + rect.height) * scale).ceil());
+    let (right, bottom) = (
+        ((rect.x + rect.width) * scale).ceil(),
+        ((rect.y + rect.height) * scale).ceil(),
+    );
     damage.is_full()
         || damage.regions().iter().any(|region| {
             (region.x as f32) <= left
@@ -91,12 +118,21 @@ fn covers(damage: &aimer_cupid::damage_region::DamageSet, rect: aimer_cupid::uti
 
 #[test]
 fn a_hovered_card_repaints_its_whole_border() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     for (width, scale) in [(1003u32, 2.0f32), (1001, 2.0), (1000, 1.0)] {
-        let mut app = AimerApp::start_headless_with(Cards, HeadlessOptions {
-            size: PhysicalSize::new(width, 1400), scale_factor: f64::from(scale),
+        let mut app = AimerApp::start_headless_with(
+            Cards,
+            HeadlessOptions {
+                size: PhysicalSize::new(width, 1400),
+                scale_factor: f64::from(scale),
+            },
+        );
+        app.send_window_event(WindowEvent::CursorMoved {
+            device_id: DeviceId::dummy(),
+            position: PhysicalPosition::new(-10.0, -10.0),
         });
-        app.send_window_event(WindowEvent::CursorMoved { device_id: DeviceId::dummy(), position: PhysicalPosition::new(-10.0, -10.0) });
         app.pump_frames(3);
         let _ = direct_headless_frame_packet(&mut app);
         let root = app.app.widget_root.as_ref().unwrap();
@@ -109,7 +145,8 @@ fn a_hovered_card_repaints_its_whole_border() {
             let painted = painted_fill(&app, *node);
             let y = (painted.y + painted.height / 2.0) * scale;
             app.send_window_event(WindowEvent::CursorMoved {
-                device_id: DeviceId::dummy(), position: PhysicalPosition::new(f64::from(300.0 * scale), f64::from(y)),
+                device_id: DeviceId::dummy(),
+                position: PhysicalPosition::new(f64::from(300.0 * scale), f64::from(y)),
             });
             let (_, packet) = direct_headless_frame_packet(&mut app);
             assert!(
@@ -119,7 +156,10 @@ fn a_hovered_card_repaints_its_whole_border() {
             );
         }
         // Leaving a card repaints it as well.
-        app.send_window_event(WindowEvent::CursorMoved { device_id: DeviceId::dummy(), position: PhysicalPosition::new(-10.0, -10.0) });
+        app.send_window_event(WindowEvent::CursorMoved {
+            device_id: DeviceId::dummy(),
+            position: PhysicalPosition::new(-10.0, -10.0),
+        });
         let (_, packet) = direct_headless_frame_packet(&mut app);
         let left = painted_fill(&app, decorated[2]);
         assert!(
@@ -142,9 +182,18 @@ impl Widget for Padded {
                 BoxDecoration::new()
                     .background_color(Color::Rgb(30, 20, 20))
                     .border_radius(8)
-                    .border(BoxBorder::all(BorderSlice::new().style(BorderStyle::Solid).stroke(2).color(Color::Rgb(240, 100, 70)))),
+                    .border(BoxBorder::all(
+                        BorderSlice::new()
+                            .style(BorderStyle::Solid)
+                            .stroke(2)
+                            .color(Color::Rgb(240, 100, 70)),
+                    )),
             )
-            .child(SizedBox::new().width(Dimension::Px(50.0)).height(Dimension::Px(50.0)))
+            .child(
+                SizedBox::new()
+                    .width(Dimension::Px(50.0))
+                    .height(Dimension::Px(50.0)),
+            )
             .to_element(ctx)
     }
 }
@@ -152,10 +201,16 @@ impl aimer_widget::PortableWidget for Padded {}
 
 #[test]
 fn a_decorated_node_covers_what_it_paints() {
-    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    let mut app = AimerApp::start_headless_with(Padded, HeadlessOptions {
-        size: PhysicalSize::new(1000, 600), scale_factor: 2.0,
-    });
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let mut app = AimerApp::start_headless_with(
+        Padded,
+        HeadlessOptions {
+            size: PhysicalSize::new(1000, 600),
+            scale_factor: 2.0,
+        },
+    );
     app.pump_frames(3);
     let root = app.app.widget_root.as_ref().unwrap();
     let mut nodes = Vec::new();

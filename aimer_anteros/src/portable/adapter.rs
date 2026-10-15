@@ -79,18 +79,12 @@ impl NativeAdapter {
     }
 
     /// Encodes one callback invocation using the canonical event image.
-    pub fn encode_callback_event(
-        &self,
-        event: CallbackEvent<'_>,
-    ) -> Result<Vec<u8>, AdapterError> {
+    pub fn encode_callback_event(&self, event: CallbackEvent<'_>) -> Result<Vec<u8>, AdapterError> {
         event.encode(self.limits).map_err(Into::into)
     }
 
     /// Encodes one complete versioned guest-state bundle.
-    pub fn encode_state_bundle(
-        &self,
-        state: &StateBundle<'_>,
-    ) -> Result<Vec<u8>, AdapterError> {
+    pub fn encode_state_bundle(&self, state: &StateBundle<'_>) -> Result<Vec<u8>, AdapterError> {
         state.encode(self.limits).map_err(Into::into)
     }
 }

@@ -1,5 +1,5 @@
-use std::cell::{Cell, RefCell};
 use std::borrow::Cow;
+use std::cell::{Cell, RefCell};
 use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
@@ -26,15 +26,14 @@ use aimer_widget::{
     Widget,
 };
 
+use crate::editable_text::{
+    ControllerAttachment, DisplayText, EditableGeometry, EditableGeometryCache,
+    EditableGeometryKey, adapt_native_delta, vertical_target, wrap_visual_lines,
+};
 use crate::input_field::caret::{
     CaretBlink, CaretBuilder, CaretContext, CaretGeometry, DefaultCaret,
 };
 use crate::input_field::context_menu::{FieldAction, HoldOutcome, TouchHold};
-use crate::editable_text::{
-    ControllerAttachment, DisplayText, EditableGeometry, EditableGeometryCache,
-    EditableGeometryKey, adapt_native_delta,
-    vertical_target, wrap_visual_lines,
-};
 use crate::{TextEditingController, TextEditingValue};
 
 static NEXT_TEXT_EDITING_SESSION: AtomicU64 = AtomicU64::new(1);

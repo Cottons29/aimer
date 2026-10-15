@@ -1,0 +1,28 @@
+{
+  "$schema": "../icon.schema.json",
+  "contributors": [
+    "Tummerhore",
+    "ericfennis",
+    "karsa-mistmere",
+    "jguddas"
+  ],
+  "use-cases": [],
+  "tags": [
+    "school",
+    "university",
+    "learn",
+    "study",
+    "mortarboard",
+    "education",
+    "ceremony",
+    "academic",
+    "hat",
+    "diploma",
+    "bachelor's",
+    "master's",
+    "doctorate"
+  ],
+  "categories": [
+    "buildings"
+  ]
+}

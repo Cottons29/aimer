@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
-use ash::vk;
 use crate::backend::TextureUsage;
+use ash::vk;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
 use super::{
@@ -62,14 +62,18 @@ pub(super) fn create_windowed<W>(
 where
     W: HasDisplayHandle + HasWindowHandle + Send + Sync + 'static,
 {
-    let display = window.display_handle()
+    let display = window
+        .display_handle()
         .map_err(|error| VulkanError::new("get display handle", error.to_string()))?
         .as_raw();
-    let raw_window = window.window_handle()
+    let raw_window = window
+        .window_handle()
         .map_err(|error| VulkanError::new("get window handle", error.to_string()))?
         .as_raw();
-    let required_extensions = ash_window::enumerate_required_extensions(display)
-        .map_err(|error| VulkanError::new("enumerate Vulkan surface extensions", format!("{error:?}")))?;
+    let required_extensions =
+        ash_window::enumerate_required_extensions(display).map_err(|error| {
+            VulkanError::new("enumerate Vulkan surface extensions", format!("{error:?}"))
+        })?;
     let owner = super::create_instance_owner(required_extensions, true)?;
     let surface_owner = create_surface_owner(owner.clone(), display, raw_window)?;
     let (core, graphics_family, present_family) = VulkanCore::create(owner, Some(&surface_owner))?;
@@ -88,12 +92,17 @@ where
     W: HasDisplayHandle + HasWindowHandle + Send + Sync + 'static,
 {
     let present_family = shared.present_family.ok_or_else(|| {
-        VulkanError::new("create Vulkan surface", "the backend was initialized headless")
+        VulkanError::new(
+            "create Vulkan surface",
+            "the backend was initialized headless",
+        )
     })?;
-    let display = window.display_handle()
+    let display = window
+        .display_handle()
         .map_err(|error| VulkanError::new("get display handle", error.to_string()))?
         .as_raw();
-    let raw_window = window.window_handle()
+    let raw_window = window
+        .window_handle()
         .map_err(|error| VulkanError::new("get window handle", error.to_string()))?
         .as_raw();
     let owner = shared.core._owner.clone();
@@ -104,7 +113,13 @@ where
             present_family,
             surface_owner.raw,
         )
-    }.map_err(|error| VulkanError::new("query Vulkan surface presentation support", format!("{error:?}")))?;
+    }
+    .map_err(|error| {
+        VulkanError::new(
+            "query Vulkan surface presentation support",
+            format!("{error:?}"),
+        )
+    })?;
     if !supports_present {
         return Err(VulkanError::new(
             "create Vulkan surface",
@@ -122,16 +137,9 @@ fn create_surface_owner(
     let loader = ash::khr::surface::Instance::new(&owner.entry, &owner.instance);
     // SAFETY: the instance was created with the platform surface extensions,
     // and its caller keeps the corresponding window alive through this owner.
-    let raw = unsafe {
-        ash_window::create_surface(
-            &owner.entry,
-            &owner.instance,
-            display,
-            window,
-            None,
-        )
-    }
-    .map_err(|error| VulkanError::new("create Vulkan surface", format!("{error:?}")))?;
+    let raw =
+        unsafe { ash_window::create_surface(&owner.entry, &owner.instance, display, window, None) }
+            .map_err(|error| VulkanError::new("create Vulkan surface", format!("{error:?}")))?;
     Ok(VulkanSurfaceOwner { owner, loader, raw })
 }
 
@@ -142,10 +150,8 @@ impl<W: HasDisplayHandle + HasWindowHandle + Send + Sync + 'static> VulkanSurfac
         owner: VulkanSurfaceOwner,
         initial_size: (u32, u32),
     ) -> Result<Self, VulkanError> {
-        let swapchain_loader = ash::khr::swapchain::Device::new(
-            &owner.owner.instance,
-            &shared.core.device,
-        );
+        let swapchain_loader =
+            ash::khr::swapchain::Device::new(&owner.owner.instance, &shared.core.device);
         let (swapchain, format, extent, images) = create_swapchain(
             &shared,
             &owner,
@@ -249,8 +255,13 @@ impl<W: HasDisplayHandle + HasWindowHandle + Send + Sync + 'static> VulkanSurfac
         let frame = &mut self.frames[frame_index];
         if frame.in_flight {
             unsafe {
-                self.shared.core.device.wait_for_fences(&[frame.fence], true, u64::MAX)
-                    .map_err(|error| VulkanError::new("wait for Vulkan frame", format!("{error:?}")))?;
+                self.shared
+                    .core
+                    .device
+                    .wait_for_fences(&[frame.fence], true, u64::MAX)
+                    .map_err(|error| {
+                        VulkanError::new("wait for Vulkan frame", format!("{error:?}"))
+                    })?;
             }
             frame.in_flight = false;
         }
@@ -272,7 +283,12 @@ impl<W: HasDisplayHandle + HasWindowHandle + Send + Sync + 'static> VulkanSurfac
                 }
                 return Ok(None);
             }
-            Err(error) => return Err(VulkanError::new("acquire Vulkan swapchain image", format!("{error:?}"))),
+            Err(error) => {
+                return Err(VulkanError::new(
+                    "acquire Vulkan swapchain image",
+                    format!("{error:?}"),
+                ));
+            }
         };
 
         // This wait-only queue operation places WSI's acquire dependency before
@@ -283,10 +299,19 @@ impl<W: HasDisplayHandle + HasWindowHandle + Send + Sync + 'static> VulkanSurfac
             .wait_semaphores(&wait_semaphores)
             .wait_dst_stage_mask(&wait_stages);
         {
-            let _queue = self.shared.queue_lock.lock().expect("Vulkan graphics queue mutex is not poisoned");
+            let _queue = self
+                .shared
+                .queue_lock
+                .lock()
+                .expect("Vulkan graphics queue mutex is not poisoned");
             unsafe {
-                self.shared.core.device.queue_submit(self.shared.graphics_queue, &[wait], vk::Fence::null())
-                    .map_err(|error| VulkanError::new("wait for Vulkan acquire semaphore", format!("{error:?}")))?;
+                self.shared
+                    .core
+                    .device
+                    .queue_submit(self.shared.graphics_queue, &[wait], vk::Fence::null())
+                    .map_err(|error| {
+                        VulkanError::new("wait for Vulkan acquire semaphore", format!("{error:?}"))
+                    })?;
             }
         }
         if suboptimal {
@@ -309,7 +334,10 @@ impl<W: HasDisplayHandle + HasWindowHandle + Send + Sync + 'static> VulkanSurfac
             if frame.in_flight {
                 let complete = unsafe { self.shared.core.device.get_fence_status(frame.fence) }
                     .map_err(|error| {
-                        VulkanError::new("check Vulkan frame before swapchain recreation", format!("{error:?}"))
+                        VulkanError::new(
+                            "check Vulkan frame before swapchain recreation",
+                            format!("{error:?}"),
+                        )
                     })?;
                 if !complete {
                     return Ok(false);
@@ -326,12 +354,27 @@ impl<W: HasDisplayHandle + HasWindowHandle + Send + Sync + 'static> VulkanSurfac
         // `frame_work_complete` has already waited for this surface's graphics
         // submissions. Only presentation can still reference the old swapchain,
         // so avoid stalling unrelated device work during interactive resizing.
-        let present_queue = self.shared.present_queue.expect("windowed backend has a present queue");
+        let present_queue = self
+            .shared
+            .present_queue
+            .expect("windowed backend has a present queue");
         {
-            let _queue = self.shared.present_lock.lock().expect("Vulkan present queue mutex is not poisoned");
+            let _queue = self
+                .shared
+                .present_lock
+                .lock()
+                .expect("Vulkan present queue mutex is not poisoned");
             unsafe {
-                self.shared.core.device.queue_wait_idle(present_queue)
-                    .map_err(|error| VulkanError::new("wait for Vulkan presentations before swapchain recreation", format!("{error:?}")))?;
+                self.shared
+                    .core
+                    .device
+                    .queue_wait_idle(present_queue)
+                    .map_err(|error| {
+                        VulkanError::new(
+                            "wait for Vulkan presentations before swapchain recreation",
+                            format!("{error:?}"),
+                        )
+                    })?;
             }
         }
         super::commands::collect_finished(&self.shared);
@@ -355,7 +398,10 @@ impl<W: HasDisplayHandle + HasWindowHandle + Send + Sync + 'static> VulkanSurfac
             unsafe { self.shared.core.device.destroy_semaphore(semaphore, None) };
         }
         self.render_finished = render_finished;
-        unsafe { self.swapchain_loader.destroy_swapchain(self.swapchain, None) };
+        unsafe {
+            self.swapchain_loader
+                .destroy_swapchain(self.swapchain, None)
+        };
         self.swapchain = new_swapchain;
         self.format = format;
         self.extent = extent;
@@ -369,14 +415,28 @@ impl<W: HasDisplayHandle + HasWindowHandle + Send + Sync + 'static> VulkanSurfac
         let signal = vk::SubmitInfo::default().signal_semaphores(&signal_semaphores);
         let frame_fence = self.frames[frame_index].fence;
         unsafe {
-            self.shared.core.device.reset_fences(&[frame_fence])
-                .map_err(|error| VulkanError::new("reset Vulkan frame fence", format!("{error:?}")))?;
+            self.shared
+                .core
+                .device
+                .reset_fences(&[frame_fence])
+                .map_err(|error| {
+                    VulkanError::new("reset Vulkan frame fence", format!("{error:?}"))
+                })?;
         }
         {
-            let _queue = self.shared.queue_lock.lock().expect("Vulkan graphics queue mutex is not poisoned");
+            let _queue = self
+                .shared
+                .queue_lock
+                .lock()
+                .expect("Vulkan graphics queue mutex is not poisoned");
             unsafe {
-                self.shared.core.device.queue_submit(self.shared.graphics_queue, &[signal], frame_fence)
-                    .map_err(|error| VulkanError::new("signal Vulkan present semaphore", format!("{error:?}")))?;
+                self.shared
+                    .core
+                    .device
+                    .queue_submit(self.shared.graphics_queue, &[signal], frame_fence)
+                    .map_err(|error| {
+                        VulkanError::new("signal Vulkan present semaphore", format!("{error:?}"))
+                    })?;
             }
         }
         self.frames[frame_index].in_flight = true;
@@ -387,9 +447,16 @@ impl<W: HasDisplayHandle + HasWindowHandle + Send + Sync + 'static> VulkanSurfac
             .wait_semaphores(&waits)
             .swapchains(&swapchains)
             .image_indices(&image_indices);
-        let present_queue = self.shared.present_queue.expect("windowed backend has a present queue");
+        let present_queue = self
+            .shared
+            .present_queue
+            .expect("windowed backend has a present queue");
         let present_result = {
-            let _queue = self.shared.present_lock.lock().expect("Vulkan present queue mutex is not poisoned");
+            let _queue = self
+                .shared
+                .present_lock
+                .lock()
+                .expect("Vulkan present queue mutex is not poisoned");
             unsafe { self.swapchain_loader.queue_present(present_queue, &present) }
         };
         self.current_frame = (frame_index + 1) % self.frames.len();
@@ -402,7 +469,10 @@ impl<W: HasDisplayHandle + HasWindowHandle + Send + Sync + 'static> VulkanSurfac
                 self.needs_recreate = true;
                 Ok(())
             }
-            Err(error) => Err(VulkanError::new("present Vulkan swapchain image", format!("{error:?}"))),
+            Err(error) => Err(VulkanError::new(
+                "present Vulkan swapchain image",
+                format!("{error:?}"),
+            )),
         }
     }
 }
@@ -422,16 +492,22 @@ impl<'a, W: HasDisplayHandle + HasWindowHandle + Send + Sync + 'static> VulkanSu
 
     /// Presents this frame after prior graphics queue submissions complete.
     pub fn present(mut self) -> Result<(), VulkanError> {
-        let result = self.surface.finish_frame(self.frame_index, self.image_index);
+        let result = self
+            .surface
+            .finish_frame(self.frame_index, self.image_index);
         self.completed = true;
         result
     }
 }
 
-impl<W: HasDisplayHandle + HasWindowHandle + Send + Sync + 'static> Drop for VulkanSurfaceFrame<'_, W> {
+impl<W: HasDisplayHandle + HasWindowHandle + Send + Sync + 'static> Drop
+    for VulkanSurfaceFrame<'_, W>
+{
     fn drop(&mut self) {
         if !self.completed {
-            let _ = self.surface.finish_frame(self.frame_index, self.image_index);
+            let _ = self
+                .surface
+                .finish_frame(self.frame_index, self.image_index);
         }
     }
 }
@@ -445,10 +521,14 @@ impl<W: HasDisplayHandle + HasWindowHandle + Send + Sync + 'static> Drop for Vul
                 self.shared.core.device.destroy_semaphore(semaphore, None);
             }
             for frame in self.frames.drain(..) {
-                self.shared.core.device.destroy_semaphore(frame.acquire, None);
+                self.shared
+                    .core
+                    .device
+                    .destroy_semaphore(frame.acquire, None);
                 self.shared.core.device.destroy_fence(frame.fence, None);
             }
-            self.swapchain_loader.destroy_swapchain(self.swapchain, None);
+            self.swapchain_loader
+                .destroy_swapchain(self.swapchain, None);
         }
     }
 }
@@ -459,34 +539,71 @@ fn create_swapchain(
     loader: &ash::khr::swapchain::Device,
     requested_size: (u32, u32),
     old_swapchain: vk::SwapchainKHR,
-) -> Result<(vk::SwapchainKHR, vk::Format, vk::Extent2D, Vec<VulkanTextureView>), VulkanError> {
+) -> Result<
+    (
+        vk::SwapchainKHR,
+        vk::Format,
+        vk::Extent2D,
+        Vec<VulkanTextureView>,
+    ),
+    VulkanError,
+> {
     let capabilities = unsafe {
-        surface.loader.get_physical_device_surface_capabilities(
-            shared.core.physical_device,
-            surface.raw,
-        )
-    }.map_err(|error| VulkanError::new("query Vulkan surface capabilities", format!("{error:?}")))?;
-    if !capabilities.supported_usage_flags.contains(vk::ImageUsageFlags::COLOR_ATTACHMENT) {
-        return Err(VulkanError::new("create Vulkan swapchain", "surface images do not support color attachments"));
+        surface
+            .loader
+            .get_physical_device_surface_capabilities(shared.core.physical_device, surface.raw)
+    }
+    .map_err(|error| VulkanError::new("query Vulkan surface capabilities", format!("{error:?}")))?;
+    if !capabilities
+        .supported_usage_flags
+        .contains(vk::ImageUsageFlags::COLOR_ATTACHMENT)
+    {
+        return Err(VulkanError::new(
+            "create Vulkan swapchain",
+            "surface images do not support color attachments",
+        ));
     }
     let formats = unsafe {
-        surface.loader.get_physical_device_surface_formats(shared.core.physical_device, surface.raw)
-    }.map_err(|error| VulkanError::new("query Vulkan surface formats", format!("{error:?}")))?;
-    let selected_format = formats.iter().copied().find(|format| {
-        format.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR
-            && matches!(format.format, vk::Format::B8G8R8A8_SRGB | vk::Format::R8G8B8A8_SRGB)
-    }).or_else(|| formats.first().copied()).ok_or_else(|| {
-        VulkanError::new("select Vulkan surface format", "surface exposes no color formats")
-    })?;
+        surface
+            .loader
+            .get_physical_device_surface_formats(shared.core.physical_device, surface.raw)
+    }
+    .map_err(|error| VulkanError::new("query Vulkan surface formats", format!("{error:?}")))?;
+    let selected_format = formats
+        .iter()
+        .copied()
+        .find(|format| {
+            format.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR
+                && matches!(
+                    format.format,
+                    vk::Format::B8G8R8A8_SRGB | vk::Format::R8G8B8A8_SRGB
+                )
+        })
+        .or_else(|| formats.first().copied())
+        .ok_or_else(|| {
+            VulkanError::new(
+                "select Vulkan surface format",
+                "surface exposes no color formats",
+            )
+        })?;
     let extent = if capabilities.current_extent.width != u32::MAX {
         capabilities.current_extent
     } else {
         vk::Extent2D {
-            width: requested_size.0.clamp(capabilities.min_image_extent.width, capabilities.max_image_extent.width),
-            height: requested_size.1.clamp(capabilities.min_image_extent.height, capabilities.max_image_extent.height),
+            width: requested_size.0.clamp(
+                capabilities.min_image_extent.width,
+                capabilities.max_image_extent.width,
+            ),
+            height: requested_size.1.clamp(
+                capabilities.min_image_extent.height,
+                capabilities.max_image_extent.height,
+            ),
         }
     };
-    let desired_count = capabilities.min_image_count.saturating_add(1).max(FRAMES_IN_FLIGHT as u32);
+    let desired_count = capabilities
+        .min_image_count
+        .saturating_add(1)
+        .max(FRAMES_IN_FLIGHT as u32);
     let image_count = if capabilities.max_image_count == 0 {
         desired_count
     } else {
@@ -514,7 +631,9 @@ fn create_swapchain(
         .image_sharing_mode(sharing_mode)
         .queue_family_indices(queue_family_indices)
         .pre_transform(capabilities.current_transform)
-        .composite_alpha(select_composite_alpha(capabilities.supported_composite_alpha))
+        .composite_alpha(select_composite_alpha(
+            capabilities.supported_composite_alpha,
+        ))
         .present_mode(vk::PresentModeKHR::FIFO)
         .clipped(true)
         .old_swapchain(old_swapchain);
@@ -524,7 +643,10 @@ fn create_swapchain(
         Ok(images) => images,
         Err(error) => {
             unsafe { loader.destroy_swapchain(swapchain, None) };
-            return Err(VulkanError::new("get Vulkan swapchain images", format!("{error:?}")));
+            return Err(VulkanError::new(
+                "get Vulkan swapchain images",
+                format!("{error:?}"),
+            ));
         }
     };
     let mut images = Vec::with_capacity(raw_images.len());
@@ -557,7 +679,10 @@ fn create_swapchain(
             Err(error) => {
                 drop(images);
                 unsafe { loader.destroy_swapchain(swapchain, None) };
-                return Err(VulkanError::new("create Vulkan swapchain image view", format!("{error:?}")));
+                return Err(VulkanError::new(
+                    "create Vulkan swapchain image view",
+                    format!("{error:?}"),
+                ));
             }
         };
         images.push(VulkanTextureView(Arc::new(VulkanTextureViewInner {
@@ -572,11 +697,17 @@ fn create_swapchain(
 fn create_semaphores(core: &VulkanCore, count: usize) -> Result<Vec<vk::Semaphore>, VulkanError> {
     let mut semaphores = Vec::with_capacity(count);
     for _ in 0..count {
-        match unsafe { core.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) } {
+        match unsafe {
+            core.device
+                .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
+        } {
             Ok(semaphore) => semaphores.push(semaphore),
             Err(error) => {
                 destroy_semaphores(core, semaphores);
-                return Err(VulkanError::new("create Vulkan semaphore", format!("{error:?}")));
+                return Err(VulkanError::new(
+                    "create Vulkan semaphore",
+                    format!("{error:?}"),
+                ));
             }
         }
     }
@@ -587,12 +718,16 @@ fn create_frame_sync(core: &VulkanCore) -> Result<Vec<FrameSync>, VulkanError> {
     let mut frames = Vec::with_capacity(FRAMES_IN_FLIGHT);
     for _ in 0..FRAMES_IN_FLIGHT {
         let acquire = match unsafe {
-            core.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
+            core.device
+                .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
         } {
             Ok(semaphore) => semaphore,
             Err(error) => {
                 destroy_frame_sync(core, frames);
-                return Err(VulkanError::new("create Vulkan acquire semaphore", format!("{error:?}")));
+                return Err(VulkanError::new(
+                    "create Vulkan acquire semaphore",
+                    format!("{error:?}"),
+                ));
             }
         };
         let fence = match unsafe {
@@ -605,10 +740,17 @@ fn create_frame_sync(core: &VulkanCore) -> Result<Vec<FrameSync>, VulkanError> {
             Err(error) => {
                 unsafe { core.device.destroy_semaphore(acquire, None) };
                 destroy_frame_sync(core, frames);
-                return Err(VulkanError::new("create Vulkan frame fence", format!("{error:?}")));
+                return Err(VulkanError::new(
+                    "create Vulkan frame fence",
+                    format!("{error:?}"),
+                ));
             }
         };
-        frames.push(FrameSync { acquire, fence, in_flight: false });
+        frames.push(FrameSync {
+            acquire,
+            fence,
+            in_flight: false,
+        });
     }
     Ok(frames)
 }
@@ -636,11 +778,15 @@ fn select_composite_alpha(flags: vk::CompositeAlphaFlagsKHR) -> vk::CompositeAlp
         vk::CompositeAlphaFlagsKHR::PRE_MULTIPLIED,
         vk::CompositeAlphaFlagsKHR::POST_MULTIPLIED,
         vk::CompositeAlphaFlagsKHR::INHERIT,
-    ].into_iter().find(|candidate| flags.contains(*candidate)).unwrap_or(vk::CompositeAlphaFlagsKHR::OPAQUE)
+    ]
+    .into_iter()
+    .find(|candidate| flags.contains(*candidate))
+    .unwrap_or(vk::CompositeAlphaFlagsKHR::OPAQUE)
 }
 
 pub(super) fn is_srgb_format(format: vk::Format) -> bool {
-    matches!(format,
+    matches!(
+        format,
         vk::Format::R8_SRGB
             | vk::Format::R8G8_SRGB
             | vk::Format::R8G8B8_SRGB

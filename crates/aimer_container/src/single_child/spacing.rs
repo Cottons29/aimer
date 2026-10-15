@@ -1,13 +1,12 @@
+use aimer_attribute::BoxConstraint;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
-use aimer_attribute::BoxConstraint;
 use aimer_macro::{EventElement, PortableWidget, Rebuildable};
+use aimer_style::{LayoutSpacing, Spacing};
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
-    AnyElement, AnyWidget, Drawable, Element, LayoutElement, RequiredChild, VisitorElement,
-    Widget,
+    AnyElement, AnyWidget, Drawable, Element, LayoutElement, RequiredChild, VisitorElement, Widget,
 };
-use aimer_style::{LayoutSpacing, Spacing};
 
 /// Adds transparent insets around one child.
 ///
@@ -229,10 +228,7 @@ fn child_constraint(ctx: &BuildContext, spacing: ResolvedSpacing) -> BoxConstrai
 }
 
 #[inline]
-fn translated_context<'a>(
-    ctx: &BuildContext<'a>,
-    spacing: ResolvedSpacing,
-) -> BuildContext<'a> {
+fn translated_context<'a>(ctx: &BuildContext<'a>, spacing: ResolvedSpacing) -> BuildContext<'a> {
     let mut child_ctx = ctx.clone();
     child_ctx.box_constraint = child_constraint(ctx, spacing);
     child_ctx.parent_size = ResolvedSize {
@@ -361,7 +357,6 @@ macro_rules! impl_spacing_element {
                 self.child.sync_paint_geometry(&child_ctx);
                 ctx.canvas.restore();
             }
-
         }
 
         impl LayoutElement for $raw {
@@ -464,7 +459,7 @@ mod tests {
 
     use aimer_attribute::size::ResolvedSize;
     use aimer_widget::base::WindowHandle;
-    use aimer_widget::{EventElement, Rebuildable, PortableWidget};
+    use aimer_widget::{EventElement, PortableWidget, Rebuildable};
 
     use super::*;
 
@@ -702,16 +697,20 @@ mod portable_tests {
         assert_eq!(padding.children().minimum(), 1);
         assert_eq!(padding.children().maximum(), 1);
         assert_eq!(padding.properties().len(), 1);
-        assert_eq!(padding.properties()[0].canonical_name(),
-            "aimer.property:aimer_container::single_child::Padding:padding");
+        assert_eq!(
+            padding.properties()[0].canonical_name(),
+            "aimer.property:aimer_container::single_child::Padding:padding"
+        );
         assert!(padding.properties()[0].is_optional());
 
         let margin = <Margin<RequiredChild> as PortableWidgetSchema>::SCHEMA;
         assert_eq!(margin.children().minimum(), 1);
         assert_eq!(margin.children().maximum(), 1);
         assert_eq!(margin.properties().len(), 1);
-        assert_eq!(margin.properties()[0].canonical_name(),
-            "aimer.property:aimer_container::single_child::Margin:margin");
+        assert_eq!(
+            margin.properties()[0].canonical_name(),
+            "aimer.property:aimer_container::single_child::Margin:margin"
+        );
         assert!(margin.properties()[0].is_optional());
     }
 }

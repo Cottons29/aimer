@@ -5,20 +5,26 @@ compile_error!("Aimer's wasm-hot-reload host feature is available only on native
 #[cfg(all(feature = "wasm-hot-reload", not(debug_assertions)))]
 compile_error!("Aimer's wasm-hot-reload host feature is available only in debug builds");
 
+/// Interpreted application runtime exposed only to hot-reload hosts.
+#[cfg(feature = "wasm-hot-reload")]
+pub use aimer_anteros as wasm_runtime;
 /// Authenticated development reload protocol exposed only to hot-reload hosts.
 #[cfg(feature = "wasm-hot-reload")]
 pub use aimer_reload_protocol as reload_protocol;
 /// App-side development listener exposed only to hot-reload hosts.
 #[cfg(feature = "wasm-hot-reload")]
 pub use aimer_reload_server as reload_server;
-/// Interpreted application runtime exposed only to hot-reload hosts.
-#[cfg(feature = "wasm-hot-reload")]
-pub use aimer_anteros as wasm_runtime;
 
+#[cfg(target_os = "android")]
+mod android_storage;
+#[cfg(target_os = "android")]
+pub use android_storage::register_android_app;
+#[cfg(all(unix, not(any(target_os = "android", target_os = "ios"))))]
+mod shutdown_signals;
 mod ffi_utils;
+mod first_frame;
 #[cfg(any(target_os = "ios", test))]
 mod ios_input;
-mod first_frame;
 mod render_mode;
 pub use render_mode::RenderMode;
 #[cfg(debug_assertions)]
@@ -50,22 +56,22 @@ mod ios_screen {
 }
 
 mod adapter_detail;
+pub mod frame_stats;
+/// The native application menu, and the shortcuts macOS routes through it.
+pub mod menu;
 /// Entering the application's async runtime while Venus polls a task. Native
 /// only: the browser has one task queue and no runtime to be inside of.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod poll_context;
-/// The native application menu, and the shortcuts macOS routes through it.
-pub mod menu;
-pub mod frame_stats;
-/// Where the platform's light / dark appearance comes from.
-mod system_appearance;
-/// Where the region the platform reserves in the window comes from.
-mod system_safe_area;
 /// Off-thread rasterization. Native only: the browser has no thread the WebGPU
 /// objects could move to, so the web backend presents inline.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod raster;
 pub mod render_ctx;
+/// Where the platform's light / dark appearance comes from.
+mod system_appearance;
+/// Where the region the platform reserves in the window comes from.
+mod system_safe_area;
 pub mod window_attr;
 pub use window_attr::WindowAttr;
 
@@ -85,28 +91,28 @@ mod tests {
         use std::thread;
         use std::time::{Duration, Instant};
 
-        use aimer_anteros::{
-            CallbackBindingSnapshot, CallbackEvent, CapabilityCompletionToken,
-            CapabilityDescriptor, CapabilityGeneration, CapabilityLimits, CapabilityProvider,
-            CapabilityRegistry, CapabilityResult, CapabilityStagingClass, Generation, GenerationId,
-            CallbackBinding, GenerationLimits, GuestInstance, ModelLimits, PropertyValue,
-            ReloadSnapshot, ReloadStage, Runtime, RuntimeConfig, RuntimeErrorKind, StableId128,
-            StateBundleView, StateTransferCoordinator, Version, WidgetDocument, WidgetNode,
-            WidgetProperty, WIDGET_BUTTON, WIDGET_TEXT, PROPERTY_TEXT_CONTENT,
-        };
+        use crate::AimerApp;
         use crate::hot_reload::{
             EVENT_BUTTON_PRESS, LiveReloadConfig, LiveReloadHost, ReloadCandidateLimits,
-            ReloadCandidatePreparationError, ReloadCandidatePreparer, materialize_aimer_widget_tree,
-            reload_command_bridge,
+            ReloadCandidatePreparationError, ReloadCandidatePreparer,
+            materialize_aimer_widget_tree, reload_command_bridge,
         };
         use crate::reload_protocol::{
             ModuleMetadata, ProtocolLimits, ReloadResult, ReloadStage as ProtocolReloadStage,
             SessionCredentials, send_reload_command,
         };
         use crate::reload_server::{ListenerSecurity, ReloadCommandListener};
+        use aimer_anteros::{
+            CallbackBinding, CallbackBindingSnapshot, CallbackEvent, CapabilityCompletionToken,
+            CapabilityDescriptor, CapabilityGeneration, CapabilityLimits, CapabilityProvider,
+            CapabilityRegistry, CapabilityResult, CapabilityStagingClass, Generation, GenerationId,
+            GenerationLimits, GuestInstance, ModelLimits, PROPERTY_TEXT_CONTENT, PropertyValue,
+            ReloadSnapshot, ReloadStage, Runtime, RuntimeConfig, RuntimeErrorKind, StableId128,
+            StateBundleView, StateTransferCoordinator, Version, WIDGET_BUTTON, WIDGET_TEXT,
+            WidgetDocument, WidgetNode, WidgetProperty,
+        };
         use aimer_widget::base::{BuildContext, WindowHandle};
         use aimer_widget::{AnyElement, Widget};
-        use crate::AimerApp;
         use winit::dpi::PhysicalPosition;
         use winit::event::{DeviceId, ElementState, MouseButton, WindowEvent};
 
@@ -126,10 +132,7 @@ mod tests {
 
         #[allow(dead_code)]
         #[derive(aimer_macro::PortableWidget)]
-        #[portable_widget(
-            id = "aimer_quiver.tests.Phase23SchemaOnly",
-            schema_only
-        )]
+        #[portable_widget(id = "aimer_quiver.tests.Phase23SchemaOnly", schema_only)]
         struct Phase23SchemaOnly;
 
         impl Widget for Phase23SchemaOnly {
@@ -200,7 +203,8 @@ mod tests {
         }
 
         #[test]
-        fn host_owned_typed_capability_completion_uses_generation_identity_and_rejects_stale_delivery() {
+        fn host_owned_typed_capability_completion_uses_generation_identity_and_rejects_stale_delivery()
+         {
             let completion = Rc::new(RefCell::new(None));
             let mut capabilities = CapabilityRegistry::new(1);
             capabilities
@@ -243,7 +247,10 @@ mod tests {
             );
             wake_receiver.recv_timeout(Duration::from_secs(10)).unwrap();
             assert_eq!(
-                host.process_safe_point(&context()).unwrap().unwrap().generation_id(),
+                host.process_safe_point(&context())
+                    .unwrap()
+                    .unwrap()
+                    .generation_id(),
                 GenerationId::new(1)
             );
             assert!(matches!(
@@ -264,13 +271,7 @@ mod tests {
                 .unwrap();
             let payload = typed_result.value.to_le_bytes();
             let event = completion
-                .encode_async_completion(
-                    CALLBACK_ID,
-                    task_id,
-                    1,
-                    &payload,
-                    MODEL_LIMITS,
-                )
+                .encode_async_completion(CALLBACK_ID, task_id, 1, &payload, MODEL_LIMITS)
                 .unwrap();
             host.dispatch_async_event(&event, &context()).unwrap();
             let state = host
@@ -298,7 +299,10 @@ mod tests {
             );
             wake_receiver.recv_timeout(Duration::from_secs(10)).unwrap();
             assert_eq!(
-                host.process_safe_point(&context()).unwrap().unwrap().generation_id(),
+                host.process_safe_point(&context())
+                    .unwrap()
+                    .unwrap()
+                    .generation_id(),
                 GenerationId::new(2)
             );
             assert!(matches!(
@@ -349,8 +353,7 @@ mod tests {
                 assert_eq!(method_id, 0);
                 assert!(request.is_empty());
                 assert_eq!(response_limit, 512);
-                self.completion
-                    .replace(Some(generation.completion_token()));
+                self.completion.replace(Some(generation.completion_token()));
                 let text_properties = [WidgetProperty::new(
                     PROPERTY_TEXT_CONTENT,
                     PropertyValue::StringRef(0),
@@ -366,8 +369,7 @@ mod tests {
                     WidgetNode::new(WIDGET_BUTTON, Version::new(1, 0))
                         .callbacks(&callbacks)
                         .children(&child),
-                    WidgetNode::new(WIDGET_TEXT, Version::new(1, 0))
-                        .properties(&text_properties),
+                    WidgetNode::new(WIDGET_TEXT, Version::new(1, 0)).properties(&text_properties),
                 ];
                 WidgetDocument::new(
                     generation.id().get(),
@@ -472,7 +474,10 @@ mod tests {
 
             let deadline = Instant::now() + Duration::from_secs(10);
             while !app.take_redraw_request() {
-                assert!(Instant::now() < deadline, "live listener did not wake the app");
+                assert!(
+                    Instant::now() < deadline,
+                    "live listener did not wake the app"
+                );
                 thread::yield_now();
             }
             app.render_frame();
@@ -492,7 +497,10 @@ mod tests {
                 .expect("button container must be laid out");
             let button_width = button_end.x - button_start.x;
             let button_height = button_end.y - button_start.y;
-            assert!(button_width > 0.0 && button_height > 0.0, "{button_start:?}..{button_end:?}");
+            assert!(
+                button_width > 0.0 && button_height > 0.0,
+                "{button_start:?}..{button_end:?}"
+            );
             let device_id = DeviceId::dummy();
             app.send_window_event(WindowEvent::CursorMoved {
                 device_id,
@@ -577,7 +585,10 @@ mod tests {
             let diagnostic = app
                 .live_reload_diagnostic()
                 .expect("a rejected candidate must leave a host diagnostic");
-            assert!(diagnostic.contains("candidate instantiation failed"), "{diagnostic}");
+            assert!(
+                diagnostic.contains("candidate instantiation failed"),
+                "{diagnostic}"
+            );
 
             let recovery_module = stateful_guest_module().to_vec();
             let recovery_credentials = credentials.clone();
@@ -665,7 +676,10 @@ mod tests {
             let diagnostic = app
                 .live_reload_diagnostic()
                 .expect("a first-generation rejection must leave a host diagnostic");
-            assert!(diagnostic.contains("candidate instantiation failed"), "{diagnostic}");
+            assert!(
+                diagnostic.contains("candidate instantiation failed"),
+                "{diagnostic}"
+            );
         }
 
         #[test]
@@ -701,11 +715,14 @@ mod tests {
             );
             wait_for_redraw(&app);
             app.render_frame();
-            assert_eq!(initial.join().unwrap(), ReloadResult::Committed {
-                active_generation: 1,
-                reset_state_entries: 0,
-                cleanup_warnings: 0,
-            });
+            assert_eq!(
+                initial.join().unwrap(),
+                ReloadResult::Committed {
+                    active_generation: 1,
+                    reset_state_entries: 0,
+                    cleanup_warnings: 0,
+                }
+            );
             assert_eq!(app.live_reload_generation(), Some(GenerationId::new(1)));
 
             let (button_start, button_end) = app
@@ -713,7 +730,10 @@ mod tests {
                 .expect("fixture button container must be laid out");
             let button_width = button_end.x - button_start.x;
             let button_height = button_end.y - button_start.y;
-            assert!(button_width > 0.0 && button_height > 0.0, "{button_start:?}..{button_end:?}");
+            assert!(
+                button_width > 0.0 && button_height > 0.0,
+                "{button_start:?}..{button_end:?}"
+            );
             let device_id = DeviceId::dummy();
             app.send_window_event(WindowEvent::CursorMoved {
                 device_id,
@@ -747,11 +767,7 @@ mod tests {
                     ProtocolReloadStage::Materialization,
                     "unsupported required property",
                 ),
-                (
-                    "phase23-oversized-blob",
-                    ProtocolReloadStage::Build,
-                    "blob",
-                ),
+                ("phase23-oversized-blob", ProtocolReloadStage::Build, "blob"),
                 (
                     "phase23-missing-materializer",
                     ProtocolReloadStage::Materialization,
@@ -781,7 +797,10 @@ mod tests {
                     } => {
                         assert_eq!(actual_stage, stage, "{feature}: {diagnostic}");
                         assert_eq!(active_generation, 1, "{feature}: {diagnostic}");
-                        assert!(diagnostic.contains(diagnostic_fragment), "{feature}: {diagnostic}");
+                        assert!(
+                            diagnostic.contains(diagnostic_fragment),
+                            "{feature}: {diagnostic}"
+                        );
                     }
                     other => panic!("{feature} unexpectedly returned {other:?}"),
                 }
@@ -794,7 +813,10 @@ mod tests {
         fn wait_for_redraw<W: aimer_widget::Widget + 'static>(app: &crate::HeadlessAimerApp<W>) {
             let deadline = Instant::now() + Duration::from_secs(10);
             while !app.take_redraw_request() {
-                assert!(Instant::now() < deadline, "live listener did not wake the app");
+                assert!(
+                    Instant::now() < deadline,
+                    "live listener did not wake the app"
+                );
                 thread::yield_now();
             }
         }
@@ -857,7 +879,12 @@ mod tests {
                 .unwrap();
 
             assert_eq!(prepared.state_transfer_report().preserved_entries(), 1);
-            assert!(prepared.state_transfer_report().reset_state_ids().is_empty());
+            assert!(
+                prepared
+                    .state_transfer_report()
+                    .reset_state_ids()
+                    .is_empty()
+            );
             assert_eq!(
                 active
                     .generation_mut()
@@ -1019,13 +1046,7 @@ mod tests {
             let second_preparer = preparer(&second_runtime, &capabilities, &state_transfer, 8);
 
             let second = second_preparer
-                .prepare(
-                    module,
-                    second_generation,
-                    &mut active,
-                    &context(),
-                    |_| {},
-                )
+                .prepare(module, second_generation, &mut active, &context(), |_| {})
                 .unwrap();
 
             assert_eq!(second.into_snapshot().generation_id(), second_generation);
@@ -1037,7 +1058,12 @@ mod tests {
             module: &[u8],
         ) -> ReloadSnapshot<GuestInstance, AnyElement> {
             let mut guest = runtime
-                .instantiate_with_capabilities(module, capabilities, MODEL_LIMITS, ACTIVE_GENERATION)
+                .instantiate_with_capabilities(
+                    module,
+                    capabilities,
+                    MODEL_LIMITS,
+                    ACTIVE_GENERATION,
+                )
                 .unwrap();
             guest.activate();
             guest
@@ -1045,8 +1071,9 @@ mod tests {
                 .unwrap();
             let image = guest.build(MODEL_LIMITS).unwrap();
             let callbacks = CallbackBindingSnapshot::from_document(&image.view(), 8).unwrap();
-            let root = materialize_aimer_widget_tree(image.as_bytes(), MODEL_LIMITS, &context(), |_| {})
-                .unwrap();
+            let root =
+                materialize_aimer_widget_tree(image.as_bytes(), MODEL_LIMITS, &context(), |_| {})
+                    .unwrap();
             let generation = Generation::with_guest(
                 ACTIVE_GENERATION,
                 callbacks,
@@ -1158,7 +1185,8 @@ mod tests {
                     .parent()
                     .unwrap()
                     .to_path_buf();
-                let fixture = workspace.join("crates/aimer_wasm_guest/fixtures/stateful_guest/Cargo.toml");
+                let fixture =
+                    workspace.join("crates/aimer_wasm_guest/fixtures/stateful_guest/Cargo.toml");
                 let target = workspace.join("target/candidate-preparation-fixture");
                 let status = Command::new(env!("CARGO"))
                     .args([
@@ -1172,11 +1200,12 @@ mod tests {
                     ])
                     .status()
                     .unwrap();
-                assert!(status.success(), "stateful WASM guest fixture failed to build");
-                fs::read(
-                    target.join("wasm32-unknown-unknown/debug/aimer_stateful_wasm_guest.wasm"),
-                )
-                .unwrap()
+                assert!(
+                    status.success(),
+                    "stateful WASM guest fixture failed to build"
+                );
+                fs::read(target.join("wasm32-unknown-unknown/debug/aimer_stateful_wasm_guest.wasm"))
+                    .unwrap()
             })
         }
 
@@ -1185,7 +1214,8 @@ mod tests {
                 .parent()
                 .unwrap()
                 .to_path_buf();
-            let fixture = workspace.join("crates/aimer_wasm_guest/fixtures/stateful_guest/Cargo.toml");
+            let fixture =
+                workspace.join("crates/aimer_wasm_guest/fixtures/stateful_guest/Cargo.toml");
             let target = workspace
                 .join("target/candidate-preparation-fixture")
                 .join(feature);
@@ -1203,11 +1233,12 @@ mod tests {
                 ])
                 .status()
                 .unwrap();
-            assert!(status.success(), "stateful WASM guest variant {feature} failed to build");
-            fs::read(
-                target.join("wasm32-unknown-unknown/debug/aimer_stateful_wasm_guest.wasm"),
-            )
-            .unwrap()
+            assert!(
+                status.success(),
+                "stateful WASM guest variant {feature} failed to build"
+            );
+            fs::read(target.join("wasm32-unknown-unknown/debug/aimer_stateful_wasm_guest.wasm"))
+                .unwrap()
         }
 
         fn context() -> BuildContext<'static> {
@@ -1234,22 +1265,18 @@ mod tests {
             let _guard = runtime.enter();
             tokio::runtime::Handle::current()
         }
-
     }
     #[cfg(feature = "wasm-hot-reload")]
     mod derived_materializer_conflict {
         use aimer_anteros::PortableWidgetSchemaValidator;
         use aimer_macro::PortableWidget;
-        use aimer_widget::portable::PortableWidgetSchema;
         use aimer_widget::base::{BuildContext, WindowHandle};
+        use aimer_widget::portable::PortableWidgetSchema;
         use aimer_widget::{AnyElement, Widget};
         use std::marker::PhantomData;
 
         #[derive(PortableWidget)]
-        #[portable_widget(
-            id = "aimer_quiver.tests.ConflictingDerivedWidget",
-            schema_only
-        )]
+        #[portable_widget(id = "aimer_quiver.tests.ConflictingDerivedWidget", schema_only)]
         struct FirstConflict<T = ()> {
             #[portable_skip]
             marker: PhantomData<T>,
@@ -1272,10 +1299,7 @@ mod tests {
         }
 
         #[derive(PortableWidget)]
-        #[portable_widget(
-            id = "aimer_quiver.tests.ConflictingDerivedWidget",
-            schema_only
-        )]
+        #[portable_widget(id = "aimer_quiver.tests.ConflictingDerivedWidget", schema_only)]
         struct SecondConflict<T = ()> {
             #[portable_skip]
             marker: PhantomData<T>,
@@ -1337,20 +1361,19 @@ mod tests {
             let _guard = runtime.enter();
             tokio::runtime::Handle::current()
         }
-
     }
     #[cfg(feature = "wasm-hot-reload")]
     mod headless_reload {
-        use std::cell::RefCell;
-        use std::cell::Cell;
         use std::any::Any;
+        use std::cell::Cell;
+        use std::cell::RefCell;
         use std::rc::Rc;
 
-        use aimer_anteros::{
-            CallbackBindingSnapshot, Generation, GenerationId, GenerationLimits, ReloadEventDisposition,
-            ReloadGuest, ReloadSnapshot,
-        };
         use crate::handler::{HeadlessReloadHost, ReloadCommand};
+        use aimer_anteros::{
+            CallbackBindingSnapshot, Generation, GenerationId, GenerationLimits,
+            ReloadEventDisposition, ReloadGuest, ReloadSnapshot,
+        };
         use aimer_widget::base::{BuildContext, WindowHandle};
         use aimer_widget::{
             AnyElement, Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement,
@@ -1362,11 +1385,8 @@ mod tests {
             let frames = Rc::new(RefCell::new(0));
             let requested_frames = frames.clone();
             let active = snapshot(1, "old-root", lifecycle.clone());
-            let mut host: HeadlessReloadHost<RecordingGuest, _, u8> = HeadlessReloadHost::new(
-                active,
-                4,
-                move || *requested_frames.borrow_mut() += 1,
-            );
+            let mut host: HeadlessReloadHost<RecordingGuest, _, u8> =
+                HeadlessReloadHost::new(active, 4, move || *requested_frames.borrow_mut() += 1);
             let transaction = host.begin_reload();
             host.queue_command(ReloadCommand::new(
                 transaction,
@@ -1440,10 +1460,7 @@ mod tests {
                 rejection.preflight_error(),
                 Some(&"reconciliation rejected")
             );
-            assert_eq!(
-                rejection.replay().unwrap().as_slice(),
-                &["first", "second"]
-            );
+            assert_eq!(rejection.replay().unwrap().as_slice(), &["first", "second"]);
             assert_eq!(host.active().generation_id(), GenerationId::new(1));
             assert_eq!(host.active().root(), &"old-root");
             assert_eq!(lifecycle.borrow().as_slice(), [LifecycleEvent::Retired(2)]);
@@ -1490,7 +1507,10 @@ mod tests {
                 }
 
                 assert!(!host.has_pending_command());
-                assert_eq!(host.active().generation_id(), GenerationId::new(active_generation));
+                assert_eq!(
+                    host.active().generation_id(),
+                    GenerationId::new(active_generation)
+                );
             }
 
             assert_eq!(lifecycle.borrow().as_slice(), expected_lifecycle);
@@ -1516,7 +1536,9 @@ mod tests {
             assert_eq!(host.active().root().id(), old_id);
             assert_ne!(candidate_id, old_id);
 
-            host.process_element_safe_point(&context()).unwrap().unwrap();
+            host.process_element_safe_point(&context())
+                .unwrap()
+                .unwrap();
 
             assert_eq!(host.active().root().id(), old_id);
             assert_eq!(root_state(host.active().root()), 17);
@@ -1672,14 +1694,6 @@ mod tests {
         use std::thread::{self, JoinHandle};
         use std::time::Duration;
 
-        use aimer_anteros::{
-            CallbackBinding, CallbackBindingError, CallbackBindingSnapshot, CallbackEvent, Generation,
-            GenerationId, GenerationLimits, GenerationResource, GenerationResourceKind, ModelLimits,
-            PreparedStateTransfer, PropertyValue, ReloadEventDisposition, ReloadGuest, ReloadReplay,
-            ReloadSnapshot, ReloadStage as RuntimeReloadStage, StableId128, StateBundle, StateBundleView,
-            StateEntry, StateMigration, StateMigrationFailure, StatePolicy, StateTransferCoordinator,
-            Version, WidgetDocument, WidgetDocumentView, WidgetNode, WidgetProperty,
-        };
         use crate::handler::{HeadlessReloadHost, ReloadCommand};
         use crate::hot_reload::{
             EVENT_BUTTON_PRESS, PROPERTY_TEXT_CONTENT, PendingProtocolReload, ProtocolReloadInbox,
@@ -1691,13 +1705,23 @@ mod tests {
             SessionCredentials, query_reload_result, send_reload_command,
         };
         use crate::reload_server::{ListenerSecurity, ReloadCommandListener};
+        use aimer_anteros::{
+            CallbackBinding, CallbackBindingError, CallbackBindingSnapshot, CallbackEvent,
+            Generation, GenerationId, GenerationLimits, GenerationResource, GenerationResourceKind,
+            ModelLimits, PreparedStateTransfer, PropertyValue, ReloadEventDisposition, ReloadGuest,
+            ReloadReplay, ReloadSnapshot, ReloadStage as RuntimeReloadStage, StableId128,
+            StateBundle, StateBundleView, StateEntry, StateMigration, StateMigrationFailure,
+            StatePolicy, StateTransferCoordinator, Version, WidgetDocument, WidgetDocumentView,
+            WidgetNode, WidgetProperty,
+        };
         use aimer_widget::base::{BuildContext, WindowHandle};
         use aimer_widget::{
             AnyElement, Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement,
         };
 
         const TIMEOUT: Duration = Duration::from_secs(10);
-        const MODEL_LIMITS: ModelLimits = ModelLimits::new(8_192, 64, 256, 256).max_widget_depth(16);
+        const MODEL_LIMITS: ModelLimits =
+            ModelLimits::new(8_192, 64, 256, 256).max_widget_depth(16);
         const WIDGET_SCHEMA: Version = Version::new(1, 0);
         const STATE_V1: Version = Version::new(1, 0);
         const STATE_V2: Version = Version::new(2, 0);
@@ -1772,7 +1796,11 @@ mod tests {
             let reloaded = spawn_command_client(
                 address,
                 2,
-                guest_module("second", PRESS_CALLBACK_V1, counter_state(2, STATE_V1, &[0])),
+                guest_module(
+                    "second",
+                    PRESS_CALLBACK_V1,
+                    counter_state(2, STATE_V1, &[0]),
+                ),
             );
             let served = app.serve(inbox.recv_timeout(TIMEOUT).unwrap());
 
@@ -1813,7 +1841,13 @@ mod tests {
             );
             app.serve(inbox.recv_timeout(TIMEOUT).unwrap());
             installed.join().unwrap();
-            app.set_guest_state(counter_and_draft_state(1, STATE_V1, &[9], STATE_V1, b"typed"));
+            app.set_guest_state(counter_and_draft_state(
+                1,
+                STATE_V1,
+                &[9],
+                STATE_V1,
+                b"typed",
+            ));
 
             let migrated = spawn_command_client(
                 address,
@@ -1848,7 +1882,8 @@ mod tests {
         }
 
         #[test]
-        fn rebound_callback_identities_dispatch_to_the_new_generation_and_retired_events_are_rejected() {
+        fn rebound_callback_identities_dispatch_to_the_new_generation_and_retired_events_are_rejected()
+         {
             let mut app = ConformanceHost::new();
             let (address, inbox, server) = spawn_command_listener(BOOTSTRAP_GENERATION, 2);
             let installed = spawn_command_client(
@@ -1863,7 +1898,11 @@ mod tests {
             let rebound = spawn_command_client(
                 address,
                 2,
-                guest_module("second", PRESS_CALLBACK_V2, counter_state(2, STATE_V1, &[0])),
+                guest_module(
+                    "second",
+                    PRESS_CALLBACK_V2,
+                    counter_state(2, STATE_V1, &[0]),
+                ),
             );
             app.serve(inbox.recv_timeout(TIMEOUT).unwrap());
             rebound.join().unwrap();
@@ -1890,7 +1929,8 @@ mod tests {
         }
 
         #[test]
-        fn rejected_module_keeps_the_committed_generation_active_and_a_later_module_still_commits() {
+        fn rejected_module_keeps_the_committed_generation_active_and_a_later_module_still_commits()
+        {
             let mut app = ConformanceHost::new();
             let (address, inbox, server) = spawn_command_listener(BOOTSTRAP_GENERATION, 3);
             let installed = spawn_command_client(
@@ -1958,7 +1998,11 @@ mod tests {
             let rolled_back = spawn_command_client(
                 address,
                 2,
-                guest_module("second", PRESS_CALLBACK_V2, counter_state(2, STATE_V1, &[0])),
+                guest_module(
+                    "second",
+                    PRESS_CALLBACK_V2,
+                    counter_state(2, STATE_V1, &[0]),
+                ),
             );
             let rejection = app.serve_with_rejected_pre_commit(
                 inbox.recv_timeout(TIMEOUT).unwrap(),
@@ -1989,10 +2033,7 @@ mod tests {
             assert_eq!(app.guest_payload(COUNTER_STATE), [7]);
             assert_eq!(app.frames(), 1);
             assert_eq!(app.released(), ["released:0", "released:2"]);
-            assert_eq!(
-                app.lifecycle(),
-                ["activated:1", "retired:0", "retired:2"]
-            );
+            assert_eq!(app.lifecycle(), ["activated:1", "retired:0", "retired:2"]);
         }
 
         #[test]
@@ -2014,7 +2055,8 @@ mod tests {
                 drop(stream);
                 let mut reconnected = connect_loopback_client(address);
                 let recovered =
-                    query_reload_result(&mut reconnected, &credentials(), protocol_limits(), 7).unwrap();
+                    query_reload_result(&mut reconnected, &credentials(), protocol_limits(), 7)
+                        .unwrap();
                 (committed, recovered)
             });
 
@@ -2044,7 +2086,8 @@ mod tests {
             const RECONNECTS: usize = 64;
 
             let mut app = ConformanceHost::new();
-            let (address, inbox, server) = spawn_command_listener(BOOTSTRAP_GENERATION, RECONNECTS + 1);
+            let (address, inbox, server) =
+                spawn_command_listener(BOOTSTRAP_GENERATION, RECONNECTS + 1);
             let module = guest_module("first", PRESS_CALLBACK_V1, counter_state(1, STATE_V1, &[7]));
             let client = thread::spawn(move || {
                 let mut stream = connect_loopback_client(address);
@@ -2118,16 +2161,17 @@ mod tests {
                 }
             ));
             assert_eq!(lifecycle.borrow().as_slice(), ["retired:0", "retired:1"]);
-            assert_eq!(
-                released.borrow().as_slice(),
-                ["released:0", "released:1"]
-            );
+            assert_eq!(released.borrow().as_slice(), ["released:0", "released:1"]);
 
             drop(inbox);
             let disconnected = spawn_command_client(
                 address,
                 2,
-                guest_module("second", PRESS_CALLBACK_V1, counter_state(2, STATE_V1, &[0])),
+                guest_module(
+                    "second",
+                    PRESS_CALLBACK_V1,
+                    counter_state(2, STATE_V1, &[0]),
+                ),
             );
             let after_exit = disconnected.join().unwrap();
 
@@ -2212,7 +2256,8 @@ mod tests {
                 let transaction = self.host.begin_reload();
                 match self.prepare_candidate(pending.command().module()) {
                     Ok(prepared) => {
-                        let reset_state_entries = prepared.transfer.report().reset_state_ids().len() as u32;
+                        let reset_state_entries =
+                            prepared.transfer.report().reset_state_ids().len() as u32;
                         self.host
                             .queue_command(ReloadCommand::new(transaction, prepared.snapshot))
                             .unwrap();
@@ -2278,8 +2323,12 @@ mod tests {
                 let error = self
                     .host
                     .process_safe_point(
-                        |_active, _candidate| Err("native reconciliation planning rejected the candidate"),
-                        |_active, _candidate| unreachable!("commit ran after a rejected pre-commit stage"),
+                        |_active, _candidate| {
+                            Err("native reconciliation planning rejected the candidate")
+                        },
+                        |_active, _candidate| {
+                            unreachable!("commit ran after a rejected pre-commit stage")
+                        },
                     )
                     .unwrap_err();
                 let diagnostic = (*error.preflight_error().unwrap()).to_owned();
@@ -2304,7 +2353,10 @@ mod tests {
                     .unwrap();
             }
 
-            fn prepare_candidate(&mut self, module: &[u8]) -> Result<PreparedCandidate, CandidateFailure> {
+            fn prepare_candidate(
+                &mut self,
+                module: &[u8],
+            ) -> Result<PreparedCandidate, CandidateFailure> {
                 let module = GuestModule::decode(module).ok_or_else(|| {
                     CandidateFailure::new(
                         RuntimeReloadStage::Preflight,
@@ -2329,10 +2381,15 @@ mod tests {
                     .map_err(|error| {
                         CandidateFailure::new(RuntimeReloadStage::Validate, VALIDATION_ERROR, error)
                     })?;
-                let callbacks = CallbackBindingSnapshot::from_document(&document, MAX_CALLBACK_BINDINGS)
-                    .map_err(|error| {
-                        CandidateFailure::new(RuntimeReloadStage::Validate, VALIDATION_ERROR, error)
-                    })?;
+                let callbacks =
+                    CallbackBindingSnapshot::from_document(&document, MAX_CALLBACK_BINDINGS)
+                        .map_err(|error| {
+                            CandidateFailure::new(
+                                RuntimeReloadStage::Validate,
+                                VALIDATION_ERROR,
+                                error,
+                            )
+                        })?;
                 let transfer = self
                     .transfer
                     .prepare(
@@ -2441,7 +2498,9 @@ mod tests {
             }
 
             fn set_element_counter(&mut self, value: u32) {
-                CounterRoot::of(self.host.active().root()).counter.set(value);
+                CounterRoot::of(self.host.active().root())
+                    .counter
+                    .set(value);
             }
 
             fn lifecycle(&self) -> Vec<String> {
@@ -2635,7 +2694,8 @@ mod tests {
 
         impl GuestModule {
             fn encode(&self) -> Vec<u8> {
-                let mut bytes = Vec::with_capacity(8 + self.widget_image.len() + self.default_state.len());
+                let mut bytes =
+                    Vec::with_capacity(8 + self.widget_image.len() + self.default_state.len());
                 bytes.extend_from_slice(b"AGMD");
                 bytes.extend_from_slice(&(self.widget_image.len() as u32).to_le_bytes());
                 bytes.extend_from_slice(&self.widget_image);
@@ -2756,7 +2816,9 @@ mod tests {
         fn widen_counter(payload: &[u8]) -> Result<Vec<u8>, StateMigrationFailure> {
             match payload {
                 [counter] => Ok(vec![*counter, 0]),
-                _ => Err(StateMigrationFailure::new("counter payload is not one byte")),
+                _ => Err(StateMigrationFailure::new(
+                    "counter payload is not one byte",
+                )),
             }
         }
 
@@ -2872,7 +2934,6 @@ mod tests {
                 dummy_async_handle(),
             )
         }
-
     }
     #[cfg(feature = "wasm-hot-reload")]
     mod reload_listener_bridge {
@@ -2881,13 +2942,13 @@ mod tests {
         use std::thread;
         use std::time::Duration;
 
-        use aimer_anteros::ReloadStage as RuntimeReloadStage;
         use crate::hot_reload::{protocol_reload_stage, reload_command_bridge};
         use crate::reload_protocol::{
             ModuleMetadata, ProtocolLimits, ReloadResult, ReloadStage, SessionCredentials,
             send_reload_command,
         };
         use crate::reload_server::{ListenerSecurity, ReloadCommandListener};
+        use aimer_anteros::ReloadStage as RuntimeReloadStage;
 
         #[test]
         fn authenticated_listener_waits_for_the_host_safe_point_result() {
@@ -2924,7 +2985,10 @@ mod tests {
 
             let pending = inbox.recv_timeout(Duration::from_secs(1)).unwrap();
             assert_eq!(pending.command().request_id(), 41);
-            assert!(matches!(client_rx.try_recv(), Err(mpsc::TryRecvError::Empty)));
+            assert!(matches!(
+                client_rx.try_recv(),
+                Err(mpsc::TryRecvError::Empty)
+            ));
             let committed = ReloadResult::Committed {
                 active_generation: 2,
                 reset_state_entries: 0,
@@ -2932,7 +2996,10 @@ mod tests {
             };
             pending.complete(committed.clone()).unwrap();
 
-            assert_eq!(client_rx.recv_timeout(Duration::from_secs(1)).unwrap(), committed);
+            assert_eq!(
+                client_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+                committed
+            );
             assert_eq!(server.join().unwrap(), committed);
             client.join().unwrap();
         }
@@ -2948,7 +3015,10 @@ mod tests {
                 (RuntimeReloadStage::ImportState, ReloadStage::StateImport),
                 (RuntimeReloadStage::Build, ReloadStage::Build),
                 (RuntimeReloadStage::Validate, ReloadStage::Validation),
-                (RuntimeReloadStage::Materialize, ReloadStage::Materialization),
+                (
+                    RuntimeReloadStage::Materialize,
+                    ReloadStage::Materialization,
+                ),
                 (
                     RuntimeReloadStage::PrepareReconciliation,
                     ReloadStage::Reconciliation,
@@ -3053,47 +3123,47 @@ mod tests {
         use std::cell::Cell;
         use std::rc::Rc;
 
+        use crate::hot_reload::{
+            EVENT_BUTTON_PRESS, PROPERTY_CONTAINER_COLOR, PROPERTY_CONTAINER_WIDTH,
+            PROPERTY_SIZED_BOX_HEIGHT, PROPERTY_SIZED_BOX_WIDTH, PROPERTY_TEXT_CONTENT,
+            WIDGET_BUTTON, WIDGET_COLUMN, WIDGET_CONTAINER, WIDGET_ROW, WIDGET_SIZED_BOX,
+            WIDGET_TEXT, materialize_aimer_widget_tree,
+        };
+        #[cfg(feature = "portable-guest")]
+        use crate::hot_reload::{
+            PROPERTY_CONTAINER_BOX_DECORATION, PROPERTY_CONTAINER_HEIGHT,
+            PROPERTY_CONTAINER_MARGIN, PROPERTY_CONTAINER_PADDING,
+        };
         use aimer_anteros::{
-            BUILTIN_PORTABLE_WIDGET_SCHEMAS, CallbackBinding, EventId, ModelError, ModelLimits, PropertyId,
-            PropertyValue,
-            StableId128 as WireStableId128, Version,
-            WidgetDocument, WidgetMaterializeError, WidgetNode, WidgetProperty, WidgetSchemaId,
+            BUILTIN_PORTABLE_WIDGET_SCHEMAS, CallbackBinding, EventId, ModelError, ModelLimits,
+            PropertyId, PropertyValue, StableId128 as WireStableId128, Version, WidgetDocument,
+            WidgetMaterializeError, WidgetNode, WidgetProperty, WidgetSchemaId,
         };
         use aimer_container::{Container, SizedBox};
         use aimer_flex::{Column, Row};
         use aimer_input::button::Button;
-        use crate::hot_reload::{
-            EVENT_BUTTON_PRESS, PROPERTY_CONTAINER_COLOR, PROPERTY_CONTAINER_WIDTH,
-            PROPERTY_SIZED_BOX_HEIGHT, PROPERTY_SIZED_BOX_WIDTH, PROPERTY_TEXT_CONTENT, WIDGET_BUTTON,
-            WIDGET_COLUMN, WIDGET_CONTAINER, WIDGET_ROW, WIDGET_SIZED_BOX, WIDGET_TEXT,
-            materialize_aimer_widget_tree,
-        };
+        #[cfg(feature = "portable-guest")]
+        use aimer_style::{BoxDecoration, LayoutSpacing, Spacing};
+        use aimer_text::Text;
+        #[cfg(feature = "portable-guest")]
+        use aimer_widget::PortableWidget;
+        #[cfg(feature = "portable-guest")]
+        use aimer_widget::base::Color;
         use aimer_widget::base::{BuildContext, WindowHandle};
         use aimer_widget::portable::{
-            linked_portable_native_widget_schemas, PortableCallbackBinding, PortableWidgetSchema,
-            PORTABLE_NATIVE_WIDGET_SCHEMAS,
+            PORTABLE_NATIVE_WIDGET_SCHEMAS, PortableCallbackBinding, PortableWidgetSchema,
+            linked_portable_native_widget_schemas,
+        };
+        #[cfg(feature = "portable-guest")]
+        use aimer_widget::portable::{
+            PortableAsyncLimits, PortableBuildContext, PortableCallbackError,
+            PortableCallbackStart, PortableLimits, PortableWidgetLimits, SourceFingerprint,
+            StableId128 as PortableStableId128,
         };
         use aimer_widget::{
             AnyElement, Element, ReconciliationMatchKind, RequiredChild, Widget,
             plan_element_reconciliation,
         };
-        #[cfg(feature = "portable-guest")]
-        use aimer_style::{BoxDecoration, LayoutSpacing, Spacing};
-        use aimer_text::Text;
-        #[cfg(feature = "portable-guest")]
-        use aimer_widget::portable::{
-            PortableAsyncLimits, PortableBuildContext, PortableCallbackError, PortableCallbackStart,
-            PortableLimits, PortableWidgetLimits, SourceFingerprint, StableId128 as PortableStableId128,
-        };
-        #[cfg(feature = "portable-guest")]
-        use aimer_widget::PortableWidget;
-        #[cfg(feature = "portable-guest")]
-        use crate::hot_reload::{
-            PROPERTY_CONTAINER_BOX_DECORATION, PROPERTY_CONTAINER_HEIGHT, PROPERTY_CONTAINER_MARGIN,
-            PROPERTY_CONTAINER_PADDING,
-        };
-        #[cfg(feature = "portable-guest")]
-        use aimer_widget::base::Color;
 
         const LIMITS: ModelLimits = ModelLimits::new(8_192, 64, 256, 256).max_widget_depth(16);
         const CALLBACK_ID: WireStableId128 = WireStableId128::from_bytes([0x31; 16]);
@@ -3101,19 +3171,21 @@ mod tests {
 
         #[test]
         fn gesture_detector_materializes_its_child_and_callback_binding() {
-            let gesture_type = WidgetSchemaId::from_canonical_name(
-                "aimer.widget:aimer_input::GestureDetector",
-            );
-            let tap_event = EventId::from_canonical_name(
-                "aimer.event:aimer_input::GestureDetector:on_tap",
-            );
-            let callbacks = [CallbackBinding::new(tap_event, Version::new(1, 0), CALLBACK_ID)];
+            let gesture_type =
+                WidgetSchemaId::from_canonical_name("aimer.widget:aimer_input::GestureDetector");
+            let tap_event =
+                EventId::from_canonical_name("aimer.event:aimer_input::GestureDetector:on_tap");
+            let callbacks = [CallbackBinding::new(
+                tap_event,
+                Version::new(1, 0),
+                CALLBACK_ID,
+            )];
             let text_properties = [WidgetProperty::new(
                 PROPERTY_TEXT_CONTENT,
                 PropertyValue::StringRef(0),
             )];
-            let text = WidgetNode::new(WIDGET_TEXT, Version::new(1, 0))
-                .properties(&text_properties);
+            let text =
+                WidgetNode::new(WIDGET_TEXT, Version::new(1, 0)).properties(&text_properties);
             let children = [0];
             let gesture = WidgetNode::new(gesture_type, Version::new(1, 0))
                 .callbacks(&callbacks)
@@ -3134,15 +3206,12 @@ mod tests {
 
         #[test]
         fn mouse_region_materializes_its_child_and_callback_bindings() {
-            let region_type = WidgetSchemaId::from_canonical_name(
-                "aimer.widget:aimer_input::MouseRegion",
-            );
-            let enter_event = EventId::from_canonical_name(
-                "aimer.event:aimer_input::MouseRegion:on_hover_enter",
-            );
-            let exit_event = EventId::from_canonical_name(
-                "aimer.event:aimer_input::MouseRegion:on_hover_exit",
-            );
+            let region_type =
+                WidgetSchemaId::from_canonical_name("aimer.widget:aimer_input::MouseRegion");
+            let enter_event =
+                EventId::from_canonical_name("aimer.event:aimer_input::MouseRegion:on_hover_enter");
+            let exit_event =
+                EventId::from_canonical_name("aimer.event:aimer_input::MouseRegion:on_hover_exit");
             let callbacks = [
                 CallbackBinding::new(enter_event, Version::new(1, 0), CALLBACK_ID),
                 CallbackBinding::new(
@@ -3155,8 +3224,8 @@ mod tests {
                 PROPERTY_TEXT_CONTENT,
                 PropertyValue::StringRef(0),
             )];
-            let text = WidgetNode::new(WIDGET_TEXT, Version::new(1, 0))
-                .properties(&text_properties);
+            let text =
+                WidgetNode::new(WIDGET_TEXT, Version::new(1, 0)).properties(&text_properties);
             let children = [0];
             let region = WidgetNode::new(region_type, Version::new(1, 0))
                 .callbacks(&callbacks)
@@ -3247,9 +3316,8 @@ mod tests {
 
         #[test]
         fn derive_registered_widget_materializes_without_a_quiver_registration() {
-            let widget_type = WidgetSchemaId::from_canonical_name(
-                "aimer.widget:aimer_quiver.tests.DerivedLabel",
-            );
+            let widget_type =
+                WidgetSchemaId::from_canonical_name("aimer.widget:aimer_quiver.tests.DerivedLabel");
             let text_property = PropertyId::from_canonical_name(
                 "aimer.property:aimer_quiver.tests.DerivedLabel:text",
             );
@@ -3257,15 +3325,15 @@ mod tests {
                 text_property,
                 PropertyValue::StringRef(0),
             )];
-            let nodes = [WidgetNode::new(widget_type, Version::new(1, 0))
-                .properties(&properties)];
+            let nodes = [WidgetNode::new(widget_type, Version::new(1, 0)).properties(&properties)];
             let image = WidgetDocument::new(0, 1, 0, &nodes, &["Derived"], &[])
                 .encode(LIMITS)
                 .unwrap();
 
-            assert!(linked_portable_native_widget_schemas()
-                .iter()
-                .any(|schema| schema.widget().id() == widget_type),
+            assert!(
+                linked_portable_native_widget_schemas()
+                    .iter()
+                    .any(|schema| schema.widget().id() == widget_type),
                 "linked schemas: {:?}",
                 PORTABLE_NATIVE_WIDGET_SCHEMAS
                     .iter()
@@ -3280,15 +3348,14 @@ mod tests {
 
         #[test]
         fn derive_registered_parent_adapts_materialized_children_and_keeps_optional_defaults() {
-            let frame_type = WidgetSchemaId::from_canonical_name(
-                "aimer.widget:aimer_quiver.tests.DerivedFrame",
-            );
+            let frame_type =
+                WidgetSchemaId::from_canonical_name("aimer.widget:aimer_quiver.tests.DerivedFrame");
             let text_properties = [WidgetProperty::new(
                 PROPERTY_TEXT_CONTENT,
                 PropertyValue::StringRef(0),
             )];
-            let text = WidgetNode::new(WIDGET_TEXT, Version::new(1, 0))
-                .properties(&text_properties);
+            let text =
+                WidgetNode::new(WIDGET_TEXT, Version::new(1, 0)).properties(&text_properties);
             let children = [0];
             let frame = WidgetNode::new(frame_type, Version::new(1, 0)).children(&children);
             let image = WidgetDocument::new(1, 1, 1, &[text, frame], &["Child"], &[])
@@ -3397,10 +3464,12 @@ mod tests {
             ] {
                 assert!(names.contains(&expected), "missing {expected} in {names:?}");
             }
-            assert!(find_by_name(root.as_ref(), "Button")
-                .unwrap()
-                .reconciliation_key()
-                .is_some());
+            assert!(
+                find_by_name(root.as_ref(), "Button")
+                    .unwrap()
+                    .reconciliation_key()
+                    .is_some()
+            );
         }
 
         fn built_in_schema(
@@ -3461,15 +3530,17 @@ mod tests {
             assert_eq!(view.generation_id(), 7);
             assert_eq!(binding.event_kind(), EVENT_BUTTON_PRESS);
             assert_eq!(binding.async_schema(), Some(Version::new(1, 0)));
-            let native_root = materialize_aimer_widget_tree(&encoded, LIMITS, &context(), |_| {})
-                .unwrap();
+            let native_root =
+                materialize_aimer_widget_tree(&encoded, LIMITS, &context(), |_| {}).unwrap();
             assert_eq!(native_root.debug_name(), "Button");
 
             let callback_id = PortableStableId128::from_bytes(*binding.callback_id().as_bytes());
             let registry = build.callback_registry();
             let task_id = match registry.dispatch_start(callback_id, &mut build).unwrap() {
                 PortableCallbackStart::Started { task_id } => task_id,
-                PortableCallbackStart::Completed => panic!("async Button callback completed synchronously"),
+                PortableCallbackStart::Completed => {
+                    panic!("async Button callback completed synchronously")
+                }
             };
             assert_eq!(task_id.value(), 1);
             assert_eq!(build.async_task_count(), 1);
@@ -3488,7 +3559,8 @@ mod tests {
                 .unwrap();
             let next_document = build.finish_document(next).unwrap();
             let next_encoded = next_document.encode().unwrap();
-            let next_view = aimer_anteros::WidgetDocumentView::decode(&next_encoded, LIMITS).unwrap();
+            let next_view =
+                aimer_anteros::WidgetDocumentView::decode(&next_encoded, LIMITS).unwrap();
             let next_node = next_view.node(next.index()).unwrap();
             let text_index = match next_node.properties().next().unwrap().value() {
                 PropertyValue::StringRef(index) => index,
@@ -3546,7 +3618,9 @@ mod tests {
             let registry = build.callback_registry();
             let task_id = match registry.dispatch_start(callback_id, &mut build).unwrap() {
                 PortableCallbackStart::Started { task_id } => task_id,
-                PortableCallbackStart::Completed => panic!("async Button callback completed synchronously"),
+                PortableCallbackStart::Completed => {
+                    panic!("async Button callback completed synchronously")
+                }
             };
 
             build.run_async_microtasks();
@@ -3614,8 +3688,14 @@ mod tests {
             let mut names = Vec::new();
             collect_names(root.as_ref(), &mut names);
             assert_eq!(root.debug_name(), "Container");
-            assert!(names.contains(&"Container"), "missing Container in {names:?}");
-            assert!(names.contains(&"RawTextWidget"), "missing text child in {names:?}");
+            assert!(
+                names.contains(&"Container"),
+                "missing Container in {names:?}"
+            );
+            assert!(
+                names.contains(&"RawTextWidget"),
+                "missing text child in {names:?}"
+            );
         }
 
         #[test]
@@ -3646,7 +3726,10 @@ mod tests {
                 (
                     encode_single(
                         WidgetNode::new(WIDGET_SIZED_BOX, Version::new(1, 0)).properties(&[
-                            WidgetProperty::new(PROPERTY_SIZED_BOX_WIDTH, PropertyValue::Bool(true)),
+                            WidgetProperty::new(
+                                PROPERTY_SIZED_BOX_WIDTH,
+                                PropertyValue::Bool(true),
+                            ),
                         ]),
                         &[],
                     ),
@@ -3801,7 +3884,8 @@ mod tests {
             ];
 
             for (image, expected) in cases {
-                let error = match materialize_aimer_widget_tree(&image, LIMITS, &context(), |_| {}) {
+                let error = match materialize_aimer_widget_tree(&image, LIMITS, &context(), |_| {})
+                {
                     Ok(_) => panic!("invalid concrete widget schema unexpectedly materialized"),
                     Err(error) => error,
                 };
@@ -3851,7 +3935,8 @@ mod tests {
             moved_plan.validate().unwrap();
             assert_eq!(keyed_match_count(&moved_plan), 2);
 
-            let incompatible_plan = plan_element_reconciliation(old.as_ref(), incompatible.as_ref());
+            let incompatible_plan =
+                plan_element_reconciliation(old.as_ref(), incompatible.as_ref());
             incompatible_plan.validate().unwrap();
             assert_eq!(keyed_match_count(&incompatible_plan), 1);
         }
@@ -3964,6 +4049,5 @@ mod tests {
             )
             .unwrap()
         }
-
     }
 }

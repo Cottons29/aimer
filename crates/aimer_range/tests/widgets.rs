@@ -16,10 +16,7 @@ use aimer_widget::{
 
 #[test]
 fn slider_builder_constructs_a_standalone_value_model() {
-    let slider = Slider::new()
-        .range(0.0..100.0)
-        .step(10.0)
-        .value(20.0);
+    let slider = Slider::new().range(0.0..100.0).step(10.0).value(20.0);
 
     assert_eq!(slider.current_value(), 20.0);
     assert_eq!(slider.min(), 0.0);
@@ -58,10 +55,7 @@ async fn range_controls_keep_composable_visual_slots_in_the_element_tree() {
             slot.visit_children(&mut |visual| slot_names.push(visual.debug_name()));
         });
     });
-    assert_eq!(
-        slot_names,
-        ["ErrorWidget", "ErrorWidget", "ErrorWidget"]
-    );
+    assert_eq!(slot_names, ["ErrorWidget", "ErrorWidget", "ErrorWidget"]);
 
     let range_slider = RangeSlider::new()
         .range(0.0..100.0)
@@ -168,31 +162,55 @@ async fn slider_widget_dispatches_pointer_drag_and_keyboard_increment() {
 
     let mut dispatcher = EventDispatcher::new();
     let down = PointerInfo::mouse(Vec2d { x: 20.0, y: 20.0 }, PointerButton::Primary);
-    assert!(dispatcher
-        .dispatch(element.as_ref(), down.pos, &ElementEvent::PointerDown(down))
-        .is_consumed());
+    assert!(
+        dispatcher
+            .dispatch(element.as_ref(), down.pos, &ElementEvent::PointerDown(down))
+            .is_consumed()
+    );
 
     let moved = down.at(Vec2d { x: 140.0, y: 20.0 });
-    assert!(dispatcher
-        .dispatch(element.as_ref(), moved.pos, &ElementEvent::PointerMove(moved))
-        .is_consumed());
-    assert!(dispatcher
-        .dispatch(element.as_ref(), moved.pos, &ElementEvent::PointerUp(moved))
-        .is_consumed());
+    assert!(
+        dispatcher
+            .dispatch(
+                element.as_ref(),
+                moved.pos,
+                &ElementEvent::PointerMove(moved)
+            )
+            .is_consumed()
+    );
+    assert!(
+        dispatcher
+            .dispatch(element.as_ref(), moved.pos, &ElementEvent::PointerUp(moved))
+            .is_consumed()
+    );
 
     let key = ElementEvent::KeyInput {
         key: NamedKey::ArrowRight,
         action: KeyAction::Pressed,
         modifiers: Modifiers::default(),
     };
-    assert!(dispatcher
-        .dispatch(element.as_ref(), moved.pos, &key)
-        .is_consumed());
+    assert!(
+        dispatcher
+            .dispatch(element.as_ref(), moved.pos, &key)
+            .is_consumed()
+    );
 
     let values = values.borrow();
-    assert!(values.iter().any(|value| (*value - 10.0).abs() < f64::EPSILON));
-    assert!(values.iter().any(|value| (*value - 70.0).abs() < f64::EPSILON));
-    assert!(values.iter().any(|value| (*value - 80.0).abs() < f64::EPSILON));
+    assert!(
+        values
+            .iter()
+            .any(|value| (*value - 10.0).abs() < f64::EPSILON)
+    );
+    assert!(
+        values
+            .iter()
+            .any(|value| (*value - 70.0).abs() < f64::EPSILON)
+    );
+    assert!(
+        values
+            .iter()
+            .any(|value| (*value - 80.0).abs() < f64::EPSILON)
+    );
 }
 
 #[tokio::test]
@@ -216,16 +234,26 @@ async fn slider_widget_dispatches_pointer_drag_when_nested_in_a_padded_container
 
     let mut dispatcher = EventDispatcher::new();
     let down = PointerInfo::mouse(Vec2d { x: 40.0, y: 40.0 }, PointerButton::Primary);
-    assert!(dispatcher
-        .dispatch(element.as_ref(), down.pos, &ElementEvent::PointerDown(down))
-        .is_consumed());
+    assert!(
+        dispatcher
+            .dispatch(element.as_ref(), down.pos, &ElementEvent::PointerDown(down))
+            .is_consumed()
+    );
     let moved = down.at(Vec2d { x: 160.0, y: 40.0 });
-    assert!(dispatcher
-        .dispatch(element.as_ref(), moved.pos, &ElementEvent::PointerMove(moved))
-        .is_consumed());
-    assert!(dispatcher
-        .dispatch(element.as_ref(), moved.pos, &ElementEvent::PointerUp(moved))
-        .is_consumed());
+    assert!(
+        dispatcher
+            .dispatch(
+                element.as_ref(),
+                moved.pos,
+                &ElementEvent::PointerMove(moved)
+            )
+            .is_consumed()
+    );
+    assert!(
+        dispatcher
+            .dispatch(element.as_ref(), moved.pos, &ElementEvent::PointerUp(moved))
+            .is_consumed()
+    );
 
     assert!(values.borrow().iter().any(|value| *value == 70.0));
 }
@@ -248,35 +276,51 @@ async fn range_slider_widget_dispatches_the_nearest_thumb_and_keyboard_increment
 
     let mut dispatcher = EventDispatcher::new();
     let down = PointerInfo::mouse(Vec2d { x: 40.0, y: 20.0 }, PointerButton::Primary);
-    assert!(dispatcher
-        .dispatch(element.as_ref(), down.pos, &ElementEvent::PointerDown(down))
-        .is_consumed());
+    assert!(
+        dispatcher
+            .dispatch(element.as_ref(), down.pos, &ElementEvent::PointerDown(down))
+            .is_consumed()
+    );
     let moved = down.at(Vec2d { x: 100.0, y: 20.0 });
-    assert!(dispatcher
-        .dispatch(element.as_ref(), moved.pos, &ElementEvent::PointerMove(moved))
-        .is_consumed());
-    assert!(dispatcher
-        .dispatch(element.as_ref(), moved.pos, &ElementEvent::PointerUp(moved))
-        .is_consumed());
+    assert!(
+        dispatcher
+            .dispatch(
+                element.as_ref(),
+                moved.pos,
+                &ElementEvent::PointerMove(moved)
+            )
+            .is_consumed()
+    );
+    assert!(
+        dispatcher
+            .dispatch(element.as_ref(), moved.pos, &ElementEvent::PointerUp(moved))
+            .is_consumed()
+    );
 
     let key = ElementEvent::KeyInput {
         key: NamedKey::ArrowRight,
         action: KeyAction::Pressed,
         modifiers: Modifiers::default(),
     };
-    assert!(dispatcher
-        .dispatch(element.as_ref(), moved.pos, &key)
-        .is_consumed());
+    assert!(
+        dispatcher
+            .dispatch(element.as_ref(), moved.pos, &key)
+            .is_consumed()
+    );
 
     let values = values.borrow();
-    assert!(values
-        .iter()
-        .any(|(lower, upper)| (*lower - 50.0).abs() < f64::EPSILON
-            && (*upper - 70.0).abs() < f64::EPSILON));
-    assert!(values
-        .iter()
-        .any(|(lower, upper)| (*lower - 60.0).abs() < f64::EPSILON
-            && (*upper - 70.0).abs() < f64::EPSILON));
+    assert!(
+        values
+            .iter()
+            .any(|(lower, upper)| (*lower - 50.0).abs() < f64::EPSILON
+                && (*upper - 70.0).abs() < f64::EPSILON)
+    );
+    assert!(
+        values
+            .iter()
+            .any(|(lower, upper)| (*lower - 60.0).abs() < f64::EPSILON
+                && (*upper - 70.0).abs() < f64::EPSILON)
+    );
 }
 
 #[tokio::test]
@@ -296,26 +340,40 @@ async fn slider_state_retains_runtime_press_while_adopting_a_controlled_value() 
 
     let mut dispatcher = EventDispatcher::new();
     let pointer = PointerInfo::mouse(Vec2d { x: 40.0, y: 20.0 }, PointerButton::Primary);
-    assert!(dispatcher
-        .dispatch(element.as_ref(), pointer.pos, &ElementEvent::PointerDown(pointer))
-        .is_consumed());
+    assert!(
+        dispatcher
+            .dispatch(
+                element.as_ref(),
+                pointer.pos,
+                &ElementEvent::PointerDown(pointer)
+            )
+            .is_consumed()
+    );
     assert!(updater.read_state().is_pressed());
     assert!(updater.read_state().is_focused());
 
     let moved = pointer.at(Vec2d { x: 100.0, y: 20.0 });
-    assert!(dispatcher
-        .dispatch(element.as_ref(), moved.pos, &ElementEvent::PointerMove(moved))
-        .is_consumed());
+    assert!(
+        dispatcher
+            .dispatch(
+                element.as_ref(),
+                moved.pos,
+                &ElementEvent::PointerMove(moved)
+            )
+            .is_consumed()
+    );
     assert_eq!(updater.read_state().current_value(), 50.0);
 
-    updater.set_state(|state| state.adopt_config_from(
-        Slider::new()
-            .range(0.0..100.0)
-            .step(10.0)
-            .value(80.0)
-            .width(200.0)
-            .create_state(),
-    ));
+    updater.set_state(|state| {
+        state.adopt_config_from(
+            Slider::new()
+                .range(0.0..100.0)
+                .step(10.0)
+                .value(80.0)
+                .width(200.0)
+                .create_state(),
+        )
+    });
     element.rebuild_if_dirty(&ctx);
     assert_eq!(updater.read_state().current_value(), 80.0);
     assert!(updater.read_state().is_pressed());
@@ -338,25 +396,39 @@ async fn range_slider_state_retains_the_selected_thumb_while_adopting_values() {
 
     let mut dispatcher = EventDispatcher::new();
     let pointer = PointerInfo::mouse(Vec2d { x: 40.0, y: 20.0 }, PointerButton::Primary);
-    assert!(dispatcher
-        .dispatch(element.as_ref(), pointer.pos, &ElementEvent::PointerDown(pointer))
-        .is_consumed());
+    assert!(
+        dispatcher
+            .dispatch(
+                element.as_ref(),
+                pointer.pos,
+                &ElementEvent::PointerDown(pointer)
+            )
+            .is_consumed()
+    );
     assert_eq!(updater.read_state().active_thumb(), Some(RangeThumb::Lower));
 
     let moved = pointer.at(Vec2d { x: 100.0, y: 20.0 });
-    assert!(dispatcher
-        .dispatch(element.as_ref(), moved.pos, &ElementEvent::PointerMove(moved))
-        .is_consumed());
+    assert!(
+        dispatcher
+            .dispatch(
+                element.as_ref(),
+                moved.pos,
+                &ElementEvent::PointerMove(moved)
+            )
+            .is_consumed()
+    );
     assert_eq!(updater.read_state().current_values(), 50.0..70.0);
 
-    updater.set_state(|state| state.adopt_config_from(
-        RangeSlider::new()
-            .range(0.0..100.0)
-            .step(10.0)
-            .values(30.0..80.0)
-            .width(200.0)
-            .create_state(),
-    ));
+    updater.set_state(|state| {
+        state.adopt_config_from(
+            RangeSlider::new()
+                .range(0.0..100.0)
+                .step(10.0)
+                .values(30.0..80.0)
+                .width(200.0)
+                .create_state(),
+        )
+    });
     element.rebuild_if_dirty(&ctx);
     assert_eq!(updater.read_state().current_values(), 30.0..80.0);
     assert_eq!(updater.read_state().active_thumb(), Some(RangeThumb::Lower));
@@ -381,17 +453,25 @@ async fn disabled_slider_does_not_capture_or_propose_input() {
 
     let mut dispatcher = EventDispatcher::new();
     let pointer = PointerInfo::mouse(Vec2d { x: 100.0, y: 20.0 }, PointerButton::Primary);
-    assert!(!dispatcher
-        .dispatch(element.as_ref(), pointer.pos, &ElementEvent::PointerDown(pointer))
-        .is_consumed());
+    assert!(
+        !dispatcher
+            .dispatch(
+                element.as_ref(),
+                pointer.pos,
+                &ElementEvent::PointerDown(pointer)
+            )
+            .is_consumed()
+    );
     let key = ElementEvent::KeyInput {
         key: NamedKey::ArrowRight,
         action: KeyAction::Pressed,
         modifiers: Modifiers::default(),
     };
-    assert!(!dispatcher
-        .dispatch(element.as_ref(), pointer.pos, &key)
-        .is_consumed());
+    assert!(
+        !dispatcher
+            .dispatch(element.as_ref(), pointer.pos, &key)
+            .is_consumed()
+    );
     assert!(values.borrow().is_empty());
 }
 
@@ -462,7 +542,12 @@ fn recorded_fills(leaf: &dyn aimer_widget::Element, ctx: &BuildContext<'_>) -> u
         .unwrap()
         .commands
         .iter()
-        .filter(|command| matches!(command, aimer_cupid::draw_cmd_v2::DrawCommand::FillRect { .. }))
+        .filter(|command| {
+            matches!(
+                command,
+                aimer_cupid::draw_cmd_v2::DrawCommand::FillRect { .. }
+            )
+        })
         .count()
 }
 
@@ -490,7 +575,11 @@ async fn slider_paints_track_active_segment_and_thumb() {
         let mut leaves = 0;
         slot.visit_children(&mut |leaf| {
             leaves += 1;
-            assert_eq!(recorded_fills(leaf, &ctx), 1, "each part records one rectangle");
+            assert_eq!(
+                recorded_fills(leaf, &ctx),
+                1,
+                "each part records one rectangle"
+            );
         });
         assert_eq!(leaves, 1);
     }
@@ -515,7 +604,11 @@ async fn slider_minimum_thumb_stays_inside_the_visual_bounds() {
         let slots = visual_slots(&element, &ctx);
         let (x, width) = slot_extent(slots[2], &ctx);
         assert!(x >= 0.0, "value {value}: thumb starts at {x}");
-        assert!(x + width <= size.width, "value {value}: thumb ends at {}", x + width);
+        assert!(
+            x + width <= size.width,
+            "value {value}: thumb ends at {}",
+            x + width
+        );
     }
 }
 
@@ -553,7 +646,13 @@ async fn zero_width_slider_is_layout_safe_and_not_hit_testable() {
 
     let pointer = PointerInfo::mouse(Vec2d::default(), PointerButton::Primary);
     let mut dispatcher = EventDispatcher::new();
-    assert!(!dispatcher
-        .dispatch(element.as_ref(), pointer.pos, &ElementEvent::PointerDown(pointer))
-        .is_consumed());
+    assert!(
+        !dispatcher
+            .dispatch(
+                element.as_ref(),
+                pointer.pos,
+                &ElementEvent::PointerDown(pointer)
+            )
+            .is_consumed()
+    );
 }

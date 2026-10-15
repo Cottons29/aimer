@@ -61,9 +61,9 @@ impl FromStr for SvgPreserveAspectRatio {
         let mut tokens = value
             .split(|character: char| character.is_ascii_whitespace() || character == ',')
             .filter(|token| !token.is_empty());
-        let mut token = tokens.next().ok_or_else(|| {
-            SvgFitError::InvalidPreserveAspectRatio("value is empty".to_owned())
-        })?;
+        let mut token = tokens
+            .next()
+            .ok_or_else(|| SvgFitError::InvalidPreserveAspectRatio("value is empty".to_owned()))?;
 
         // `defer` is a valid SVG grammar prefix for embedded resources. The
         // root document has no later resource to defer to, so it does not
@@ -88,7 +88,7 @@ impl FromStr for SvgPreserveAspectRatio {
             other => {
                 return Err(SvgFitError::InvalidPreserveAspectRatio(format!(
                     "unknown alignment `{other}`"
-                )))
+                )));
             }
         };
 
@@ -99,7 +99,7 @@ impl FromStr for SvgPreserveAspectRatio {
             Some(other) => {
                 return Err(SvgFitError::InvalidPreserveAspectRatio(format!(
                     "unknown sizing mode `{other}`"
-                )))
+                )));
             }
         };
         if tokens.next().is_some() {
@@ -175,7 +175,9 @@ impl SvgViewBox {
         let sy = destination_height / self.height;
         let (sx, sy, extra_x, extra_y) = match policy {
             SvgFitPolicy::Stretch => (sx, sy, 0.0, 0.0),
-            SvgFitPolicy::PreserveAspectRatio(preserve) if preserve.align == SvgAspectAlign::None => {
+            SvgFitPolicy::PreserveAspectRatio(preserve)
+                if preserve.align == SvgAspectAlign::None =>
+            {
                 (sx, sy, 0.0, 0.0)
             }
             SvgFitPolicy::PreserveAspectRatio(preserve) => {
@@ -223,9 +225,9 @@ impl FromStr for SvgViewBox {
             .split(|character: char| character.is_ascii_whitespace() || character == ',')
             .filter(|token| !token.is_empty())
             .map(|token| {
-                token.parse::<f32>().map_err(|_| {
-                    SvgFitError::InvalidViewBox(format!("invalid number `{token}`"))
-                })
+                token
+                    .parse::<f32>()
+                    .map_err(|_| SvgFitError::InvalidViewBox(format!("invalid number `{token}`")))
             })
             .collect::<Result<Vec<_>, _>>()?;
         if values.len() != 4 {

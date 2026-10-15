@@ -62,7 +62,7 @@ impl ScrollBehavior {
 #[derive(Default, Copy, Clone, Debug, PartialEq, Eq, aimer_macro::PortableValue)]
 #[portable_value(
     id = "aimer.value:aimer_scroll::scrollable::ScrollAxis",
-    max_encoded_bytes = 16,
+    max_encoded_bytes = 16
 )]
 pub enum ScrollAxis {
     #[default]

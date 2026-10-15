@@ -18,10 +18,10 @@
 //! churns through unbounded unique `storage_key`s grows this map without limit.
 //! Upgrade path: evict on an explicit dispose hook, or cap it with an LRU.
 
-use std::cell::RefCell;
-use hashbrown::HashMap;
 use aimer_attribute::position::Vec2d;
 use aimer_widget::Key;
+use hashbrown::HashMap;
+use std::cell::RefCell;
 
 thread_local! {
     static SCROLL_OFFSETS: RefCell<HashMap<Key, Vec2d>> = RefCell::new(HashMap::new());

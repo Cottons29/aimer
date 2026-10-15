@@ -63,12 +63,20 @@ pub trait CustomPipelineGeneric<B: GpuBackend>: 'static {
     }
 
     /// Copies the backdrop needed by one prepared command.
+    ///
+    /// `width` and `height` are the size of the target being drawn into, and
+    /// `source_offset` is that target's origin inside `source_texture`. The
+    /// two only differ for an offscreen target, such as an opacity group, whose
+    /// draw coordinates are local to its bounds while `source_texture` is the
+    /// whole frame. Regions the command prepared are target-local, so they must
+    /// be shifted by `source_offset` to be read from the source.
     fn capture_backdrop_command(
         &self,
         _command_index: Option<usize>,
         backend: &B,
         encoder: &mut B::CommandEncoder,
         source_texture: &B::Texture,
+        _source_offset: (u32, u32),
         width: u32,
         height: u32,
     ) {

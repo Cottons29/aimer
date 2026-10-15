@@ -177,9 +177,7 @@ impl ResizeHandle {
         // The outer reach makes a point beyond one border but level with the
         // middle of the widget a legitimate hit, so the grown rectangle — not the
         // widget's own — is what rules a far-away point out.
-        if band.is_empty()
-            || direction.is_empty()
-            || !band.grow(bounds).is_inside(point.x, point.y)
+        if band.is_empty() || direction.is_empty() || !band.grow(bounds).is_inside(point.x, point.y)
         {
             return None;
         }
@@ -494,7 +492,10 @@ mod tests {
 
     #[test]
     fn a_thickness_of_zero_disables_every_handle() {
-        assert_eq!(ResizeHandle::hit(BOUNDS, Vec2d { x: 10.0, y: 20.0 }, 0.0), None);
+        assert_eq!(
+            ResizeHandle::hit(BOUNDS, Vec2d { x: 10.0, y: 20.0 }, 0.0),
+            None
+        );
     }
 
     // A widget dragged down to a sliver has overlapping bands: the far edge must

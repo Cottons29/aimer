@@ -161,7 +161,9 @@ impl EventSpatialIndex {
             EventSpatialNode::Empty => SpatialBounds::default(),
             EventSpatialNode::Branch(bounds) => bounds.get(),
             EventSpatialNode::Leaf(target) => {
-                let bounds = elements.get(*target).and_then(|element| element.bound.get_bounds());
+                let bounds = elements
+                    .get(*target)
+                    .and_then(|element| element.bound.get_bounds());
                 SpatialBounds {
                     bounds,
                     has_unbounded_target: bounds.is_none(),
@@ -292,11 +294,7 @@ impl EventTree {
     /// they walk the supplied children in reverse so the last painted child is
     /// offered the event first.
     #[inline]
-    pub fn hit_test_paint_order(
-        &self,
-        x: f32,
-        y: f32,
-    ) -> impl Iterator<Item = EventTargetId> + '_ {
+    pub fn hit_test_paint_order(&self, x: f32, y: f32) -> impl Iterator<Item = EventTargetId> + '_ {
         self.hit_test_iter(x, y, false)
     }
 
@@ -349,7 +347,10 @@ impl<'a> EventTreeHitTest<'a> {
 
     #[inline]
     fn push(&mut self, node: usize) {
-        assert!(self.stack_len < self.stack.len(), "event index depth overflow");
+        assert!(
+            self.stack_len < self.stack.len(),
+            "event index depth overflow"
+        );
         self.stack[self.stack_len] = node;
         self.stack_len += 1;
     }
@@ -551,9 +552,9 @@ impl ElementTree {
     /// topmost first.
     #[inline]
     pub fn hit_test(&self, x: f32, y: f32) -> impl Iterator<Item = ElementId> + '_ {
-        self.events.hit_test(x, y).filter_map(|target| {
-            self.events.get(target).map(EventElement::element_id)
-        })
+        self.events
+            .hit_test(x, y)
+            .filter_map(|target| self.events.get(target).map(EventElement::element_id))
     }
 
     /// Returns the number of elements in the general tree.
@@ -675,11 +676,7 @@ mod tests {
     const SHOWCASE_PANE_WIDTH: f32 = 341.0;
     const SHOWCASE_PANE_STRIDE: f32 = 360.0;
     const SHOWCASE_CATEGORY_WIDTH: f32 = 300.0;
-    const SHOWCASE_CATEGORY_TOP_INSET: f32 = if cfg!(target_os = "macos") {
-        38.0
-    } else {
-        0.0
-    };
+    const SHOWCASE_CATEGORY_TOP_INSET: f32 = if cfg!(target_os = "macos") { 38.0 } else { 0.0 };
     const SHOWCASE_HEADER_HEIGHT: f32 = 30.0;
     const SHOWCASE_BUTTON_HEIGHT: f32 = 39.0;
     const SHOWCASE_BUTTON_STEP: f32 = 42.0;
@@ -724,14 +721,7 @@ mod tests {
         general_bounds.push(bounds);
 
         if participation == EventParticipation::HandlesEvents {
-            assert!(tree.update_event_bounds(
-                id,
-                1.0,
-                rect.x,
-                rect.y,
-                rect.width,
-                rect.height,
-            ));
+            assert!(tree.update_event_bounds(id, 1.0, rect.x, rect.y, rect.width, rect.height,));
         }
 
         id
@@ -1216,7 +1206,10 @@ mod tests {
             .iter()
             .filter(|(_, rect)| rect.y >= 0.0 && rect.y + rect.height <= SHOWCASE_VIEWPORT_HEIGHT)
             .count();
-        assert_eq!(visible_buttons, if cfg!(target_os = "macos") { 14 } else { 15 });
+        assert_eq!(
+            visible_buttons,
+            if cfg!(target_os = "macos") { 14 } else { 15 }
+        );
 
         let mut stack = Vec::with_capacity(fixture.tree.len());
         for (expected, rect) in fixture.button_targets.iter().take(visible_buttons) {
@@ -1241,14 +1234,20 @@ mod tests {
         let (header, header_rect) = fixture.header_targets[0];
         let header_x = header_rect.x + 20.0;
         let header_y = header_rect.y + header_rect.height / 2.0;
-        assert_eq!(fixture.tree.hit_test(header_x, header_y).next(), Some(header));
+        assert_eq!(
+            fixture.tree.hit_test(header_x, header_y).next(),
+            Some(header)
+        );
 
         // An inter-button gap and the adjacent divider are not event targets.
         let first_button = fixture.button_targets[0].1;
         assert_eq!(
             fixture
                 .tree
-                .hit_test(first_button.x + 20.0, first_button.y + SHOWCASE_BUTTON_HEIGHT + 1.0)
+                .hit_test(
+                    first_button.x + 20.0,
+                    first_button.y + SHOWCASE_BUTTON_HEIGHT + 1.0
+                )
                 .next(),
             None
         );
@@ -1282,14 +1281,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         for (index, target) in targets.iter().copied().enumerate() {
-            assert!(tree.update_bounds(
-                target,
-                1.0,
-                index as f32 * 10.0,
-                0.0,
-                4.0,
-                4.0,
-            ));
+            assert!(tree.update_bounds(target, 1.0, index as f32 * 10.0, 0.0, 4.0, 4.0,));
         }
         assert!(tree.update_bounds(targets[0], 1.0, 80.0, 0.0, 4.0, 4.0));
 
@@ -1323,7 +1315,10 @@ mod tests {
 
         assert!(tree.update_bounds(unbounded, 1.0, 80.0, 80.0, 4.0, 4.0));
         assert_eq!(tree.hit_test(2.0, 3.0).next(), None);
-        assert_eq!(tree.hit_test(82.0, 82.0).collect::<Vec<_>>(), vec![unbounded]);
+        assert_eq!(
+            tree.hit_test(82.0, 82.0).collect::<Vec<_>>(),
+            vec![unbounded]
+        );
     }
 
     #[test]
@@ -1340,7 +1335,10 @@ mod tests {
         // has no layout bound yet, so its new ancestor summary must remain
         // unbounded until layout publishes its rectangle.
         let unbounded = tree.register(ElementId(3));
-        assert_eq!(tree.hit_test(500.0, 500.0).collect::<Vec<_>>(), vec![unbounded]);
+        assert_eq!(
+            tree.hit_test(500.0, 500.0).collect::<Vec<_>>(),
+            vec![unbounded]
+        );
 
         assert!(tree.update_bounds(unbounded, 1.0, 60.0, 0.0, 4.0, 4.0));
         assert_eq!(tree.hit_test(500.0, 500.0).next(), None);
@@ -1488,8 +1486,7 @@ mod tests {
                 event_hit = Some(event.element);
                 black_box(event.element);
             }
-            event_bounds_checked +=
-                hit_test.index_bounds_checked + hit_test.target_bounds_checked;
+            event_bounds_checked += hit_test.index_bounds_checked + hit_test.target_bounds_checked;
         }
         let event_elapsed = started.elapsed();
 
@@ -1498,15 +1495,22 @@ mod tests {
         assert_eq!(general_nodes_visited, tree.len() * ITERATIONS);
         assert!(event_bounds_checked > 0);
 
-        let general_micros_per_query = general_elapsed.as_secs_f64() * 1_000_000.0
-            / ITERATIONS as f64;
-        let event_micros_per_query = event_elapsed.as_secs_f64() * 1_000_000.0
-            / ITERATIONS as f64;
+        let general_micros_per_query =
+            general_elapsed.as_secs_f64() * 1_000_000.0 / ITERATIONS as f64;
+        let event_micros_per_query = event_elapsed.as_secs_f64() * 1_000_000.0 / ITERATIONS as f64;
         let relative_time = general_elapsed.as_secs_f64() / event_elapsed.as_secs_f64();
 
-        println!("nodes={}, event handlers={}, iterations={ITERATIONS}", tree.len(), tree.events.elements.len());
-        println!("general tree: visited {general_nodes_visited} nodes, {general_micros_per_query:.2} µs/query");
-        println!("event tree: checked {event_bounds_checked} index/target bounds, {event_micros_per_query:.2} µs/query");
+        println!(
+            "nodes={}, event handlers={}, iterations={ITERATIONS}",
+            tree.len(),
+            tree.events.elements.len()
+        );
+        println!(
+            "general tree: visited {general_nodes_visited} nodes, {general_micros_per_query:.2} µs/query"
+        );
+        println!(
+            "event tree: checked {event_bounds_checked} index/target bounds, {event_micros_per_query:.2} µs/query"
+        );
         println!("general/event elapsed ratio: {relative_time:.2}x");
     }
 
@@ -1521,10 +1525,9 @@ mod tests {
         use aimer_widget::{
             AnyElement as FrameworkAnyElement, Drawable as FrameworkDrawable,
             Element as FrameworkElement, ElementId as FrameworkElementId, EventDispatcher,
-            EventElement as FrameworkEventElement,
-            EventResult, FocusNode, FollowUp, LayoutElement, PointerKey, Rebuildable,
-            VisitorElement, EventTreeRole, begin_event_frame, broadcast_event, dispatch_event,
-            dispatch_focused_event,
+            EventElement as FrameworkEventElement, EventResult, EventTreeRole, FocusNode, FollowUp,
+            LayoutElement, PointerKey, Rebuildable, VisitorElement, begin_event_frame,
+            broadcast_event, dispatch_event, dispatch_focused_event,
         };
         use std::cell::RefCell;
         use std::collections::HashMap;
@@ -1617,9 +1620,7 @@ mod tests {
                         EventResult::ignored().with_follow_up(FollowUp::DragOver)
                     }
                     FrameworkEvent::PointerMove(_) => EventResult::ignored(),
-                    FrameworkEvent::PointerUp(_)
-                        if self.capture_target == Some(ElementId(id)) =>
-                    {
+                    FrameworkEvent::PointerUp(_) if self.capture_target == Some(ElementId(id)) => {
                         EventResult::consumed()
                             .with_redraw()
                             .with_follow_up(FollowUp::DragDrop)
@@ -1636,9 +1637,7 @@ mod tests {
                     FrameworkEvent::HoveredFileMoved { .. }
                     | FrameworkEvent::DragOver { .. }
                     | FrameworkEvent::DragDrop { .. } => EventResult::redraw(),
-                    FrameworkEvent::Cancel
-                        if self.capture_target == Some(ElementId(id)) =>
-                    {
+                    FrameworkEvent::Cancel if self.capture_target == Some(ElementId(id)) => {
                         EventResult::consumed()
                     }
                     _ => EventResult::ignored(),
@@ -1682,9 +1681,7 @@ mod tests {
         }
 
         impl LayoutElement for ComparisonElement {
-            fn pos_start_end(
-                &self,
-            ) -> Option<(aimer_attribute::Vec2d, aimer_attribute::Vec2d)> {
+            fn pos_start_end(&self) -> Option<(aimer_attribute::Vec2d, aimer_attribute::Vec2d)> {
                 self.metrics
                     .layout_bound_reads
                     .set(self.metrics.layout_bound_reads.get() + 1);
@@ -1753,9 +1750,7 @@ mod tests {
         }
 
         impl LayoutElement for LegacyHitBoundary {
-            fn pos_start_end(
-                &self,
-            ) -> Option<(aimer_attribute::Vec2d, aimer_attribute::Vec2d)> {
+            fn pos_start_end(&self) -> Option<(aimer_attribute::Vec2d, aimer_attribute::Vec2d)> {
                 Some((
                     (self.bounds.x, self.bounds.y).into(),
                     (
@@ -1774,7 +1769,11 @@ mod tests {
         impl Rebuildable for LegacyHitBoundary {}
 
         impl FrameworkCase {
-            fn dispatch(&mut self, pos: aimer_attribute::Vec2d, event: &FrameworkEvent) -> EventResult {
+            fn dispatch(
+                &mut self,
+                pos: aimer_attribute::Vec2d,
+                event: &FrameworkEvent,
+            ) -> EventResult {
                 self.dispatcher.dispatch(self.root.as_ref(), pos, event)
             }
 
@@ -2175,7 +2174,10 @@ mod tests {
                 *sparse.metrics.effects.borrow(),
             );
             assert_eq!(general.focused_element(), sparse.focused_element());
-            assert_eq!(general.dispatcher.capture_count(), sparse.dispatcher.capture_count());
+            assert_eq!(
+                general.dispatcher.capture_count(),
+                sparse.dispatcher.capture_count()
+            );
             if let Some(pointer) = event_pointer_key(&event) {
                 assert_eq!(
                     general.captured_logical_owner(pointer),
@@ -2250,8 +2252,14 @@ mod tests {
             );
             assert!(touch_down.is_consumed());
             assert_eq!(general.dispatcher.capture_count(), 2);
-            assert_eq!(general.captured_logical_owner(touch_key), Some(capture_target));
-            assert_eq!(sparse.captured_logical_owner(touch_key), Some(capture_target));
+            assert_eq!(
+                general.captured_logical_owner(touch_key),
+                Some(capture_target)
+            );
+            assert_eq!(
+                sparse.captured_logical_owner(touch_key),
+                Some(capture_target)
+            );
 
             let touch_up = assert_dispatch_parity(
                 &mut general,
@@ -2288,12 +2296,8 @@ mod tests {
             let next_focus = fixture.button_targets[1].0;
             general.request_focus(next_focus);
             sparse.request_focus(next_focus);
-            let _ = assert_dispatch_parity(
-                &mut general,
-                &mut sparse,
-                outside,
-                FrameworkEvent::Cancel,
-            );
+            let _ =
+                assert_dispatch_parity(&mut general, &mut sparse, outside, FrameworkEvent::Cancel);
             assert_eq!(general.focused_element(), Some(next_focus));
 
             let text_result = assert_dispatch_parity(
@@ -2425,15 +2429,13 @@ mod tests {
                 *sparse.metrics.effects.borrow(),
             );
 
-            let focused = general.focused_element().expect("directed events focus a field");
+            let focused = general
+                .focused_element()
+                .expect("directed events focus a field");
             general.request_unfocus(focused);
             sparse.request_unfocus(focused);
-            let _ = assert_dispatch_parity(
-                &mut general,
-                &mut sparse,
-                outside,
-                FrameworkEvent::Cancel,
-            );
+            let _ =
+                assert_dispatch_parity(&mut general, &mut sparse, outside, FrameworkEvent::Cancel);
             assert_eq!(general.focused_element(), None);
             assert_eq!(sparse.focused_element(), None);
 
@@ -2444,12 +2446,8 @@ mod tests {
                 FrameworkEvent::PointerDown(pointer(point)),
             );
             assert!(down_result.is_consumed());
-            let cancel_result = assert_dispatch_parity(
-                &mut general,
-                &mut sparse,
-                outside,
-                FrameworkEvent::Cancel,
-            );
+            let cancel_result =
+                assert_dispatch_parity(&mut general, &mut sparse, outside, FrameworkEvent::Cancel);
             assert!(cancel_result.is_consumed());
             assert_eq!(general.dispatcher.capture_count(), 0);
             assert_eq!(sparse.dispatcher.capture_count(), 0);
@@ -2459,7 +2457,11 @@ mod tests {
         fn nested_event_participants_keep_route_and_broadcast_order() {
             let mut tree = ElementTree::new();
             let root = tree
-                .insert(None, AnyElement::new(StressElement), EventParticipation::None)
+                .insert(
+                    None,
+                    AnyElement::new(StressElement),
+                    EventParticipation::None,
+                )
                 .unwrap();
             let parent = tree
                 .insert(
@@ -2509,12 +2511,18 @@ mod tests {
             assert_eq!(
                 *general.metrics.deliveries.borrow(),
                 vec![
-                    (grandchild.index(), std::mem::discriminant(&FrameworkEvent::PointerMove(pointer(parent_only)))),
-                    (parent.index(), std::mem::discriminant(&FrameworkEvent::DragOver {
-                        pos: parent_only,
-                        source: PointerSource::Mouse,
-                        id: 0,
-                    })),
+                    (
+                        grandchild.index(),
+                        std::mem::discriminant(&FrameworkEvent::PointerMove(pointer(parent_only)))
+                    ),
+                    (
+                        parent.index(),
+                        std::mem::discriminant(&FrameworkEvent::DragOver {
+                            pos: parent_only,
+                            source: PointerSource::Mouse,
+                            id: 0,
+                        })
+                    ),
                 ]
             );
             let up_result = assert_dispatch_parity(
@@ -2528,12 +2536,18 @@ mod tests {
             assert_eq!(
                 *general.metrics.deliveries.borrow(),
                 vec![
-                    (grandchild.index(), std::mem::discriminant(&FrameworkEvent::PointerUp(pointer(parent_only)))),
-                    (parent.index(), std::mem::discriminant(&FrameworkEvent::DragDrop {
-                        pos: parent_only,
-                        source: PointerSource::Mouse,
-                        id: 0,
-                    })),
+                    (
+                        grandchild.index(),
+                        std::mem::discriminant(&FrameworkEvent::PointerUp(pointer(parent_only)))
+                    ),
+                    (
+                        parent.index(),
+                        std::mem::discriminant(&FrameworkEvent::DragDrop {
+                            pos: parent_only,
+                            source: PointerSource::Mouse,
+                            id: 0,
+                        })
+                    ),
                 ]
             );
 
@@ -2637,7 +2651,11 @@ mod tests {
         fn moved_layout_bounds_update_the_handler_and_spatial_index_together() {
             let mut tree = ElementTree::new();
             let root = tree
-                .insert(None, AnyElement::new(StressElement), EventParticipation::None)
+                .insert(
+                    None,
+                    AnyElement::new(StressElement),
+                    EventParticipation::None,
+                )
                 .unwrap();
             let target = tree
                 .insert(
@@ -2682,7 +2700,10 @@ mod tests {
             );
             assert_eq!(
                 *sparse.metrics.deliveries.borrow(),
-                vec![(target.index(), std::mem::discriminant(&FrameworkEvent::PointerDown(pointer(new_point))))]
+                vec![(
+                    target.index(),
+                    std::mem::discriminant(&FrameworkEvent::PointerDown(pointer(new_point)))
+                )]
             );
         }
 
@@ -2716,7 +2737,10 @@ mod tests {
             assert!(inside_result.is_consumed());
             assert_eq!(
                 general.metrics.deliveries.borrow().as_slice(),
-                &[(700, std::mem::discriminant(&FrameworkEvent::PointerDown(pointer(inside))))],
+                &[(
+                    700,
+                    std::mem::discriminant(&FrameworkEvent::PointerDown(pointer(inside)))
+                )],
             );
         }
 
@@ -2724,7 +2748,11 @@ mod tests {
         fn unbounded_event_targets_remain_hit_eligible_in_both_dispatchers() {
             let mut tree = ElementTree::new();
             let root = tree
-                .insert(None, AnyElement::new(StressElement), EventParticipation::None)
+                .insert(
+                    None,
+                    AnyElement::new(StressElement),
+                    EventParticipation::None,
+                )
                 .unwrap();
             let target = tree
                 .insert(
@@ -2776,7 +2804,10 @@ mod tests {
                 let roots = fixture.tree.event_tree().roots().len();
                 let targets = fixture.tree.event_tree().elements().len();
                 assert_eq!(roots, targets);
-                assert_eq!(roots, copies * (SHOWCASE_BUTTON_COUNT + SHOWCASE_CATEGORY_BUTTON_COUNTS.len()));
+                assert_eq!(
+                    roots,
+                    copies * (SHOWCASE_BUTTON_COUNT + SHOWCASE_CATEGORY_BUTTON_COUNTS.len())
+                );
             }
         }
 

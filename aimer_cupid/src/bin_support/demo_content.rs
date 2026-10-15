@@ -104,7 +104,14 @@ pub(super) fn record_demo_frame(canvas: &CupidCanvas, width: f32, height: f32) {
     );
 
     let diagnostics_y = (sea_y + sea_height + 12.0).min(height - 1.0);
-    canvas.draw_text(30.0, diagnostics_y, "Font weights", 18.0, Color::black(), 400);
+    canvas.draw_text(
+        30.0,
+        diagnostics_y,
+        "Font weights",
+        18.0,
+        Color::black(),
+        400,
+    );
     for (index, (weight, sample)) in FONT_WEIGHT_SAMPLES.iter().enumerate() {
         let column = index % 4;
         let row = index / 4;
@@ -119,8 +126,22 @@ pub(super) fn record_demo_frame(canvas: &CupidCanvas, width: f32, height: f32) {
     }
 
     let color_x = (width * 0.56).max(360.0).min(width - 180.0);
-    canvas.draw_text(color_x, diagnostics_y, "Color glyphs / text", 18.0, Color::black(), 400);
-    canvas.draw_text(color_x, diagnostics_y + 24.0, "Red", 17.0, Color::red(), 400);
+    canvas.draw_text(
+        color_x,
+        diagnostics_y,
+        "Color glyphs / text",
+        18.0,
+        Color::black(),
+        400,
+    );
+    canvas.draw_text(
+        color_x,
+        diagnostics_y + 24.0,
+        "Red",
+        17.0,
+        Color::red(),
+        400,
+    );
     canvas.draw_text(
         color_x + 42.0,
         diagnostics_y + 24.0,

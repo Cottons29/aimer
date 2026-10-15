@@ -87,25 +87,44 @@ mod tests {
     #[test]
     fn slider_validates_finite_configuration_and_has_explicit_reversed_policy() {
         assert!(matches!(
-            Slider::new().range(10.0..0.0).step(1.0).value(5.0).validate(),
-            Err(RangeError::ReversedBounds { min: 10.0, max: 0.0 })
+            Slider::new()
+                .range(10.0..0.0)
+                .step(1.0)
+                .value(5.0)
+                .validate(),
+            Err(RangeError::ReversedBounds {
+                min: 10.0,
+                max: 0.0
+            })
         ));
         assert!(matches!(
-            Slider::new().range(f64::NAN..10.0).step(1.0).value(5.0).validate(),
+            Slider::new()
+                .range(f64::NAN..10.0)
+                .step(1.0)
+                .value(5.0)
+                .validate(),
             Err(RangeError::NonFinite {
                 field: RangeField::Minimum,
                 ..
             })
         ));
         assert!(matches!(
-            Slider::new().range(0.0..f64::INFINITY).step(1.0).value(5.0).validate(),
+            Slider::new()
+                .range(0.0..f64::INFINITY)
+                .step(1.0)
+                .value(5.0)
+                .validate(),
             Err(RangeError::NonFinite {
                 field: RangeField::Maximum,
                 ..
             })
         ));
         assert!(matches!(
-            Slider::new().range(0.0..10.0).step(0.0).value(5.0).validate(),
+            Slider::new()
+                .range(0.0..10.0)
+                .step(0.0)
+                .value(5.0)
+                .validate(),
             Err(RangeError::NonPositiveStep { step: 0.0 })
         ));
 
@@ -253,17 +272,23 @@ mod tests {
             .step(10.0)
             .values(20.0..70.0);
 
-        assert!(slider
-            .handle_key(RangeThumb::Lower, SliderKey::ArrowRight)
-            .unwrap());
+        assert!(
+            slider
+                .handle_key(RangeThumb::Lower, SliderKey::ArrowRight)
+                .unwrap()
+        );
         assert_eq!(slider.lower(), 30.0);
-        assert!(slider
-            .set_thumb_from_position(RangeThumb::Upper, 95.0, 100.0)
-            .unwrap());
+        assert!(
+            slider
+                .set_thumb_from_position(RangeThumb::Upper, 95.0, 100.0)
+                .unwrap()
+        );
         assert_eq!(slider.upper(), 100.0);
-        assert!(slider
-            .set_thumb_from_position(RangeThumb::Lower, 110.0, 100.0)
-            .unwrap());
+        assert!(
+            slider
+                .set_thumb_from_position(RangeThumb::Lower, 110.0, 100.0)
+                .unwrap()
+        );
         assert_eq!(slider.lower(), 100.0);
 
         let semantics = slider.semantics();
@@ -330,17 +355,13 @@ mod tests {
             .values(-20.0..20.0);
 
         assert_eq!((slider.lower(), slider.upper()), (6.0, 6.0));
-        assert_eq!(
-            slider.value_at_position(200.0, 0.0).unwrap(),
-            6.0
+        assert_eq!(slider.value_at_position(200.0, 0.0).unwrap(), 6.0);
+        assert_eq!(slider.position_for_value(100.0, 0.0).unwrap(), 0.0);
+        assert!(
+            !slider
+                .set_thumb_from_position(RangeThumb::Lower, 0.0, 0.0)
+                .unwrap()
         );
-        assert_eq!(
-            slider.position_for_value(100.0, 0.0).unwrap(),
-            0.0
-        );
-        assert!(!slider
-            .set_thumb_from_position(RangeThumb::Lower, 0.0, 0.0)
-            .unwrap());
         assert_eq!((slider.lower(), slider.upper()), (6.0, 6.0));
     }
 

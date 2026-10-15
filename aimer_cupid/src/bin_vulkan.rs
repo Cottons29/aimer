@@ -88,20 +88,19 @@ impl ApplicationHandler for VulkanDemo {
             return;
         }
         let window = Arc::new(
-            event_loop.create_window(
-                Window::default_attributes()
-                    .with_title("Aimer Cupid — Vulkan")
-                    .with_inner_size(winit::dpi::LogicalSize::new(800, 600))
-                    .with_visible(false),
-            )
-            .expect("create Vulkan demo window"),
+            event_loop
+                .create_window(
+                    Window::default_attributes()
+                        .with_title("Aimer Cupid — Vulkan")
+                        .with_inner_size(winit::dpi::LogicalSize::new(800, 600))
+                        .with_visible(false),
+                )
+                .expect("create Vulkan demo window"),
         );
         let size = window.inner_size();
-        let (backend, surface) = VulkanBackend::new_windowed(
-            window.clone(),
-            (size.width, size.height),
-        )
-        .expect("create Vulkan backend and surface");
+        let (backend, surface) =
+            VulkanBackend::new_windowed(window.clone(), (size.width, size.height))
+                .expect("create Vulkan backend and surface");
         let format = surface.format();
         self.renderer = Some(RendererImpl::new(&backend, format));
         self.backend = Some(backend);

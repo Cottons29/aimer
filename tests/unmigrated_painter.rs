@@ -52,7 +52,9 @@ fn an_element_without_retained_paint_paints_nothing_and_is_asked_again() {
         app.render_frame();
     }
 
-    let census = app.paint_source_census().expect("a mounted page has a root");
+    let census = app
+        .paint_source_census()
+        .expect("a mounted page has a root");
     assert!(
         census
             .unresolved_roots
@@ -61,6 +63,10 @@ fn an_element_without_retained_paint_paints_nothing_and_is_asked_again() {
         "the element has no paint to show: {:?}",
         census.unresolved_roots
     );
-    assert!(census.drawn_unmapped.is_empty(), "{:?}", census.drawn_unmapped);
+    assert!(
+        census.drawn_unmapped.is_empty(),
+        "{:?}",
+        census.drawn_unmapped
+    );
     assert_eq!(census.sync_error, None);
 }

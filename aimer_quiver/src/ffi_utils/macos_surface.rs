@@ -105,10 +105,7 @@ mod tests {
 
     #[test]
     fn missing_sublayers_are_reported_without_querying_a_null_array() {
-        assert_eq!(
-            metal_layer_location(false, || None::<[bool; 0]>),
-            None
-        );
+        assert_eq!(metal_layer_location(false, || None::<[bool; 0]>), None);
     }
 
     #[test]

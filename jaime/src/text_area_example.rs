@@ -1,8 +1,8 @@
 //! A focused showcase for Aimer's multiline text editor.
 
+use aimer::input::{TextArea, TextEditingController};
 use aimer::style::*;
 use aimer::*;
-use aimer::input::{TextArea, TextEditingController};
 
 use crate::theme;
 
@@ -39,13 +39,14 @@ impl Default for TextAreaExample {
 impl StatelessWidget for TextAreaExample {
     fn build(&self, ctx: &BuildContext) -> impl Widget {
         let theme = ThemeData::copied(ctx);
-        let text_style = TextStyle::new().font_size(16).color(theme.on_surface_color);
+        let text_style = TextStyle::new()
+            .font_size(16)
+            .color(theme.on_surface_color);
 
         Container::new()
             .color(theme.background_color)
             .padding(LayoutSpacing::all(Spacing::Px(32)))
-            .child(
-                Column::new().children(vec![
+            .child(Column::new().children(vec![
                     Text::new("TextArea")
                         .text_style(
                             TextStyle::new()
@@ -74,7 +75,6 @@ impl StatelessWidget for TextAreaExample {
                             println!("TextArea contains {} bytes", text.len())
                         })
                         .boxed(),
-                ]),
-            )
+                ]))
     }
 }

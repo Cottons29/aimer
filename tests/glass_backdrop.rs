@@ -1,9 +1,11 @@
-use aimer::canvas::{Canvas as RetainedCanvas, FrameCanvas, InnerCanvas, MaterialDrawRequest, MaterialKind};
+use aimer::canvas::{
+    Canvas as RetainedCanvas, FrameCanvas, InnerCanvas, MaterialDrawRequest, MaterialKind,
+};
+use aimer::cupid::WgpuBackend;
 use aimer::cupid::damage_region::DamageSet;
 use aimer::cupid::draw_cmd_v2::{Rect, RenderFrame, RenderNodeId, RenderPaintSource, RenderTree};
 use aimer::cupid::frame::{FramePacket, FrameRenderMetadata};
 use aimer::cupid::renderer::Renderer;
-use aimer::cupid::WgpuBackend;
 use aimer::widget::base::WindowHandle;
 use aimer::{BuildContext, Color, Glass, ResolvedSize, SizedBox, Vec2d, Widget};
 use aimer_utils::SyncFuture;
@@ -83,7 +85,7 @@ fn glass_frame(blur_radius: f32) -> aimer::cupid::draw_cmd::DrawList {
         .blur_radius(blur_radius)
         .border_width(0.0)
         .shadow_blur(0.0)
-        .corner_radius(0.0)
+        .border_radius(0.0)
         .child(
             SizedBox::new()
                 .width(GLASS_SIZE as f32)
@@ -147,7 +149,7 @@ fn tinted_glass_frame() -> aimer::cupid::draw_cmd::DrawList {
         .border_color(Color::Transparent)
         .border_width(0.0)
         .shadow_blur(0.0)
-        .corner_radius(0.0)
+        .border_radius(0.0)
         .child(
             SizedBox::new()
                 .width(GLASS_SIZE as f32)
@@ -191,14 +193,7 @@ fn render_and_read(
 
     // Exercise the ordinary renderer entry point. Real presentation surfaces
     // are not guaranteed to support COPY_SRC, but Glass must still work.
-    renderer.render(
-        backend,
-        &view,
-        FRAME_WIDTH,
-        FRAME_HEIGHT,
-        false,
-        draw_list,
-    );
+    renderer.render(backend, &view, FRAME_WIDTH, FRAME_HEIGHT, false, draw_list);
 
     let readback = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("glass widget regression readback"),
@@ -254,7 +249,12 @@ fn retained_v2_glass_tree() -> (RenderTree, RenderNodeId) {
         .unwrap();
     let background = RetainedCanvas::of(&tree.context(root).unwrap());
     background.fill_rect(
-        Rect::new(GLASS_X as f32, 0.0, GLASS_SIZE as f32 / 2.0, GLASS_SIZE as f32),
+        Rect::new(
+            GLASS_X as f32,
+            0.0,
+            GLASS_SIZE as f32 / 2.0,
+            GLASS_SIZE as f32,
+        ),
         [0, 0, 0, 255],
     );
     background.fill_rect(
@@ -271,12 +271,7 @@ fn retained_v2_glass_tree() -> (RenderTree, RenderNodeId) {
     let glass = tree
         .add_child(
             root,
-            Rect::new(
-                GLASS_X as f32,
-                0.0,
-                GLASS_SIZE as f32,
-                GLASS_SIZE as f32,
-            ),
+            Rect::new(GLASS_X as f32, 0.0, GLASS_SIZE as f32, GLASS_SIZE as f32),
         )
         .unwrap();
     tree.set_paint_source(glass, RenderPaintSource::LocalV2)
@@ -310,30 +305,26 @@ fn retained_v2_glass_packet(
             damage: vec![Rect::new(0.0, 0.0, FRAME_WIDTH as f32, FRAME_HEIGHT as f32)],
             operations: tree.render_all(),
         },
-        FrameRenderMetadata::new(
-            1.0,
-            0,
-            0,
-            0,
-            0,
-            DamageSet::new(FRAME_WIDTH, FRAME_HEIGHT),
-        ),
+        FrameRenderMetadata::new(1.0, 0, 0, 0, 0, DamageSet::new(FRAME_WIDTH, FRAME_HEIGHT)),
     )
     .expect("complete retained v2 material frame");
-    assert!(packet
-        .render_plan()
-        .is_some_and(|plan| plan.local_v2_revision(glass).is_some()));
-    assert!(tree
-        .draw_list_snapshot(glass)
-        .unwrap()
-        .commands
-        .iter()
-        .any(|command| matches!(
-            command,
-            aimer::cupid::draw_cmd_v2::DrawCommand::DrawCustom { pipeline_name, data }
-                if pipeline_name.as_ref() == "aimer.material"
-                    && data.len() == MaterialDrawRequest::PACKET_LEN
-        )));
+    assert!(
+        packet
+            .render_plan()
+            .is_some_and(|plan| plan.local_v2_revision(glass).is_some())
+    );
+    assert!(
+        tree.draw_list_snapshot(glass)
+            .unwrap()
+            .commands
+            .iter()
+            .any(|command| matches!(
+                command,
+                aimer::cupid::draw_cmd_v2::DrawCommand::DrawCustom { pipeline_name, data }
+                    if pipeline_name.as_ref() == "aimer.material"
+                        && data.len() == MaterialDrawRequest::PACKET_LEN
+            ))
+    );
     packet
 }
 
@@ -420,20 +411,8 @@ fn glass_widget_blurs_a_backdrop_without_a_copyable_surface() {
     let backend = WgpuBackend::new(device.clone(), queue.clone());
     let mut renderer = Renderer::new(&backend, FORMAT);
 
-    let sharp = render_and_read(
-        &device,
-        &queue,
-        &backend,
-        &mut renderer,
-        &glass_frame(0.0),
-    );
-    let frosted = render_and_read(
-        &device,
-        &queue,
-        &backend,
-        &mut renderer,
-        &glass_frame(64.0),
-    );
+    let sharp = render_and_read(&device, &queue, &backend, &mut renderer, &glass_frame(0.0));
+    let frosted = render_and_read(&device, &queue, &backend, &mut renderer, &glass_frame(64.0));
     let sample_x = GLASS_X + GLASS_SIZE / 2;
     let sharp_edge = pixel(&sharp, sample_x, GLASS_SIZE / 2);
     let frosted_edge = pixel(&frosted, sample_x, GLASS_SIZE / 2);
@@ -487,25 +466,15 @@ fn retained_v2_glass_custom_command_samples_the_backdrop() {
         .render_plan()
         .and_then(|plan| plan.local_v2_revision(glass))
         .unwrap();
-    let sharp = render_packet_and_read(
-        &device,
-        &queue,
-        &backend,
-        &mut renderer,
-        &sharp_packet,
-    );
+    let sharp = render_packet_and_read(&device, &queue, &backend, &mut renderer, &sharp_packet);
     let frosted_packet = retained_v2_glass_packet(&tree, glass, 64.0);
-    assert!(frosted_packet
-        .render_plan()
-        .and_then(|plan| plan.local_v2_revision(glass))
-        .is_some_and(|revision| revision > sharp_revision));
-    let frosted = render_packet_and_read(
-        &device,
-        &queue,
-        &backend,
-        &mut renderer,
-        &frosted_packet,
+    assert!(
+        frosted_packet
+            .render_plan()
+            .and_then(|plan| plan.local_v2_revision(glass))
+            .is_some_and(|revision| revision > sharp_revision)
     );
+    let frosted = render_packet_and_read(&device, &queue, &backend, &mut renderer, &frosted_packet);
     assert_eq!(pixel(&sharp, GLASS_X + 8, GLASS_SIZE / 2), [0, 0, 0, 255]);
     assert_eq!(
         pixel(&sharp, GLASS_X + GLASS_SIZE - 8, GLASS_SIZE / 2),

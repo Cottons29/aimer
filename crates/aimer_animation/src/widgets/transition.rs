@@ -6,8 +6,8 @@ use aimer_events::element::ElementEvent;
 use aimer_widget::base::*;
 use aimer_widget::{
     AnyElement, CompositorAnimationDecision, CompositorAnimationFrame, CompositorTransform,
-    Drawable, Element, EventElement, EventResult, LayoutElement, Rebuildable,
-    VisitorElement, Widget,
+    Drawable, Element, EventElement, EventResult, LayoutElement, Rebuildable, VisitorElement,
+    Widget,
 };
 
 use crate::control::controller::AnimationController;
@@ -43,11 +43,7 @@ fn update_transition_frame(
 /// Values are clamped to that range for drawing. Layout and event behavior are
 /// delegated to the child.
 #[derive(aimer_macro::PortableWidget)]
-#[portable_widget(
-    id = "aimer_animation::FadeTransition",
-    schema_only,
-    manual_lowering
-)]
+#[portable_widget(id = "aimer_animation::FadeTransition", schema_only, manual_lowering)]
 pub struct FadeTransition<T: Widget + 'static> {
     #[portable_skip]
     pub opacity: AnimationController,
@@ -119,7 +115,6 @@ macro_rules! impl_transition_element {
                     CompositorAnimationDecision::Live(frame)
                 }
             }
-
         }
 
         impl $name {
@@ -208,11 +203,7 @@ impl_transition_element!(
 /// At value `0.0` the child is at the offset position; at `1.0` it is at its
 /// natural position.
 #[derive(aimer_macro::PortableWidget)]
-#[portable_widget(
-    id = "aimer_animation::SlideTransition",
-    schema_only,
-    manual_lowering
-)]
+#[portable_widget(id = "aimer_animation::SlideTransition", schema_only, manual_lowering)]
 pub struct SlideTransition<T: Widget + 'static> {
     #[portable_skip]
     pub position: AnimationController,
@@ -294,7 +285,6 @@ impl Drawable for SlideTransitionElement {
             CompositorAnimationDecision::Live(frame)
         }
     }
-
 }
 
 impl SlideTransitionElement {
@@ -382,11 +372,7 @@ impl LayoutElement for SlideTransitionElement {
 /// A value of `1.0` is the child's natural size. The drawing transform is
 /// centered in the current box constraints; layout itself is unchanged.
 #[derive(aimer_macro::PortableWidget)]
-#[portable_widget(
-    id = "aimer_animation::ScaleTransition",
-    schema_only,
-    manual_lowering
-)]
+#[portable_widget(id = "aimer_animation::ScaleTransition", schema_only, manual_lowering)]
 pub struct ScaleTransition<T: Widget + 'static> {
     #[portable_skip]
     pub scale: AnimationController,
@@ -457,7 +443,6 @@ impl Drawable for ScaleTransitionElement {
             CompositorAnimationDecision::Live(frame)
         }
     }
-
 }
 
 impl ScaleTransitionElement {
@@ -648,7 +633,6 @@ impl Drawable for RotationTransitionElement {
             CompositorAnimationDecision::Live(frame)
         }
     }
-
 }
 
 impl RotationTransitionElement {
@@ -760,11 +744,7 @@ macro_rules! impl_portable_transition_lowering {
                 aimer_widget::portable::PortableNodeId,
                 aimer_widget::portable::PortableBuildError,
             > {
-                aimer_widget::PortableWidget::to_portable_node(
-                    self.child,
-                    ctx,
-                    source.child(0),
-                )
+                aimer_widget::PortableWidget::to_portable_node(self.child, ctx, source.child(0))
             }
         }
     };
@@ -778,9 +758,9 @@ impl_portable_transition_lowering!(RotationTransition);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aimer_attribute::BoxConstraint;
-    use crate::primitives::curve::Curve;
+    use crate::primitives::curve::curves;
     use crate::widgets::test_frame_requester;
+    use aimer_attribute::BoxConstraint;
 
     struct TestWidget;
 
@@ -852,7 +832,7 @@ mod tests {
     }
 
     fn controller() -> AnimationController {
-        let controller = AnimationController::with_millis(100, Curve::Linear);
+        let controller = AnimationController::with_millis(100, curves::LINEAR);
         controller.forward_from_first_tick();
         controller
     }
@@ -868,7 +848,7 @@ mod tests {
     fn a_valid_sample_goes_to_the_compositor_and_an_invalid_one_stays_live() {
         let ctx = dummy_build_context();
 
-        let controller = AnimationController::with_millis(100, Curve::Linear);
+        let controller = AnimationController::with_millis(100, curves::LINEAR);
         controller.set_value(0.5);
         let element = FadeTransition::new(controller, TestWidget).to_element(&ctx);
         assert!(matches!(
@@ -876,7 +856,7 @@ mod tests {
             CompositorAnimationDecision::Compositor(frame) if frame.valid
         ));
 
-        let controller = AnimationController::with_millis(100, Curve::Linear);
+        let controller = AnimationController::with_millis(100, curves::LINEAR);
         controller.set_value(f32::NAN);
         let element = FadeTransition::new(controller, TestWidget).to_element(&ctx);
         assert!(matches!(
@@ -910,11 +890,11 @@ mod tests {
     #[cfg(feature = "portable-guest")]
     #[test]
     fn portable_transitions_lower_to_their_current_child() {
+        use aimer_widget::portable::__anteros::{Version, WIDGET_TEXT, WidgetDocumentView};
         use aimer_widget::portable::{
             PortableBuildContext, PortableLimits, PortableWidgetLimits, SourceFingerprint,
             StableId128,
         };
-        use aimer_widget::portable::__anteros::{Version, WidgetDocumentView, WIDGET_TEXT};
         use aimer_widget::{AnyElement, PortableWidget};
 
         struct PortableLeaf;

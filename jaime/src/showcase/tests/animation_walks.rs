@@ -15,8 +15,10 @@ struct Page(ExampleId);
 
 impl Widget for Page {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
-        let state = ExampleShowcaseState { selected: self.0, updater: StateUpdater::empty() };
-        state.build(ctx).to_element(ctx)
+        let state = ExampleShowcaseState::with_selected(self.0);
+        state
+            .build(ctx)
+            .to_element(ctx)
     }
 }
 impl aimer::PortableWidget for Page {}
@@ -26,10 +28,18 @@ impl aimer::PortableWidget for Page {}
 fn animation_walks_by_page() {
     let only = std::env::var("ONLY_PAGE").ok();
     for &id in EXAMPLES {
-        if only.as_deref().is_some_and(|name| name != id.label()) { continue; }
+        if only
+            .as_deref()
+            .is_some_and(|name| name != id.label())
+        {
+            continue;
+        }
         let mut app = AimerApp::start_headless_with(
             theme::provide(Page(id)),
-            HeadlessOptions { size: PhysicalSize::new(1280, 800), scale_factor: 1.0 },
+            HeadlessOptions {
+                size: PhysicalSize::new(1280, 800),
+                scale_factor: 1.0,
+            },
         );
         app.pump_frames(8);
         let before = aimer::traversal_counts();

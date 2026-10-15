@@ -2,19 +2,19 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
 
-use aimer_animation::Curve;
+use aimer_animation::{AnyCurve, Curve};
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_utils::AnimInstant;
 use aimer_utils::callback::Callback;
 use aimer_widget::Key;
 
-use crate::scrollable::{ScrollAxis, ScrollBarPlacement};
 use crate::scrollable::constants::*;
 use crate::scrollable::overscroll_source::{OverscrollSource, OverscrollSources};
 use crate::scrollable::scroll_behavior::ScrollBehavior;
 use crate::scrollable::spring::advance_overscroll_spring;
 use crate::scrollable::velocity_history::VelocityHistory;
+use crate::scrollable::{ScrollAxis, ScrollBarPlacement};
 
 /// Minimum logical-pixel movement between two frames for `on_scroll` to fire.
 /// Collapses idle frames and sub-pixel jitter to no-ops so the per-frame
@@ -187,7 +187,7 @@ pub struct ScrollState {
     /// Optional easing curve for a programmatic `animate_to`. When `Some`, the
     /// active fling interpolates through this curve instead of the default
     /// release-fling bézier; `None` = a normal touch/mouse release fling.
-    pub(crate) anim_curve: Cell<Option<Curve>>,
+    pub(crate) anim_curve: RefCell<Option<AnyCurve>>,
     /// Primary touch finger ID that owns this scrollable, or `None` for mouse.
     /// Set on first PointerDown, cleared on PointerUp/Cancel.
     pub(crate) active_touch_id: Cell<Option<u64>>,
@@ -302,7 +302,7 @@ impl ScrollState {
         self.fling_target_offset
             .set(Self::axis_only(self.axis, prev.fling_target_offset.get()));
         self.fling_duration.set(prev.fling_duration.get());
-        self.anim_curve.set(prev.anim_curve.get());
+        self.anim_curve.replace(prev.anim_curve.borrow().clone());
         self.active_touch_id.set(prev.active_touch_id.get());
         self.spring_velocity
             .set(Self::axis_only(self.axis, prev.spring_velocity.get()));
@@ -315,8 +315,7 @@ impl ScrollState {
         {
             self.session_input_events
                 .set(prev.session_input_events.get());
-            self.session_draw_frames
-                .set(prev.session_draw_frames.get());
+            self.session_draw_frames.set(prev.session_draw_frames.get());
             self.session_moved_frames
                 .set(prev.session_moved_frames.get());
         }
@@ -341,8 +340,7 @@ impl ScrollState {
         self.overscroll_peak_at.set(prev.overscroll_peak_at.get());
         self.device_contact.set(prev.device_contact.get());
         if prev.last_scale.get() == self.last_scale.get() {
-            self.cached_content_size
-                .set(prev.cached_content_size.get());
+            self.cached_content_size.set(prev.cached_content_size.get());
             self.cached_content_size_valid
                 .set(prev.cached_content_size_valid.get());
         }
@@ -358,7 +356,10 @@ impl ScrollState {
     /// never reports the end of a gesture — clamps at the edge.
     #[inline]
     pub(crate) fn bouncy(&self) -> bool {
-        self.scroll_behavior.bouncy && self.overscroll_sources.contains(self.overscroll_source.get())
+        self.scroll_behavior.bouncy
+            && self
+                .overscroll_sources
+                .contains(self.overscroll_source.get())
     }
 
     /// Records the device that produced the input now being applied.
@@ -509,12 +510,7 @@ impl ScrollState {
     /// renewed user intent from a decaying device-scroll tail during recovery.
     /// A peak whose episode went idle no longer gates anything, so a gesture
     /// boundary the platform failed to report cannot wedge the edge.
-    fn accepts_overscroll_step_at(
-        &self,
-        current: Vec2d,
-        next: Vec2d,
-        now: AnimInstant,
-    ) -> bool {
+    fn accepts_overscroll_step_at(&self, current: Vec2d, next: Vec2d, now: AnimInstant) -> bool {
         if !self.bouncy() {
             return true;
         }
@@ -774,10 +770,13 @@ impl ScrollController {
         };
 
         let scale = state.last_scale.get().max(f32::EPSILON);
-        let internal = ScrollState::axis_only(state.axis, Vec2d {
-            x: -position.x * scale,
-            y: -position.y * scale,
-        });
+        let internal = ScrollState::axis_only(
+            state.axis,
+            Vec2d {
+                x: -position.x * scale,
+                y: -position.y * scale,
+            },
+        );
         state.cancel_fling();
         state.pointer_velocity.set(Vec2d { x: 0.0, y: 0.0 });
         state.spring_velocity.set(Vec2d { x: 0.0, y: 0.0 });
@@ -796,17 +795,20 @@ impl ScrollController {
     /// over `duration`, easing with `curve`, and request repaints. If the
     /// controller is not yet attached, the target is remembered as the initial
     /// position (no animation) and applied on attachment.
-    pub fn animate_to(&self, position: Vec2d, duration: Duration, curve: Curve) {
+    pub fn animate_to(&self, position: Vec2d, duration: Duration, curve: impl Curve) {
         let Some(state) = self.inner.state.borrow().clone() else {
             self.inner.pending.set(Some(position));
             return;
         };
 
         let scale = state.last_scale.get().max(f32::EPSILON);
-        let target = ScrollState::axis_only(state.axis, Vec2d {
-            x: -position.x * scale,
-            y: -position.y * scale,
-        });
+        let target = ScrollState::axis_only(
+            state.axis,
+            Vec2d {
+                x: -position.x * scale,
+                y: -position.y * scale,
+            },
+        );
         // Announce the session now; the draw loop fires `end` once the
         // animation settles. A zero-duration animation degenerates to an
         // instant jump, which the draw loop then reports as settled.
@@ -1291,7 +1293,7 @@ impl ScrollState {
     /// keep fighting the fresh interaction.
     pub(crate) fn cancel_fling(&self) {
         self.fling_start_time.set(None);
-        self.anim_curve.set(None);
+        self.anim_curve.replace(None);
     }
 
     /// Arm a programmatic animation that eases the scroll offset from its
@@ -1305,7 +1307,7 @@ impl ScrollState {
     ///
     /// `target` is an internal (scaled) scroll offset in the same convention as
     /// [`Self::scroll_offset`] (negative = content moved up).
-    pub(crate) fn start_animation(&self, target: Vec2d, duration_s: f32, curve: Curve) {
+    pub(crate) fn start_animation(&self, target: Vec2d, duration_s: f32, curve: impl Curve) {
         // Clear any live drag/momentum so the animation fully owns the motion.
         self.pointer_velocity.set(Vec2d { x: 0.0, y: 0.0 });
         self.spring_velocity.set(Vec2d { x: 0.0, y: 0.0 });
@@ -1333,7 +1335,7 @@ impl ScrollState {
         self.fling_start_offset.set(start);
         self.fling_target_offset.set(target);
         self.fling_duration.set(duration_s);
-        self.anim_curve.set(Some(curve));
+        self.anim_curve.replace(Some(curve.into_any()));
         self.fling_start_time.set(Some(AnimInstant::now()));
     }
 
@@ -1455,7 +1457,6 @@ impl ScrollState {
             .set(Self::axis_only(self.axis, self.spring_velocity.get()));
         let mut needs_redraw = false;
 
-
         let now = AnimInstant::now();
         let dt = self
             .last_frame_time
@@ -1475,7 +1476,6 @@ impl ScrollState {
         }
 
         if let Some(fling_start) = self.fling_start_time.get() {
-
             let duration = self.fling_duration.get();
             let elapsed = now.duration_since(fling_start).as_secs_f32();
             let u = if duration > 0.0 {
@@ -1484,7 +1484,7 @@ impl ScrollState {
                 1.0
             };
 
-            let eased = match self.anim_curve.get() {
+            let eased = match self.anim_curve.borrow().as_ref() {
                 Some(curve) => curve.transform(u),
                 None => cubic_bezier_ease(
                     u,
@@ -1648,10 +1648,7 @@ impl ScrollState {
         let v_check = self.pointer_velocity.get();
         let momentum_active =
             v_check.x.abs() > VELOCITY_EPSILON || v_check.y.abs() > VELOCITY_EPSILON;
-        if self.bouncy()
-            && !momentum_active
-            && (offset.x != clamped.x || offset.y != clamped.y)
-        {
+        if self.bouncy() && !momentum_active && (offset.x != clamped.x || offset.y != clamped.y) {
             let mut sv = self.spring_velocity.get();
             let err_x = offset.x - clamped.x;
             let err_y = offset.y - clamped.y;
@@ -1741,7 +1738,7 @@ impl ScrollState {
             fling_start_offset: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
             fling_target_offset: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
             fling_duration: Cell::new(0.0),
-            anim_curve: Cell::new(None),
+            anim_curve: RefCell::new(None),
             active_touch_id: Cell::new(None),
             spring_velocity: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
             momentum_start_time: Cell::new(None),
@@ -1778,7 +1775,7 @@ mod tests {
     use std::rc::Rc;
 
     use super::*;
-
+    use aimer_animation::curves;
 
     fn ctrl_with_offset(offset: Vec2d) -> ScrollState {
         ScrollState::for_test_at(offset)
@@ -1806,26 +1803,11 @@ mod tests {
         ctrl.v_thumb_rect.set(Some((312.0, 100.0, 6.0, 80.0)));
 
         ctrl.scroll_bar_placement = ScrollBarPlacement::Floating;
-        assert!(ctrl.hit_test_v_track(
-            Vec2d { x: 309.0, y: 300.0 },
-            320.0,
-            500.0,
-            12.0,
-        ));
+        assert!(ctrl.hit_test_v_track(Vec2d { x: 309.0, y: 300.0 }, 320.0, 500.0, 12.0,));
 
         ctrl.scroll_bar_placement = ScrollBarPlacement::Inline;
-        assert!(!ctrl.hit_test_v_track(
-            Vec2d { x: 309.0, y: 300.0 },
-            320.0,
-            500.0,
-            12.0,
-        ));
-        assert!(ctrl.hit_test_v_track(
-            Vec2d { x: 321.0, y: 300.0 },
-            320.0,
-            500.0,
-            12.0,
-        ));
+        assert!(!ctrl.hit_test_v_track(Vec2d { x: 309.0, y: 300.0 }, 320.0, 500.0, 12.0,));
+        assert!(ctrl.hit_test_v_track(Vec2d { x: 321.0, y: 300.0 }, 320.0, 500.0, 12.0,));
     }
 
     // Regression for "moving the cursor pins a core": with per-move redraws
@@ -2228,8 +2210,7 @@ mod tests {
         ctrl.record_overscroll_peak(ctrl.scroll_offset.get());
         ctrl.scroll_offset.set(Vec2d::ZERO);
 
-        let idle =
-            AnimInstant::now() + Duration::from_millis(OVERSCROLL_PEAK_IDLE_MS as u64 + 10);
+        let idle = AnimInstant::now() + Duration::from_millis(OVERSCROLL_PEAK_IDLE_MS as u64 + 10);
         let applied = ctrl.apply_precise_scroll_delta_at(Vec2d { x: 0.0, y: 8.0 }, idle);
 
         assert!(applied, "a stale peak cannot block the edge forever");
@@ -2665,7 +2646,7 @@ mod tests {
         ctrl.animate_to(
             Vec2d { x: 0.0, y: 200.0 },
             Duration::from_millis(300),
-            Curve::Linear,
+            curves::LINEAR,
         );
 
         assert!(
@@ -2673,8 +2654,8 @@ mod tests {
             "a timed animation arms the fling"
         );
         assert_eq!(
-            state.anim_curve.get(),
-            Some(Curve::Linear),
+            state.anim_curve.borrow().clone(),
+            Some(curves::LINEAR.into_any()),
             "the requested curve drives the fling"
         );
         assert_eq!(
@@ -2693,7 +2674,7 @@ mod tests {
     #[test]
     fn controller_animate_to_zero_duration_jumps_immediately() {
         let (ctrl, state) = attached(1000.0);
-        ctrl.animate_to(Vec2d { x: 0.0, y: 300.0 }, Duration::ZERO, Curve::EaseInOut);
+        ctrl.animate_to(Vec2d { x: 0.0, y: 300.0 }, Duration::ZERO, curves::EASE_IN_OUT);
         assert_eq!(ctrl.offset().y, 300.0);
         assert!(
             state.fling_start_time.get().is_none(),
@@ -2709,7 +2690,7 @@ mod tests {
         ctrl.animate_to(
             Vec2d { x: 0.0, y: 250.0 },
             Duration::from_millis(300),
-            Curve::Linear,
+            curves::LINEAR,
         );
 
         // Pretend the whole duration has already passed.
@@ -2728,7 +2709,7 @@ mod tests {
             "the fling is cleared once complete"
         );
         assert!(
-            state.anim_curve.get().is_none(),
+            state.anim_curve.borrow().is_none(),
             "the animation curve is cleared once complete"
         );
     }
@@ -2736,7 +2717,7 @@ mod tests {
     #[test]
     fn line_wheel_delta_applies_immediately_without_momentum() {
         let (_ctrl, state) = attached(1000.0);
-        state.start_animation(Vec2d { x: 0.0, y: -100.0 }, 1.0, Curve::EaseOut);
+        state.start_animation(Vec2d { x: 0.0, y: -100.0 }, 1.0, curves::EASE_OUT);
         state.pointer_velocity.set(Vec2d { x: 0.0, y: -8.0 });
 
         state.apply_line_wheel_delta(Vec2d { x: 0.0, y: -20.0 });
@@ -2851,7 +2832,7 @@ mod tests {
         ctrl.animate_to(
             Vec2d { x: 0.0, y: 200.0 },
             Duration::from_millis(300),
-            Curve::Linear,
+            curves::LINEAR,
         );
         assert_eq!(starts.borrow().len(), 1, "animation fires start when armed");
         assert_eq!(

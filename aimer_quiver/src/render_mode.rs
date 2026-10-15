@@ -12,7 +12,11 @@ pub enum RenderMode {
 
 impl Default for RenderMode {
     fn default() -> Self {
-        if cfg!(target_arch = "wasm32") { Self::Inline } else { Self::Threaded }
+        if cfg!(target_arch = "wasm32") {
+            Self::Inline
+        } else {
+            Self::Threaded
+        }
     }
 }
 
@@ -23,7 +27,10 @@ mod tests {
     #[test]
     fn native_apps_default_to_threaded_and_allow_inline_configuration() {
         #[cfg(not(target_arch = "wasm32"))]
-        assert_eq!(AimerApp::new().configured_render_mode(), RenderMode::Threaded);
+        assert_eq!(
+            AimerApp::new().configured_render_mode(),
+            RenderMode::Threaded
+        );
         let app = AimerApp::new().render_mode(RenderMode::Inline);
         assert_eq!(app.configured_render_mode(), RenderMode::Inline);
     }

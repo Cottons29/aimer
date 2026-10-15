@@ -16,11 +16,9 @@ impl Drop for VulkanRenderPassObject {
     }
 }
 
-pub(super) fn create_sampler(
-    core: &Arc<VulkanCore>,
-    desc: &SamplerDescriptor,
-) -> VulkanSampler {
-    let anisotropy = desc.max_anisotropy > 1 && core.enabled_features.sampler_anisotropy == vk::TRUE;
+pub(super) fn create_sampler(core: &Arc<VulkanCore>, desc: &SamplerDescriptor) -> VulkanSampler {
+    let anisotropy =
+        desc.max_anisotropy > 1 && core.enabled_features.sampler_anisotropy == vk::TRUE;
     let create_info = vk::SamplerCreateInfo::default()
         .mag_filter(filter_mode(desc.mag_filter))
         .min_filter(filter_mode(desc.min_filter))
@@ -30,34 +28,50 @@ pub(super) fn create_sampler(
         .address_mode_w(address_mode(desc.address_mode_w))
         .mip_lod_bias(0.0)
         .anisotropy_enable(anisotropy)
-        .max_anisotropy(if anisotropy { desc.max_anisotropy as f32 } else { 1.0 })
+        .max_anisotropy(if anisotropy {
+            desc.max_anisotropy as f32
+        } else {
+            1.0
+        })
         .compare_enable(desc.compare.is_some())
-        .compare_op(desc.compare.map(compare_function).unwrap_or(vk::CompareOp::ALWAYS))
+        .compare_op(
+            desc.compare
+                .map(compare_function)
+                .unwrap_or(vk::CompareOp::ALWAYS),
+        )
         .min_lod(desc.lod_min_clamp)
         .max_lod(desc.lod_max_clamp)
         .border_color(vk::BorderColor::FLOAT_TRANSPARENT_BLACK)
         .unnormalized_coordinates(false);
     let raw = unsafe {
-        core.device.create_sampler(&create_info, None)
+        core.device
+            .create_sampler(&create_info, None)
             .expect("create Vulkan sampler")
     };
-    VulkanSampler(Arc::new(VulkanSamplerInner { core: core.clone(), raw }))
+    VulkanSampler(Arc::new(VulkanSamplerInner {
+        core: core.clone(),
+        raw,
+    }))
 }
 
 pub(super) fn create_bind_group_layout(
     core: &Arc<VulkanCore>,
     entries: &[BindGroupLayoutEntry],
 ) -> VulkanBindGroupLayout {
-    let bindings: Vec<_> = entries.iter().map(|entry| {
-        vk::DescriptorSetLayoutBinding::default()
-            .binding(entry.binding)
-            .descriptor_type(binding_descriptor_type(&entry.ty))
-            .descriptor_count(entry.count.map_or(1, |count| count.get()))
-            .stage_flags(shader_stages(&entry.visibility))
-    }).collect();
+    let bindings: Vec<_> = entries
+        .iter()
+        .map(|entry| {
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(entry.binding)
+                .descriptor_type(binding_descriptor_type(&entry.ty))
+                .descriptor_count(entry.count.map_or(1, |count| count.get()))
+                .stage_flags(shader_stages(&entry.visibility))
+        })
+        .collect();
     let create_info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings);
     let raw = unsafe {
-        core.device.create_descriptor_set_layout(&create_info, None)
+        core.device
+            .create_descriptor_set_layout(&create_info, None)
             .expect("create Vulkan descriptor set layout")
     };
     VulkanBindGroupLayout(Arc::new(VulkanBindGroupLayoutInner {
@@ -76,19 +90,25 @@ pub(super) fn create_bind_group(
     for entry in &layout.0.entries {
         let descriptor_type = binding_descriptor_type(&entry.ty);
         let descriptor_count = entry.count.map_or(1, |count| count.get());
-        if let Some(existing) = pool_sizes.iter_mut().find(|size| size.ty == descriptor_type) {
+        if let Some(existing) = pool_sizes
+            .iter_mut()
+            .find(|size| size.ty == descriptor_type)
+        {
             existing.descriptor_count += descriptor_count;
         } else {
-            pool_sizes.push(vk::DescriptorPoolSize::default()
-                .ty(descriptor_type)
-                .descriptor_count(descriptor_count));
+            pool_sizes.push(
+                vk::DescriptorPoolSize::default()
+                    .ty(descriptor_type)
+                    .descriptor_count(descriptor_count),
+            );
         }
     }
     let pool_info = vk::DescriptorPoolCreateInfo::default()
         .max_sets(1)
         .pool_sizes(&pool_sizes);
     let pool = unsafe {
-        core.device.create_descriptor_pool(&pool_info, None)
+        core.device
+            .create_descriptor_pool(&pool_info, None)
             .expect("create Vulkan descriptor pool")
     };
     let set_layouts = [layout.0.raw];
@@ -96,7 +116,8 @@ pub(super) fn create_bind_group(
         .descriptor_pool(pool)
         .set_layouts(&set_layouts);
     let raw = unsafe {
-        core.device.allocate_descriptor_sets(&allocate_info)
+        core.device
+            .allocate_descriptor_sets(&allocate_info)
             .expect("allocate Vulkan descriptor set")[0]
     };
 
@@ -108,35 +129,51 @@ pub(super) fn create_bind_group(
     let mut textures = Vec::new();
     let mut samplers = Vec::new();
     for entry in entries {
-        let binding = layout.0.entries.iter().find(|item| item.binding == entry.binding)
+        let binding = layout
+            .0
+            .entries
+            .iter()
+            .find(|item| item.binding == entry.binding)
             .expect("Vulkan bind group entry must exist in its layout");
-        assert_eq!(binding.count.map_or(1, |count| count.get()), 1, "Cupid Vulkan bind groups require one resource per binding");
+        assert_eq!(
+            binding.count.map_or(1, |count| count.get()),
+            1,
+            "Cupid Vulkan bind groups require one resource per binding"
+        );
         let descriptor_type = binding_descriptor_type(&binding.ty);
         match &entry.resource {
             BindingResource::Buffer(buffer) => {
-                buffer_infos.push(vk::DescriptorBufferInfo::default()
-                    .buffer(buffer.0.raw)
-                    .offset(0)
-                    .range(buffer.0.size));
+                buffer_infos.push(
+                    vk::DescriptorBufferInfo::default()
+                        .buffer(buffer.0.raw)
+                        .offset(0)
+                        .range(buffer.0.size),
+                );
                 write_refs.push((entry.binding, descriptor_type, true, buffer_infos.len() - 1));
                 buffers.push((**buffer).clone());
             }
             BindingResource::BufferRange(buffer, offset, size) => {
-                buffer_infos.push(vk::DescriptorBufferInfo::default()
-                    .buffer(buffer.0.raw)
-                    .offset(*offset)
-                    .range(*size));
+                buffer_infos.push(
+                    vk::DescriptorBufferInfo::default()
+                        .buffer(buffer.0.raw)
+                        .offset(*offset)
+                        .range(*size),
+                );
                 write_refs.push((entry.binding, descriptor_type, true, buffer_infos.len() - 1));
                 buffers.push((**buffer).clone());
             }
             BindingResource::TextureView(view) => {
-                image_infos.push(vk::DescriptorImageInfo::default()
-                    .image_view(view.0.raw)
-                    .image_layout(if matches!(&binding.ty, BindingType::StorageTexture { .. }) {
-                        vk::ImageLayout::GENERAL
-                    } else {
-                        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-                    }));
+                image_infos.push(
+                    vk::DescriptorImageInfo::default()
+                        .image_view(view.0.raw)
+                        .image_layout(
+                            if matches!(&binding.ty, BindingType::StorageTexture { .. }) {
+                                vk::ImageLayout::GENERAL
+                            } else {
+                                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+                            },
+                        ),
+                );
                 write_refs.push((entry.binding, descriptor_type, false, image_infos.len() - 1));
                 textures.push((**view).clone());
             }
@@ -177,7 +214,8 @@ pub(super) fn create_pipeline_layout(
     let raw_layouts: Vec<_> = layouts.iter().map(|layout| layout.0.raw).collect();
     let create_info = vk::PipelineLayoutCreateInfo::default().set_layouts(&raw_layouts);
     let raw = unsafe {
-        core.device.create_pipeline_layout(&create_info, None)
+        core.device
+            .create_pipeline_layout(&create_info, None)
             .expect("create Vulkan pipeline layout")
     };
     VulkanPipelineLayout(Arc::new(VulkanPipelineLayoutInner {
@@ -206,41 +244,66 @@ pub(super) fn create_render_pipeline(
         .module(desc.vertex.module.0.raw)
         .name(&vertex_entry);
     let mut shader_stages = vec![vertex_stage];
-    let fragment_entry = desc.fragment.as_ref().map(|fragment| {
-        CString::new(fragment.entry_point).map_err(|error| BackendError {
-            operation: "create_render_pipeline",
-            message: format!("fragment entry point contains NUL: {error}"),
+    let fragment_entry = desc
+        .fragment
+        .as_ref()
+        .map(|fragment| {
+            CString::new(fragment.entry_point).map_err(|error| BackendError {
+                operation: "create_render_pipeline",
+                message: format!("fragment entry point contains NUL: {error}"),
+            })
         })
-    }).transpose()?;
+        .transpose()?;
     if let (Some(fragment), Some(entry)) = (&desc.fragment, fragment_entry.as_ref()) {
-        shader_stages.push(vk::PipelineShaderStageCreateInfo::default()
-            .stage(vk::ShaderStageFlags::FRAGMENT)
-            .module(fragment.module.0.raw)
-            .name(entry));
+        shader_stages.push(
+            vk::PipelineShaderStageCreateInfo::default()
+                .stage(vk::ShaderStageFlags::FRAGMENT)
+                .module(fragment.module.0.raw)
+                .name(entry),
+        );
     }
 
-    let attribute_storage: Vec<Vec<vk::VertexInputAttributeDescription>> = desc.vertex.buffers.iter()
-        .map(|layout| layout.as_ref().map(|layout| layout.attributes.iter().map(|attribute| {
-            vk::VertexInputAttributeDescription::default()
-                .location(attribute.shader_location)
-                .binding(0)
-                .format(vertex_format(attribute.format))
-                .offset(attribute.offset as u32)
-        }).collect()).unwrap_or_default())
+    let attribute_storage: Vec<Vec<vk::VertexInputAttributeDescription>> = desc
+        .vertex
+        .buffers
+        .iter()
+        .map(|layout| {
+            layout
+                .as_ref()
+                .map(|layout| {
+                    layout
+                        .attributes
+                        .iter()
+                        .map(|attribute| {
+                            vk::VertexInputAttributeDescription::default()
+                                .location(attribute.shader_location)
+                                .binding(0)
+                                .format(vertex_format(attribute.format))
+                                .offset(attribute.offset as u32)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        })
         .collect();
     let mut bindings = Vec::new();
     let mut attributes = Vec::new();
     for (index, layout) in desc.vertex.buffers.iter().enumerate() {
         if let Some(layout) = layout {
-            bindings.push(vk::VertexInputBindingDescription::default()
-                .binding(index as u32)
-                .stride(layout.array_stride as u32)
-                .input_rate(match layout.step_mode {
-                    VertexStepMode::Vertex => vk::VertexInputRate::VERTEX,
-                    VertexStepMode::Instance => vk::VertexInputRate::INSTANCE,
-                }));
+            bindings.push(
+                vk::VertexInputBindingDescription::default()
+                    .binding(index as u32)
+                    .stride(layout.array_stride as u32)
+                    .input_rate(match layout.step_mode {
+                        VertexStepMode::Vertex => vk::VertexInputRate::VERTEX,
+                        VertexStepMode::Instance => vk::VertexInputRate::INSTANCE,
+                    }),
+            );
             for attribute in &attribute_storage[index] {
-                attributes.push(vk::VertexInputAttributeDescription { binding: index as u32, ..*attribute });
+                attributes.push(vk::VertexInputAttributeDescription {
+                    binding: index as u32,
+                    ..*attribute
+                });
             }
         }
     }
@@ -257,7 +320,12 @@ pub(super) fn create_render_pipeline(
         .depth_clamp_enable(desc.primitive.unclipped_depth)
         .rasterizer_discard_enable(false)
         .polygon_mode(polygon_mode(desc.primitive.polygon_mode))
-        .cull_mode(desc.primitive.cull_mode.map(face).unwrap_or(vk::CullModeFlags::NONE))
+        .cull_mode(
+            desc.primitive
+                .cull_mode
+                .map(face)
+                .unwrap_or(vk::CullModeFlags::NONE),
+        )
         .front_face(match desc.primitive.front_face {
             FrontFace::Ccw => vk::FrontFace::COUNTER_CLOCKWISE,
             FrontFace::Cw => vk::FrontFace::CLOCKWISE,
@@ -271,34 +339,99 @@ pub(super) fn create_render_pipeline(
             .depth_bias_clamp(depth.bias.clamp);
     }
     if desc.primitive.unclipped_depth && core.enabled_features.depth_clamp != vk::TRUE {
-        return Err(BackendError { operation: "create_render_pipeline", message: "unclipped depth is not supported by this Vulkan device".to_string() });
+        return Err(BackendError {
+            operation: "create_render_pipeline",
+            message: "unclipped depth is not supported by this Vulkan device".to_string(),
+        });
     }
     if desc.primitive.conservative {
-        return Err(BackendError { operation: "create_render_pipeline", message: "conservative rasterization is not supported by Cupid's Vulkan backend".to_string() });
+        return Err(BackendError {
+            operation: "create_render_pipeline",
+            message: "conservative rasterization is not supported by Cupid's Vulkan backend"
+                .to_string(),
+        });
     }
     if desc.primitive.polygon_mode != PolygonMode::Fill
         && core.enabled_features.fill_mode_non_solid != vk::TRUE
     {
-        return Err(BackendError { operation: "create_render_pipeline", message: "line and point polygon modes are not supported by this Vulkan device".to_string() });
+        return Err(BackendError {
+            operation: "create_render_pipeline",
+            message: "line and point polygon modes are not supported by this Vulkan device"
+                .to_string(),
+        });
     }
     let multisample = vk::PipelineMultisampleStateCreateInfo::default()
         .rasterization_samples(sample_count(desc.multisample.count))
         .sample_shading_enable(false)
         .alpha_to_coverage_enable(desc.multisample.alpha_to_coverage_enabled)
         .alpha_to_one_enable(false);
-    let depth_stencil = desc.depth_stencil.as_ref().map(depth_stencil_state).unwrap_or_default();
-    let color_blends: Vec<_> = desc.fragment.as_ref().map(|fragment| fragment.targets.iter().map(|target| {
-        target.as_ref().map(|target| vk::PipelineColorBlendAttachmentState::default()
-            .blend_enable(target.blend.is_some())
-            .src_color_blend_factor(target.blend.as_ref().map(|blend| blend_factor(blend.color.src_factor)).unwrap_or(vk::BlendFactor::ONE))
-            .dst_color_blend_factor(target.blend.as_ref().map(|blend| blend_factor(blend.color.dst_factor)).unwrap_or(vk::BlendFactor::ZERO))
-            .color_blend_op(target.blend.as_ref().map(|blend| blend_operation(blend.color.operation)).unwrap_or(vk::BlendOp::ADD))
-            .src_alpha_blend_factor(target.blend.as_ref().map(|blend| blend_factor(blend.alpha.src_factor)).unwrap_or(vk::BlendFactor::ONE))
-            .dst_alpha_blend_factor(target.blend.as_ref().map(|blend| blend_factor(blend.alpha.dst_factor)).unwrap_or(vk::BlendFactor::ZERO))
-            .alpha_blend_op(target.blend.as_ref().map(|blend| blend_operation(blend.alpha.operation)).unwrap_or(vk::BlendOp::ADD))
-            .color_write_mask(color_write_mask(target.write_mask)))
-            .unwrap_or_default()
-    }).collect()).unwrap_or_default();
+    let depth_stencil = desc
+        .depth_stencil
+        .as_ref()
+        .map(depth_stencil_state)
+        .unwrap_or_default();
+    let color_blends: Vec<_> = desc
+        .fragment
+        .as_ref()
+        .map(|fragment| {
+            fragment
+                .targets
+                .iter()
+                .map(|target| {
+                    target
+                        .as_ref()
+                        .map(|target| {
+                            vk::PipelineColorBlendAttachmentState::default()
+                                .blend_enable(target.blend.is_some())
+                                .src_color_blend_factor(
+                                    target
+                                        .blend
+                                        .as_ref()
+                                        .map(|blend| blend_factor(blend.color.src_factor))
+                                        .unwrap_or(vk::BlendFactor::ONE),
+                                )
+                                .dst_color_blend_factor(
+                                    target
+                                        .blend
+                                        .as_ref()
+                                        .map(|blend| blend_factor(blend.color.dst_factor))
+                                        .unwrap_or(vk::BlendFactor::ZERO),
+                                )
+                                .color_blend_op(
+                                    target
+                                        .blend
+                                        .as_ref()
+                                        .map(|blend| blend_operation(blend.color.operation))
+                                        .unwrap_or(vk::BlendOp::ADD),
+                                )
+                                .src_alpha_blend_factor(
+                                    target
+                                        .blend
+                                        .as_ref()
+                                        .map(|blend| blend_factor(blend.alpha.src_factor))
+                                        .unwrap_or(vk::BlendFactor::ONE),
+                                )
+                                .dst_alpha_blend_factor(
+                                    target
+                                        .blend
+                                        .as_ref()
+                                        .map(|blend| blend_factor(blend.alpha.dst_factor))
+                                        .unwrap_or(vk::BlendFactor::ZERO),
+                                )
+                                .alpha_blend_op(
+                                    target
+                                        .blend
+                                        .as_ref()
+                                        .map(|blend| blend_operation(blend.alpha.operation))
+                                        .unwrap_or(vk::BlendOp::ADD),
+                                )
+                                .color_write_mask(color_write_mask(target.write_mask))
+                        })
+                        .unwrap_or_default()
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     let color_blend = vk::PipelineColorBlendStateCreateInfo::default()
         .logic_op_enable(false)
         .attachments(&color_blends);
@@ -318,8 +451,10 @@ pub(super) fn create_render_pipeline(
         .render_pass(compatible_render_pass.raw)
         .subpass(0);
     let raw = unsafe {
-        core.device.create_graphics_pipelines(vk::PipelineCache::null(), &[create_info], None)
-    }.map_err(|(_, error)| BackendError {
+        core.device
+            .create_graphics_pipelines(vk::PipelineCache::null(), &[create_info], None)
+    }
+    .map_err(|(_, error)| BackendError {
         operation: "create_render_pipeline",
         message: format!("Vulkan returned {error:?}"),
     })?[0];
@@ -335,38 +470,58 @@ pub(super) fn create_compatible_render_pass(
     core: &Arc<VulkanCore>,
     desc: &RenderPipelineDescriptor<VulkanBackend>,
 ) -> Result<Arc<VulkanRenderPassObject>, BackendError> {
-    let targets = desc.fragment.as_ref().map(|fragment| fragment.targets).unwrap_or(&[]);
+    let targets = desc
+        .fragment
+        .as_ref()
+        .map(|fragment| fragment.targets)
+        .unwrap_or(&[]);
     let samples = sample_count(desc.multisample.count);
-    let attachments: Vec<_> = targets.iter().map(|target| {
-        vk::AttachmentDescription::default()
-            .format(target.as_ref().map(|target| target.format).unwrap_or(vk::Format::R8G8B8A8_UNORM))
-            .samples(samples)
-            .load_op(vk::AttachmentLoadOp::DONT_CARE)
-            .store_op(vk::AttachmentStoreOp::STORE)
-            .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
-            .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
-            .initial_layout(vk::ImageLayout::UNDEFINED)
-            .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-    }).collect();
-    let color_refs: Vec<_> = (0..targets.len()).map(|index| {
-        if targets[index].is_some() {
-            vk::AttachmentReference::default().attachment(index as u32).layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-        } else {
-            vk::AttachmentReference::default().attachment(vk::ATTACHMENT_UNUSED).layout(vk::ImageLayout::UNDEFINED)
-        }
-    }).collect();
+    let attachments: Vec<_> = targets
+        .iter()
+        .map(|target| {
+            vk::AttachmentDescription::default()
+                .format(
+                    target
+                        .as_ref()
+                        .map(|target| target.format)
+                        .unwrap_or(vk::Format::R8G8B8A8_UNORM),
+                )
+                .samples(samples)
+                .load_op(vk::AttachmentLoadOp::DONT_CARE)
+                .store_op(vk::AttachmentStoreOp::STORE)
+                .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+                .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+                .initial_layout(vk::ImageLayout::UNDEFINED)
+                .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+        })
+        .collect();
+    let color_refs: Vec<_> = (0..targets.len())
+        .map(|index| {
+            if targets[index].is_some() {
+                vk::AttachmentReference::default()
+                    .attachment(index as u32)
+                    .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            } else {
+                vk::AttachmentReference::default()
+                    .attachment(vk::ATTACHMENT_UNUSED)
+                    .layout(vk::ImageLayout::UNDEFINED)
+            }
+        })
+        .collect();
     let depth_index = attachments.len();
     let mut attachments = attachments;
     let depth_ref = desc.depth_stencil.as_ref().map(|depth| {
-        attachments.push(vk::AttachmentDescription::default()
-            .format(depth.format)
-            .samples(samples)
-            .load_op(vk::AttachmentLoadOp::DONT_CARE)
-            .store_op(vk::AttachmentStoreOp::STORE)
-            .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
-            .stencil_store_op(vk::AttachmentStoreOp::STORE)
-            .initial_layout(vk::ImageLayout::UNDEFINED)
-            .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL));
+        attachments.push(
+            vk::AttachmentDescription::default()
+                .format(depth.format)
+                .samples(samples)
+                .load_op(vk::AttachmentLoadOp::DONT_CARE)
+                .store_op(vk::AttachmentStoreOp::STORE)
+                .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+                .stencil_store_op(vk::AttachmentStoreOp::STORE)
+                .initial_layout(vk::ImageLayout::UNDEFINED)
+                .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL),
+        );
         vk::AttachmentReference::default()
             .attachment(depth_index as u32)
             .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
@@ -381,14 +536,24 @@ pub(super) fn create_compatible_render_pass(
     let create_info = vk::RenderPassCreateInfo::default()
         .attachments(&attachments)
         .subpasses(&subpass);
-    let raw = unsafe { core.device.create_render_pass(&create_info, None) }
-        .map_err(|error| BackendError { operation: "create_render_pipeline", message: format!("create compatible Vulkan render pass: {error:?}") })?;
-    Ok(Arc::new(VulkanRenderPassObject { core: core.clone(), raw }))
+    let raw = unsafe { core.device.create_render_pass(&create_info, None) }.map_err(|error| {
+        BackendError {
+            operation: "create_render_pipeline",
+            message: format!("create compatible Vulkan render pass: {error:?}"),
+        }
+    })?;
+    Ok(Arc::new(VulkanRenderPassObject {
+        core: core.clone(),
+        raw,
+    }))
 }
 
 fn binding_descriptor_type(ty: &BindingType) -> vk::DescriptorType {
     match ty {
-        BindingType::Buffer { ty: BufferBindingType::Uniform, .. } => vk::DescriptorType::UNIFORM_BUFFER,
+        BindingType::Buffer {
+            ty: BufferBindingType::Uniform,
+            ..
+        } => vk::DescriptorType::UNIFORM_BUFFER,
         BindingType::Buffer { .. } => vk::DescriptorType::STORAGE_BUFFER,
         BindingType::Texture { .. } => vk::DescriptorType::SAMPLED_IMAGE,
         BindingType::Sampler(_) => vk::DescriptorType::SAMPLER,
@@ -397,11 +562,16 @@ fn binding_descriptor_type(ty: &BindingType) -> vk::DescriptorType {
 }
 
 fn shader_stages(stages: &[ShaderStage]) -> vk::ShaderStageFlags {
-    stages.iter().fold(vk::ShaderStageFlags::empty(), |flags, stage| flags | match stage {
-        ShaderStage::Vertex => vk::ShaderStageFlags::VERTEX,
-        ShaderStage::Fragment => vk::ShaderStageFlags::FRAGMENT,
-        ShaderStage::Compute => vk::ShaderStageFlags::COMPUTE,
-    })
+    stages
+        .iter()
+        .fold(vk::ShaderStageFlags::empty(), |flags, stage| {
+            flags
+                | match stage {
+                    ShaderStage::Vertex => vk::ShaderStageFlags::VERTEX,
+                    ShaderStage::Fragment => vk::ShaderStageFlags::FRAGMENT,
+                    ShaderStage::Compute => vk::ShaderStageFlags::COMPUTE,
+                }
+        })
 }
 
 fn address_mode(mode: AddressMode) -> vk::SamplerAddressMode {
@@ -529,26 +699,40 @@ fn blend_operation(operation: BlendOperation) -> vk::BlendOp {
 
 fn color_write_mask(mask: ColorWriteMask) -> vk::ColorComponentFlags {
     let mut flags = vk::ColorComponentFlags::empty();
-    if mask.red { flags |= vk::ColorComponentFlags::R; }
-    if mask.green { flags |= vk::ColorComponentFlags::G; }
-    if mask.blue { flags |= vk::ColorComponentFlags::B; }
-    if mask.alpha { flags |= vk::ColorComponentFlags::A; }
+    if mask.red {
+        flags |= vk::ColorComponentFlags::R;
+    }
+    if mask.green {
+        flags |= vk::ColorComponentFlags::G;
+    }
+    if mask.blue {
+        flags |= vk::ColorComponentFlags::B;
+    }
+    if mask.alpha {
+        flags |= vk::ColorComponentFlags::A;
+    }
     flags
 }
 
-fn depth_stencil_state(state: &DepthStencilState<vk::Format>) -> vk::PipelineDepthStencilStateCreateInfo<'_> {
+fn depth_stencil_state(
+    state: &DepthStencilState<vk::Format>,
+) -> vk::PipelineDepthStencilStateCreateInfo<'_> {
     vk::PipelineDepthStencilStateCreateInfo::default()
         .depth_test_enable(true)
         .depth_write_enable(state.depth_write_enabled)
         .depth_compare_op(compare_function(state.depth_compare))
         .depth_bounds_test_enable(false)
         .stencil_test_enable(true)
-        .front(stencil_face_state(state.stencil.front)
-            .compare_mask(state.stencil.read_mask)
-            .write_mask(state.stencil.write_mask))
-        .back(stencil_face_state(state.stencil.back)
-            .compare_mask(state.stencil.read_mask)
-            .write_mask(state.stencil.write_mask))
+        .front(
+            stencil_face_state(state.stencil.front)
+                .compare_mask(state.stencil.read_mask)
+                .write_mask(state.stencil.write_mask),
+        )
+        .back(
+            stencil_face_state(state.stencil.back)
+                .compare_mask(state.stencil.read_mask)
+                .write_mask(state.stencil.write_mask),
+        )
         .min_depth_bounds(0.0)
         .max_depth_bounds(1.0)
 }

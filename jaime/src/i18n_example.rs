@@ -3,12 +3,11 @@
 //! W17 registers this page in the shared showcase and exposes the
 //! `aimer_i18n` model through the umbrella crate.
 
-use aimer::{AnyElement, BuildContext, Column, Container, Text, Widget};
 use aimer::i18n::{
-    DateFormatStyle, DateTimeFormatOptions, Locale, MissingTranslationPolicy,
-    NumberFormatOptions, TimeFormatStyle, TranslationCatalog, Translator, UtcOffset,
-    format_datetime, format_number,
+    DateFormatStyle, DateTimeFormatOptions, Locale, MissingTranslationPolicy, NumberFormatOptions,
+    TimeFormatStyle, TranslationCatalog, Translator, UtcOffset, format_datetime, format_number,
 };
+use aimer::{AnyElement, BuildContext, Column, Container, Text, Widget};
 
 /// A small localization page showing translated, pluralized, formatted, and
 /// direction-aware values.
@@ -61,7 +60,9 @@ impl I18nExample {
                 datetime_options,
             )
             .expect("the example timestamp is representable"),
-            direction: locale.direction().to_string(),
+            direction: locale
+                .direction()
+                .to_string(),
             validation_message: translator.validation_message(&locale, "required"),
             accessibility_label: translator.accessibility_label(&locale, "close"),
             locale,
@@ -83,7 +84,9 @@ impl Widget for I18nExample {
                     Text::new(format!("{} ({})", self.greeting, self.locale))
                         .wrapped()
                         .boxed(),
-                    Text::new(self.item_count).wrapped().boxed(),
+                    Text::new(self.item_count)
+                        .wrapped()
+                        .boxed(),
                     Text::new(format!("Number: {}", self.formatted_number))
                         .wrapped()
                         .boxed(),

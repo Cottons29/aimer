@@ -197,8 +197,7 @@ aimer_animation = {{ path = {:?} }}
 }
 
 fn fixture_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/aimer_macro_animatable_compile")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/aimer_macro_animatable_compile")
 }
 
 fn assert_failure(output: &Output, diagnostic: &str) {

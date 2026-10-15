@@ -13,8 +13,8 @@
 
 use std::hint::black_box;
 
-use aimer_cupid::draw_cmd::DrawList;
 use aimer_cupid::backend::wgpu::WgpuBackend;
+use aimer_cupid::draw_cmd::DrawList;
 use aimer_cupid::renderer::{Renderer, RendererMemoryStats};
 use aimer_cupid::utilities::Rect;
 use aimer_utils::SyncFuture;
@@ -80,14 +80,7 @@ fn render_viewport(
             texture_id,
         );
     }
-    renderer.render(
-        backend,
-        view,
-        SURFACE_WIDTH,
-        SURFACE_HEIGHT,
-        false,
-        &draw,
-    );
+    renderer.render(backend, view, SURFACE_WIDTH, SURFACE_HEIGHT, false, &draw);
     drop(draw);
     black_box(renderer.memory_stats())
 }
@@ -118,12 +111,7 @@ fn main() {
 
     let mut peak = RendererMemoryStats::default();
     for frame in 0..SCROLL_FRAMES {
-        let stats = render_viewport(
-            &mut renderer,
-            &backend,
-            &view,
-            frame * VISIBLE_IMAGES,
-        );
+        let stats = render_viewport(&mut renderer, &backend, &view, frame * VISIBLE_IMAGES);
         peak.image_texture_count = peak.image_texture_count.max(stats.image_texture_count);
         peak.image_texture_bytes = peak.image_texture_bytes.max(stats.image_texture_bytes);
     }
@@ -131,18 +119,15 @@ fn main() {
     let final_viewport = (SCROLL_FRAMES - 1) * VISIBLE_IMAGES;
     let mut settled = RendererMemoryStats::default();
     for _ in 0..SETTLE_FRAMES {
-        settled = render_viewport(
-            &mut renderer,
-            &backend,
-            &view,
-            final_viewport,
-        );
+        settled = render_viewport(&mut renderer, &backend, &view, final_viewport);
     }
     device
         .poll(wgpu::PollType::wait_indefinitely())
         .expect("the device to finish the image profile");
 
-    println!("image scroll memory profile: {SCROLL_FRAMES} scroll frames, {SETTLE_FRAMES} settle frames, {VISIBLE_IMAGES} visible images, {IMAGE_WIDTH}x{IMAGE_HEIGHT} RGBA8");
+    println!(
+        "image scroll memory profile: {SCROLL_FRAMES} scroll frames, {SETTLE_FRAMES} settle frames, {VISIBLE_IMAGES} visible images, {IMAGE_WIDTH}x{IMAGE_HEIGHT} RGBA8"
+    );
     println!(
         "peak logical image cache:     {} textures, {} bytes",
         peak.image_texture_count, peak.image_texture_bytes

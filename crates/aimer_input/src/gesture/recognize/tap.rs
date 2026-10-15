@@ -274,10 +274,7 @@ mod tests {
         let now = AnimInstant::now();
         let pointer = touch(1.0, 1.0);
         let mut state = GestureState {
-            last_tap: Some(Tap {
-                pointer,
-                at: now,
-            }),
+            last_tap: Some(Tap { pointer, at: now }),
             ..Default::default()
         };
 

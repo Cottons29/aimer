@@ -12,7 +12,8 @@ use aimer_events::pointer::PointerButton;
 use crate::callback::{CallbackExecutor, VoidCallback};
 use crate::gesture::{
     DragCallback, DragUpdateCallback, DragUpdateData, GestureEvent, GestureMask, GestureOutput,
-    GestureStreamCallback, ScaleCallback, ScaleData, ScrollCallback, ScrollData, SwipeCallback,
+    GestureStreamCallback, PanCallback, PanData, ScaleCallback, ScaleData, ScrollCallback,
+    ScrollData, SmartZoomCallback, SmartZoomData, SwipeCallback,
 };
 
 /// Every handler a [`super::gesture_detector::GestureDetector`] may have, plus
@@ -33,8 +34,13 @@ pub struct GestureHandlers {
     pub on_swipe: SwipeCallback,
     pub on_scroll: ScrollCallback,
     pub on_scale: ScaleCallback,
+    pub on_pan: PanCallback,
+    pub on_smart_zoom: SmartZoomCallback,
     pub on_gesture: GestureStreamCallback,
     mask: GestureMask,
+    /// The gestures a specific handler was installed for, as opposed to the ones
+    /// the raw [`Self::on_gesture`] merely observes.
+    claims: GestureMask,
 }
 
 impl GestureHandlers {
@@ -60,7 +66,23 @@ impl GestureHandlers {
     /// `Scrollable` below could see it.
     #[inline]
     pub const fn consumes_scroll(&self) -> bool {
-        self.mask.intersects(GestureMask::SCROLL)
+        self.claims.intersects(GestureMask::SCROLL)
+    }
+
+    /// Whether a platform gesture of this kind should be consumed rather than
+    /// left to fall through to the widgets behind the detector.
+    ///
+    /// The same distinction as [`Self::consumes_scroll`], for the same reason: a
+    /// platform pinch carries no contact to capture, so it is delivered to every
+    /// detector under the cursor, innermost first. A [`Button`] that watches its
+    /// press through `on_gesture` must not swallow the trackpad pinch meant for
+    /// the zoomable canvas it sits on. Only a handler installed for the gesture
+    /// itself claims it.
+    ///
+    /// [`Button`]: crate::button::Button
+    #[inline]
+    pub const fn claims(&self, gestures: GestureMask) -> bool {
+        self.claims.intersects(gestures)
     }
 
     /// Widens the mask, which is how the raw
@@ -118,6 +140,10 @@ impl GestureHandlers {
                 focal_y,
                 scale,
                 delta_scale,
+                rotation,
+                delta_rotation,
+                focal_delta_x,
+                focal_delta_y,
             } => Self::call(
                 &self.on_scale,
                 ScaleData {
@@ -125,10 +151,31 @@ impl GestureHandlers {
                     focal_y,
                     scale,
                     delta_scale,
+                    rotation,
+                    delta_rotation,
+                    focal_delta_x,
+                    focal_delta_y,
                 },
             ),
+            GestureEvent::PanUpdate {
+                x,
+                y,
+                delta_x,
+                delta_y,
+            } => Self::call(
+                &self.on_pan,
+                PanData {
+                    x,
+                    y,
+                    delta_x,
+                    delta_y,
+                },
+            ),
+            GestureEvent::SmartZoom { x, y } => {
+                Self::call(&self.on_smart_zoom, SmartZoomData { x, y })
+            }
             // The press and long-press lifecycles, drag cancellation, and the
-            // pinch boundaries have no sugar setter of their own: they are read
+            // pinch and pan boundaries have no sugar setter of their own: they are read
             // through `on_gesture`, which has already been called above.
             _ => {}
         }
@@ -168,6 +215,7 @@ macro_rules! handler_setters {
                 pub fn $setter(&mut self, callback: impl Into<$callback>) {
                     self.$field = callback.into();
                     self.mask.insert($gestures);
+                    self.claims.insert($gestures);
                 }
             )*
         }
@@ -197,8 +245,25 @@ handler_setters! {
         "Installs the handler for wheel and trackpad scrolling, which also makes the detector consume those events.";
     set_on_scale => on_scale: ScaleCallback, GestureMask::SCALE,
         "Installs the handler for a two-pointer pinch.";
-    set_on_gesture => on_gesture: GestureStreamCallback, GestureMask::EVERY_POINTER_GESTURE,
-        "Installs the handler that sees every recognized gesture, including the ones with no sugar setter of their own.\n\nScrolls are still reported to it, but observing one does not claim it — see [`GestureMask::EVERY_POINTER_GESTURE`].";
+    set_on_pan => on_pan: PanCallback, GestureMask::PAN,
+        "Installs the handler for a platform multi-finger pan, which also makes the detector consume those events.";
+    set_on_smart_zoom => on_smart_zoom: SmartZoomCallback, GestureMask::SMART_ZOOM,
+        "Installs the handler for the platform's smart-zoom double tap, which also makes the detector consume those events.";
+}
+
+impl GestureHandlers {
+    /// Installs the handler that sees every recognized gesture, including the
+    /// ones with no sugar setter of their own.
+    ///
+    /// It *observes* without *claiming*: scrolls and platform gestures are still
+    /// reported to it where the detector receives them, but they are not consumed
+    /// on its account — see [`GestureMask::EVERY_POINTER_GESTURE`] and
+    /// [`Self::claims`].
+    #[inline]
+    pub fn set_on_gesture(&mut self, callback: impl Into<GestureStreamCallback>) {
+        self.on_gesture = callback.into();
+        self.mask.insert(GestureMask::EVERY_POINTER_GESTURE);
+    }
 }
 
 #[cfg(test)]
@@ -302,11 +367,9 @@ mod tests {
     fn a_secondary_tap_fires_only_the_secondary_handler() {
         let (log, handlers) = recorder();
 
-        handlers.dispatch(
-            GestureEvent::Tap {
-                pointer: mouse(PointerButton::Secondary),
-            },
-        );
+        handlers.dispatch(GestureEvent::Tap {
+            pointer: mouse(PointerButton::Secondary),
+        });
 
         assert_eq!(*log.borrow(), vec!["right_tap"]);
     }
@@ -315,11 +378,9 @@ mod tests {
     fn a_primary_tap_fires_only_the_primary_handler() {
         let (log, handlers) = recorder();
 
-        handlers.dispatch(
-            GestureEvent::Tap {
-                pointer: mouse(PointerButton::Primary),
-            },
-        );
+        handlers.dispatch(GestureEvent::Tap {
+            pointer: mouse(PointerButton::Primary),
+        });
 
         assert_eq!(*log.borrow(), vec!["tap"]);
     }
@@ -330,11 +391,9 @@ mod tests {
     fn a_middle_tap_fires_no_sugar_handler() {
         let (log, handlers) = recorder();
 
-        handlers.dispatch(
-            GestureEvent::Tap {
-                pointer: mouse(PointerButton::Middle),
-            },
-        );
+        handlers.dispatch(GestureEvent::Tap {
+            pointer: mouse(PointerButton::Middle),
+        });
 
         assert!(log.borrow().is_empty());
     }
@@ -386,10 +445,93 @@ mod tests {
     fn dispatching_to_a_missing_handler_is_a_no_op() {
         let handlers = GestureHandlers::new();
 
-        handlers.dispatch(
-            GestureEvent::Tap {
-                pointer: mouse(PointerButton::Primary),
-            },
+        handlers.dispatch(GestureEvent::Tap {
+            pointer: mouse(PointerButton::Primary),
+        });
+    }
+
+    #[test]
+    fn installing_pan_and_smart_zoom_declares_interest_and_claims_them() {
+        let mut handlers = GestureHandlers::new();
+        handlers.set_on_pan(|_: PanData| {});
+        handlers.set_on_smart_zoom(|_: SmartZoomData| {});
+
+        assert!(handlers.mask().contains(GestureMask::PAN));
+        assert!(handlers.mask().contains(GestureMask::SMART_ZOOM));
+        assert!(handlers.claims(GestureMask::PAN));
+        assert!(handlers.claims(GestureMask::SMART_ZOOM));
+        assert!(!handlers.claims(GestureMask::SCALE));
+    }
+
+    // The raw handler listens for everything, but it claims nothing: a Button
+    // observing its press through it must not swallow a pinch, a pan or a scroll.
+    #[test]
+    fn the_raw_handler_observes_every_platform_gesture_but_claims_none() {
+        let mut handlers = GestureHandlers::new();
+        handlers.set_on_gesture(|_: GestureEvent| {});
+
+        for gesture in [
+            GestureMask::SCALE,
+            GestureMask::PAN,
+            GestureMask::SMART_ZOOM,
+        ] {
+            assert!(handlers.mask().contains(gesture));
+            assert!(!handlers.claims(gesture));
+        }
+    }
+
+    #[test]
+    fn a_scale_update_hands_the_whole_transform_to_on_scale() {
+        let seen: Rc<RefCell<Vec<ScaleData>>> = Rc::default();
+        let recorded = seen.clone();
+        let mut handlers = GestureHandlers::new();
+        handlers.set_on_scale(move |data: ScaleData| recorded.borrow_mut().push(data));
+
+        handlers.dispatch(GestureEvent::ScaleUpdate {
+            focal_x: 1.0,
+            focal_y: 2.0,
+            scale: 3.0,
+            delta_scale: 1.5,
+            rotation: 0.5,
+            delta_rotation: 0.25,
+            focal_delta_x: 4.0,
+            focal_delta_y: -4.0,
+        });
+
+        assert_eq!(
+            *seen.borrow(),
+            vec![ScaleData {
+                focal_x: 1.0,
+                focal_y: 2.0,
+                scale: 3.0,
+                delta_scale: 1.5,
+                rotation: 0.5,
+                delta_rotation: 0.25,
+                focal_delta_x: 4.0,
+                focal_delta_y: -4.0,
+            }]
         );
+    }
+
+    #[test]
+    fn pan_updates_and_smart_zoom_reach_their_handlers() {
+        let log: Rc<RefCell<Vec<&'static str>>> = Rc::default();
+        let mut handlers = GestureHandlers::new();
+        let pan = log.clone();
+        handlers.set_on_pan(move |_: PanData| pan.borrow_mut().push("pan"));
+        let zoom = log.clone();
+        handlers.set_on_smart_zoom(move |_: SmartZoomData| zoom.borrow_mut().push("zoom"));
+
+        handlers.dispatch(GestureEvent::PanStart { x: 0.0, y: 0.0 });
+        handlers.dispatch(GestureEvent::PanUpdate {
+            x: 0.0,
+            y: 0.0,
+            delta_x: 1.0,
+            delta_y: 1.0,
+        });
+        handlers.dispatch(GestureEvent::PanEnd);
+        handlers.dispatch(GestureEvent::SmartZoom { x: 0.0, y: 0.0 });
+
+        assert_eq!(*log.borrow(), vec!["pan", "zoom"]);
     }
 }

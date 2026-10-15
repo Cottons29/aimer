@@ -5,18 +5,10 @@ use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use aimer_widget::base::*;
-use aimer_widget::{
-    AnyElement, AnyWidget, ChildBuilder, Drawable, Element, EventElement, EventResult,
-    LayoutElement, Rebuildable, VisitorElement, Widget, carry_element_state,
-};
 use aimer_widget::portable::__anteros::{
-    BUILTIN_WIDGET_SCHEMA_VERSION, ChildCardinality, PortableWidgetSchemaMetadata,
-    PropertyId, PropertySchemaMetadata, PropertyValueKind, WidgetDocumentView, WidgetNodeView,
+    BUILTIN_WIDGET_SCHEMA_VERSION, ChildCardinality, PortableWidgetSchemaMetadata, PropertyId,
+    PropertySchemaMetadata, PropertyValueKind, WidgetDocumentView, WidgetNodeView,
     WidgetSchemaMetadata,
-};
-use aimer_widget::portable::{
-    PortableMaterializeError, PortableNativeWidget, PortableWidgetSchema,
-    optional_materialized_property, required_materialized_property,
 };
 #[cfg(any(
     target_os = "linux",
@@ -27,15 +19,28 @@ use aimer_widget::portable::{
     target_os = "illumos",
 ))]
 use aimer_widget::portable::PortableNativeWidgetRegistration;
+use aimer_widget::portable::{
+    PortableMaterializeError, PortableNativeWidget, PortableWidgetSchema,
+    optional_materialized_property, required_materialized_property,
+};
+use aimer_widget::{
+    AnyElement, AnyWidget, ChildBuilder, Drawable, Element, EventElement, EventResult,
+    LayoutElement, Rebuildable, VisitorElement, Widget, carry_element_state,
+};
 
+#[cfg(feature = "portable-guest")]
+use aimer_widget::portable::__anteros::PropertyValue;
 #[cfg(feature = "portable-guest")]
 use aimer_widget::portable::{
     PortableBuildContext, PortableBuildError, PortableNodeId, SourceFingerprint,
 };
-#[cfg(feature = "portable-guest")]
-use aimer_widget::portable::__anteros::PropertyValue;
 
 use crate::control::controller::{AnimationController, AnimationStatus};
+use crate::control::keyframe_timeline::{KeyframeTimeline, TimelineFrame};
+use crate::control::timed_keyframe::TimedKeyframeAnimation;
+use crate::control::tween_animation::TweenAnimation;
+use crate::primitives::animatable::Animatable;
+use crate::primitives::curve::Curve;
 use crate::primitives::time::AnimInstant;
 
 type AnimatedElementBuilder = dyn Fn(f32, &BuildContext) -> AnyElement;
@@ -162,10 +167,10 @@ pub(crate) const ANIMATED_BUILDER_SCHEMA: PortableWidgetSchemaMetadata<'static> 
 /// ```rust
 /// use std::time::Duration;
 ///
-/// use aimer_animation::{AnimatedBuilder, AnimationController, Curve};
+/// use aimer_animation::{AnimatedBuilder, AnimationController, curves};
 /// use aimer_widget::ErrorWidget;
 ///
-/// let controller = AnimationController::new(Duration::from_millis(250), Curve::Linear);
+/// let controller = AnimationController::new(Duration::from_millis(250), curves::LINEAR);
 /// let animated = AnimatedBuilder::new(controller, |value| {
 ///     ErrorWidget::new(format!("Progress: {:.0}%", value * 100.0))
 /// });
@@ -204,6 +209,108 @@ impl AnimatedBuilder {
             portable_builder,
         }
     }
+
+    /// Creates a builder that receives `animation`'s value instead of raw
+    /// progress.
+    ///
+    /// The builder is called with the interpolated `T` under the same rules as
+    /// [`new`](Self::new): once on creation and again whenever the value
+    /// changes. The animation's controller drives it, so start the animation
+    /// through the handle you kept (clones share playback).
+    ///
+    /// ```rust
+    /// use std::time::Duration;
+    ///
+    /// use aimer_animation::{AnimatedBuilder, curves, TweenAnimation};
+    /// use aimer_widget::ErrorWidget;
+    ///
+    /// let slide = TweenAnimation::new(0.0f32, 120.0, Duration::from_millis(250), curves::EASE_OUT);
+    /// let animated = AnimatedBuilder::tween(slide.clone(), |offset| {
+    ///     ErrorWidget::new(format!("offset {offset:.0}"))
+    /// });
+    /// slide.forward();
+    /// ```
+    pub fn tween<T, F, W>(animation: TweenAnimation<T>, builder: F) -> Self
+    where
+        T: Animatable + 'static,
+        F: Fn(T) -> W + 'static,
+        W: Widget,
+    {
+        let controller = animation.controller().clone();
+        // The builder is handed the controller's curved progress, which is what
+        // `TweenAnimation::value` maps through its tween.
+        Self::new(controller, move |progress| {
+            builder(animation.tween().lerp(progress))
+        })
+    }
+
+    /// Creates a builder that receives the value of a timed keyframe
+    /// animation.
+    ///
+    /// See [`tween`](Self::tween) for when the builder runs.
+    ///
+    /// ```rust
+    /// use std::time::Duration;
+    ///
+    /// use aimer_animation::{AnimatedBuilder, KeyframeTrack, TimedKeyframeAnimation};
+    /// use aimer_widget::ErrorWidget;
+    ///
+    /// let ms = Duration::from_millis;
+    /// let track = KeyframeTrack::builder()
+    ///     .at(ms(0), 1.0f32)
+    ///     .at(ms(120), 1.2)
+    ///     .at(ms(300), 1.0)
+    ///     .build()
+    ///     .unwrap();
+    /// let pulse = TimedKeyframeAnimation::new(track);
+    /// let animated = AnimatedBuilder::keyframes(pulse.clone(), |scale| {
+    ///     ErrorWidget::new(format!("scale {scale:.2}"))
+    /// });
+    /// pulse.forward();
+    /// ```
+    pub fn keyframes<T, F, W>(animation: TimedKeyframeAnimation<T>, builder: F) -> Self
+    where
+        T: Animatable + Clone + 'static,
+        F: Fn(T) -> W + 'static,
+        W: Widget,
+    {
+        let controller = animation.controller().clone();
+        Self::new(controller, move |progress| {
+            builder(animation.track().at_progress(progress))
+        })
+    }
+
+    /// Creates a builder that receives a [`TimelineFrame`], from which any
+    /// number of tracks are sampled in step.
+    ///
+    /// See [`tween`](Self::tween) for when the builder runs.
+    ///
+    /// ```rust
+    /// use std::time::Duration;
+    ///
+    /// use aimer_animation::{AnimatedBuilder, KeyframeTimeline, KeyframeTrack};
+    /// use aimer_widget::ErrorWidget;
+    ///
+    /// let ms = Duration::from_millis;
+    /// let fade = KeyframeTrack::builder().at(ms(0), 0.0f32).at(ms(200), 1.0).build().unwrap();
+    /// let grow = KeyframeTrack::builder().at(ms(0), 0.8f32).at(ms(400), 1.0).build().unwrap();
+    /// let timeline = KeyframeTimeline::new(Duration::ZERO).including(&fade).including(&grow);
+    ///
+    /// let animated = AnimatedBuilder::timeline(timeline.clone(), move |frame| {
+    ///     ErrorWidget::new(format!("{:.2} {:.2}", frame.sample(&fade), frame.sample(&grow)))
+    /// });
+    /// timeline.forward();
+    /// ```
+    pub fn timeline<F, W>(timeline: KeyframeTimeline, builder: F) -> Self
+    where
+        F: Fn(TimelineFrame) -> W + 'static,
+        W: Widget,
+    {
+        let controller = timeline.controller().clone();
+        Self::new(controller, move |progress| {
+            builder(timeline.frame_at_progress(progress))
+        })
+    }
 }
 
 impl PortableWidgetSchema for AnimatedBuilder {
@@ -220,16 +327,17 @@ impl aimer_widget::portable::PortableWidget for AnimatedBuilder {
         ctx: &mut PortableBuildContext,
         source: SourceFingerprint,
     ) -> Result<PortableNodeId, PortableBuildError> {
-        let duration_millis = i64::try_from(self.controller.duration().as_millis()).map_err(|_| {
-            property_encoding_error(
-                PROPERTY_ANIMATED_BUILDER_DURATION,
-                ANIMATED_BUILDER_DURATION_CANONICAL_NAME,
-                source,
-                PortableBuildError::InvalidPropertyValue {
-                    rust_type: "Duration",
-                },
-            )
-        })?;
+        let duration_millis =
+            i64::try_from(self.controller.duration().as_millis()).map_err(|_| {
+                property_encoding_error(
+                    PROPERTY_ANIMATED_BUILDER_DURATION,
+                    ANIMATED_BUILDER_DURATION_CANONICAL_NAME,
+                    source,
+                    PortableBuildError::InvalidPropertyValue {
+                        rust_type: "Duration",
+                    },
+                )
+            })?;
         let value = self.controller.value();
         if !value.is_finite() {
             return Err(property_encoding_error(
@@ -239,7 +347,16 @@ impl aimer_widget::portable::PortableWidget for AnimatedBuilder {
                 PortableBuildError::NonFiniteFloat,
             ));
         }
-        let (curve_tag, control_points) = portable_curve(self.controller.curve());
+        let (curve_tag, control_points) = portable_curve(&self.controller.curve()).ok_or_else(|| {
+            property_encoding_error(
+                PROPERTY_ANIMATED_BUILDER_CURVE,
+                ANIMATED_BUILDER_CURVE_CANONICAL_NAME,
+                source,
+                PortableBuildError::InvalidPropertyValue {
+                    rust_type: "custom Curve (only standard curves and cubic Béziers can be lowered to a portable guest)",
+                },
+            )
+        })?;
         let mut properties = vec![
             aimer_widget::portable::__anteros::WidgetProperty::new(
                 PROPERTY_ANIMATED_BUILDER_DURATION,
@@ -268,10 +385,26 @@ impl aimer_widget::portable::PortableWidget for AnimatedBuilder {
         ];
         if let Some([x1, y1, x2, y2]) = control_points {
             let points = [
-                (PROPERTY_ANIMATED_BUILDER_CURVE_X1, ANIMATED_BUILDER_CURVE_X1_CANONICAL_NAME, x1),
-                (PROPERTY_ANIMATED_BUILDER_CURVE_Y1, ANIMATED_BUILDER_CURVE_Y1_CANONICAL_NAME, y1),
-                (PROPERTY_ANIMATED_BUILDER_CURVE_X2, ANIMATED_BUILDER_CURVE_X2_CANONICAL_NAME, x2),
-                (PROPERTY_ANIMATED_BUILDER_CURVE_Y2, ANIMATED_BUILDER_CURVE_Y2_CANONICAL_NAME, y2),
+                (
+                    PROPERTY_ANIMATED_BUILDER_CURVE_X1,
+                    ANIMATED_BUILDER_CURVE_X1_CANONICAL_NAME,
+                    x1,
+                ),
+                (
+                    PROPERTY_ANIMATED_BUILDER_CURVE_Y1,
+                    ANIMATED_BUILDER_CURVE_Y1_CANONICAL_NAME,
+                    y1,
+                ),
+                (
+                    PROPERTY_ANIMATED_BUILDER_CURVE_X2,
+                    ANIMATED_BUILDER_CURVE_X2_CANONICAL_NAME,
+                    x2,
+                ),
+                (
+                    PROPERTY_ANIMATED_BUILDER_CURVE_Y2,
+                    ANIMATED_BUILDER_CURVE_Y2_CANONICAL_NAME,
+                    y2,
+                ),
             ];
             for (property, property_name, value) in points {
                 if !value.is_finite() {
@@ -319,29 +452,14 @@ fn property_encoding_error(
     }
 }
 
+/// The portable tag and control points of `curve`, or `None` for a custom
+/// curve, which only exists natively.
 #[cfg(feature = "portable-guest")]
-fn portable_curve(curve: crate::primitives::curve::Curve) -> (i64, Option<[f64; 4]>) {
+fn portable_curve(curve: &crate::primitives::curve::AnyCurve) -> Option<(i64, Option<[f64; 4]>)> {
     use crate::primitives::curve::Curve;
 
-    match curve {
-        Curve::Linear => (0, None),
-        Curve::EaseIn => (1, None),
-        Curve::EaseOut => (2, None),
-        Curve::EaseInOut => (3, None),
-        Curve::CubicBezier(x1, y1, x2, y2) => {
-            (4, Some([x1 as f64, y1 as f64, x2 as f64, y2 as f64]))
-        }
-        Curve::Decelerate => (5, None),
-        Curve::BounceOut => (6, None),
-        Curve::BounceIn => (7, None),
-        Curve::BounceInOut => (8, None),
-        Curve::ElasticIn => (9, None),
-        Curve::ElasticOut => (10, None),
-        Curve::ElasticInOut => (11, None),
-        Curve::FastOutSlowIn => (12, None),
-        Curve::LinearOutSlowIn => (13, None),
-        Curve::FastOutLinearIn => (14, None),
-    }
+    let descriptor = curve.descriptor()?;
+    Some((descriptor.tag, descriptor.control_points))
 }
 
 #[cfg(feature = "portable-guest")]
@@ -366,32 +484,23 @@ pub(crate) fn materialize_animated_builder(
         });
     }
 
-    let duration_millis: i64 = required_materialized_property(
-        document,
-        &node,
-        PROPERTY_ANIMATED_BUILDER_DURATION,
-    )?;
+    let duration_millis: i64 =
+        required_materialized_property(document, &node, PROPERTY_ANIMATED_BUILDER_DURATION)?;
     let duration_millis = u64::try_from(duration_millis).map_err(|_| {
         PortableMaterializeError::InvalidPropertyValue {
             property: PROPERTY_ANIMATED_BUILDER_DURATION,
         }
     })?;
     let curve = materialize_curve(document, &node)?;
-    let value: f32 = required_materialized_property(
-        document,
-        &node,
-        PROPERTY_ANIMATED_BUILDER_VALUE,
-    )?;
+    let value: f32 =
+        required_materialized_property(document, &node, PROPERTY_ANIMATED_BUILDER_VALUE)?;
     if !(0.0..=1.0).contains(&value) {
         return Err(PortableMaterializeError::InvalidPropertyValue {
             property: PROPERTY_ANIMATED_BUILDER_VALUE,
         });
     }
-    let status: i64 = required_materialized_property(
-        document,
-        &node,
-        PROPERTY_ANIMATED_BUILDER_STATUS,
-    )?;
+    let status: i64 =
+        required_materialized_property(document, &node, PROPERTY_ANIMATED_BUILDER_STATUS)?;
     let status = match status {
         0 => AnimationStatus::Dismissed,
         1 => AnimationStatus::Forward,
@@ -403,16 +512,10 @@ pub(crate) fn materialize_animated_builder(
             });
         }
     };
-    let repeat: bool = required_materialized_property(
-        document,
-        &node,
-        PROPERTY_ANIMATED_BUILDER_REPEAT,
-    )?;
-    let auto_reverse: bool = required_materialized_property(
-        document,
-        &node,
-        PROPERTY_ANIMATED_BUILDER_AUTO_REVERSE,
-    )?;
+    let repeat: bool =
+        required_materialized_property(document, &node, PROPERTY_ANIMATED_BUILDER_REPEAT)?;
+    let auto_reverse: bool =
+        required_materialized_property(document, &node, PROPERTY_ANIMATED_BUILDER_AUTO_REVERSE)?;
 
     let controller = AnimationController::with_millis(duration_millis, curve);
     controller.set_value(value);
@@ -424,44 +527,30 @@ pub(crate) fn materialize_animated_builder(
         AnimationStatus::Dismissed | AnimationStatus::Completed => {}
     }
 
-    let child = ChildBuilder::from_widget(
-        children
-            .pop()
-            .ok_or(PortableMaterializeError::InvalidChildCount {
-                expected: 1,
-                actual: 0,
-            })?,
-    );
+    let child = ChildBuilder::from_widget(children.pop().ok_or(
+        PortableMaterializeError::InvalidChildCount {
+            expected: 1,
+            actual: 0,
+        },
+    )?);
     Ok(AnimatedBuilder::new(controller, move |_| child.clone()).boxed())
 }
 
 fn materialize_curve(
     document: &WidgetDocumentView<'_>,
     node: &WidgetNodeView<'_>,
-) -> Result<crate::primitives::curve::Curve, PortableMaterializeError> {
-    use crate::primitives::curve::Curve;
+) -> Result<crate::primitives::curve::AnyCurve, PortableMaterializeError> {
+    use crate::primitives::curve::{AnyCurve, Curve, curves};
 
     let tag: i64 = required_materialized_property(document, node, PROPERTY_ANIMATED_BUILDER_CURVE)?;
-    let x1: Option<f64> = optional_materialized_property(
-        document,
-        node,
-        PROPERTY_ANIMATED_BUILDER_CURVE_X1,
-    )?;
-    let y1: Option<f64> = optional_materialized_property(
-        document,
-        node,
-        PROPERTY_ANIMATED_BUILDER_CURVE_Y1,
-    )?;
-    let x2: Option<f64> = optional_materialized_property(
-        document,
-        node,
-        PROPERTY_ANIMATED_BUILDER_CURVE_X2,
-    )?;
-    let y2: Option<f64> = optional_materialized_property(
-        document,
-        node,
-        PROPERTY_ANIMATED_BUILDER_CURVE_Y2,
-    )?;
+    let x1: Option<f64> =
+        optional_materialized_property(document, node, PROPERTY_ANIMATED_BUILDER_CURVE_X1)?;
+    let y1: Option<f64> =
+        optional_materialized_property(document, node, PROPERTY_ANIMATED_BUILDER_CURVE_Y1)?;
+    let x2: Option<f64> =
+        optional_materialized_property(document, node, PROPERTY_ANIMATED_BUILDER_CURVE_X2)?;
+    let y2: Option<f64> =
+        optional_materialized_property(document, node, PROPERTY_ANIMATED_BUILDER_CURVE_Y2)?;
     let points = [x1, y1, x2, y2];
     match tag {
         0..=3 | 5..=14 => {
@@ -470,22 +559,8 @@ fn materialize_curve(
                     property: PROPERTY_ANIMATED_BUILDER_CURVE,
                 });
             }
-            Ok(match tag {
-                0 => Curve::Linear,
-                1 => Curve::EaseIn,
-                2 => Curve::EaseOut,
-                3 => Curve::EaseInOut,
-                5 => Curve::Decelerate,
-                6 => Curve::BounceOut,
-                7 => Curve::BounceIn,
-                8 => Curve::BounceInOut,
-                9 => Curve::ElasticIn,
-                10 => Curve::ElasticOut,
-                11 => Curve::ElasticInOut,
-                12 => Curve::FastOutSlowIn,
-                13 => Curve::LinearOutSlowIn,
-                14 => Curve::FastOutLinearIn,
-                _ => unreachable!("the range above excludes cubic bezier"),
+            AnyCurve::from_descriptor(tag, None).ok_or(PortableMaterializeError::InvalidPropertyValue {
+                property: PROPERTY_ANIMATED_BUILDER_CURVE,
             })
         }
         4 => {
@@ -498,7 +573,7 @@ fn materialize_curve(
             let y1 = finite_curve_coordinate(y1, PROPERTY_ANIMATED_BUILDER_CURVE_Y1)?;
             let x2 = finite_curve_coordinate(x2, PROPERTY_ANIMATED_BUILDER_CURVE_X2)?;
             let y2 = finite_curve_coordinate(y2, PROPERTY_ANIMATED_BUILDER_CURVE_Y2)?;
-            Ok(Curve::CubicBezier(x1, y1, x2, y2))
+            Ok(curves::cubic_bezier(x1, y1, x2, y2).into_any())
         }
         _ => Err(PortableMaterializeError::InvalidPropertyValue {
             property: PROPERTY_ANIMATED_BUILDER_CURVE,
@@ -705,8 +780,8 @@ impl LayoutElement for AnimatedBuilderElement {
 )]
 #[linkme(crate = aimer_widget::portable::__linkme)]
 #[allow(non_upper_case_globals)]
-pub(crate) static ANIMATED_BUILDER_NATIVE_SCHEMA:
-    PortableWidgetSchemaMetadata<'static> = ANIMATED_BUILDER_SCHEMA;
+pub(crate) static ANIMATED_BUILDER_NATIVE_SCHEMA: PortableWidgetSchemaMetadata<'static> =
+    ANIMATED_BUILDER_SCHEMA;
 
 #[cfg(any(
     target_os = "linux",
@@ -722,10 +797,7 @@ pub(crate) static ANIMATED_BUILDER_NATIVE_SCHEMA:
 #[linkme(crate = aimer_widget::portable::__linkme)]
 #[allow(non_upper_case_globals)]
 pub(crate) static ANIMATED_BUILDER_NATIVE_REGISTRATION: PortableNativeWidgetRegistration =
-    PortableNativeWidgetRegistration::new(
-        ANIMATED_BUILDER_SCHEMA,
-        materialize_animated_builder,
-    );
+    PortableNativeWidgetRegistration::new(ANIMATED_BUILDER_SCHEMA, materialize_animated_builder);
 
 /// Ensures this crate's native portable-widget registration is retained when
 /// the crate is linked from an archive.
@@ -753,19 +825,18 @@ pub fn ensure_portable_native_registrations() {
 #[cfg(test)]
 mod tests {
     use aimer_widget::portable::__anteros::{
-        ChildCardinality, ModelLimits, PropertyId, PropertyPresence,
-        PropertyValue, Version, WidgetDocument, WidgetDocumentView, WidgetNode, WidgetProperty,
-        WidgetSchemaId,
+        ChildCardinality, ModelLimits, PropertyId, PropertyPresence, PropertyValue, Version,
+        WidgetDocument, WidgetDocumentView, WidgetNode, WidgetProperty, WidgetSchemaId,
     };
     use aimer_widget::portable::{
-        linked_portable_native_widget_registrations, linked_portable_native_widget_schemas,
         PortableNativeWidgetRegistration, PortableWidgetSchema,
+        linked_portable_native_widget_registrations, linked_portable_native_widget_schemas,
     };
     use aimer_widget::{AnyElement, PortableWidget, Widget};
 
-    use crate::Curve;
-
     use super::*;
+    #[cfg(feature = "portable-guest")]
+    use crate::primitives::curve::curves;
 
     const WIDGET_CANONICAL_NAME: &str = "aimer.widget:aimer_animation::AnimatedBuilder";
     const PROPERTY_DURATION_CANONICAL_NAME: &str =
@@ -824,19 +895,46 @@ mod tests {
 
     fn valid_properties() -> Vec<WidgetProperty> {
         vec![
-            WidgetProperty::new(property_id(PROPERTY_DURATION_CANONICAL_NAME), PropertyValue::I64(321)),
-            WidgetProperty::new(property_id(PROPERTY_CURVE_CANONICAL_NAME), PropertyValue::I64(4)),
-            WidgetProperty::new(property_id(PROPERTY_CURVE_X1_CANONICAL_NAME), PropertyValue::F64(0.1))
-                .optional(),
-            WidgetProperty::new(property_id(PROPERTY_CURVE_Y1_CANONICAL_NAME), PropertyValue::F64(0.2))
-                .optional(),
-            WidgetProperty::new(property_id(PROPERTY_CURVE_X2_CANONICAL_NAME), PropertyValue::F64(0.8))
-                .optional(),
-            WidgetProperty::new(property_id(PROPERTY_CURVE_Y2_CANONICAL_NAME), PropertyValue::F64(0.9))
-                .optional(),
-            WidgetProperty::new(property_id(PROPERTY_VALUE_CANONICAL_NAME), PropertyValue::F64(0.25)),
-            WidgetProperty::new(property_id(PROPERTY_STATUS_CANONICAL_NAME), PropertyValue::I64(1)),
-            WidgetProperty::new(property_id(PROPERTY_REPEAT_CANONICAL_NAME), PropertyValue::Bool(true)),
+            WidgetProperty::new(
+                property_id(PROPERTY_DURATION_CANONICAL_NAME),
+                PropertyValue::I64(321),
+            ),
+            WidgetProperty::new(
+                property_id(PROPERTY_CURVE_CANONICAL_NAME),
+                PropertyValue::I64(4),
+            ),
+            WidgetProperty::new(
+                property_id(PROPERTY_CURVE_X1_CANONICAL_NAME),
+                PropertyValue::F64(0.1),
+            )
+            .optional(),
+            WidgetProperty::new(
+                property_id(PROPERTY_CURVE_Y1_CANONICAL_NAME),
+                PropertyValue::F64(0.2),
+            )
+            .optional(),
+            WidgetProperty::new(
+                property_id(PROPERTY_CURVE_X2_CANONICAL_NAME),
+                PropertyValue::F64(0.8),
+            )
+            .optional(),
+            WidgetProperty::new(
+                property_id(PROPERTY_CURVE_Y2_CANONICAL_NAME),
+                PropertyValue::F64(0.9),
+            )
+            .optional(),
+            WidgetProperty::new(
+                property_id(PROPERTY_VALUE_CANONICAL_NAME),
+                PropertyValue::F64(0.25),
+            ),
+            WidgetProperty::new(
+                property_id(PROPERTY_STATUS_CANONICAL_NAME),
+                PropertyValue::I64(1),
+            ),
+            WidgetProperty::new(
+                property_id(PROPERTY_REPEAT_CANONICAL_NAME),
+                PropertyValue::Bool(true),
+            ),
             WidgetProperty::new(
                 property_id(PROPERTY_AUTO_REVERSE_CANONICAL_NAME),
                 PropertyValue::Bool(true),
@@ -844,10 +942,14 @@ mod tests {
         ]
     }
 
-    fn host_document<R>(properties: &[WidgetProperty], child_count: usize, inspect: impl FnOnce(
-        &WidgetDocumentView<'_>,
-        aimer_widget::portable::__anteros::WidgetNodeView<'_>,
-    ) -> R) -> R {
+    fn host_document<R>(
+        properties: &[WidgetProperty],
+        child_count: usize,
+        inspect: impl FnOnce(
+            &WidgetDocumentView<'_>,
+            aimer_widget::portable::__anteros::WidgetNodeView<'_>,
+        ) -> R,
+    ) -> R {
         let child_indices = [1_u32, 2_u32];
         let mut nodes = Vec::with_capacity(child_count + 1);
         nodes.push(
@@ -871,11 +973,8 @@ mod tests {
         let image = WidgetDocument::new(1, 0, 0, &nodes, &[], &[])
             .encode(ModelLimits::new(4_096, 32, 64, 128))
             .unwrap();
-        let document = WidgetDocumentView::decode(
-            &image,
-            ModelLimits::new(4_096, 32, 64, 128),
-        )
-        .unwrap();
+        let document =
+            WidgetDocumentView::decode(&image, ModelLimits::new(4_096, 32, 64, 128)).unwrap();
         inspect(&document, document.node(0).unwrap())
     }
 
@@ -883,15 +982,24 @@ mod tests {
     fn schema_declares_controller_properties_and_one_structural_child() {
         let schema = <AnimatedBuilder as PortableWidgetSchema>::SCHEMA;
 
-        assert_eq!(schema.widget().id(), WidgetSchemaId::from_canonical_name(WIDGET_CANONICAL_NAME));
+        assert_eq!(
+            schema.widget().id(),
+            WidgetSchemaId::from_canonical_name(WIDGET_CANONICAL_NAME)
+        );
         assert_eq!(schema.children(), ChildCardinality::exactly(1));
         assert_eq!(schema.properties().len(), 10);
         assert_eq!(
             schema.properties()[0].id(),
             property_id(PROPERTY_DURATION_CANONICAL_NAME)
         );
-        assert_eq!(schema.properties()[2].presence(), PropertyPresence::Optional);
-        assert_eq!(schema.properties()[5].presence(), PropertyPresence::Optional);
+        assert_eq!(
+            schema.properties()[2].presence(),
+            PropertyPresence::Optional
+        );
+        assert_eq!(
+            schema.properties()[5].presence(),
+            PropertyPresence::Optional
+        );
     }
 
     #[cfg(feature = "portable-guest")]
@@ -913,10 +1021,7 @@ mod tests {
             aimer_widget::portable::StableId128::from_bytes([9; 16]),
         );
         let root = AnimatedBuilder::new(
-            AnimationController::with_millis(
-                321,
-                Curve::CubicBezier(0.1, 0.2, 0.8, 0.9),
-            ),
+            AnimationController::with_millis(321, curves::cubic_bezier(0.1, 0.2, 0.8, 0.9)),
             |_| PortableLeaf,
         )
         .to_portable_node(&mut context, source)
@@ -927,25 +1032,33 @@ mod tests {
         let view = WidgetDocumentView::decode(&image, limits).unwrap();
         let node = view.node(view.root_node()).unwrap();
 
-        assert_eq!(node.widget_type(), WidgetSchemaId::from_canonical_name(WIDGET_CANONICAL_NAME));
+        assert_eq!(
+            node.widget_type(),
+            WidgetSchemaId::from_canonical_name(WIDGET_CANONICAL_NAME)
+        );
         assert_eq!(node.children().count(), 1);
         assert_eq!(
             node.properties()
-                .find(|property| property.property_id() == property_id(PROPERTY_DURATION_CANONICAL_NAME))
+                .find(|property| property.property_id()
+                    == property_id(PROPERTY_DURATION_CANONICAL_NAME))
                 .unwrap()
                 .value(),
             PropertyValue::I64(321)
         );
         assert_eq!(
             node.properties()
-                .find(|property| property.property_id() == property_id(PROPERTY_CURVE_CANONICAL_NAME))
+                .find(
+                    |property| property.property_id() == property_id(PROPERTY_CURVE_CANONICAL_NAME)
+                )
                 .unwrap()
                 .value(),
             PropertyValue::I64(4)
         );
         assert_eq!(
             node.properties()
-                .find(|property| property.property_id() == property_id(PROPERTY_VALUE_CANONICAL_NAME))
+                .find(
+                    |property| property.property_id() == property_id(PROPERTY_VALUE_CANONICAL_NAME)
+                )
                 .unwrap()
                 .value(),
             PropertyValue::F64(0.0)
@@ -964,10 +1077,7 @@ mod tests {
             aimer_widget::portable::StableId128::from_bytes([7; 16]),
         );
         let error = AnimatedBuilder::new(
-            AnimationController::with_millis(
-                321,
-                Curve::CubicBezier(f32::NAN, 0.2, 0.8, 0.9),
-            ),
+            AnimationController::with_millis(321, curves::cubic_bezier(f32::NAN, 0.2, 0.8, 0.9)),
             |_| PortableLeaf,
         )
         .to_portable_node(&mut context, source)
@@ -1009,7 +1119,10 @@ mod tests {
             .find(|registration| registration.widget_type() == widget_type)
             .expect("AnimatedBuilder must publish a host registration");
 
-        assert_eq!(registration.schema().children(), ChildCardinality::exactly(1));
+        assert_eq!(
+            registration.schema().children(),
+            ChildCardinality::exactly(1)
+        );
         assert_eq!(registration.schema().properties().len(), 10);
         let _: PortableNativeWidgetRegistration = registration;
     }
@@ -1048,10 +1161,12 @@ mod tests {
         host_document(&properties, 0, |document, node| {
             assert!(matches!(
                 materialize_animated_builder(document, node, Vec::new()),
-                Err(aimer_widget::portable::PortableMaterializeError::InvalidChildCount {
-                    expected: 1,
-                    actual: 0,
-                })
+                Err(
+                    aimer_widget::portable::PortableMaterializeError::InvalidChildCount {
+                        expected: 1,
+                        actual: 0,
+                    }
+                )
             ));
         });
     }

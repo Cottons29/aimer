@@ -1,3 +1,4 @@
+pub(crate) mod aimer_font;
 #[cfg(all(
     any(target_os = "ios", target_os = "macos"),
     feature = "apple-core-text"
@@ -9,18 +10,17 @@ mod cache_key;
     feature = "apple-core-text"
 ))]
 pub(crate) mod core_text_raster;
-pub(crate) mod aimer_font;
 mod deferred_preparation;
 mod font_resolver;
 pub mod glyph_atlas;
 mod glyph_metrics;
-mod paint_cache;
 pub mod glyph_rasterizer;
 mod layout_cache;
+mod paint_cache;
 mod preparation_batch;
 pub(crate) mod system_fallback;
-mod unicode_script;
 pub mod text_layout;
+mod unicode_script;
 pub use self::text_layout::{TextHorizontalAlign, TextWritingMode};
 #[cfg(test)]
 mod phase0_baseline;
@@ -40,8 +40,8 @@ use crate::font::{FontFamily, FontRegistry, FontStyle, FontWeight, TextLanguage}
 use crate::pipeline::frame_upload::FrameUpload;
 use crate::pipeline::image_pipeline::InstanceBufferPolicy;
 use crate::text_pipeline::cache_key::{
-    LayoutCacheKey, LayoutInput, OwnedLayoutInput, ShapingCacheKey, ShapingInput,
-    SpanLayoutKeys, span_layout_keys_with_writing_mode,
+    LayoutCacheKey, LayoutInput, OwnedLayoutInput, ShapingCacheKey, ShapingInput, SpanLayoutKeys,
+    span_layout_keys_with_writing_mode,
 };
 use crate::text_pipeline::deferred_preparation::{
     PREPARATION_BUDGET, PREPARATION_CHUNK, PreparationBudget, prepare_ahead_of_view,
@@ -54,7 +54,7 @@ use crate::text_pipeline::glyph_rasterizer::{
 };
 use crate::text_pipeline::layout_cache::LayoutCache;
 use crate::text_pipeline::paint_cache::{
-    CachedPaintKind, CachedPaintGlyph, CachedTextPaint, TextPaintCache, TextPaintCacheKey,
+    CachedPaintGlyph, CachedPaintKind, CachedTextPaint, TextPaintCache, TextPaintCacheKey,
     sanitize_shadow,
 };
 use crate::text_pipeline::preparation_batch::{BatchExecutor, IndexedJob, PreparationBatch};
@@ -63,7 +63,6 @@ use crate::text_pipeline::text_layout::{
     positioned_line_widths, prepare_shaped_text_with_writing_mode,
 };
 use crate::utilities::Rgba8;
-
 
 /// Per-instance data for one glyph quad.
 #[repr(C)]
@@ -272,15 +271,47 @@ impl GlyphInstance {
         }
     }
 
-        const GENERIC_ATTRIBUTES: [crate::backend::VertexAttribute; 8] = [
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x2, offset: std::mem::offset_of!(Self, position) as u64, shader_location: 0 },
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x2, offset: std::mem::offset_of!(Self, size) as u64, shader_location: 1 },
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, uv_rect) as u64, shader_location: 2 },
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Unorm8x4, offset: std::mem::offset_of!(Self, color) as u64, shader_location: 3 },
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, clip_rect) as u64, shader_location: 4 },
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, clip_border_radius) as u64, shader_location: 5 },
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32, offset: std::mem::offset_of!(Self, skew) as u64, shader_location: 6 },
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32, offset: std::mem::offset_of!(Self, coverage_exponent) as u64, shader_location: 7 },
+    const GENERIC_ATTRIBUTES: [crate::backend::VertexAttribute; 8] = [
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Float32x2,
+            offset: std::mem::offset_of!(Self, position) as u64,
+            shader_location: 0,
+        },
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Float32x2,
+            offset: std::mem::offset_of!(Self, size) as u64,
+            shader_location: 1,
+        },
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Float32x4,
+            offset: std::mem::offset_of!(Self, uv_rect) as u64,
+            shader_location: 2,
+        },
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Unorm8x4,
+            offset: std::mem::offset_of!(Self, color) as u64,
+            shader_location: 3,
+        },
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Float32x4,
+            offset: std::mem::offset_of!(Self, clip_rect) as u64,
+            shader_location: 4,
+        },
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Float32x4,
+            offset: std::mem::offset_of!(Self, clip_border_radius) as u64,
+            shader_location: 5,
+        },
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Float32,
+            offset: std::mem::offset_of!(Self, skew) as u64,
+            shader_location: 6,
+        },
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Float32,
+            offset: std::mem::offset_of!(Self, coverage_exponent) as u64,
+            shader_location: 7,
+        },
     ];
 }
 
@@ -321,13 +352,37 @@ impl DecorationInstance {
         }
     }
 
-        const GENERIC_ATTRIBUTES: [crate::backend::VertexAttribute; 6] = [
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x2, offset: std::mem::offset_of!(Self, position) as u64, shader_location: 0 },
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x2, offset: std::mem::offset_of!(Self, size) as u64, shader_location: 1 },
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Unorm8x4, offset: std::mem::offset_of!(Self, color) as u64, shader_location: 2 },
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, clip_rect) as u64, shader_location: 3 },
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, clip_border_radius) as u64, shader_location: 4 },
-        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, params) as u64, shader_location: 5 },
+    const GENERIC_ATTRIBUTES: [crate::backend::VertexAttribute; 6] = [
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Float32x2,
+            offset: std::mem::offset_of!(Self, position) as u64,
+            shader_location: 0,
+        },
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Float32x2,
+            offset: std::mem::offset_of!(Self, size) as u64,
+            shader_location: 1,
+        },
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Unorm8x4,
+            offset: std::mem::offset_of!(Self, color) as u64,
+            shader_location: 2,
+        },
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Float32x4,
+            offset: std::mem::offset_of!(Self, clip_rect) as u64,
+            shader_location: 3,
+        },
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Float32x4,
+            offset: std::mem::offset_of!(Self, clip_border_radius) as u64,
+            shader_location: 4,
+        },
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Float32x4,
+            offset: std::mem::offset_of!(Self, params) as u64,
+            shader_location: 5,
+        },
     ];
 }
 
@@ -745,8 +800,6 @@ pub struct TextPipelineV2<B: crate::backend::GpuBackend = crate::backend::Defaul
     prepared_frame: Option<PreparedFrameCache>,
 }
 
-
-
 // ── Backend-generic text preparation and rendering ─────────────────────────
 mod generic_prepare;
 
@@ -758,11 +811,7 @@ impl<B: crate::backend::GpuBackend> TextPipelineV2<B> {
     ///
     /// Creates GPU resources through the selected backend, including shader
     /// modules, atlases, samplers, buffers, bind groups, and render pipelines.
-    pub fn new(
-        backend: &B,
-        format: B::TextureFormat,
-        antialiasing: crate::AntiAlias,
-    ) -> Self {
+    pub fn new(backend: &B, format: B::TextureFormat, antialiasing: crate::AntiAlias) -> Self {
         use crate::backend::*;
 
         warm_fallbacks_in_background();
@@ -1071,13 +1120,7 @@ impl<B: crate::backend::GpuBackend> TextPipelineV2<B> {
     /// [`GpuBackend::write_buffer`], skipping the write when the viewport
     /// size is unchanged since the last call (mirrors the `last_viewport`
     /// gate inside the concrete [`TextPipelineV2::prepare_inner`]).
-    pub fn write_viewport(
-        &mut self,
-        backend: &B,
-        width: u32,
-        height: u32,
-        is_srgb: bool,
-    ) {
+    pub fn write_viewport(&mut self, backend: &B, width: u32, height: u32, is_srgb: bool) {
         if self.last_viewport == (width, height) {
             return;
         }
@@ -1090,11 +1133,8 @@ impl<B: crate::backend::GpuBackend> TextPipelineV2<B> {
         );
     }
 
-    pub fn render_request<'a>(
-        &'a self,
-        pass: &mut B::RenderPass<'a>,
-        index: usize,
-    ) where
+    pub fn render_request<'a>(&'a self, pass: &mut B::RenderPass<'a>, index: usize)
+    where
         B::RenderPass<'a>: crate::backend::GpuRenderPass<B>,
     {
         use crate::backend::GpuRenderPass;
@@ -1213,16 +1253,7 @@ mod tests {
     #[test]
     fn prepared_frame_cache_requires_exact_render_inputs() {
         let requests = vec![cache_request("same", 0.0)];
-        let cache = PreparedFrameCache::new(
-            400,
-            300,
-            false,
-            7,
-            9,
-            11,
-            &requests,
-            &[],
-        );
+        let cache = PreparedFrameCache::new(400, 300, false, 7, 9, 11, &requests, &[]);
 
         assert!(cache.matches(400, 300, false, 7, 9, 11, &requests, &[]));
         assert!(!cache.matches(
@@ -1248,9 +1279,7 @@ mod tests {
         let cache = PreparedFrameCache::new(400, 300, false, 0, 0, 0, &requests, &[]);
 
         let mut changed = cache_request("outer", 0.0);
-        changed
-            .spans
-            .push(super::RichTextSpan::new("changed"));
+        changed.spans.push(super::RichTextSpan::new("changed"));
         assert!(!cache.matches(400, 300, false, 0, 0, 0, &[changed], &[]));
     }
 
@@ -1536,7 +1565,10 @@ mod tests {
     #[test]
     fn text_instances_use_unorm_bytes_for_paint_colors() {
         assert_eq!(std::mem::size_of::<GlyphInstance>(), 84);
-        assert_eq!(GlyphInstance::ATTRIBS[3].format, wgpu::VertexFormat::Unorm8x4);
+        assert_eq!(
+            GlyphInstance::ATTRIBS[3].format,
+            wgpu::VertexFormat::Unorm8x4
+        );
         assert_eq!(
             GlyphInstance::ATTRIBS[3].offset,
             std::mem::offset_of!(GlyphInstance, color) as u64
@@ -1564,12 +1596,12 @@ mod tests {
     // `lib.rs`'s `generic_backend_tests`) because it needs direct access to
     // private fields (`atlas`, `instances`, `request_ranges`, …) to bypass the
     // full CPU text-shaping pipeline, which is out of scope for this pass.
-        #[test]
+    #[test]
     fn generic_text_pipeline_renders_opaque_glyph_quad() {
-        use aimer_utils::SyncFuture;
         use crate::backend::GpuBackend;
         use crate::backend::wgpu::WgpuBackend;
         use crate::text_pipeline::glyph_rasterizer::GlyphKey;
+        use aimer_utils::SyncFuture;
 
         const SIZE: u32 = 64;
         const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -1595,16 +1627,13 @@ mod tests {
 
         let backend = WgpuBackend::new(device, queue);
 
-        let mut pipeline =
-            super::TextPipelineV2::new(&backend, FORMAT, crate::AntiAlias::Analytic);
+        let mut pipeline = super::TextPipelineV2::new(&backend, FORMAT, crate::AntiAlias::Analytic);
 
         // Insert a fully opaque 8×8 alpha glyph into the atlas and flush it to
         // the GPU texture through the backend-driven upload path.
         let key = GlyphKey::new(1, 1, 16.0);
         let bitmap = vec![255u8; 8 * 8];
-        let region = pipeline
-            .atlas
-            .get_or_insert(&backend, key, 8, 8, &bitmap);
+        let region = pipeline.atlas.get_or_insert(&backend, key, 8, 8, &bitmap);
         pipeline.flush_atlas(&backend);
         pipeline.write_viewport(&backend, SIZE, SIZE, false);
 

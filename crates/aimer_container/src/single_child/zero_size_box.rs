@@ -34,7 +34,6 @@ impl Drawable for ZeroSizedBox {
     fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
         true
     }
-
 }
 
 impl VisitorElement for ZeroSizedBox {

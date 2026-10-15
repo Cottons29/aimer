@@ -83,6 +83,11 @@ mod tests {
 
         assert_eq!(adapted.text(), value.text());
         assert_eq!(adapted.selection(), TextSelection::collapsed(1));
-        assert_eq!(adapted.composing().map(|range| (range.start(), range.end())), Some((1, 12)));
+        assert_eq!(
+            adapted
+                .composing()
+                .map(|range| (range.start(), range.end())),
+            Some((1, 12))
+        );
     }
 }

@@ -14,8 +14,8 @@ use aimer_shape::{
 
 use crate::svg::{
     SvgColor, SvgElementKind, SvgFill, SvgGeometry, SvgGeometryCache, SvgLineCap, SvgLineJoin,
-    SvgMesh, SvgMeshStyle, SvgNode, SvgNodeId, SvgPaintOrder, SvgScene, SvgStroke, SvgTransform,
-    SvgTessellationError, SvgViewport,
+    SvgMesh, SvgMeshStyle, SvgNode, SvgNodeId, SvgPaintOrder, SvgScene, SvgStroke,
+    SvgTessellationError, SvgTransform, SvgViewport,
 };
 
 /// Renderer-side bounds used by this adapter before GPU submission.
@@ -119,7 +119,10 @@ pub fn build_scene(
         transform: svg_transform(request.transform),
         opacity: request.opacity,
         geometry: Some(0),
-        fill_rule: fill.as_ref().map(|fill| fill.rule).unwrap_or(crate::svg::SvgFillRule::NonZero),
+        fill_rule: fill
+            .as_ref()
+            .map(|fill| fill.rule)
+            .unwrap_or(crate::svg::SvgFillRule::NonZero),
         fill,
         stroke,
         fill_paint: None,
@@ -230,9 +233,11 @@ impl ShapeTessellator {
     ) -> Result<Arc<SvgMesh>, ShapeRenderError> {
         fill.validate().map_err(ShapeRenderError::Paint)?;
         let geometry = to_svg_geometry(path)?;
-        Ok(self
-            .cache
-            .mesh_for(&geometry, SvgMeshStyle::Fill(svg_fill_rule(fill.rule)), physical_scale)?)
+        Ok(self.cache.mesh_for(
+            &geometry,
+            SvgMeshStyle::Fill(svg_fill_rule(fill.rule)),
+            physical_scale,
+        )?)
     }
 
     /// Tessellates a solid stroke and reuses it when its paint geometry matches.
@@ -290,20 +295,18 @@ fn validate_request(
     {
         return Err(ShapeRenderError::InvalidViewport);
     }
-    if !request.transform.is_valid() || !request.opacity.is_finite() || !(0.0..=1.0).contains(&request.opacity) {
+    if !request.transform.is_valid()
+        || !request.opacity.is_finite()
+        || !(0.0..=1.0).contains(&request.opacity)
+    {
         return Err(ShapeRenderError::InvalidRequest);
     }
     let bounds = request.path.bounds();
     if !bounds.min.is_finite()
         || !bounds.max.is_finite()
-        || [
-            bounds.min.x,
-            bounds.min.y,
-            bounds.max.x,
-            bounds.max.y,
-        ]
-        .into_iter()
-        .any(|value| value.abs() > DEFAULT_MAX_SHAPE_SCENE_COORDINATE)
+        || [bounds.min.x, bounds.min.y, bounds.max.x, bounds.max.y]
+            .into_iter()
+            .any(|value| value.abs() > DEFAULT_MAX_SHAPE_SCENE_COORDINATE)
     {
         return Err(ShapeRenderError::InvalidRequest);
     }
@@ -471,23 +474,30 @@ mod tests {
         };
         let scene = build_scene(&request, ShapeSize::new(20.0, 20.0)).unwrap();
         assert_eq!(scene.nodes.len(), 1);
-        assert!(scene.geometries[0].commands.iter().all(|command| match command {
-            crate::svg::SvgPathCommand::MoveTo { x, y }
-            | crate::svg::SvgPathCommand::LineTo { x, y } => x.is_finite() && y.is_finite(),
-            crate::svg::SvgPathCommand::QuadraticTo { x, y, control_x, control_y } => {
-                [*x, *y, *control_x, *control_y].into_iter().all(f32::is_finite)
+        assert!(scene.geometries[0].commands.iter().all(|command| {
+            match command {
+                crate::svg::SvgPathCommand::MoveTo { x, y }
+                | crate::svg::SvgPathCommand::LineTo { x, y } => x.is_finite() && y.is_finite(),
+                crate::svg::SvgPathCommand::QuadraticTo {
+                    x,
+                    y,
+                    control_x,
+                    control_y,
+                } => [*x, *y, *control_x, *control_y]
+                    .into_iter()
+                    .all(f32::is_finite),
+                crate::svg::SvgPathCommand::CubicTo {
+                    control1_x,
+                    control1_y,
+                    control2_x,
+                    control2_y,
+                    x,
+                    y,
+                } => [*control1_x, *control1_y, *control2_x, *control2_y, *x, *y]
+                    .into_iter()
+                    .all(f32::is_finite),
+                crate::svg::SvgPathCommand::Close => true,
             }
-            crate::svg::SvgPathCommand::CubicTo {
-                control1_x,
-                control1_y,
-                control2_x,
-                control2_y,
-                x,
-                y,
-            } => [*control1_x, *control1_y, *control2_x, *control2_y, *x, *y]
-                .into_iter()
-                .all(f32::is_finite),
-            crate::svg::SvgPathCommand::Close => true,
         }));
     }
 

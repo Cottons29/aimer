@@ -4,15 +4,15 @@ pub mod render_ctx {
     use std::rc::Rc;
 
     use aimer_cupid::AntiAlias;
+    #[cfg(feature = "wgpu")]
+    use aimer_cupid::backend::wgpu::WgpuBackend;
     use aimer_cupid::canvas::CupidCanvas;
     use aimer_cupid::compositor::CompositorScene;
     use aimer_cupid::damage_region::DamageSet;
     use aimer_cupid::frame::{Frame, FramePacket, FrameRenderMetadata};
-    use aimer_cupid::renderer::Renderer;
     #[cfg(feature = "wgpu")]
     use aimer_cupid::gpu_context::GpuContext;
-    #[cfg(feature = "wgpu")]
-    use aimer_cupid::backend::wgpu::WgpuBackend;
+    use aimer_cupid::renderer::Renderer;
     #[cfg(all(feature = "web", not(feature = "wgpu")))]
     use aimer_cupid::{WebGl2Backend, WebGl2TextureFormat, WebGl2TextureView};
     #[cfg(all(feature = "web", not(feature = "wgpu")))]
@@ -24,8 +24,6 @@ pub mod render_ctx {
 
     use crate::frame_stats::{FramePhase, PhaseTimer};
     use crate::render_ctx::PresentOutcome;
-
-
 
     #[cfg(all(feature = "web", not(feature = "wgpu")))]
     enum BrowserGpuState {
@@ -116,11 +114,11 @@ pub mod render_ctx {
                 info!("Canvas created.");
             }
 
-
-
             #[cfg(all(feature = "web", not(feature = "wgpu")))]
             {
-                let canvas = window.canvas().expect("winit did not provide a browser canvas");
+                let canvas = window
+                    .canvas()
+                    .expect("winit did not provide a browser canvas");
                 let state = self.state.clone();
                 let antialiasing = self.antialiasing;
                 wasm_bindgen_futures::spawn_local(async move {
@@ -288,14 +286,7 @@ pub mod render_ctx {
             };
             let draw_list = state.canvas.take_draw_list();
             let frame = Frame::new(draw_list, width, height);
-            let metadata = FrameRenderMetadata::new(
-                scale,
-                0,
-                0,
-                0,
-                0,
-                damage,
-            );
+            let metadata = FrameRenderMetadata::new(scale, 0, 0, 0, 0, damage);
             let scene = render_plan.is_none().then(|| {
                 CompositorScene::from_draw_list(
                     &frame.draw_list,
@@ -343,8 +334,6 @@ pub mod render_ctx {
 
         fn encode(state: &mut GpuState, packet: &FramePacket) -> bool {
             let encode = PhaseTimer::start();
-
-
 
             #[cfg(all(feature = "web", not(feature = "wgpu")))]
             {
@@ -397,35 +386,32 @@ pub mod render_ctx {
 
             #[cfg(feature = "wgpu")]
             {
-            let surface = match state.gpu.begin_frame() {
-                wgpu::CurrentSurfaceTexture::Success(texture)
-                | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
-                _ => return false,
-            };
+                let surface = match state.gpu.begin_frame() {
+                    wgpu::CurrentSurfaceTexture::Success(texture)
+                    | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
+                    _ => return false,
+                };
 
-            let view = surface.texture.create_view(&Default::default());
+                let view = surface.texture.create_view(&Default::default());
 
-            state.renderer.render_packet(
-                &state.backend,
-                &view,
-                packet,
-                state.gpu.is_srgb,
-            );
-            encode.finish(FramePhase::Encode);
+                state
+                    .renderer
+                    .render_packet(&state.backend, &view, packet, state.gpu.is_srgb);
+                encode.finish(FramePhase::Encode);
 
-            // A frame prepares text beyond the viewport edges so a line is
-            // ready before it scrolls in, and stops when its budget runs out.
-            // What it stopped short of is invisible, so this frame is correct
-            // as it stands — but nothing else will ask for the rest, and the
-            // arrival frame would pay for it. One more frame finishes it while
-            // the user is still reading.
-            if state.renderer.has_postponed_text_preparation() {
-                aimer_events::window::request_animation_frame();
-            }
+                // A frame prepares text beyond the viewport edges so a line is
+                // ready before it scrolls in, and stops when its budget runs out.
+                // What it stopped short of is invisible, so this frame is correct
+                // as it stands — but nothing else will ask for the rest, and the
+                // arrival frame would pay for it. One more frame finishes it while
+                // the user is still reading.
+                if state.renderer.has_postponed_text_preparation() {
+                    aimer_events::window::request_animation_frame();
+                }
 
-            let present = PhaseTimer::start();
-            state.gpu.end_frame(surface);
-            present.finish(FramePhase::Present);
+                let present = PhaseTimer::start();
+                state.gpu.end_frame(surface);
+                present.finish(FramePhase::Present);
             }
 
             true

@@ -366,10 +366,7 @@ fn native_window(window: &Window) -> Option<objc2::rc::Retained<objc2_app_kit::N
 }
 
 #[cfg(target_os = "macos")]
-fn apply_traffic_light_position(
-    window: &objc2_app_kit::NSWindow,
-    position: TrafficLightPosition,
-) {
+fn apply_traffic_light_position(window: &objc2_app_kit::NSWindow, position: TrafficLightPosition) {
     use objc2_app_kit::NSWindowButton;
     use objc2_foundation::NSPoint;
 

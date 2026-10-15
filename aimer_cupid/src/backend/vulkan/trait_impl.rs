@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use ash::vk;
 
-use super::*;
 use super::commands::{self, VulkanCommandEncoder, VulkanRenderPass};
+use super::*;
 
 impl Drop for VulkanBufferInner {
     fn drop(&mut self) {
@@ -33,7 +33,11 @@ impl Drop for VulkanSamplerInner {
 
 impl Drop for VulkanBindGroupLayoutInner {
     fn drop(&mut self) {
-        unsafe { self.core.device.destroy_descriptor_set_layout(self.raw, None) };
+        unsafe {
+            self.core
+                .device
+                .destroy_descriptor_set_layout(self.raw, None)
+        };
     }
 }
 
@@ -75,9 +79,13 @@ impl GpuBackend for VulkanBackend {
     type TextureFormat = vk::Format;
     type RenderPass<'a> = VulkanRenderPass<'a>;
 
-    fn r8_unorm_format() -> Self::TextureFormat { vk::Format::R8_UNORM }
+    fn r8_unorm_format() -> Self::TextureFormat {
+        vk::Format::R8_UNORM
+    }
 
-    fn rgba8_unorm_format() -> Self::TextureFormat { vk::Format::R8G8B8A8_UNORM }
+    fn rgba8_unorm_format() -> Self::TextureFormat {
+        vk::Format::R8G8B8A8_UNORM
+    }
 
     fn rect_shader_source(&self) -> &'static [u8] {
         include_bytes!("../../pipeline/shaders/vulkan/rect.spv")
@@ -87,26 +95,41 @@ impl GpuBackend for VulkanBackend {
         match shader {
             BuiltinShader::Image => {
                 #[cfg(target_os = "android")]
-                { include_bytes!("../../pipeline/shaders/vulkan/image.android.spv") }
+                {
+                    include_bytes!("../../pipeline/shaders/vulkan/image.android.spv")
+                }
                 #[cfg(not(target_os = "android"))]
-                { include_bytes!("../../pipeline/shaders/vulkan/image.spv") }
+                {
+                    include_bytes!("../../pipeline/shaders/vulkan/image.spv")
+                }
             }
             BuiltinShader::Text => include_bytes!("../../pipeline/shaders/vulkan/text.spv"),
-            BuiltinShader::TextColor => include_bytes!("../../pipeline/shaders/vulkan/text_color.spv"),
-            BuiltinShader::TextDecoration => include_bytes!("../../pipeline/shaders/vulkan/text_decoration.spv"),
+            BuiltinShader::TextColor => {
+                include_bytes!("../../pipeline/shaders/vulkan/text_color.spv")
+            }
+            BuiltinShader::TextDecoration => {
+                include_bytes!("../../pipeline/shaders/vulkan/text_decoration.spv")
+            }
             BuiltinShader::Svg => {
                 #[cfg(target_os = "android")]
-                { include_bytes!("../../pipeline/shaders/vulkan/svg.android.spv") }
+                {
+                    include_bytes!("../../pipeline/shaders/vulkan/svg.android.spv")
+                }
                 #[cfg(not(target_os = "android"))]
-                { include_bytes!("../../pipeline/shaders/vulkan/svg.spv") }
+                {
+                    include_bytes!("../../pipeline/shaders/vulkan/svg.spv")
+                }
             }
-            BuiltinShader::FrameComposite => include_bytes!("../../pipeline/shaders/vulkan/frame_composite.spv"),
+            BuiltinShader::FrameComposite => {
+                include_bytes!("../../pipeline/shaders/vulkan/frame_composite.spv")
+            }
             BuiltinShader::Material => include_bytes!("../../pipeline/shaders/vulkan/material.spv"),
         }
     }
 
     fn create_shader_module(&self, source: &[u8], label: &str) -> Self::ShaderModule {
-        self.try_create_shader_module(source, label).unwrap_or_else(|error| panic!("{error}"))
+        self.try_create_shader_module(source, label)
+            .unwrap_or_else(|error| panic!("{error}"))
     }
 
     fn try_create_shader_module(
@@ -120,7 +143,8 @@ impl GpuBackend for VulkanBackend {
                 message: format!("{label} is not a complete SPIR-V module"),
             });
         }
-        let words: Vec<u32> = source.chunks_exact(4)
+        let words: Vec<u32> = source
+            .chunks_exact(4)
             .map(|word| u32::from_le_bytes([word[0], word[1], word[2], word[3]]))
             .collect();
         if words.first().copied() != Some(0x0723_0203) {
@@ -130,11 +154,16 @@ impl GpuBackend for VulkanBackend {
             });
         }
         let create_info = vk::ShaderModuleCreateInfo::default().code(&words);
-        let raw = unsafe { self.shared.core.device.create_shader_module(&create_info, None) }
-            .map_err(|error| BackendError {
-                operation: "create_shader_module",
-                message: format!("{label}: {error:?}"),
-            })?;
+        let raw = unsafe {
+            self.shared
+                .core
+                .device
+                .create_shader_module(&create_info, None)
+        }
+        .map_err(|error| BackendError {
+            operation: "create_shader_module",
+            message: format!("{label}: {error:?}"),
+        })?;
         Ok(VulkanShaderModule(Arc::new(VulkanShaderModuleInner {
             core: self.shared.core.clone(),
             raw,
@@ -166,10 +195,17 @@ impl GpuBackend for VulkanBackend {
                 base_mip_level: 0,
                 level_count: vk::REMAINING_MIP_LEVELS,
                 base_array_layer: 0,
-                layer_count: if texture.0.dimension == TextureDimension::D3 { 1 } else { vk::REMAINING_ARRAY_LAYERS },
+                layer_count: if texture.0.dimension == TextureDimension::D3 {
+                    1
+                } else {
+                    vk::REMAINING_ARRAY_LAYERS
+                },
             });
         let raw = unsafe {
-            self.shared.core.device.create_image_view(&create_info, None)
+            self.shared
+                .core
+                .device
+                .create_image_view(&create_info, None)
                 .expect("create Vulkan image view")
         };
         VulkanTextureView(Arc::new(VulkanTextureViewInner {
@@ -199,8 +235,12 @@ impl GpuBackend for VulkanBackend {
         pipeline::create_pipeline_layout(&self.shared.core, layouts)
     }
 
-    fn create_render_pipeline(&self, desc: &RenderPipelineDescriptor<Self>) -> Self::RenderPipeline {
-        self.try_create_render_pipeline(desc).unwrap_or_else(|error| panic!("{error}"))
+    fn create_render_pipeline(
+        &self,
+        desc: &RenderPipelineDescriptor<Self>,
+    ) -> Self::RenderPipeline {
+        self.try_create_render_pipeline(desc)
+            .unwrap_or_else(|error| panic!("{error}"))
     }
 
     fn try_create_render_pipeline(
@@ -211,38 +251,74 @@ impl GpuBackend for VulkanBackend {
     }
 
     fn write_buffer(&self, buffer: &Self::Buffer, offset: u64, data: &[u8]) {
-        assert!(offset.saturating_add(data.len() as u64) <= buffer.0.size, "Vulkan buffer write is out of bounds");
-        if data.is_empty() { return; }
+        assert!(
+            offset.saturating_add(data.len() as u64) <= buffer.0.size,
+            "Vulkan buffer write is out of bounds"
+        );
+        if data.is_empty() {
+            return;
+        }
         let staging = self.create_upload_buffer(data);
-        self.pending_buffers.lock().expect("Vulkan pending upload mutex is not poisoned")
-            .push(commands::PendingBufferUpload { staging, destination: (*buffer).clone(), offset });
+        self.pending_buffers
+            .lock()
+            .expect("Vulkan pending upload mutex is not poisoned")
+            .push(commands::PendingBufferUpload {
+                staging,
+                destination: (*buffer).clone(),
+                offset,
+            });
     }
 
     fn write_texture(&self, desc: &WriteTextureDescriptor<Self>) {
-        if desc.extent.width == 0 || desc.extent.height == 0 || desc.extent.depth_or_array_layers == 0 {
+        if desc.extent.width == 0
+            || desc.extent.height == 0
+            || desc.extent.depth_or_array_layers == 0
+        {
             return;
         }
         let texel_size = texel_size(desc.texture.0.format);
         let tight_row = desc.extent.width as usize * texel_size;
-        let source_stride = desc.buffer_layout.bytes_per_row.map(|value| value as usize).unwrap_or(tight_row);
-        assert!(source_stride >= tight_row, "Vulkan texture upload row is shorter than its extent");
-        let input_rows = desc.buffer_layout.rows_per_image.map(|value| value as usize).unwrap_or(desc.extent.height as usize);
-        assert!(input_rows >= desc.extent.height as usize, "Vulkan texture upload image height is shorter than its extent");
+        let source_stride = desc
+            .buffer_layout
+            .bytes_per_row
+            .map(|value| value as usize)
+            .unwrap_or(tight_row);
+        assert!(
+            source_stride >= tight_row,
+            "Vulkan texture upload row is shorter than its extent"
+        );
+        let input_rows = desc
+            .buffer_layout
+            .rows_per_image
+            .map(|value| value as usize)
+            .unwrap_or(desc.extent.height as usize);
+        assert!(
+            input_rows >= desc.extent.height as usize,
+            "Vulkan texture upload image height is shorter than its extent"
+        );
         let row_stride = align_up(source_stride as u64, texel_size.max(4) as u64) as usize;
         let image_stride = row_stride.saturating_mul(input_rows);
-        let mut bytes = vec![0; image_stride.saturating_mul(desc.extent.depth_or_array_layers as usize)];
+        let mut bytes =
+            vec![0; image_stride.saturating_mul(desc.extent.depth_or_array_layers as usize)];
         for layer in 0..desc.extent.depth_or_array_layers as usize {
             for row in 0..desc.extent.height as usize {
-                let src_offset = desc.buffer_layout.offset as usize + layer * input_rows * source_stride + row * source_stride;
+                let src_offset = desc.buffer_layout.offset as usize
+                    + layer * input_rows * source_stride
+                    + row * source_stride;
                 let dst_offset = layer * image_stride + row * row_stride;
-                let src = desc.data.get(src_offset..src_offset.saturating_add(tight_row))
+                let src = desc
+                    .data
+                    .get(src_offset..src_offset.saturating_add(tight_row))
                     .expect("Vulkan texture upload data is shorter than its declared layout");
                 bytes[dst_offset..dst_offset + tight_row].copy_from_slice(src);
             }
         }
         let staging = self.create_upload_buffer(&bytes);
-        let row_length = u32::try_from(row_stride / texel_size).expect("Vulkan texture row length fits u32");
-        self.pending_textures.lock().expect("Vulkan pending upload mutex is not poisoned")
+        let row_length =
+            u32::try_from(row_stride / texel_size).expect("Vulkan texture row length fits u32");
+        self.pending_textures
+            .lock()
+            .expect("Vulkan pending upload mutex is not poisoned")
             .push(commands::PendingTextureUpload {
                 staging,
                 destination: (*desc.texture).clone(),
@@ -256,8 +332,18 @@ impl GpuBackend for VulkanBackend {
     }
 
     fn create_command_encoder(&self, label: &str) -> Self::CommandEncoder {
-        let buffers = std::mem::take(&mut *self.pending_buffers.lock().expect("Vulkan pending upload mutex is not poisoned"));
-        let textures = std::mem::take(&mut *self.pending_textures.lock().expect("Vulkan pending upload mutex is not poisoned"));
+        let buffers = std::mem::take(
+            &mut *self
+                .pending_buffers
+                .lock()
+                .expect("Vulkan pending upload mutex is not poisoned"),
+        );
+        let textures = std::mem::take(
+            &mut *self
+                .pending_textures
+                .lock()
+                .expect("Vulkan pending upload mutex is not poisoned"),
+        );
         VulkanCommandEncoder::new(self.shared.clone(), label, buffers, textures)
     }
 
@@ -301,14 +387,30 @@ impl GpuBackend for VulkanBackend {
 
     fn read_buffer(&self, buffer: &Self::Buffer, size: u64) -> Vec<u8> {
         self.flush_pending_uploads();
-        unsafe { self.shared.core.device.device_wait_idle().expect("wait for Vulkan readback") };
+        unsafe {
+            self.shared
+                .core
+                .device
+                .device_wait_idle()
+                .expect("wait for Vulkan readback")
+        };
         commands::collect_all(&self.shared);
         buffer.0.allocation.read(size.min(buffer.0.size))
     }
 
     fn submit(&self, encoder: Self::CommandEncoder) {
-        let buffers = std::mem::take(&mut *self.pending_buffers.lock().expect("Vulkan pending upload mutex is not poisoned"));
-        let textures = std::mem::take(&mut *self.pending_textures.lock().expect("Vulkan pending upload mutex is not poisoned"));
+        let buffers = std::mem::take(
+            &mut *self
+                .pending_buffers
+                .lock()
+                .expect("Vulkan pending upload mutex is not poisoned"),
+        );
+        let textures = std::mem::take(
+            &mut *self
+                .pending_textures
+                .lock()
+                .expect("Vulkan pending upload mutex is not poisoned"),
+        );
         if buffers.is_empty() && textures.is_empty() {
             encoder.submit();
         } else {
@@ -325,7 +427,13 @@ impl GpuBackend for VulkanBackend {
     fn limits(&self) -> GpuLimits {
         GpuLimits {
             max_texture_dimension_2d: self.shared.core.properties.limits.max_image_dimension2_d,
-            min_uniform_buffer_offset_alignment: self.shared.core.properties.limits.min_uniform_buffer_offset_alignment as u32,
+            min_uniform_buffer_offset_alignment: self
+                .shared
+                .core
+                .properties
+                .limits
+                .min_uniform_buffer_offset_alignment
+                as u32,
         }
     }
 
@@ -336,10 +444,28 @@ impl GpuBackend for VulkanBackend {
 
 impl VulkanBackend {
     fn flush_pending_uploads(&self) {
-        let buffers = std::mem::take(&mut *self.pending_buffers.lock().expect("Vulkan pending upload mutex is not poisoned"));
-        let textures = std::mem::take(&mut *self.pending_textures.lock().expect("Vulkan pending upload mutex is not poisoned"));
-        if buffers.is_empty() && textures.is_empty() { return; }
-        VulkanCommandEncoder::new(self.shared.clone(), "Cupid Vulkan readback uploads", buffers, textures).submit();
+        let buffers = std::mem::take(
+            &mut *self
+                .pending_buffers
+                .lock()
+                .expect("Vulkan pending upload mutex is not poisoned"),
+        );
+        let textures = std::mem::take(
+            &mut *self
+                .pending_textures
+                .lock()
+                .expect("Vulkan pending upload mutex is not poisoned"),
+        );
+        if buffers.is_empty() && textures.is_empty() {
+            return;
+        }
+        VulkanCommandEncoder::new(
+            self.shared.clone(),
+            "Cupid Vulkan readback uploads",
+            buffers,
+            textures,
+        )
+        .submit();
     }
 }
 
@@ -359,9 +485,9 @@ fn align_up(value: u64, alignment: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::damage_region::DamageSet;
     use crate::draw_cmd::DrawList;
     use crate::draw_cmd_v2::{DrawCommand as V2DrawCommand, RenderFrame, RenderNodeId, RenderTree};
-    use crate::damage_region::DamageSet;
     use crate::frame::{Frame, FramePacket, FrameRenderMetadata};
     use crate::renderer::RendererImpl;
     use crate::utilities::{Color, Rect, Vec2d};
@@ -374,7 +500,8 @@ mod tests {
             eprintln!("skipping: no Vulkan graphics device is available");
             return;
         };
-        let mut renderer = RendererImpl::<VulkanBackend>::new(&backend, VulkanBackend::rgba8_unorm_format());
+        let mut renderer =
+            RendererImpl::<VulkanBackend>::new(&backend, VulkanBackend::rgba8_unorm_format());
         let mut draw = DrawList::new();
         draw.fill_rect(
             Rect::new(0.0, 0.0, SIZE as f32, SIZE as f32),
@@ -397,8 +524,16 @@ mod tests {
 
         let pixels = read_target(&backend, &target, SIZE, SIZE);
         let center = ((SIZE / 2 * SIZE + SIZE / 2) * 4) as usize;
-        let colored_pixels = pixels.chunks_exact(4).filter(|pixel| pixel.iter().any(|channel| *channel != 0)).count();
-        assert_eq!(&pixels[center..center + 4], &[255, 0, 0, 255], "non-clear pixel count: {colored_pixels}; corner: {:?}", &pixels[..4]);
+        let colored_pixels = pixels
+            .chunks_exact(4)
+            .filter(|pixel| pixel.iter().any(|channel| *channel != 0))
+            .count();
+        assert_eq!(
+            &pixels[center..center + 4],
+            &[255, 0, 0, 255],
+            "non-clear pixel count: {colored_pixels}; corner: {:?}",
+            &pixels[..4]
+        );
     }
 
     #[test]
@@ -408,10 +543,8 @@ mod tests {
             eprintln!("skipping: no Vulkan graphics device is available");
             return;
         };
-        let mut renderer = RendererImpl::<VulkanBackend>::new(
-            &backend,
-            VulkanBackend::rgba8_unorm_format(),
-        );
+        let mut renderer =
+            RendererImpl::<VulkanBackend>::new(&backend, VulkanBackend::rgba8_unorm_format());
         let target = create_target(&backend, SIZE, SIZE);
         let view = backend.create_texture_view(&target, "Cupid Vulkan opacity-group target");
         let tree = RenderTree::new();
@@ -452,9 +585,7 @@ mod tests {
             Color::rgba8(255, 255, 0, 255),
         );
 
-        let metadata = || {
-            FrameRenderMetadata::new(1.0, 401, 1, 1, 1, DamageSet::new(SIZE, SIZE))
-        };
+        let metadata = || FrameRenderMetadata::new(1.0, 401, 1, 1, 1, DamageSet::new(SIZE, SIZE));
         let first_packet = FramePacket::from_v2_direct(
             RenderFrame {
                 damage: vec![Rect::new(0.0, 0.0, SIZE as f32, SIZE as f32)],
@@ -472,10 +603,13 @@ mod tests {
 
         tree.set_opacity(edge_group, 0.25).unwrap();
         let edge_damage = tree.take_damage();
-        assert!(edge_damage.iter().any(|rect| {
-            (rect.x + rect.width - SIZE as f32).abs() < f32::EPSILON
-                && (rect.y + rect.height - SIZE as f32).abs() < f32::EPSILON
-        }), "edge-group damage reaches both target edges: {edge_damage:?}");
+        assert!(
+            edge_damage.iter().any(|rect| {
+                (rect.x + rect.width - SIZE as f32).abs() < f32::EPSILON
+                    && (rect.y + rect.height - SIZE as f32).abs() < f32::EPSILON
+            }),
+            "edge-group damage reaches both target edges: {edge_damage:?}"
+        );
         let update_packet = FramePacket::from_v2_direct_with_frame(
             RenderFrame {
                 damage: edge_damage,
@@ -532,14 +666,24 @@ mod tests {
             eprintln!("skipping: no Vulkan graphics device is available");
             return;
         };
-        let mut renderer = RendererImpl::<VulkanBackend>::new(&backend, VulkanBackend::rgba8_unorm_format());
+        let mut renderer =
+            RendererImpl::<VulkanBackend>::new(&backend, VulkanBackend::rgba8_unorm_format());
         let mut draw = DrawList::new();
         let blue = [0, 0, 255, 255];
         let texture = draw.load_image(&blue.repeat(4), 2, 2);
         draw.draw_image(Rect::new(0.0, 0.0, 24.0, 24.0), texture);
-        draw.draw_text(Vec2d::new(32.0, 40.0), Arc::from("A"), 22.0, Color::white(), 400);
+        draw.draw_text(
+            Vec2d::new(32.0, 40.0),
+            Arc::from("A"),
+            22.0,
+            Color::white(),
+            400,
+        );
         let svg_scene = Arc::new(crate::svg::SvgScene {
-            viewport: crate::svg::SvgViewport { width: 10.0, height: 10.0 },
+            viewport: crate::svg::SvgViewport {
+                width: 10.0,
+                height: 10.0,
+            },
             nodes: Arc::new([crate::svg::SvgNode {
                 node_id: crate::svg::SvgNodeId(0),
                 svg_id: None,
@@ -611,7 +755,8 @@ mod tests {
             VulkanBackend::rgba8_unorm_format(),
             crate::AntiAlias::Analytic,
         );
-        let request = MaterialRequest::new(MaterialKind::Glass, [0.0, 0.0, SIZE as f32, SIZE as f32]);
+        let request =
+            MaterialRequest::new(MaterialKind::Glass, [0.0, 0.0, SIZE as f32, SIZE as f32]);
         pipeline.begin_frame();
         pipeline.prepare_command(&request as &(dyn Any + Send));
         let context = crate::custom_pipeline::RenderContextGeneric {
@@ -664,7 +809,12 @@ mod tests {
         })
     }
 
-    fn read_target(backend: &VulkanBackend, target: &VulkanTexture, width: u32, height: u32) -> Vec<u8> {
+    fn read_target(
+        backend: &VulkanBackend,
+        target: &VulkanTexture,
+        width: u32,
+        height: u32,
+    ) -> Vec<u8> {
         let row_bytes = width * 4;
         let readback = backend.create_buffer(&BufferDescriptor {
             label: Some("Cupid Vulkan readback test buffer".to_string()),
@@ -688,7 +838,11 @@ mod tests {
                     rows_per_image: Some(height),
                 },
             },
-            Extent3d { width, height, depth_or_array_layers: 1 },
+            Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
         );
         backend.submit(encoder);
         backend.read_buffer(&readback, (row_bytes * height) as u64)

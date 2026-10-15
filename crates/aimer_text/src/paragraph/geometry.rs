@@ -351,12 +351,14 @@ mod tests {
 
     #[test]
     fn italic_only_decoration_has_no_stroke_geometry() {
-        assert!(prepare_decoration_paint(
-            TextDecoration::new().line(TextDecorationLine::ITALIC),
-            16.0,
-            1.0,
-        )
-        .is_none());
+        assert!(
+            prepare_decoration_paint(
+                TextDecoration::new().line(TextDecorationLine::ITALIC),
+                16.0,
+                1.0,
+            )
+            .is_none()
+        );
     }
 
     #[test]
