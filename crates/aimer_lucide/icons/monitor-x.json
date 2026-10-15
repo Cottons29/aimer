@@ -1,0 +1,32 @@
+{
+  "$schema": "../icon.schema.json",
+  "contributors": [
+    "danielbayley",
+    "jguddas",
+    "karsa-mistmere"
+  ],
+  "use-cases": [],
+  "tags": [
+    "tv",
+    "computer",
+    "screen",
+    "display",
+    "desktop",
+    "external display",
+    "screen sharing",
+    "virtual machine",
+    "vm",
+    "close",
+    "error",
+    "failed",
+    "disconnected",
+    "stop",
+    "suspend",
+    "remove",
+    "delete"
+  ],
+  "categories": [
+    "connectivity",
+    "devices"
+  ]
+}

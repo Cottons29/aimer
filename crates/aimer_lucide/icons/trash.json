@@ -1,0 +1,37 @@
+{
+  "$schema": "../icon.schema.json",
+  "contributors": [
+    "colebemis",
+    "csandman",
+    "ericfennis",
+    "karsa-mistmere"
+  ],
+  "use-cases": [],
+  "tags": [
+    "empty",
+    "deletion",
+    "cleanup",
+    "junk",
+    "clear",
+    "garbage",
+    "delete",
+    "remove",
+    "bin",
+    "waste",
+    "recycle",
+    "discard",
+    "binoculars",
+    "rubbish"
+  ],
+  "categories": [
+    "files",
+    "mail"
+  ],
+  "aliases": [
+    {
+      "name": "trash-2",
+      "deprecated": true,
+      "deprecationReason": "alias.duplicate"
+    }
+  ]
+}

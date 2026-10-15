@@ -1,0 +1,38 @@
+{
+  "$schema": "../icon.schema.json",
+  "contributors": [
+    "danielbayley",
+    "jguddas"
+  ],
+  "use-cases": [],
+  "tags": [
+    "mode",
+    "overlay",
+    "multiply",
+    "screen",
+    "opacity",
+    "transparency",
+    "alpha",
+    "filters",
+    "lenses",
+    "mixed",
+    "shades",
+    "tints",
+    "hues",
+    "saturation",
+    "brightness",
+    "overlap",
+    "colors",
+    "colours",
+    "marriage",
+    "rings",
+    "couple",
+    "connection"
+  ],
+  "categories": [
+    "design",
+    "photography",
+    "tools",
+    "development"
+  ]
+}

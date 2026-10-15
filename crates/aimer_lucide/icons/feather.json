@@ -1,0 +1,35 @@
+{
+  "$schema": "../icon.schema.json",
+  "contributors": [
+    "colebemis",
+    "csandman",
+    "ericfennis",
+    "karsa-mistmere"
+  ],
+  "use-cases": [
+    "Representing writing, authorship, or creative composition",
+    "Representing literature, poetry, publishing, or editorial content",
+    "Representing quills, manuscripts, or historical writing",
+    "Representing birds, plumage, wildlife, or nature",
+    "Representing lightness, softness, delicacy, or weight"
+  ],
+  "tags": [
+    "quill",
+    "plume",
+    "writing",
+    "author",
+    "literature",
+    "poetry",
+    "manuscript",
+    "bird",
+    "plumage",
+    "lightweight",
+    "soft"
+  ],
+  "categories": [
+    "nature",
+    "animals",
+    "gaming",
+    "text"
+  ]
+}

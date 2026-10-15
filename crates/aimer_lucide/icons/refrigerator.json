@@ -1,0 +1,19 @@
+{
+  "$schema": "../icon.schema.json",
+  "contributors": [
+    "karsa-mistmere"
+  ],
+  "use-cases": [],
+  "tags": [
+    "fridge",
+    "freezer",
+    "cooler",
+    "icebox",
+    "chiller",
+    "cold storage"
+  ],
+  "categories": [
+    "food-beverage",
+    "home"
+  ]
+}

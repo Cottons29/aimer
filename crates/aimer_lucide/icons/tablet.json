@@ -1,0 +1,23 @@
+{
+  "$schema": "../icon.schema.json",
+  "contributors": [
+    "colebemis",
+    "ericfennis"
+  ],
+  "use-cases": [
+    "Representing tablet devices in responsive layouts",
+    "Showing touch-based interfaces on larger mobile screens"
+  ],
+  "tags": [
+    "device",
+    "mobile",
+    "screen",
+    "display",
+    "touchscreen",
+    "portable",
+    "responsive"
+  ],
+  "categories": [
+    "devices"
+  ]
+}
