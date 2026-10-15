@@ -15,7 +15,7 @@
 
 use std::time::{Duration, Instant};
 
-use aimer::animation::{AnimatedBuilder, AnimationController, Curve, RotationTransition};
+use aimer::animation::{AnimatedBuilder, AnimationController, curves, RotationTransition};
 use aimer::quiver::winit::dpi::PhysicalSize;
 use aimer::style::{FontWeight, TextAlign, TextStyle};
 use aimer::{
@@ -37,9 +37,9 @@ fn measured_frames() -> usize {
 }
 
 fn page() -> impl Widget {
-    let controller = AnimationController::new(Duration::from_millis(1500), Curve::Linear);
+    let controller = AnimationController::new(Duration::from_millis(1500), curves::LINEAR);
     controller.set_repeat(true);
-    controller.set_curve(Curve::EaseInOut);
+    controller.set_curve(curves::EASE_IN_OUT);
     controller.forward_from_first_tick();
     let icon = Svg::new(
         SvgDocument::from_svg(include_bytes!(
@@ -78,7 +78,7 @@ fn page() -> impl Widget {
 /// A repeating `AnimatedBuilder` above a few hundred static rows: the shape of
 /// a build-driven animation inside a real page. Used with an external sampler.
 fn builder_page(calls: Rc<std::cell::Cell<usize>>) -> impl Widget {
-    let controller = AnimationController::new(Duration::from_millis(1500), Curve::Linear);
+    let controller = AnimationController::new(Duration::from_millis(1500), curves::LINEAR);
     controller.set_repeat(true);
     controller.forward_from_first_tick();
     let animated = AnimatedBuilder::new(controller, move |progress| {

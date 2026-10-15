@@ -20,7 +20,7 @@ use std::hint::black_box;
 use std::time::Instant;
 
 use aimer::animation::{
-    Animated, AnimatedBuilder, AnimatedPaint, AnimationController, AnimationEffect, Curve,
+    Animated, AnimatedBuilder, AnimatedPaint, AnimationController, AnimationEffect, curves,
 };
 use aimer::events::element::{ElementEvent, KeyAction, Modifiers, NamedKey};
 use aimer::events::pointer::{PointerButton, PointerInfo};
@@ -160,7 +160,7 @@ fn animated_row(index: usize, value: f32) -> AnyWidget {
 }
 
 fn animated_column(count: usize) -> AnyWidget {
-    let controller = AnimationController::with_millis(1_000, Curve::Linear);
+    let controller = AnimationController::with_millis(1_000, curves::LINEAR);
     controller.forward_from_first_tick();
     AnimatedBuilder::new(controller, move |value| {
         Column::new()
@@ -174,7 +174,7 @@ fn animated_column(count: usize) -> AnyWidget {
 /// the animation measurement. The controller, animation element, and one-child
 /// reconciliation still run through the production frame path.
 fn animated_probe() -> AnyWidget {
-    let controller = AnimationController::with_millis(1_000, Curve::Linear);
+    let controller = AnimationController::with_millis(1_000, curves::LINEAR);
     controller.forward_from_first_tick();
     AnimatedBuilder::new(controller, |_value| SizedBox::new().width(1.0).height(1.0)).boxed()
 }
@@ -182,7 +182,7 @@ fn animated_probe() -> AnyWidget {
 /// A retained opacity wrapper around one stable child. The controller is
 /// sampled during synchronization, and the child element is never rebuilt.
 fn retained_paint_probe() -> AnyWidget {
-    let controller = AnimationController::with_millis(1_000, Curve::Linear);
+    let controller = AnimationController::with_millis(1_000, curves::LINEAR);
     controller.forward_from_first_tick();
     AnimatedPaint::new(controller, SizedBox::new().width(1.0).height(1.0))
         .opacity()
@@ -190,7 +190,7 @@ fn retained_paint_probe() -> AnyWidget {
 }
 
 fn retained_paint_column(count: usize) -> AnyWidget {
-    let controller = AnimationController::with_millis(1_000, Curve::Linear);
+    let controller = AnimationController::with_millis(1_000, curves::LINEAR);
     controller.forward_from_first_tick();
     AnimatedPaint::new(controller, stable_column(count))
         .opacity()
@@ -200,7 +200,7 @@ fn retained_paint_column(count: usize) -> AnyWidget {
 /// A fixed visual animation whose stable child can be retained while opacity
 /// is updated in the compositor scene.
 fn compositor_animation_probe() -> AnyWidget {
-    let controller = AnimationController::with_millis(1_000, Curve::Linear);
+    let controller = AnimationController::with_millis(1_000, curves::LINEAR);
     controller.forward_from_first_tick();
     Animated::new(
         controller,
@@ -211,7 +211,7 @@ fn compositor_animation_probe() -> AnyWidget {
 }
 
 fn compositor_animation_column(count: usize) -> AnyWidget {
-    let controller = AnimationController::with_millis(1_000, Curve::Linear);
+    let controller = AnimationController::with_millis(1_000, curves::LINEAR);
     controller.forward_from_first_tick();
     Animated::new(
         controller,

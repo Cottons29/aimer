@@ -437,6 +437,7 @@ pub(crate) fn lower_retained_v2_commands(
     let origin_transform = Mat3::scale(scale, scale)
         .mul(&item.transform)
         .mul(&Mat3::translate(item.origin.0, item.origin.1));
+    let text_scale = scale * node_text_scale(&item.transform);
     let mut output = LegacyDrawList::new();
     output.save();
     if let Some(clip) = item.clip {
@@ -462,7 +463,7 @@ pub(crate) fn lower_retained_v2_commands(
             V2DrawCommand::DrawImageWithResource { rect, resource } => {
                 output.draw_image_with_resource(rect, resource);
             }
-            command => output.push(lower_command(command, origin_transform, scale)),
+            command => output.push(lower_command(command, origin_transform, text_scale)),
         }
     }
 
@@ -475,6 +476,32 @@ pub(crate) fn lower_retained_v2_commands(
     Ok(output.take_commands_for_composition())
 }
 
+/// The factor by which a node's transform enlarges glyphs.
+///
+/// The renderer maps a text request's position through the current transform
+/// but takes its font size and layout bounds as given, so a scaled node has to
+/// scale them before lowering. A uniform scale is exact; a non-uniform one
+/// (a stretching transition) cannot be expressed by a glyph, so the geometric
+/// mean keeps the text proportional to the area it occupies. A degenerate
+/// transform (zero, negative or non-finite scale) leaves the text unscaled
+/// rather than collapsing it. Returns exactly `1.0` for a pure translation, so
+/// unscaled nodes lower to the same sizes as before.
+#[inline]
+fn node_text_scale(transform: &Mat3) -> f32 {
+    let x = transform.cols[0][0].hypot(transform.cols[0][1]);
+    let y = transform.cols[1][0].hypot(transform.cols[1][1]);
+    let scale = (x * y).sqrt();
+    if scale.is_finite() && scale > 0.0 && transform.cols[0][0] * transform.cols[1][1]
+        - transform.cols[0][1] * transform.cols[1][0] > 0.0
+    {
+        scale
+    } else {
+        1.0
+    }
+}
+
+/// Lowers one retained command. `scale` converts logical to device pixels for
+/// text; the renderer applies `origin` to positions and geometry itself.
 fn lower_command(command: V2DrawCommand, origin: Mat3, scale: f32) -> LegacyDrawCommand {
     match command {
         V2DrawCommand::FillRect {
@@ -621,6 +648,9 @@ fn lower_command(command: V2DrawCommand, origin: Mat3, scale: f32) -> LegacyDraw
 
 #[cfg(test)]
 mod rounded_clip_tests;
+
+#[cfg(test)]
+mod text_scale_tests;
 
 #[cfg(test)]
 mod tests {

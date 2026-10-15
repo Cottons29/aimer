@@ -3,6 +3,12 @@
 //! The parser intentionally converts source documents to Cupid's own path and
 //! scene types. GPU rendering and path tessellation operate on those types.
 
+#[cfg(test)]
+mod icon_tests;
+
+mod shapes;
+use shapes::element_path;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -97,6 +103,11 @@ impl std::error::Error for SvgParseError {}
 
 #[derive(Clone)]
 struct Style {
+    color: SvgColor,
+    fill_current_color: bool,
+    stroke_current_color: bool,
+    fill_opacity: f32,
+    stroke_opacity: f32,
     fill: Option<SvgColor>,
     stroke: Option<SvgColor>,
     stroke_width: f32,
@@ -113,6 +124,11 @@ struct Style {
 impl Default for Style {
     fn default() -> Self {
         Self {
+            color: SvgColor::rgba8(0, 0, 0, 255),
+            fill_current_color: false,
+            stroke_current_color: false,
+            fill_opacity: 1.0,
+            stroke_opacity: 1.0,
             fill: Some(SvgColor::rgba8(0, 0, 0, 255)),
             stroke: None,
             stroke_width: 1.0,
@@ -125,6 +141,16 @@ impl Default for Style {
             mask: None,
             filter: None,
         }
+    }
+}
+
+impl Style {
+    fn fill_color(&self) -> Option<SvgColor> {
+        self.fill.map(|mut color| { color.a *= self.fill_opacity; color })
+    }
+
+    fn stroke_color(&self) -> Option<SvgColor> {
+        self.stroke.map(|mut color| { color.a *= self.stroke_opacity; color })
     }
 }
 
@@ -484,11 +510,11 @@ pub fn parse_svg_document(bytes: impl AsRef<[u8]>) -> Result<SvgParsedDocument, 
                 opacity: style.opacity,
                 geometry: None,
                 fill_rule: style.fill_rule,
-                fill: style.fill.map(|color| SvgFill {
+                fill: style.fill_color().map(|color| SvgFill {
                     color,
                     rule: style.fill_rule,
                 }),
-                stroke: style.stroke.map(|color| SvgStroke {
+                stroke: style.stroke_color().map(|color| SvgStroke {
                     color,
                     width: style.stroke_width,
                     line_cap: style.cap,
@@ -687,11 +713,11 @@ pub fn parse_svg_document(bytes: impl AsRef<[u8]>) -> Result<SvgParsedDocument, 
             });
             Some(index)
         };
-        let fill = style.fill.map(|color| SvgFill {
+        let fill = style.fill_color().map(|color| SvgFill {
             color,
             rule: style.fill_rule,
         });
-        let stroke = style.stroke.map(|color| SvgStroke {
+        let stroke = style.stroke_color().map(|color| SvgStroke {
             color,
             width: style.stroke_width,
             line_cap: style.cap,
@@ -1068,11 +1094,28 @@ fn parse_style(
     }
 
     let value = |property: &str| declarations.get(property).map(|(value, _)| value.as_str());
+    if let Some(value) = value("color") {
+        if !value.trim().eq_ignore_ascii_case("currentColor") {
+            style.color = parse_color(value)?.ok_or(SvgParseError::Unsupported("color: none"))?;
+        }
+    }
     if let Some(value) = value("fill") {
-        style.fill = parse_color(value)?;
+        style.fill_current_color = value.trim().eq_ignore_ascii_case("currentColor");
+        if !style.fill_current_color {
+            style.fill = parse_color(value)?;
+        }
     }
     if let Some(value) = value("stroke") {
-        style.stroke = parse_color(value)?;
+        style.stroke_current_color = value.trim().eq_ignore_ascii_case("currentColor");
+        if !style.stroke_current_color {
+            style.stroke = parse_color(value)?;
+        }
+    }
+    if style.fill_current_color {
+        style.fill = Some(style.color);
+    }
+    if style.stroke_current_color {
+        style.stroke = Some(style.color);
     }
     if let Some(value) = value("stroke-width") {
         style.stroke_width = parse_length(value).ok_or(SvgParseError::InvalidNumber)?;
@@ -1088,14 +1131,10 @@ fn parse_style(
         style.opacity *= parse_unit(value)?;
     }
     if let Some(value) = value("fill-opacity") {
-        if let Some(color) = style.fill.as_mut() {
-            color.a *= parse_unit(value)?;
-        }
+        style.fill_opacity = parse_unit(value)?;
     }
     if let Some(value) = value("stroke-opacity") {
-        if let Some(color) = style.stroke.as_mut() {
-            color.a *= parse_unit(value)?;
-        }
+        style.stroke_opacity = parse_unit(value)?;
     }
     if value("display").is_some_and(|value| value == "none")
         || value("visibility").is_some_and(|value| value == "hidden")
@@ -1165,7 +1204,8 @@ fn insert_cascaded_declaration(
 fn is_supported_style_property(property: &str) -> bool {
     matches!(
         property,
-        "fill"
+        "color"
+            | "fill"
             | "stroke"
             | "stroke-width"
             | "fill-rule"
@@ -1831,8 +1871,15 @@ fn collect_node_paints(
         result.insert(
             node.node_id,
             SvgParsedPaints {
-                fill: fill.or(fallback_fill),
-                stroke: stroke.or(fallback_stroke),
+                // Solid node paints already include inherited paint opacity.
+                fill: match fill {
+                    Some(SvgPaint::Solid(_)) => fallback_fill,
+                    other => other.or(fallback_fill),
+                },
+                stroke: match stroke {
+                    Some(SvgPaint::Solid(_)) => fallback_stroke,
+                    other => other.or(fallback_stroke),
+                },
             },
         );
     }
@@ -1902,7 +1949,7 @@ fn resolve_use_references(
         use_node.fill = if target_has_property("fill") {
             target.fill.clone()
         } else {
-            reference.style.fill.map(|color| SvgFill {
+            reference.style.fill_color().map(|color| SvgFill {
                 color,
                 rule: use_node.fill_rule,
             })
@@ -1914,7 +1961,7 @@ fn resolve_use_references(
         {
             target.stroke.clone()
         } else {
-            reference.style.stroke.map(|color| SvgStroke {
+            reference.style.stroke_color().map(|color| SvgStroke {
                 color,
                 width: reference.style.stroke_width,
                 line_cap: reference.style.cap,
@@ -1960,6 +2007,11 @@ fn style_paint(
         return Ok(None);
     };
     let value = value.trim();
+    // The retained node already resolved this inherited paint against `color`.
+    // Returning no authored override lets collect_node_paints use that value.
+    if value.trim().eq_ignore_ascii_case("currentColor") {
+        return Ok(None);
+    }
     if let Some(reference) = value
         .strip_prefix("url(")
         .and_then(|value| value.strip_suffix(')'))
@@ -2523,74 +2575,6 @@ fn parse_transform(value: &str) -> Result<SvgTransform, SvgParseError> {
     Ok(result)
 }
 
-fn element_path(
-    tag: &str,
-    attrs: &std::collections::HashMap<String, String>,
-) -> Result<Vec<SvgPathCommand>, SvgParseError> {
-    let number = |name: &str, default: f32| {
-        attrs
-            .get(name)
-            .map(|s| parse_length(s).ok_or(SvgParseError::InvalidNumber))
-            .transpose()
-            .map(|v| v.unwrap_or(default))
-    };
-    match tag {
-        "path" => parse_path(attrs.get("d").ok_or(SvgParseError::InvalidPath)?),
-        "rect" => {
-            let x = number("x", 0.0)?;
-            let y = number("y", 0.0)?;
-            let w = number("width", 0.0)?;
-            let h = number("height", 0.0)?;
-            if w < 0.0 || h < 0.0 {
-                return Err(SvgParseError::InvalidNumber);
-            }
-            Ok(vec![
-                m(x, y),
-                l(x + w, y),
-                l(x + w, y + h),
-                l(x, y + h),
-                SvgPathCommand::Close,
-            ])
-        }
-        "circle" | "ellipse" => {
-            let cx = number("cx", 0.0)?;
-            let cy = number("cy", 0.0)?;
-            let rx = if tag == "circle" {
-                number("r", 0.0)?
-            } else {
-                number("rx", 0.0)?
-            };
-            let ry = if tag == "circle" {
-                rx
-            } else {
-                number("ry", 0.0)?
-            };
-            if rx < 0.0 || ry < 0.0 {
-                return Err(SvgParseError::InvalidNumber);
-            }
-            ellipse_path(cx, cy, rx, ry)
-        }
-        "line" => Ok(vec![
-            m(number("x1", 0.0)?, number("y1", 0.0)?),
-            l(number("x2", 0.0)?, number("y2", 0.0)?),
-        ]),
-        "polyline" | "polygon" => {
-            let points = parse_numbers(attrs.get("points").map(String::as_str).unwrap_or(""));
-            if points.len() < 4 || points.len() % 2 != 0 {
-                return Err(SvgParseError::InvalidPath);
-            }
-            let mut p = vec![m(points[0], points[1])];
-            for pair in points[2..].chunks_exact(2) {
-                p.push(l(pair[0], pair[1]));
-            }
-            if tag == "polygon" {
-                p.push(SvgPathCommand::Close);
-            }
-            Ok(p)
-        }
-        _ => Err(SvgParseError::Unsupported("shape")),
-    }
-}
 
 fn ellipse_path(cx: f32, cy: f32, rx: f32, ry: f32) -> Result<Vec<SvgPathCommand>, SvgParseError> {
     if rx == 0.0 || ry == 0.0 {
@@ -2750,12 +2734,9 @@ fn parse_path(data: &str) -> Result<Vec<SvgPathCommand>, SvgParseError> {
                     scan.number()?.abs(),
                     scan.number()?.to_radians(),
                 );
-                let large = scan.number()?;
-                let sweep = scan.number()?;
+                let large = scan.flag()?;
+                let sweep = scan.flag()?;
                 let (mut x, mut y) = (scan.number()?, scan.number()?);
-                if !matches!(large, 0.0 | 1.0) || !matches!(sweep, 0.0 | 1.0) {
-                    return Err(SvgParseError::InvalidPath);
-                }
                 if relative {
                     x += current.0;
                     y += current.1;
@@ -2769,8 +2750,8 @@ fn parse_path(data: &str) -> Result<Vec<SvgPathCommand>, SvgParseError> {
                         rx,
                         ry,
                         rotation,
-                        large != 0.0,
-                        sweep != 0.0,
+                        large,
+                        sweep,
                     )?);
                 }
                 current = (x, y);
@@ -2916,6 +2897,18 @@ struct Numbers<'a> {
 impl<'a> Numbers<'a> {
     fn new(s: &'a str) -> Self {
         Self { s, i: 0 }
+    }
+    fn flag(&mut self) -> Result<bool, SvgParseError> {
+        self.skip_separators();
+        // Arc flags are single characters, so `001.5` is flags 0, 0
+        // followed by coordinate 1.5 rather than one numeric token.
+        let flag = match self.peek_char() {
+            Some('0') => false,
+            Some('1') => true,
+            _ => return Err(SvgParseError::InvalidPath),
+        };
+        self.bump();
+        Ok(flag)
     }
     fn peek_char(&self) -> Option<char> {
         self.s[self.i..].chars().next()

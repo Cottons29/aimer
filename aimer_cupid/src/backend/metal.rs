@@ -2089,6 +2089,124 @@ mod tests {
         assert!(pixel(&pixels, 40, 40)[3] > 0, "material + frame composite");
     }
 
+    /// The analytic antialiasing fringe carries a per-vertex coverage that the
+    /// Metal SVG shader must multiply into the fragment. Ignoring it draws the
+    /// fringe at full opacity: edges grow by a pixel and stay hard, which shows
+    /// as sawtooth corners on curved icons.
+    #[test]
+    fn svg_edge_fringe_is_partially_covered_on_metal() {
+        let Some(backend) = MetalBackend::new() else {
+            eprintln!("skipping: this host exposes no Metal device");
+            return;
+        };
+
+        use std::sync::Arc;
+
+        use crate::svg::{
+            SvgElementKind, SvgFill, SvgFillRule, SvgGeometry, SvgNode, SvgNodeId, SvgPaintOrder,
+            SvgPathCommand, SvgScene, SvgTransform, SvgViewport,
+        };
+
+        let mut renderer = RendererImpl::<MetalBackend>::new(&backend, FORMAT);
+        let mut draw = DrawList::new();
+        // The right edge sits a quarter pixel into pixel column 10, so the
+        // fringe quad covers that column's centre at a coverage of 0.75.
+        let scene = Arc::new(SvgScene {
+            viewport: SvgViewport {
+                width: 16.0,
+                height: 16.0,
+            },
+            nodes: Arc::new([SvgNode {
+                node_id: SvgNodeId(0),
+                svg_id: None,
+                classes: Arc::new([]),
+                element: SvgElementKind::Path,
+                is_definition: false,
+                definition_owner: None,
+                clip_path: None,
+                mask: None,
+                filter: None,
+                parent: None,
+                children: Arc::new([]),
+                transform: SvgTransform::default(),
+                opacity: 1.0,
+                geometry: Some(0),
+                fill_rule: SvgFillRule::NonZero,
+                fill: Some(SvgFill {
+                    color: crate::svg::SvgColor::rgba8(255, 0, 0, 255),
+                    rule: SvgFillRule::NonZero,
+                }),
+                stroke: None,
+                fill_paint: None,
+                stroke_paint: None,
+                paint_order: SvgPaintOrder::FillAndStroke,
+                visible: true,
+            }]),
+            geometries: Arc::new([SvgGeometry {
+                commands: Arc::new([
+                    SvgPathCommand::MoveTo { x: 2.0, y: 2.0 },
+                    SvgPathCommand::LineTo { x: 10.25, y: 2.0 },
+                    SvgPathCommand::LineTo { x: 10.25, y: 14.0 },
+                    SvgPathCommand::LineTo { x: 2.0, y: 14.0 },
+                    SvgPathCommand::Close,
+                ]),
+            }]),
+            resources: Arc::new(crate::svg::SvgResourceGraph::empty()),
+        });
+        draw.draw_svg(scene, Rect::new(0.0, 0.0, 16.0, 16.0), Arc::from([]));
+
+        let target = backend.create_texture(&TextureDescriptor {
+            label: Some("Metal SVG fringe target".to_string()),
+            size: (SIZE, SIZE, 1),
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: FORMAT,
+            usage: vec![TextureUsage::RenderAttachment, TextureUsage::CopySrc],
+        });
+        let view = backend.create_texture_view(&target, "Metal SVG fringe view");
+        renderer.render(&backend, &view, SIZE, SIZE, false, &draw);
+
+        let readback = backend.create_buffer(&BufferDescriptor {
+            label: Some("Metal SVG fringe readback".to_string()),
+            size: FRAME_BYTES,
+            usage: vec![BufferUsage::CopyDst, BufferUsage::MapRead],
+        });
+        let mut encoder = backend.create_command_encoder("Metal SVG fringe readback");
+        backend.copy_texture_to_buffer(
+            &mut encoder,
+            &TexelCopyTextureInfo {
+                texture: &target,
+                mip_level: 0,
+                origin: Origin3d::ZERO,
+                aspect: TextureAspect::All,
+            },
+            &TexelCopyBufferInfo {
+                buffer: &readback,
+                layout: TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(ROW_BYTES),
+                    rows_per_image: Some(SIZE),
+                },
+            },
+            Extent3d {
+                width: SIZE,
+                height: SIZE,
+                depth_or_array_layers: 1,
+            },
+        );
+        backend.submit(encoder);
+
+        let pixels = backend.read_buffer(&readback, FRAME_BYTES);
+        assert_eq!(pixel(&pixels, 6, 8), [255, 0, 0, 255], "interior is opaque");
+        let fringe = pixel(&pixels, 10, 8)[3];
+        assert!(
+            (100..=230).contains(&fringe),
+            "fringe pixel should be partially covered, got alpha {fringe}"
+        );
+        assert_eq!(pixel(&pixels, 12, 8)[3], 0, "beyond the fringe is empty");
+    }
+
     /// Render a DrawList through the generic renderer on Metal and verify the
     /// rect's pixels through a buffer readback.
     #[test]
