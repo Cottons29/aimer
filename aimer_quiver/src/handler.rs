@@ -8,6 +8,7 @@ pub mod event_handler;
 /// The file drag the window is currently under.
 pub(crate) mod file_drag;
 mod native_input;
+mod platform_gesture;
 #[cfg(not(target_arch = "wasm32"))]
 mod render_worker;
 mod scoped_sync;
@@ -655,6 +656,7 @@ fn node_frame(
         bounds.height,
     );
     let mut own_outset = (0.0, 0.0);
+    let mut clip = clip;
     if let Some([left, top, right, bottom]) = element.retained_v2_paint_outsets(ctx)
         && [left, top, right, bottom]
             .iter()
@@ -667,6 +669,12 @@ fn node_frame(
             bounds.width + left + right,
             bounds.height + top + bottom,
         );
+        // A clip is local to the node, whose origin is now the grown corner,
+        // while the parent stated it from the layout box. Move it in by the
+        // growth or it lands that far up and to the left of what it clips.
+        clip = clip.map(|clip| {
+            RenderRect::new(clip.x + left, clip.y + top, clip.width, clip.height)
+        });
     }
     NodeFrame {
         position,

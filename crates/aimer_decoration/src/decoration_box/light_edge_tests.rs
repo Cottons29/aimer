@@ -1,4 +1,5 @@
-use crate::{Decoration, LightEdge};
+use super::test_support::{stacked, stacked_in};
+use crate::{BorderRadius, BoxBorder, BoxDecoration, Decoration, LightEdge};
 use aimer_attribute::{ResolvedSize, Vec2d};
 use aimer_canvas::Canvas;
 use aimer_color::prelude::Color;
@@ -50,13 +51,12 @@ fn light_edge_defaults_and_controls_survive_the_canvas_bridge() {
         edge.color(Color::Rgba(255, 0, 0, 128))
             .width(3.0)
             .strength(0.5)
-            .corner_radius(12.0)
             .light_angle(90.0),
     );
     assert_eq!(configured.border_color, [1.0, 0.0, 0.0, 128.0 / 255.0]);
     assert_eq!(configured.border_width, 3.0);
     assert_eq!(configured.specular_highlight, 0.5);
-    assert_eq!(configured.corner_radii, [12.0; 4]);
+    assert_eq!(configured.corner_radii, [0.0; 4]);
     assert_eq!(configured.light_angle, 90.0);
 }
 
@@ -88,35 +88,21 @@ fn light_edge_bounds_inputs_and_skips_invisible_paint() {
         LightEdge::new()
             .width(f32::INFINITY)
             .strength(f32::NAN)
-            .corner_radius(f32::NEG_INFINITY)
             .light_angle(f32::NAN),
     );
     assert_eq!(fallback.border_width, 8.0);
     assert_eq!(fallback.specular_highlight, 0.8);
     assert_eq!(fallback.corner_radii, [0.0; 4]);
     assert_eq!(fallback.light_angle, 225.0);
-    let bounded = request(
-        LightEdge::new()
-            .width(100.0)
-            .strength(10.0)
-            .corner_radius(2000.0),
-    );
+    let bounded = request(LightEdge::new().width(100.0).strength(10.0));
     assert_eq!(bounded.border_width, 16.0);
     assert_eq!(bounded.specular_highlight, 1.0);
-    assert_eq!(
-        bounded.corner_radii, [20.0; 4],
-        "radii fit the shorter side"
-    );
     for (angle, expected) in [(-135.0, 225.0), (720.0, 0.0), (450.0, 90.0)] {
         assert_eq!(
             request(LightEdge::new().light_angle(angle)).light_angle,
             expected
         );
     }
-    assert_eq!(
-        request(LightEdge::new().corner_radius(-1.0)).corner_radii,
-        [0.0; 4]
-    );
     let size = ResolvedSize {
         width: 80.0,
         height: 40.0,
@@ -144,17 +130,10 @@ fn light_edge_bounds_inputs_and_skips_invisible_paint() {
     ] {
         assert!(recorded(LightEdge::new(), size).is_empty());
     }
-    let commands = recorded(
-        LightEdge::new().width(16.0).corner_radius(1024.0),
-        ResolvedSize {
-            width: 0.5,
-            height: 1.0,
-        },
+    let tiny = stacked_in(
+        ResolvedSize { width: 0.5, height: 1.0 },
+        &[&BorderRadius::from(1024.0), &LightEdge::new().width(16.0)],
     );
-    let [DrawCommand::DrawCustom { data, .. }] = commands.as_slice() else {
-        panic!("tiny rim packet")
-    };
-    let tiny = MaterialRequest::decode(data).unwrap();
     assert_eq!(tiny.border_width, 0.25);
     assert_eq!(tiny.corner_radii, [0.25; 4]);
 }
@@ -181,7 +160,7 @@ async fn light_edge_preserves_child_layout_and_clipping() {
         WindowHandle::headless(Default::default(), 1.0),
         tokio::runtime::Handle::current(),
     );
-    let edge = LightEdge::new().corner_radius(20.0).width(16.0);
+    let edge = LightEdge::new().width(16.0);
     assert_eq!(edge.content_insets(ResolvedSize::default(), 2.0), [0.0; 4]);
     assert_eq!(edge.child_clip_radius(ResolvedSize::default(), 2.0), None);
     assert_eq!(edge.background_color(), None);
@@ -198,4 +177,47 @@ async fn light_edge_preserves_child_layout_and_clipping() {
     );
     assert_eq!(element.retained_clip(&ctx), None);
     assert_eq!(element.retained_v2_paint_outsets(&ctx), Some([0.0; 4]));
+}
+
+#[test]
+fn light_edge_without_a_shape_layer_has_square_corners() {
+    assert_eq!(stacked(&[&LightEdge::new()]).corner_radii, [0.0; 4]);
+    // A shape declared after the highlight cannot reach back and reshape it.
+    let late = stacked(&[&LightEdge::new(), &BorderRadius::from(12.0)]);
+    assert_eq!(late.corner_radii, [0.0; 4]);
+    // Layers that declare no shape leave the inherited one alone, including
+    // border-only and shadow-only decorations that delegate to a default box.
+    let edge = stacked(&[
+        &BorderRadius::from(12.0),
+        &Color::BLUE,
+        &BoxDecoration::new(),
+        &BoxBorder::default(),
+        &LightEdge::new(),
+    ]);
+    assert_eq!(edge.corner_radii, [12.0; 4]);
+}
+
+#[test]
+fn light_edge_takes_its_corners_from_preceding_shape_layers() {
+    let lens = stacked(&[&BorderRadius::from(12.0), &LightEdge::new()]);
+    assert_eq!(lens.corner_radii, [12.0; 4]);
+    let uneven = BorderRadius::new()
+        .top_left(4.0)
+        .top_right(8.0)
+        .bottom_right(12.0)
+        .bottom_left(16.0);
+    assert_eq!(stacked(&[&uneven, &LightEdge::new()]).corner_radii, [4.0, 8.0, 12.0, 16.0]);
+    let shape = BoxDecoration::new().border_radius(10.0);
+    assert_eq!(stacked(&[&shape, &LightEdge::new()]).corner_radii, [10.0; 4]);
+}
+
+#[test]
+fn light_edge_fits_and_sanitizes_the_declared_corners() {
+    // The 80x40 box has a 20px half-height; larger radii fit within it.
+    let fit = stacked(&[&BorderRadius::from(2000.0), &LightEdge::new()]);
+    assert_eq!(fit.corner_radii, [20.0; 4], "radii fit the shorter side");
+    for invalid in [-4.0, f32::NAN, f32::NEG_INFINITY, f32::INFINITY] {
+        let edge = stacked(&[&BorderRadius::from(invalid), &LightEdge::new()]);
+        assert_eq!(edge.corner_radii, [0.0; 4], "{invalid}");
+    }
 }

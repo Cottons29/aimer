@@ -105,7 +105,7 @@ impl State<MyAnimatedList> for MyListState {
                                                                 let uuid = Uuid::new_v4().to_string();
                                                                 let controller = AnimationController::new(
                                                                     Duration::from_millis(1000),
-                                                                    Curve::EaseOut,
+                                                                    curves::EASE_OUT,
                                                                 );
                                                                 controller.forward();
                                                                 state.list.push(ListItem {

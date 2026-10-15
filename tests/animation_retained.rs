@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use aimer::animation::layout::AnimatedLayout;
 use aimer::animation::{
-    AnimatedPaint, AnimatedSwitcher, AnimationController, Curve, FadeTransition,
+    AnimatedPaint, AnimatedSwitcher, AnimationController, curves, FadeTransition,
     ImplicitAnimatedBuilder, MorphTransition, RotationTransition, ScaleTransition, SlideTransition,
 };
 use aimer::canvas::Canvas;
@@ -138,7 +138,7 @@ impl State<Page> for PageState {
         } else {
             ("first", Color::Rgb(255, 0, 0))
         };
-        AnimatedSwitcher::new(Duration::from_millis(400), Curve::Linear, Swatch { color })
+        AnimatedSwitcher::new(Duration::from_millis(400), curves::LINEAR, Swatch { color })
             .child_key(key)
     }
 }
@@ -200,7 +200,7 @@ impl State<ImplicitPage> for ImplicitPageState {
         ImplicitAnimatedBuilder::new(
             self.target,
             Duration::from_millis(400),
-            Curve::Linear,
+            curves::LINEAR,
             |value: &f32| Swatch {
                 color: Color::Rgb((value.clamp(0.0, 1.0) * 255.0) as u8, 0, 0),
             },
@@ -290,7 +290,7 @@ impl State<MorphPage> for MorphPageState {
         } else {
             ("first", Color::Rgb(255, 0, 0))
         };
-        MorphTransition::new(Duration::from_millis(400), Curve::Linear, Swatch { color })
+        MorphTransition::new(Duration::from_millis(400), curves::LINEAR, Swatch { color })
             .child_key(key)
     }
 }
@@ -329,7 +329,7 @@ fn an_animated_opacity_over_an_unbounded_child_stays_on_the_retained_path() {
 
     impl Widget for FadePage {
         fn to_element(self, ctx: &BuildContext) -> AnyElement {
-            let controller = AnimationController::with_millis(400, Curve::Linear);
+            let controller = AnimationController::with_millis(400, curves::LINEAR);
             controller.forward();
             AnimatedPaint::new(
                 controller,
@@ -361,7 +361,7 @@ impl aimer::PortableWidget for Built {}
 
 /// A controller that is mid-run for the whole test.
 fn running_controller() -> AnimationController {
-    let controller = AnimationController::with_millis(2_000, Curve::Linear);
+    let controller = AnimationController::with_millis(2_000, curves::LINEAR);
     controller.forward_from_first_tick();
     controller
 }

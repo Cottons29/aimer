@@ -1,4 +1,4 @@
-use std::cell::UnsafeCell;
+use std::cell::{Cell, UnsafeCell};
 use std::rc::Rc;
 
 use aimer_attribute::BoxConstraint;
@@ -7,6 +7,7 @@ use aimer_macro::{LayoutElement, Rebuildable};
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
     AnyElement, AnyWidget, Drawable, Element, EventElement, LayoutElement, VisitorElement, Widget,
+    pointer_occluded_at, request_pointer_view_frame,
 };
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
@@ -129,6 +130,7 @@ impl<W: Widget + 'static> Widget for Stack<W> {
             direction: self.direction,
             paint_order: UnsafeCell::new(None),
             hit_test_index: UnsafeCell::new(None),
+            pointer_covered: Cell::new(false),
         }
         .boxed()
     }
@@ -182,9 +184,74 @@ pub struct RawStackElement {
     pub direction: StackDirection,
     paint_order: UnsafeCell<Option<CachedChildOrder>>,
     hit_test_index: UnsafeCell<Option<CachedHitTestIndex>>,
+    /// Whether the last pointer hit test found a layer covering the pointer, so
+    /// a change can ask for the frame on which the layers below find out.
+    pointer_covered: Cell<bool>,
 }
 
+/// Where a layer that something above it covers is told the cursor is.
+///
+/// A region decides its hover from the cursor it is given while painting, so
+/// handing a covered layer a cursor that is nowhere ends a hover it should not
+/// hold and keeps it from starting one.
+const COVERED_CURSOR: Vec2d = Vec2d {
+    x: -1.0e9,
+    y: -1.0e9,
+};
+
 impl RawStackElement {
+    /// Whether a higher layer covering the pointer hides the lower ones from it.
+    ///
+    /// Reverse order paints against the order layers are hit-tested in, so the
+    /// layer drawn on top is not the one a pointer would reach; there is no
+    /// covering to speak of there.
+    #[inline]
+    fn layers_cover_each_other(&self) -> bool {
+        self.direction != StackDirection::Reverse
+    }
+
+    /// How many of `topmost_first` a pointer at `pos` may reach: everything up
+    /// to and including the first layer that covers it.
+    ///
+    /// Only the layers above that one are scanned, so a stack whose layers do
+    /// not cover the pointer costs one bounds check per layer.
+    fn reachable_layers(
+        &self,
+        topmost_first: impl Iterator<Item = usize>,
+        total: usize,
+        pos: Vec2d,
+    ) -> usize {
+        if !self.layers_cover_each_other() || !pos.x.is_finite() || !pos.y.is_finite() {
+            return total;
+        }
+        for (count, index) in topmost_first.enumerate() {
+            if pointer_occluded_at(self.children[index].as_ref(), pos) {
+                return count + 1;
+            }
+        }
+        total
+    }
+
+    /// Records whether the pointer is covered, asking for a frame when that
+    /// changes: the layers below only learn of it while they paint.
+    #[inline]
+    fn note_pointer_covered(&self, covered: bool) {
+        if self.pointer_covered.replace(covered) != covered {
+            request_pointer_view_frame();
+        }
+    }
+
+    /// Rank, in ascending layer order, of the topmost layer covering `cursor`.
+    /// Layers of lower rank are painted under it and must not see the cursor.
+    fn covering_rank(&self, sorted: &[usize], cursor: Vec2d) -> Option<usize> {
+        if !self.layers_cover_each_other() || !cursor.x.is_finite() || !cursor.y.is_finite() {
+            return None;
+        }
+        (0..sorted.len())
+            .rev()
+            .find(|&rank| pointer_occluded_at(self.children[sorted[rank]].as_ref(), cursor))
+    }
+
     fn child_context<'a>(&self, ctx: &BuildContext<'a>) -> BuildContext<'a> {
         let content_size = self.content_size(ctx);
         let mut child_ctx = ctx.clone();
@@ -374,6 +441,9 @@ impl RawStackElement {
                 .and_then(|index| index.candidates(pos.y))
         };
         if let Some(candidates) = candidates {
+            let reachable = self.reachable_layers(candidates.iter().copied(), candidates.len(), pos);
+            self.note_pointer_covered(reachable < candidates.len());
+            let candidates = &candidates[..reachable];
             if reversed {
                 for &index in candidates {
                     visitor(self.children[index].as_ref());
@@ -387,12 +457,15 @@ impl RawStackElement {
         }
 
         let sorted = self.sorted_child_indices();
+        let reachable = self.reachable_layers(sorted.iter().rev().copied(), sorted.len(), pos);
+        self.note_pointer_covered(reachable < sorted.len());
+        let reachable = &sorted[sorted.len() - reachable..];
         if reversed {
-            for &index in sorted.iter().rev() {
+            for &index in reachable.iter().rev() {
                 visitor(self.children[index].as_ref());
             }
         } else {
-            for &index in sorted.iter() {
+            for &index in reachable.iter() {
                 visitor(self.children[index].as_ref());
             }
         }
@@ -439,42 +512,52 @@ impl Drawable for RawStackElement {
         };
 
         let sorted_children = self.sorted_child_indices();
+        let covering = self.covering_rank(&sorted_children, ctx.cursor_pos);
+        let covered_ctx = covering.map(|_| BuildContext {
+            cursor_pos: COVERED_CURSOR,
+            ..child_ctx.clone()
+        });
+        let child_ctx_for = |rank: usize| match (&covered_ctx, covering) {
+            (Some(covered), Some(covering)) if rank < covering => covered,
+            _ => &child_ctx,
+        };
 
         if self.direction == StackDirection::Reverse {
-            for &index in sorted_children.iter().rev() {
-                self.children[index].update(&child_ctx);
+            for (rank, &index) in sorted_children.iter().enumerate().rev() {
+                self.children[index].update(child_ctx_for(rank));
             }
         } else {
-            for &index in sorted_children.iter() {
-                self.children[index].update(&child_ctx);
+            for (rank, &index) in sorted_children.iter().enumerate() {
+                self.children[index].update(child_ctx_for(rank));
             }
         }
     }
 
     fn sync_paint_geometry(&self, ctx: &BuildContext) {
         self.invalidate_hit_test_index();
-        let Some(child_ctx) = self.retained_child_context(ctx) else {
-            let child_ctx = self.child_context(ctx);
-            let sorted_children = self.sorted_child_indices();
-            if self.direction == StackDirection::Reverse {
-                for &index in sorted_children.iter().rev() {
-                    self.children[index].sync_paint_geometry(&child_ctx);
-                }
-            } else {
-                for &index in sorted_children.iter() {
-                    self.children[index].sync_paint_geometry(&child_ctx);
-                }
-            }
-            return;
-        };
+        let child_ctx = self
+            .retained_child_context(ctx)
+            .unwrap_or_else(|| self.child_context(ctx));
         let sorted_children = self.sorted_child_indices();
+        // A region decides its hover from the cursor it is handed here, so a
+        // layer under a covering one is handed none: it stops being hovered
+        // beneath a bar the pointer is on, and does not start.
+        let covering = self.covering_rank(&sorted_children, ctx.cursor_pos);
+        let covered_ctx = covering.map(|_| BuildContext {
+            cursor_pos: COVERED_CURSOR,
+            ..child_ctx.clone()
+        });
+        let child_ctx_for = |rank: usize| match (&covered_ctx, covering) {
+            (Some(covered), Some(covering)) if rank < covering => covered,
+            _ => &child_ctx,
+        };
         if self.direction == StackDirection::Reverse {
-            for &index in sorted_children.iter().rev() {
-                self.children[index].sync_paint_geometry(&child_ctx);
+            for (rank, &index) in sorted_children.iter().enumerate().rev() {
+                self.children[index].sync_paint_geometry(child_ctx_for(rank));
             }
         } else {
-            for &index in sorted_children.iter() {
-                self.children[index].sync_paint_geometry(&child_ctx);
+            for (rank, &index) in sorted_children.iter().enumerate() {
+                self.children[index].sync_paint_geometry(child_ctx_for(rank));
             }
         }
     }
@@ -519,6 +602,22 @@ impl EventElement for RawStackElement {
     fn structural_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         for child in &self.children {
             visitor(child.as_ref());
+        }
+    }
+
+    /// Visits the event children in ascending layer order, the order they are
+    /// hit-tested in.
+    ///
+    /// The indexed event tree is built from this view and offers a press to its
+    /// last child first. In retained child order that would be whichever layer
+    /// was listed last, not the one painted on top, so a full-area `Scrollable`
+    /// listed after a floating bar would take the press and capture the finger
+    /// before the bar's button ever saw it. The `IndexedHitTestBoundary` role
+    /// requires the hit-test view to be a subset of this one in the same order.
+    #[inline]
+    fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        for &index in self.sorted_child_indices().iter() {
+            visitor(self.children[index].as_ref());
         }
     }
 
@@ -647,6 +746,7 @@ mod tests {
             direction: StackDirection::Normal,
             paint_order: UnsafeCell::new(None),
             hit_test_index: UnsafeCell::new(None),
+            pointer_covered: Cell::new(false),
         };
 
         let first = stack.sorted_child_indices();
@@ -654,6 +754,31 @@ mod tests {
 
         let second = stack.sorted_child_indices();
         assert!(Rc::ptr_eq(&first, &second));
+    }
+
+    #[test]
+    fn event_children_follow_layer_order_while_structure_keeps_list_order() {
+        let stack = RawStackElement {
+            children: vec![
+                BoundedElement { layer: 3, name: "top", bounds: Rc::new(Cell::new(None)) }.boxed(),
+                BoundedElement { layer: 1, name: "bottom", bounds: Rc::new(Cell::new(None)) }
+                    .boxed(),
+                BoundedElement { layer: 2, name: "middle", bounds: Rc::new(Cell::new(None)) }
+                    .boxed(),
+            ],
+            direction: StackDirection::Normal,
+            paint_order: UnsafeCell::new(None),
+            hit_test_index: UnsafeCell::new(None),
+            pointer_covered: Cell::new(false),
+        };
+
+        let mut events = Vec::new();
+        stack.event_children(&mut |child| events.push(child.debug_name()));
+        let mut structure = Vec::new();
+        stack.structural_children(&mut |child| structure.push(child.debug_name()));
+
+        assert_eq!(events, ["bottom", "middle", "top"]);
+        assert_eq!(structure, ["top", "bottom", "middle"]);
     }
 
     #[test]
@@ -703,6 +828,7 @@ mod tests {
             direction: StackDirection::Normal,
             paint_order: UnsafeCell::new(None),
             hit_test_index: UnsafeCell::new(None),
+            pointer_covered: Cell::new(false),
         };
 
         stack.ensure_hit_test_index();
@@ -749,6 +875,7 @@ mod tests {
             direction: StackDirection::Normal,
             paint_order: UnsafeCell::new(None),
             hit_test_index: UnsafeCell::new(None),
+            pointer_covered: Cell::new(false),
         };
 
         let mut names = Vec::new();

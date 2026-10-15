@@ -1,5 +1,5 @@
 use crate::primitives::animatable::Animatable;
-use crate::primitives::curve::Curve;
+use crate::primitives::curve::{AnyCurve, Curve};
 
 /// A single keyframe in a keyframe animation.
 ///
@@ -8,18 +8,18 @@ use crate::primitives::curve::Curve;
 #[derive(Debug, Clone)]
 pub struct Keyframe<T: Animatable + Clone> {
     pub value: T,
-    pub curve: Curve,
+    pub curve: AnyCurve,
 }
 
 impl<T: Animatable + Clone> Keyframe<T> {
-    pub fn new(value: T, curve: Curve) -> Self {
-        Self { value, curve }
+    pub fn new(value: T, curve: impl Curve) -> Self {
+        Self { value, curve: curve.into_any() }
     }
 
     pub fn linear(value: T) -> Self {
         Self {
             value,
-            curve: Curve::Linear,
+            curve: AnyCurve::default(),
         }
     }
 }
@@ -72,10 +72,10 @@ impl<T: Animatable + Clone> KeyframeAnimation<T> {
     }
 
     /// Create a keyframe animation from (fraction, value, curve) triples.
-    pub fn with_curves(entries: &[(f32, T, Curve)]) -> Self {
+    pub fn with_curves(entries: &[(f32, T, AnyCurve)]) -> Self {
         let frames = entries
             .iter()
-            .map(|(f, v, c)| (*f, Keyframe::new(v.clone(), *c)))
+            .map(|(f, v, c)| (*f, Keyframe::new(v.clone(), c.clone())))
             .collect();
         Self::new(frames)
     }
@@ -171,11 +171,11 @@ impl std::error::Error for KeyframeError {}
 /// # Example
 ///
 /// ```rust
-/// use aimer_animation::{Curve, KeyframeAnimation};
+/// use aimer_animation::{curves, KeyframeAnimation};
 ///
 /// let pulse = KeyframeAnimation::builder()
 ///     .at(0.0, 1.0f32)
-///     .at_with(0.4, 1.2, Curve::EaseOut)
+///     .at_with(0.4, 1.2, curves::EASE_OUT)
 ///     .at(1.0, 1.0)
 ///     .build()
 ///     .unwrap();
@@ -207,12 +207,12 @@ impl<T: Animatable + Clone> KeyframeBuilder<T> {
 
     /// Adds `value` at `fraction`, reached by linear interpolation.
     pub fn at(self, fraction: f32, value: T) -> Self {
-        self.at_with(fraction, value, Curve::Linear)
+        self.at_with(fraction, value, AnyCurve::default())
     }
 
     /// Adds `value` at `fraction`, eased by `curve` on the way in from the
     /// previous keyframe.
-    pub fn at_with(mut self, fraction: f32, value: T, curve: Curve) -> Self {
+    pub fn at_with(mut self, fraction: f32, value: T, curve: impl Curve) -> Self {
         self.frames.push((fraction, Keyframe::new(value, curve)));
         self
     }
@@ -245,6 +245,7 @@ mod tests {
     use std::time::Instant;
 
     use super::*;
+    use crate::primitives::curve::curves;
 
     #[test]
     fn builder_matches_the_slice_constructor() {
@@ -276,7 +277,7 @@ mod tests {
     fn builder_applies_per_keyframe_curves() {
         let built = KeyframeAnimation::builder()
             .at(0.0, 0.0f32)
-            .at_with(0.5, 100.0, Curve::EaseIn)
+            .at_with(0.5, 100.0, curves::EASE_IN)
             .at(1.0, 0.0)
             .build()
             .unwrap();
@@ -342,9 +343,9 @@ mod tests {
     #[test]
     fn test_with_curves() {
         let anim = KeyframeAnimation::with_curves(&[
-            (0.0, 0.0f32, Curve::Linear),
-            (0.5, 100.0, Curve::EaseIn),
-            (1.0, 0.0, Curve::Linear),
+            (0.0, 0.0f32, curves::LINEAR.into_any()),
+            (0.5, 100.0, curves::EASE_IN.into_any()),
+            (1.0, 0.0, curves::LINEAR.into_any()),
         ]);
         // At 0.25, we're between 0.0 and 100.0 with EaseIn curve
         let val = anim.at(0.25);
@@ -355,10 +356,10 @@ mod tests {
     #[test]
     fn test_duplicate_fractions_keep_the_first_interval() {
         let anim = KeyframeAnimation::with_curves(&[
-            (0.0, 0.0f32, Curve::Linear),
-            (0.5, 10.0, Curve::Linear),
-            (0.5, 20.0, Curve::Linear),
-            (1.0, 30.0, Curve::Linear),
+            (0.0, 0.0f32, curves::LINEAR.into_any()),
+            (0.5, 10.0, curves::LINEAR.into_any()),
+            (0.5, 20.0, curves::LINEAR.into_any()),
+            (1.0, 30.0, curves::LINEAR.into_any()),
         ]);
 
         assert_eq!(anim.at(0.5), 10.0);
@@ -425,5 +426,39 @@ mod tests {
             println!("{count} keyframes: p50 {p50:.3} us, p95 {p95:.3} us");
             assert!(checksum.is_finite());
         }
+    }
+
+    #[test]
+    fn a_custom_curve_eases_one_keyframe_segment() {
+        struct Square;
+        impl Curve for Square {
+            fn transform(&self, t: f32) -> f32 {
+                t * t
+            }
+        }
+
+        let anim = KeyframeAnimation::builder()
+            .at(0.0, 0.0f32)
+            .at_with(0.5, 100.0, Square)
+            .at(1.0, 0.0)
+            .build()
+            .unwrap();
+
+        // Halfway through the first segment, Square is 0.25.
+        assert!((anim.at(0.25) - 25.0).abs() < 1e-3);
+        // The second segment keeps its own linear curve.
+        assert!((anim.at(0.75) - 50.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn different_curves_can_share_one_slice() {
+        let anim = KeyframeAnimation::with_curves(&[
+            (0.0, 0.0f32, curves::LINEAR.into_any()),
+            (0.5, 100.0, curves::EASE_IN.into_any()),
+            (1.0, 0.0, curves::cubic_bezier(0.0, 0.0, 1.0, 1.0).into_any()),
+        ]);
+
+        assert_eq!(anim.len(), 3);
+        assert!((anim.at(0.25) - 12.5).abs() < 1.0);
     }
 }

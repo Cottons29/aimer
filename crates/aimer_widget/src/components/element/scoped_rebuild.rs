@@ -99,6 +99,31 @@ pub fn scoped_rebuilds_since(cursor: ScopedCursor) -> Option<Vec<ElementId>> {
     })
 }
 
+/// Rewrites the roots logged after `cursor` whose identity has since changed.
+///
+/// A replacement is logged under the identity its new root has when it is
+/// logged. One nested in a larger rebuild (state carried into a freshly built
+/// subtree) is logged before the enclosing reconciliation hands the new
+/// elements the identities of the ones they replace, so its entry names an id
+/// that no element has any more. `renamed` maps such an id to the one the root
+/// ended up with. Without this the entry reads as a root nobody can place,
+/// which is what a replacement under a genuinely new identity looks like.
+pub(crate) fn rename_scoped_rebuilds_since(
+    cursor: ScopedCursor,
+    renamed: impl Fn(ElementId) -> Option<ElementId>,
+) {
+    LOG.with(|log| {
+        let mut log = log.borrow_mut();
+        // A cursor older than the log means every retained entry is newer.
+        let from = cursor.0.saturating_sub(log.first) as usize;
+        for root in log.roots.iter_mut().skip(from) {
+            if let Some(id) = renamed(*root) {
+                *root = id;
+            }
+        }
+    });
+}
+
 /// Whether anything was recorded after `cursor`, including having lost track of
 /// where `cursor` was.
 #[doc(hidden)]
@@ -169,5 +194,29 @@ mod tests {
         let fresh = scoped_rebuild_cursor();
         note_scoped_rebuild(Some(id()));
         assert_eq!(scoped_rebuilds_since(fresh).map(|roots| roots.len()), Some(1));
+    }
+
+    #[test]
+    fn renaming_touches_only_the_entries_after_the_cursor() {
+        let _guard = test_generation_guard();
+        let (before, nested, after) = (id(), id(), id());
+        note_scoped_rebuild(Some(before));
+        let cursor = scoped_rebuild_cursor();
+        note_scoped_rebuild(Some(nested));
+        note_scoped_rebuild(Some(after));
+        let (renamed_nested, renamed_before) = (id(), id());
+
+        rename_scoped_rebuilds_since(cursor, |root| {
+            [(nested, renamed_nested), (before, renamed_before)]
+                .into_iter()
+                .find_map(|(from, to)| (from == root).then_some(to))
+        });
+
+        assert_eq!(
+            scoped_rebuilds_since(cursor),
+            Some(vec![renamed_nested, after])
+        );
+        let all = scoped_rebuilds_since(ScopedCursor(cursor.0 - 1));
+        assert_eq!(all.and_then(|roots| roots.first().copied()), Some(before));
     }
 }

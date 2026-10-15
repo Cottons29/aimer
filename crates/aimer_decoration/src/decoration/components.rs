@@ -137,15 +137,29 @@ impl Decoration for BoxShadow {
 /// Supplies rounded child clipping and shapes a container's fallback background.
 /// With no fallback background this records no paint. Even zero radii retain
 /// the rectangular child clip. Paint-only decoration wrappers do not clip children.
+///
+/// It also declares the box shape for the layers that follow it in a stack:
+/// [`Magnification`](crate::Magnification) and [`LightEdge`](crate::LightEdge)
+/// round their corners to the nearest preceding radius.
 impl Decoration for BorderRadius {
     #[inline]
-    fn paint(&self, _canvas: &Canvas, _origin: Vec2d, _size: ResolvedSize, _scale: f32) {}
+    fn paint(&self, canvas: &Canvas, _origin: Vec2d, size: ResolvedSize, scale: f32) {
+        if !scale.is_finite() || scale <= 0.0 {
+            return;
+        }
+        canvas.set_corner_radii(
+            self.resolve(size.width * scale, size.height * scale, scale)
+                .map(|radius| radius / scale),
+        );
+    }
 
     #[inline]
     fn paint_with_background(
         &self, canvas: &Canvas, origin: Vec2d, size: ResolvedSize, scale: f32,
         background: Option<Color>,
     ) {
+        // A zero-valued default radius is not forwarded as a shape, so declare it here.
+        self.paint(canvas, origin, size, scale);
         BoxDecoration::new().border_radius(*self)
             .paint_with_background(canvas, origin, size, scale, background);
     }

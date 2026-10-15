@@ -54,7 +54,7 @@ impl State<SystemThemeExample> for SystemThemeExampleState {
         AnimatedTheme::new()
             .mode(self.mode)
             .duration(Duration::from_millis(400))
-            .curve(Curve::EaseInOut)
+            .curve(curves::EASE_IN_OUT)
             .child(SystemThemePanel::new(self.mode, self.updater))
     }
 }

@@ -2,7 +2,7 @@ use super::fixtures::*;
 use aimer::canvas::Canvas;
 use aimer::cupid::draw_cmd_v2::Rect;
 use aimer::cupid::frame::FramePacket;
-use aimer::{Decoration, Magnification, MagnificationStyle as S, ResolvedSize, Vec2d};
+use aimer::{BorderRadius, Decoration, Magnification, MagnificationStyle as S, ResolvedSize, Vec2d};
 
 fn sample(pixels: &[u8], x: f32, y: f32) -> [f32; 4] {
     let left = (x - 0.5).floor();
@@ -80,13 +80,16 @@ pub(super) fn styles_match_sampling_and_preserve_disabled_axes(
             canvas.finish();
             let paint = |style| {
                 let canvas = Canvas::of(&tree.context(node).unwrap());
-                Magnification::new()
-                    .style(style)
-                    .zoom(1.8)
-                    .bulge(0.6)
-                    .thickness(12.0)
-                    .corner_radius(8.0)
-                    .paint(
+                vec![
+                    BorderRadius::from(8.0).notype(),
+                    Magnification::new()
+                        .style(style)
+                        .zoom(1.8)
+                        .bulge(0.6)
+                        .thickness(12.0)
+                        .notype(),
+                ]
+                .paint(
                         &canvas,
                         Vec2d::default(),
                         ResolvedSize {

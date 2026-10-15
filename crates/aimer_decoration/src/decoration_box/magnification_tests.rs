@@ -1,4 +1,5 @@
-use crate::{Decoration, Magnification, MagnificationStyle as S};
+use super::test_support::stacked;
+use crate::{BorderRadius, BoxDecoration, Decoration, Magnification, MagnificationStyle as S};
 use aimer_attribute::{ResolvedSize, Vec2d};
 use aimer_canvas::Canvas;
 use aimer_cupid::draw_cmd_v2::{DrawCommand, Rect, RenderTree};
@@ -40,7 +41,7 @@ fn magnification_defaults_and_packet_preserve_zoom_and_depth() {
     assert_eq!(default.corner_radii, [0.0; 4]);
     assert_eq!(default.magnification_style, S::DEFAULT);
     assert_eq!(default.bulge_strength, 0.25);
-    let configured = request(lens.zoom(2.0).thickness(24.0).corner_radius(0.0));
+    let configured = request(lens.zoom(2.0).thickness(24.0));
     assert_eq!(configured.magnification, 2.0);
     assert_eq!(configured.bevel_radius, 24.0);
     assert_eq!(configured.corner_radii, [0.0; 4]);
@@ -58,21 +59,13 @@ fn magnification_normalizes_inputs_and_skips_identity_and_empty_bounds() {
     let fallback = request(
         Magnification::new()
             .zoom(f32::NAN)
-            .thickness(f32::INFINITY)
-            .corner_radius(f32::NEG_INFINITY),
+            .thickness(f32::INFINITY),
     );
     assert_eq!(fallback.magnification, 1.5);
     assert_eq!(fallback.bevel_radius, 16.0);
-    assert_eq!(fallback.corner_radii, [16.0; 4]);
-    let bounded = request(
-        Magnification::new()
-            .zoom(99.0)
-            .thickness(999.0)
-            .corner_radius(9999.0),
-    );
+    let bounded = request(Magnification::new().zoom(99.0).thickness(999.0));
     assert_eq!(bounded.magnification, 8.0);
     assert_eq!(bounded.bevel_radius, 512.0);
-    assert_eq!(bounded.corner_radii, [1024.0; 4]);
     let size = ResolvedSize {
         width: 80.0,
         height: 40.0,
@@ -173,4 +166,45 @@ async fn magnification_preserves_child_layout_and_does_not_clip_it() {
         assert_eq!(child.computed_size(&ctx), element.computed_size(&ctx));
         assert_eq!(element.retained_v2_child_clip_radius(&ctx, child), [0.0; 4]);
     });
+}
+
+#[test]
+fn magnification_without_a_shape_layer_has_square_corners() {
+    assert_eq!(stacked(&[&Magnification::new()]).corner_radii, [0.0; 4]);
+    // A shape declared after the lens cannot reach back and reshape it.
+    let late = stacked(&[&Magnification::new(), &BorderRadius::from(12.0)]);
+    assert_eq!(late.corner_radii, [0.0; 4]);
+}
+
+#[test]
+fn magnification_takes_its_corners_from_the_preceding_border_radius() {
+    for scale_independent in [BorderRadius::from(12.0), BorderRadius::from(12)] {
+        let lens = stacked(&[&scale_independent, &Magnification::new()]);
+        assert_eq!(lens.corner_radii, [12.0; 4]);
+    }
+    let uneven = BorderRadius::new()
+        .top_left(4.0)
+        .top_right(8.0)
+        .bottom_right(12.0)
+        .bottom_left(16.0);
+    let lens = stacked(&[&uneven, &Magnification::new()]);
+    assert_eq!(lens.corner_radii, [4.0, 8.0, 12.0, 16.0]);
+    let lens = stacked(&[&BorderRadius::from(4.0), &BorderRadius::from(20.0), &Magnification::new()]);
+    assert_eq!(lens.corner_radii, [20.0; 4], "the nearest preceding shape wins");
+}
+
+#[test]
+fn magnification_takes_its_corners_from_a_preceding_box_decoration() {
+    let shape = BoxDecoration::new().border_radius(10.0);
+    assert_eq!(stacked(&[&shape, &Magnification::new()]).corner_radii, [10.0; 4]);
+}
+
+#[test]
+fn magnification_bounds_and_sanitizes_the_declared_corners() {
+    let huge = stacked(&[&BorderRadius::from(9999.0), &Magnification::new()]);
+    assert_eq!(huge.corner_radii, [1024.0; 4]);
+    for invalid in [-4.0, f32::NAN, f32::NEG_INFINITY, f32::INFINITY] {
+        let lens = stacked(&[&BorderRadius::from(invalid), &Magnification::new()]);
+        assert_eq!(lens.corner_radii, [0.0; 4], "{invalid}");
+    }
 }

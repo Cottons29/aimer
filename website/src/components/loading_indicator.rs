@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use aimer::animation::{AnimatedBuilder, AnimationController, Curve, RotationTransition};
+use aimer::animation::{AnimatedBuilder, AnimationController, curves, RotationTransition};
 use aimer::style::{FontWeight, TextAlign, TextStyle};
 use aimer::{
     AnyWidget, BoxAlignment, Color, Column, Container, Dimension, Opacity, SizedBox, Svg,
@@ -11,9 +11,9 @@ const LOADING_CYCLE: Duration = Duration::from_millis(800);
 const LOADING_ICON_SIZE: f32 = 32.0;
 
 fn loading_controller() -> AnimationController {
-    let controller = AnimationController::new(LOADING_CYCLE, Curve::Linear);
+    let controller = AnimationController::new(LOADING_CYCLE, curves::LINEAR);
     controller.set_repeat(true);
-    controller.set_curve(Curve::EaseInOut);
+    controller.set_curve(curves::EASE_IN_OUT);
     controller.forward_from_first_tick();
     controller
 }
@@ -40,7 +40,7 @@ pub fn build_loading_indicator(text: &'static str) -> AnyWidget {
 
     const LOADING_CYCLE: Duration = Duration::from_millis(400);
 
-    let loop_controller = AnimationController::new(LOADING_CYCLE, Curve::Linear);
+    let loop_controller = AnimationController::new(LOADING_CYCLE, curves::LINEAR);
     loop_controller.set_repeat(true);
     loop_controller.set_auto_reverse(true);
     loop_controller.forward_from_first_tick();

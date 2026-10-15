@@ -4,7 +4,7 @@ use crate::control::controller::AnimationController;
 use crate::control::playback::controller_playback;
 use crate::control::timed_keyframe::KeyframeTrack;
 use crate::primitives::animatable::Animatable;
-use crate::primitives::curve::Curve;
+use crate::primitives::curve::AnyCurve;
 use crate::primitives::time::AnimInstant;
 
 /// One clock that several [`KeyframeTrack`]s are sampled from.
@@ -58,7 +58,7 @@ impl KeyframeTimeline {
     /// Creates a stopped timeline that lasts at least `duration`.
     pub fn new(duration: Duration) -> Self {
         Self {
-            controller: AnimationController::new(duration, Curve::Linear),
+            controller: AnimationController::new(duration, AnyCurve::default()),
         }
     }
 

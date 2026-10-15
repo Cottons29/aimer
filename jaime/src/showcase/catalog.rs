@@ -15,6 +15,7 @@ pub(super) enum ExampleId {
     Navigation,
     NavigationTransitions,
     ContainerTransform,
+    LiquidTabBar,
     RoutingContext,
     Animatable,
     DataView,
@@ -22,6 +23,7 @@ pub(super) enum ExampleId {
     StyleTokens,
     I18n,
     SvgCompletion,
+    LucideIcons,
     AssetsMedia,
     GlassLiquid,
     BackdropFilter,
@@ -66,6 +68,7 @@ pub(super) enum ExampleId {
     Routing,
     Text,
     Positioned,
+    Align,
     BorderOutline,
     AssetImage,
 }
@@ -80,6 +83,7 @@ pub(super) const EXAMPLES: &[ExampleId] = &[
     ExampleId::Navigation,
     ExampleId::NavigationTransitions,
     ExampleId::ContainerTransform,
+    ExampleId::LiquidTabBar,
     ExampleId::RoutingContext,
     ExampleId::Animatable,
     ExampleId::DataView,
@@ -87,6 +91,7 @@ pub(super) const EXAMPLES: &[ExampleId] = &[
     ExampleId::StyleTokens,
     ExampleId::I18n,
     ExampleId::SvgCompletion,
+    ExampleId::LucideIcons,
     ExampleId::AssetsMedia,
     ExampleId::GlassLiquid,
     ExampleId::BackdropFilter,
@@ -131,6 +136,7 @@ pub(super) const EXAMPLES: &[ExampleId] = &[
     ExampleId::Routing,
     ExampleId::Text,
     ExampleId::Positioned,
+    ExampleId::Align,
     ExampleId::BorderOutline,
     ExampleId::AssetImage,
 ];
@@ -162,6 +168,7 @@ pub(super) const EXAMPLE_CATEGORIES: &[ExampleCategory] = &[
             ExampleId::Navigation,
             ExampleId::NavigationTransitions,
             ExampleId::ContainerTransform,
+            ExampleId::LiquidTabBar,
             ExampleId::RoutingContext,
             ExampleId::Floating,
             ExampleId::Modal,
@@ -201,6 +208,7 @@ pub(super) const EXAMPLE_CATEGORIES: &[ExampleCategory] = &[
             ExampleId::Overflow,
             ExampleId::JustifyContent,
             ExampleId::Positioned,
+            ExampleId::Align,
             ExampleId::BorderOutline,
         ],
     },
@@ -209,6 +217,7 @@ pub(super) const EXAMPLE_CATEGORIES: &[ExampleCategory] = &[
         examples: &[
             ExampleId::StyleTokens,
             ExampleId::SvgCompletion,
+            ExampleId::LucideIcons,
             ExampleId::AssetsMedia,
             ExampleId::GlassLiquid,
             ExampleId::BackdropFilter,
@@ -253,6 +262,7 @@ impl ExampleId {
             Self::Navigation => "Navigation widgets",
             Self::NavigationTransitions => "Navigation transitions",
             Self::ContainerTransform => "Container transform",
+            Self::LiquidTabBar => "Liquid tab bar",
             Self::RoutingContext => "Route-child context",
             Self::Animatable => "Derived Animatable values",
             Self::DataView => "Data views",
@@ -260,6 +270,7 @@ impl ExampleId {
             Self::StyleTokens => "Design tokens",
             Self::I18n => "Localization",
             Self::SvgCompletion => "SVG completion",
+            Self::LucideIcons => "Lucide icons",
             Self::AssetsMedia => "Assets and media",
             Self::GlassLiquid => "Glass/Liquid",
             Self::BackdropFilter => "Backdrop filter",
@@ -303,7 +314,8 @@ impl ExampleId {
             Self::Animation => "Platform animation",
             Self::Routing => "Routing",
             Self::Text => "Text basics",
-            Self::Positioned => "Positioned",
+            Self::Positioned => "Stack + Positioned",
+            Self::Align => "Align",
             Self::BorderOutline => "Border and outline",
             Self::AssetImage => "Asset image",
         }
@@ -320,12 +332,13 @@ impl ExampleId {
             Self::Feedback => "!",
             Self::Navigation | Self::NavigationTransitions | Self::RoutingContext => "⌘",
             Self::ContainerTransform => "❏",
+            Self::LiquidTabBar => "◖",
             Self::Animatable => "◈",
             Self::DataView => "▤",
             Self::DndCompletion => "✥",
             Self::StyleTokens => "◐",
             Self::I18n => "文",
-            Self::SvgCompletion | Self::CustomShape => "◇",
+            Self::SvgCompletion | Self::CustomShape | Self::LucideIcons => "◇",
             Self::AssetsMedia => "◎",
             Self::GlassLiquid => "◌",
             Self::BackdropFilter => "▧",
@@ -363,6 +376,7 @@ impl ExampleId {
             Self::ColorSync => "●",
             Self::Routing => "⌘",
             Self::Positioned => "⊞",
+            Self::Align => "⊡",
             Self::BorderOutline => "□",
         }
     }
@@ -379,6 +393,7 @@ impl ExampleId {
             Self::Navigation => "navigation",
             Self::NavigationTransitions => "navigation-transitions",
             Self::ContainerTransform => "container-transform",
+            Self::LiquidTabBar => "liquid-tab-bar",
             Self::RoutingContext => "routing-context",
             Self::Animatable => "animatable",
             Self::DataView => "data-view",
@@ -386,6 +401,7 @@ impl ExampleId {
             Self::StyleTokens => "style-tokens",
             Self::I18n => "i18n",
             Self::SvgCompletion => "svg-completion",
+            Self::LucideIcons => "lucide-icons",
             Self::AssetsMedia => "assets-media",
             Self::GlassLiquid => "glass-liquid",
             Self::BackdropFilter => "backdrop-filter",
@@ -431,6 +447,7 @@ impl ExampleId {
             Self::Routing => "routing",
             Self::Text => "text",
             Self::Positioned => "positioned",
+            Self::Align => "align",
             Self::BorderOutline => "border-outline",
             Self::AssetImage => "asset-image",
         }
@@ -464,6 +481,9 @@ impl ExampleId {
             Self::ContainerTransform => {
                 "Grow a page out of the tapped item and shrink it back, standalone or on a Navigator."
             }
+            Self::LiquidTabBar => {
+                "Slide a tab indicator that lifts into a liquid glass lens, tap or drag it, and swap its style and motion."
+            }
             Self::RoutingContext => {
                 "Keep providers available across direct and Shell/Outlet route children."
             }
@@ -482,6 +502,7 @@ impl ExampleId {
             Self::I18n => {
                 "Format translations, plurals, numbers, dates, times, and RTL navigation deterministically."
             }
+            Self::LucideIcons => "Browse every Lucide icon with its filename label.",
             Self::SvgCompletion => {
                 "Inspect SVG fit policies, gradients, deferred features, diagnostics, and fallback behavior."
             }
@@ -555,7 +576,8 @@ impl ExampleId {
             Self::Animation => "Switch between platform screenshots with a fading transition.",
             Self::Routing => "Navigate through the generated route tree.",
             Self::Text => "A compact baseline text and wrapping example.",
-            Self::Positioned => "Place overlapping children at explicit coordinates.",
+            Self::Positioned => "Layer overlapping children with edge offsets and percentage positioning.",
+            Self::Align => "Compare all nine positions for a child within its parent.",
             Self::BorderOutline => "Compare a border and an outline around a field.",
             Self::AssetImage => "Load and decorate a bundled raster asset.",
         }

@@ -11,14 +11,14 @@ use super::*;
 
 use std::time::Duration;
 
-use aimer_animation::{AnimatedBuilder, AnimationController, Curve};
+use aimer_animation::{AnimatedBuilder, AnimationController, curves};
 
 const ROWS: usize = 40;
 const ROW_DEPTH: usize = 5;
 const FRAMES: usize = 20;
 
 fn looping() -> AnimationController {
-    let controller = AnimationController::new(Duration::from_millis(1500), Curve::Linear);
+    let controller = AnimationController::new(Duration::from_millis(1500), curves::LINEAR);
     controller.set_repeat(true);
     controller.forward_from_first_tick();
     controller
@@ -168,7 +168,7 @@ fn an_animator_inside_a_finished_builder_keeps_animating() {
         .lock()
         .unwrap_or_else(|p| p.into_inner());
     let inner_runs = Rc::new(Cell::new(0usize));
-    let outer = AnimationController::new(Duration::from_millis(40), Curve::Linear);
+    let outer = AnimationController::new(Duration::from_millis(40), curves::LINEAR);
     outer.forward_from_first_tick();
     let inner = looping();
     let animated = {
@@ -379,7 +379,7 @@ mod moved_state {
         };
         let builds = tagged.builds.clone();
         let updater = tagged.updater.clone();
-        let outer = AnimationController::new(Duration::from_millis(40), Curve::Linear);
+        let outer = AnimationController::new(Duration::from_millis(40), curves::LINEAR);
         outer.forward_from_first_tick();
         let animated = AnimatedBuilder::new(outer.clone(), move |progress| {
             let holder = aimer_container::Container::new()

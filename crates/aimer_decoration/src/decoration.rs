@@ -6,6 +6,7 @@ use aimer_canvas::Canvas;
 use aimer_rubick::{ErasedFrom, Rubick};
 
 mod any_decor;
+mod collections;
 mod components;
 
 #[cfg(test)]

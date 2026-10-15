@@ -102,6 +102,17 @@ impl<D: Decoration + 'static, W: Widget> Widget for DecorationBox<D, W> {
     }
 }
 
+/// Returns the corner radii that preceding layers declared on `canvas`.
+///
+/// Each radius is bounded to `0.0..=max`; negative and nonfinite radii yield
+/// square corners. Shared by the material decorations that adopt the box shape.
+#[inline]
+fn declared_corner_radii(canvas: &Canvas, max: f32) -> [f32; 4] {
+    canvas
+        .corner_radii()
+        .map(|radius| if radius.is_finite() { radius.clamp(0.0, max) } else { 0.0 })
+}
+
 pub(super) fn decoration_element<D: Decoration + 'static, W: Widget>(
     decoration: D,
     child: W,
@@ -341,6 +352,9 @@ impl<D: Decoration> LayoutElement for RawDecorationBox<D> {
         self.child.pos_start_end()
     }
 }
+
+#[cfg(test)]
+mod test_support;
 
 #[cfg(test)]
 mod tests;

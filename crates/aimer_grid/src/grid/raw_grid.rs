@@ -965,6 +965,12 @@ impl LayoutElement for RawGrid {
         self.computed_size(ctx)
     }
 
+    /// Only a size this grid was given: its extent comes from tracks over all of
+    /// its cells, which the default — the largest child — would understate.
+    fn get_size_from_child(&self) -> Option<aimer_attribute::Size> {
+        self.size()
+    }
+
     fn invalidate_layout(&self) {
         self.layout_cache.borrow_mut().clear();
         for item in &self.children {

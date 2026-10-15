@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use aimer_animation::Curve;
+use aimer_animation::{AnyCurve, Curve, curves};
 
 /// Paint-only timing used when a modal enters or leaves the application
 /// overlay.
@@ -8,12 +8,12 @@ use aimer_animation::Curve;
 /// Modal animation never changes layout. The barrier fades while the content
 /// fades and scales around its center, keeping hit testing stable for the whole
 /// transition.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ModalAnimation {
     pub(crate) enter_duration: Duration,
     pub(crate) exit_duration: Duration,
-    pub(crate) enter_curve: Curve,
-    pub(crate) exit_curve: Curve,
+    pub(crate) enter_curve: AnyCurve,
+    pub(crate) exit_curve: AnyCurve,
     pub(crate) content_scale_from: f32,
 }
 
@@ -23,8 +23,8 @@ impl ModalAnimation {
         Self {
             enter_duration: Duration::from_millis(200),
             exit_duration: Duration::from_millis(150),
-            enter_curve: Curve::EaseOut,
-            exit_curve: Curve::EaseIn,
+            enter_curve: curves::EASE_OUT.into_any(),
+            exit_curve: curves::EASE_IN.into_any(),
             content_scale_from: 0.96,
         }
     }
@@ -42,14 +42,14 @@ impl ModalAnimation {
     }
 
     /// Sets the easing curve used while revealing the modal.
-    pub fn enter_curve(mut self, curve: Curve) -> Self {
-        self.enter_curve = curve;
+    pub fn enter_curve(mut self, curve: impl Curve) -> Self {
+        self.enter_curve = curve.into_any();
         self
     }
 
     /// Sets the easing curve used while dismissing the modal.
-    pub fn exit_curve(mut self, curve: Curve) -> Self {
-        self.exit_curve = curve;
+    pub fn exit_curve(mut self, curve: impl Curve) -> Self {
+        self.exit_curve = curve.into_any();
         self
     }
 

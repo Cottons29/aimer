@@ -796,6 +796,16 @@ impl<T: Element, D: Decoration> EventElement for RawContainer<T, D> {
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         visitor(&self.child);
     }
+
+    /// An opaque container covers the layers behind it in a `Stack` for the
+    /// pointer as well as for the eye: a press or a hover on its box belongs to
+    /// it and what it holds, not to a card painted underneath. Only the box it
+    /// paints counts, so a padding-only wrapper around a pill leaves the
+    /// pointer free where nothing is drawn.
+    #[inline]
+    fn occludes_pointer_at(&self, pos: Vec2d) -> bool {
+        self.is_opaque() && self.bounds.is_inside(pos.x, pos.y)
+    }
 }
 
 mod layout;

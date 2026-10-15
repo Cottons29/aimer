@@ -85,7 +85,7 @@ fn glass_frame(blur_radius: f32) -> aimer::cupid::draw_cmd::DrawList {
         .blur_radius(blur_radius)
         .border_width(0.0)
         .shadow_blur(0.0)
-        .corner_radius(0.0)
+        .border_radius(0.0)
         .child(
             SizedBox::new()
                 .width(GLASS_SIZE as f32)
@@ -149,7 +149,7 @@ fn tinted_glass_frame() -> aimer::cupid::draw_cmd::DrawList {
         .border_color(Color::Transparent)
         .border_width(0.0)
         .shadow_blur(0.0)
-        .corner_radius(0.0)
+        .border_radius(0.0)
         .child(
             SizedBox::new()
                 .width(GLASS_SIZE as f32)

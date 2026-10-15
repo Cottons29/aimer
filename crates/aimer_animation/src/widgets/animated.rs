@@ -165,10 +165,10 @@ impl AnimationEffect {
 /// ```rust
 /// use std::time::Duration;
 ///
-/// use aimer_animation::{Animated, AnimationController, AnimationEffect, Curve};
+/// use aimer_animation::{Animated, AnimationController, AnimationEffect, curves};
 /// use aimer_widget::ErrorWidget;
 ///
-/// let controller = AnimationController::new(Duration::from_millis(250), Curve::Linear);
+/// let controller = AnimationController::new(Duration::from_millis(250), curves::LINEAR);
 /// let animated = Animated::new(controller,
 ///                              AnimationEffect::Opacity { from: 0.0, to: 1.0 },
 ///                              ErrorWidget::new("Unable to load preview"));

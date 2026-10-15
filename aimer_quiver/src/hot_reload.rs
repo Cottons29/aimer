@@ -9,7 +9,7 @@ use std::sync::mpsc::{
 };
 use std::time::Duration;
 
-use aimer_animation::Curve;
+use aimer_animation::AnyCurve;
 use aimer_anteros::{
     BUILTIN_PORTABLE_WIDGET_SCHEMAS, BUILTIN_WIDGET_SCHEMA_VERSION, CallbackBindings, EventId,
     ModelError, ModelLimits, PortableWidgetSchemaValidator, PropertyId, PropertyValue, StableId128,
@@ -2206,7 +2206,7 @@ fn decode_animated_theme_mode(value: i64) -> Option<ThemeMode> {
     }
 }
 
-fn decode_animated_theme_curve(node: &WidgetNodeView<'_>) -> Option<Curve> {
+fn decode_animated_theme_curve(node: &WidgetNodeView<'_>) -> Option<AnyCurve> {
     let tag = animated_theme_i64_property(node, PROPERTY_ANIMATED_THEME_CURVE)?;
     let controls = [
         animated_theme_f64_property(node, PROPERTY_ANIMATED_THEME_CURVE_X1),
@@ -2214,38 +2214,14 @@ fn decode_animated_theme_curve(node: &WidgetNodeView<'_>) -> Option<Curve> {
         animated_theme_f64_property(node, PROPERTY_ANIMATED_THEME_CURVE_X2),
         animated_theme_f64_property(node, PROPERTY_ANIMATED_THEME_CURVE_Y2),
     ];
-    match tag {
-        0 if controls.iter().all(Option::is_none) => Some(Curve::Linear),
-        1 if controls.iter().all(Option::is_none) => Some(Curve::EaseIn),
-        2 if controls.iter().all(Option::is_none) => Some(Curve::EaseOut),
-        3 if controls.iter().all(Option::is_none) => Some(Curve::EaseInOut),
-        4 => {
-            let [Some(x1), Some(y1), Some(x2), Some(y2)] = controls else {
-                return None;
-            };
-            let controls = [x1, y1, x2, y2];
-            if controls
-                .iter()
-                .any(|value| !value.is_finite() || value.abs() > f32::MAX as f64)
-            {
-                return None;
-            }
-            Some(Curve::CubicBezier(
-                x1 as f32, y1 as f32, x2 as f32, y2 as f32,
-            ))
-        }
-        5 if controls.iter().all(Option::is_none) => Some(Curve::Decelerate),
-        6 if controls.iter().all(Option::is_none) => Some(Curve::BounceOut),
-        7 if controls.iter().all(Option::is_none) => Some(Curve::BounceIn),
-        8 if controls.iter().all(Option::is_none) => Some(Curve::BounceInOut),
-        9 if controls.iter().all(Option::is_none) => Some(Curve::ElasticIn),
-        10 if controls.iter().all(Option::is_none) => Some(Curve::ElasticOut),
-        11 if controls.iter().all(Option::is_none) => Some(Curve::ElasticInOut),
-        12 if controls.iter().all(Option::is_none) => Some(Curve::FastOutSlowIn),
-        13 if controls.iter().all(Option::is_none) => Some(Curve::LinearOutSlowIn),
-        14 if controls.iter().all(Option::is_none) => Some(Curve::FastOutLinearIn),
-        _ => None,
-    }
+    // All four control points or none; the descriptor decides which tags take
+    // them and rejects non-finite ones.
+    let points = match controls {
+        [None, None, None, None] => None,
+        [Some(x1), Some(y1), Some(x2), Some(y2)] => Some([x1, y1, x2, y2]),
+        _ => return None,
+    };
+    AnyCurve::from_descriptor(tag, points)
 }
 
 fn unpack_provider_version(value: i64) -> Option<Version> {
@@ -3121,7 +3097,7 @@ mod tests {
             assert_eq!(decode_animated_theme_mode(2), Some(ThemeMode::Dark));
             assert!(matches!(
                 curve,
-                Some(Curve::CubicBezier(x1, y1, x2, y2))
+                Some(curves::cubic_bezier(x1, y1, x2, y2))
                     if (x1 - 0.1).abs() < f32::EPSILON
                         && (y1 - 0.2).abs() < f32::EPSILON
                         && (x2 - 0.8).abs() < f32::EPSILON

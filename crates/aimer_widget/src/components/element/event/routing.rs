@@ -276,12 +276,23 @@ impl EventDispatcher {
             return false;
         }
 
-        // A replacement whose root the index does not know is either inside
-        // another replaced subtree, which is verified in full below, or in a
-        // private child view that the index never covered. Anything else would
-        // have advanced the unscoped generation, which was checked above.
+        // Every logged root must be one the index knows. A root it does not
+        // know cannot be placed: reconciliation gives a replacement root a
+        // fresh identity when the old and new roots are incompatible, so it may
+        // be exactly what dropped a subtree this index still points into, and
+        // the recorded parent of any other replacement could then dangle. A
+        // replacement inside another one is not an exception, because the
+        // verification below requires every element of a replaced subtree to
+        // keep its identity. A root outside this tree entirely is rare enough
+        // that rebuilding the index is the cheaper answer than proving it
+        // foreign.
         let mut starts = SmallVec::<[usize; 4]>::new();
-        starts.extend(replaced.iter().filter_map(|id| self.path_indices.get(id).copied()));
+        for id in &replaced {
+            let Some(&start) = self.path_indices.get(id) else {
+                return false;
+            };
+            starts.push(start);
+        }
         if starts.is_empty() {
             return false;
         }

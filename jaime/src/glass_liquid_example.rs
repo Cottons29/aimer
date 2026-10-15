@@ -160,7 +160,7 @@ impl State<GlassLiquidExample> for GlassLiquidExampleState {
             .elevation(1.0)
             // .contrast(0.9)
             .border_color(aimer::Color::Rgba(198, 238, 255, 214))
-            // .corner_radius(22.0)
+            // .border_radius(22.0)
             .quality(3)
             .child(GlassLiquidExample::card(
                 "Glass",

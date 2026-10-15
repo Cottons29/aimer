@@ -98,7 +98,7 @@ impl State<CustomAnimatedThemeExample> for CustomAnimatedThemeExampleState {
                 MyTheme::light()
             })
             .duration(Duration::from_millis(500))
-            .curve(Curve::EaseInOut)
+            .curve(curves::EASE_IN_OUT)
             .child(CustomThemedPanel::new(self.is_dark, self.updater))
     }
 }

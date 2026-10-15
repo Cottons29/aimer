@@ -10,7 +10,7 @@ use aimer_attribute::size::ResolvedSize;
 use aimer_canvas::Mat3;
 
 use super::animated_paint::PaintPresentation;
-use crate::primitives::curve::Curve;
+use crate::primitives::curve::{AnyCurve, Curve};
 
 /// A rectangle in logical pixels.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -92,7 +92,7 @@ pub struct ContainerTransformFrame {
 /// assert_eq!(start.transform.transform_point(0.0, 0.0), (20.0, 120.0));
 /// assert_eq!(spec.sample(1.0).page.transform.transform_point(0.0, 0.0), (0.0, 0.0));
 /// ```
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ContainerTransformSpec {
     source: ElementBounds,
     viewport: ResolvedSize,
@@ -102,8 +102,8 @@ pub struct ContainerTransformSpec {
     anchored: bool,
     handoff: f32,
     blend: f32,
-    anchor_curve: Curve,
-    page_curve: Curve,
+    anchor_curve: AnyCurve,
+    page_curve: AnyCurve,
 }
 
 /// Where the page is fully opaque, as a fraction of the expansion, when there is
@@ -138,8 +138,8 @@ impl ContainerTransformSpec {
             anchored: false,
             handoff: DEFAULT_HANDOFF,
             blend: DEFAULT_BLEND,
-            anchor_curve: Curve::Linear,
-            page_curve: Curve::Linear,
+            anchor_curve: AnyCurve::default(),
+            page_curve: AnyCurve::default(),
         })
     }
 
@@ -203,14 +203,14 @@ impl ContainerTransformSpec {
     /// copy on the card. It only reshapes the travel; the fade between copy and
     /// page keeps following the timeline, and the copy still lands exactly on the
     /// card at the handoff, whatever the curve. The default is
-    /// [`Curve::Linear`], and it does nothing without an
+    /// [`curves::LINEAR`](crate::curves::LINEAR), and it does nothing without an
     /// [`anchor`](Self::anchored).
     ///
     /// This composes with the easing the host already applies to the timeline,
     /// so pair it with a linear timeline when the element curves should be the
     /// only easing. An invalid curve (a non-finite Bézier control point) is
     /// ignored.
-    pub fn anchor_curve(mut self, curve: Curve) -> Self {
+    pub fn anchor_curve(mut self, curve: impl Curve) -> Self {
         self.anchor_curve = valid_or(curve, self.anchor_curve);
         self
     }
@@ -221,13 +221,13 @@ impl ContainerTransformSpec {
     /// scale, position and corner radius. The page's fade, the dissolve and the
     /// dimming of the page behind keep following the timeline. The item copy
     /// follows the card, so it picks up this curve after the handoff. The
-    /// default is [`Curve::Linear`]. A curve that overshoots makes the page
+    /// default is [`curves::LINEAR`](crate::curves::LINEAR). A curve that overshoots makes the page
     /// overshoot too, but never gives it a negative corner radius. An invalid
     /// curve is ignored.
     ///
     /// Collapsing runs the same curve over reversed time, so the exit mirrors
     /// the entrance.
-    pub fn page_curve(mut self, curve: Curve) -> Self {
+    pub fn page_curve(mut self, curve: impl Curve) -> Self {
         self.page_curve = valid_or(curve, self.page_curve);
         self
     }
@@ -308,11 +308,8 @@ impl ContainerTransformSpec {
 }
 
 /// `curve` unless it has a non-finite control point, in which case `fallback`.
-fn valid_or(curve: Curve, fallback: Curve) -> Curve {
-    match curve {
-        Curve::CubicBezier(a, b, c, d) if ![a, b, c, d].iter().all(|value| value.is_finite()) => fallback,
-        other => other,
-    }
+fn valid_or(curve: impl Curve, fallback: AnyCurve) -> AnyCurve {
+    if curve.is_valid() { curve.into_any() } else { fallback }
 }
 
 fn sanitize(radius: f32) -> f32 {
@@ -326,6 +323,7 @@ fn sanitize(radius: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::primitives::curve::curves;
 
     const VIEWPORT: ResolvedSize = ResolvedSize {
         width: 400.0,
@@ -585,21 +583,26 @@ mod tests {
         }
     }
 
-    mod curves {
+    mod element_curves {
         use super::*;
-        use crate::Curve;
 
         /// The overshooting curve used to check that nothing becomes invalid.
-        const OVERSHOOT: Curve = Curve::CubicBezier(0.3, 1.8, 0.6, 1.0);
+        const OVERSHOOT: curves::CubicBezier = curves::cubic_bezier(0.3, 1.8, 0.6, 1.0);
 
-        fn all_curves() -> [Curve; 5] {
-            [Curve::Linear, Curve::EaseIn, Curve::EaseOut, Curve::BounceOut, OVERSHOOT]
+        fn all_curves() -> [AnyCurve; 5] {
+            [
+                curves::LINEAR.into_any(),
+                curves::EASE_IN.into_any(),
+                curves::EASE_OUT.into_any(),
+                curves::BOUNCE_OUT.into_any(),
+                OVERSHOOT.into_any(),
+            ]
         }
 
         #[test]
         fn the_default_curves_change_nothing() {
             let plain = anchored();
-            let explicit = anchored().anchor_curve(Curve::Linear).page_curve(Curve::Linear);
+            let explicit = anchored().anchor_curve(curves::LINEAR).page_curve(curves::LINEAR);
 
             for step in 0..=20 {
                 let p = step as f32 / 20.0;
@@ -609,13 +612,13 @@ mod tests {
 
         #[test]
         fn the_page_curve_reshapes_the_pages_growth_but_not_its_fade() {
-            let eased = spec().page_curve(Curve::EaseIn);
+            let eased = spec().page_curve(curves::EASE_IN);
             let linear = spec();
 
             let at_half = eased.sample(0.5);
 
             // The page is where a linear page would be at EaseIn(0.5) = 0.125.
-            let reference = linear.sample(Curve::EaseIn.transform(0.5));
+            let reference = linear.sample(curves::EASE_IN.transform(0.5));
             assert_eq!(at_half.page.transform, reference.page.transform);
             assert_eq!(at_half.page.corner_radius, reference.page.corner_radius);
             // Its fade-in and the dimming behind it keep following the timeline.
@@ -625,7 +628,7 @@ mod tests {
 
         #[test]
         fn the_anchor_curve_reshapes_the_copys_travel() {
-            let eased = anchored().anchor_curve(Curve::EaseIn);
+            let eased = anchored().anchor_curve(curves::EASE_IN);
             let at = 0.125; // halfway through the 0 to 25% phase
 
             let frame = eased.sample(at);
@@ -643,7 +646,7 @@ mod tests {
         fn the_copy_still_lands_on_the_card_at_the_handoff_with_any_curves() {
             for anchor in all_curves() {
                 for page in all_curves() {
-                    let frame = anchored().anchor_curve(anchor).page_curve(page).sample(0.25);
+                    let frame = anchored().anchor_curve(anchor.clone()).page_curve(page.clone()).sample(0.25);
 
                     let copy = frame.anchor.transform.transform_point(0.0, 0.0);
                     let card = frame.page.transform.transform_point(0.0, 0.0);
@@ -658,7 +661,7 @@ mod tests {
 
         #[test]
         fn the_copy_keeps_pace_with_the_card_after_the_handoff_whatever_the_curves() {
-            let spec = anchored().anchor_curve(Curve::EaseIn).page_curve(OVERSHOOT);
+            let spec = anchored().anchor_curve(curves::EASE_IN).page_curve(OVERSHOOT);
 
             for step in 25..=100 {
                 let frame = spec.sample(step as f32 / 100.0);
@@ -673,7 +676,7 @@ mod tests {
             // An overshoot would push the corner radius negative, and a frame with
             // a negative radius is declined by the host: the page would blink out.
             for curve in all_curves() {
-                let spec = anchored().anchor_curve(curve).page_curve(curve).source_radius(12.0).page_radius(0.0);
+                let spec = anchored().anchor_curve(curve.clone()).page_curve(curve.clone()).source_radius(12.0).page_radius(0.0);
                 for step in 0..=100 {
                     let frame = spec.sample(step as f32 / 100.0);
                     assert!(frame.page.is_finite() && frame.anchor.is_finite() && frame.backdrop.is_finite(),
@@ -685,7 +688,7 @@ mod tests {
 
         #[test]
         fn the_ends_are_unchanged_by_curves() {
-            let spec = anchored().anchor_curve(Curve::EaseOut).page_curve(Curve::EaseIn);
+            let spec = anchored().anchor_curve(curves::EASE_OUT).page_curve(curves::EASE_IN);
 
             assert_eq!(spec.sample(0.0).anchor.transform, anchored().sample(0.0).anchor.transform);
             assert_eq!(spec.sample(1.0).page.transform, Mat3::identity());
@@ -694,7 +697,7 @@ mod tests {
 
         #[test]
         fn an_invalid_curve_is_ignored() {
-            let bad = Curve::CubicBezier(f32::NAN, 0.0, 1.0, 1.0);
+            let bad = curves::cubic_bezier(f32::NAN, 0.0, 1.0, 1.0);
             let spec = anchored().anchor_curve(bad).page_curve(bad);
 
             for step in 0..=20 {
@@ -705,7 +708,7 @@ mod tests {
 
         #[test]
         fn the_anchor_curve_does_nothing_without_an_anchor() {
-            let eased = spec().anchor_curve(Curve::EaseIn);
+            let eased = spec().anchor_curve(curves::EASE_IN);
 
             for step in 0..=10 {
                 let p = step as f32 / 10.0;

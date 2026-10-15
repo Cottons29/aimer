@@ -2,7 +2,7 @@ use aimer_attribute::{ResolvedSize, Vec2d};
 pub use aimer_canvas::MagnificationStyle;
 use aimer_canvas::{Canvas, MaterialDrawRequest, MaterialKind};
 
-use super::Decoration;
+use super::{Decoration, declared_corner_radii};
 
 /// Enlarges content already painted behind a [`super::DecorationBox`].
 ///
@@ -11,21 +11,28 @@ use super::Decoration;
 /// a separately controlled swell around the enlargement anchor. The decoration
 /// adds no tint, blur, border, shadow, or highlight. It affects neither child
 /// layout nor child clipping, and the child paints sharply after the lens.
-/// Ancestor clips still apply. If capture is unavailable or exceeds the
+/// Ancestor clips still apply.
+///
+/// The lens has square corners unless a [`BorderRadius`](crate::BorderRadius)
+/// or [`BoxDecoration`](crate::BoxDecoration) radius precedes it in the same
+/// stack, in which case it adopts those per-corner radii, bounded to
+/// `0.0..=1024.0`. A radius that follows the lens does not reach back. If capture is unavailable or exceeds the
 /// renderer's budget, the backdrop remains unchanged.
 ///
 /// ```
 /// use aimer_container::SizedBox;
-/// use aimer_decoration::{DecorationBox, Magnification};
+/// use aimer_decoration::{BorderRadius, Decoration, DecorationBox, Magnification};
 /// let lens = DecorationBox::new()
-///     .decoration(Magnification::new().zoom(2.0).thickness(16.0).corner_radius(16.0))
+///     .decoration(vec![
+///         BorderRadius::from(16).notype(),
+///         Magnification::new().zoom(2.0).thickness(16.0).notype(),
+///     ])
 ///     .child(SizedBox::new().width(240).height(160));
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Magnification {
     zoom: f32,
     thickness: f32,
-    corner_radius: f32,
     style: MagnificationStyle,
     bulge: f32,
 }
@@ -38,14 +45,13 @@ impl Default for Magnification {
 }
 
 impl Magnification {
-    /// Creates a centered 1.4× lens with 16-pixel thickness and square corners.
+    /// Creates a centered 1.4× lens with 16-pixel thickness.
     /// The default style enables uniform zoom and refraction on both axes.
     #[inline]
     pub fn new() -> Self {
         Self {
             zoom: 1.4,
             thickness: 16.0,
-            corner_radius: 0.0,
             style: MagnificationStyle::DEFAULT,
             bulge: 0.25,
         }
@@ -104,15 +110,6 @@ impl Magnification {
         self.thickness = normalize(thickness, 16.0, 512.0);
         self
     }
-
-    /// Sets the lens corner radius in logical pixels, clamped to `0.0..=1024.0`.
-    /// Nonfinite values use `16.0`; zero produces square corners. This shapes
-    /// the decoration only and does not clip its child.
-    #[inline]
-    pub fn corner_radius(mut self, radius: f32) -> Self {
-        self.corner_radius = normalize(radius, 16.0, MaterialDrawRequest::MAX_CORNER_RADIUS);
-        self
-    }
 }
 
 impl Decoration for Magnification {
@@ -129,7 +126,8 @@ impl Decoration for Magnification {
         request.bevel_radius = self.thickness;
         request.magnification_style = self.style;
         request.bulge_strength = self.bulge;
-        request.corner_radii = [self.corner_radius; 4];
+        request.corner_radii =
+            declared_corner_radii(canvas, MaterialDrawRequest::MAX_CORNER_RADIUS);
         request.blur_radius = 0.0;
         request.tint = [0.0; 4];
         request.opacity = 1.0;

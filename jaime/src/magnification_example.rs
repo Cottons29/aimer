@@ -9,8 +9,8 @@ use aimer::style::{
     Stroke, TextStyle,
 };
 use aimer::{
-    AimerApp, AnyWidget, BuildContext, ChildBuilder, Column, Container, DecorationBox,
-    Magnification, MagnificationStyle as Style, Positioned, Row, Stack, State, StateUpdater,
+    AimerApp, AnyWidget, BorderRadius, BuildContext, ChildBuilder, Column, Container, Decoration,
+    DecorationBox, Magnification, MagnificationStyle as Style, Positioned, Row, Stack, State, StateUpdater,
     StatefulWidget, Text, Widget,
 };
 
@@ -152,14 +152,15 @@ impl State<MagnificationExample> for MagnificationExampleState {
                                 .top(92)
                                 .child(
                                     DecorationBox::new()
-                                        .decoration(
+                                        .decoration(vec![
+                                            BorderRadius::from(16.0).notype(),
                                             Magnification::new()
                                                 .style(self.style)
                                                 .bulge(self.bulge as f32)
                                                 .zoom(self.zoom as f32)
                                                 .thickness(self.thickness as f32)
-                                                .corner_radius(16.0),
-                                        )
+                                                .notype(),
+                                        ])
                                         .child(
                                             self.foreground
                                                 .clone(),

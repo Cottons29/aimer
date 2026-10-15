@@ -99,7 +99,7 @@ impl State<Screen> for ScreenState {
         aimer_animation::ImplicitAnimatedBuilder::new(
             if self.animate { 1.0f32 } else { 0.0 },
             Duration::from_millis(300),
-            aimer_animation::Curve::EaseInOut,
+            aimer_animation::curves::EASE_IN_OUT,
             move |value| {
                 let title = title.clone();
                 aimer_container::Container::new()

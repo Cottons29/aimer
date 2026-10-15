@@ -105,11 +105,12 @@ pub struct Svg {
 }
 
 impl Svg {
-    /// Creates a widget for a parsed SVG document.
+    /// Creates a widget for a parsed document or an embedded [`crate::StaticSvg`].
     ///
     /// The intrinsic viewport determines its size, and no style or callback
     /// rules are installed.
-    pub fn new(document: SvgDocument) -> Self {
+    pub fn new(document: impl Into<SvgDocument>) -> Self {
+        let document = document.into();
         let source = document.source().to_owned();
         Self {
             document,

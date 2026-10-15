@@ -2,7 +2,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
 
-use aimer_animation::{AnimInstant, AnimationController, Curve};
+use aimer_animation::{AnimInstant, AnimationController, curves};
 use aimer_canvas::Canvas;
 use aimer_cupid::draw_cmd_v2::Rect;
 use aimer_widget::base::{BuildContext, Color};
@@ -411,7 +411,7 @@ impl CaretBlink {
     /// immediately wrapping cycle.
     #[inline]
     pub fn with_period(period: Duration) -> Self {
-        let controller = AnimationController::new(period, Curve::Linear);
+        let controller = AnimationController::new(period, curves::LINEAR);
         controller.set_repeat(true);
         controller.forward_from_first_tick();
         Self {

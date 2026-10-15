@@ -47,7 +47,7 @@ impl State<AnimatedThemeExample> for AnimatedThemeExampleState {
                 ThemeData::light()
             })
             .duration(Duration::from_millis(400))
-            .curve(Curve::EaseInOut)
+            .curve(curves::EASE_IN_OUT)
             .child(ThemedPanel::new(self.is_dark, self.updater))
     }
 }

@@ -8,6 +8,7 @@ pub mod focus_scope;
 pub mod focusable;
 mod frame_work_stats;
 mod hover_reconciliation;
+mod pointer_occlusion;
 pub mod key;
 pub mod layout_cache;
 pub mod page_storage;
@@ -214,6 +215,9 @@ pub mod base {
 pub use crate::async_builder::{AsyncBuilder, AsyncSnapshot};
 pub use crate::components::element::{broadcast_event, dispatch_event, dispatch_focused_event};
 pub use crate::key::Key;
+pub use crate::pointer_occlusion::pointer_occluded_at;
+#[doc(hidden)]
+pub use crate::pointer_occlusion::request_pointer_view_frame;
 pub use crate::layout_cache::LayoutCache;
 pub use crate::platform_brightness::{Brightness, platform_brightness, set_platform_brightness};
 pub use crate::pointer_claim::{

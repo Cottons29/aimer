@@ -2,7 +2,7 @@ use std::cell::{Cell, RefCell, UnsafeCell};
 use std::collections::{HashSet, VecDeque};
 use std::rc::Rc;
 
-use aimer_animation::AnimInstant;
+use aimer_animation::{AnimInstant, Curve};
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_canvas::Canvas;
 use aimer_events::element::ElementEvent;
@@ -587,7 +587,7 @@ impl RawModalOverlay {
 fn draw_hosted_entries(entries: &HostedModalEntries, ctx: &BuildContext) {
     let now = AnimInstant::now();
     for entry in entries.entries() {
-        entry.timeline.borrow_mut().tick(now, entry.animation);
+        entry.timeline.borrow_mut().tick(now, entry.animation.as_ref());
         entry.element.update(ctx);
     }
 
@@ -946,7 +946,7 @@ impl ModalTimeline {
         request_animation_frame();
     }
 
-    fn tick(&mut self, now: AnimInstant, animation: Option<ModalAnimation>) {
+    fn tick(&mut self, now: AnimInstant, animation: Option<&ModalAnimation>) {
         let Some(animation) = animation else {
             return;
         };
@@ -1119,7 +1119,7 @@ mod tests {
     use std::rc::Rc;
     use std::time::Duration;
 
-    use aimer_animation::{AnimInstant, Curve};
+    use aimer_animation::{AnimInstant, curves};
     use aimer_attribute::Vec2d;
     use aimer_events::element::ElementEvent;
     use aimer_events::pointer::{PointerButton, PointerInfo, PointerSource};
@@ -1539,23 +1539,23 @@ mod tests {
         let animation = ModalAnimation::new()
             .enter_duration(Duration::from_millis(100))
             .exit_duration(Duration::from_millis(100))
-            .enter_curve(Curve::Linear)
-            .exit_curve(Curve::Linear);
+            .enter_curve(curves::LINEAR)
+            .exit_curve(curves::LINEAR);
         let start = AnimInstant::now();
         let mut timeline = ModalTimeline::new(true);
         assert!(timeline.is_active());
 
-        timeline.tick(start, Some(animation));
-        timeline.tick(start + Duration::from_millis(50), Some(animation));
+        timeline.tick(start, Some(&animation));
+        timeline.tick(start + Duration::from_millis(50), Some(&animation));
         assert!((timeline.progress() - 0.5).abs() < 0.01);
         assert!(timeline.is_active());
 
         timeline.begin_exit(true);
         assert!(timeline.is_active());
-        timeline.tick(start + Duration::from_millis(50), Some(animation));
+        timeline.tick(start + Duration::from_millis(50), Some(&animation));
         assert!((timeline.progress() - 0.5).abs() < 0.01);
 
-        timeline.tick(start + Duration::from_millis(100), Some(animation));
+        timeline.tick(start + Duration::from_millis(100), Some(&animation));
         assert!((timeline.progress() - 0.25).abs() < 0.01);
         assert!(timeline.is_active());
     }
@@ -1568,12 +1568,12 @@ mod tests {
         let now = AnimInstant::now();
         let mut timeline = ModalTimeline::new(true);
 
-        timeline.tick(now, Some(animation));
+        timeline.tick(now, Some(&animation));
         assert_eq!(timeline.progress(), 1.0);
         assert!(!timeline.is_active());
 
         timeline.begin_exit(true);
-        timeline.tick(now, Some(animation));
+        timeline.tick(now, Some(&animation));
         assert_eq!(timeline.progress(), 0.0);
         assert!(timeline.finished());
         assert!(!timeline.is_active());

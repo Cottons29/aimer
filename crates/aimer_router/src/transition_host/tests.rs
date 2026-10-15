@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use aimer_animation::Curve;
+use aimer_animation::curves;
 use aimer_canvas::Mat3;
 use aimer_widget::ErrorWidget;
 
@@ -8,9 +8,9 @@ use super::*;
 
 #[test]
 fn playback_starts_on_first_tick_and_releases_outgoing_content_at_completion() {
-    let controller = AnimationController::new(Duration::from_millis(100), Curve::Linear);
+    let controller = AnimationController::new(Duration::from_millis(100), curves::LINEAR);
     controller.forward_from_first_tick();
-    let effect = ResolvedNavigationTransition::new(Duration::from_millis(100), Curve::Linear, |p, _| {
+    let effect = ResolvedNavigationTransition::new(Duration::from_millis(100), curves::LINEAR, |p, _| {
         NavigationTransitionFrame {
             incoming: crate::PaintPresentation { transform: Mat3::identity(), opacity: p, corner_radius: 0.0 },
             outgoing: crate::PaintPresentation { transform: Mat3::identity(), opacity: 1.0 - p, corner_radius: 0.0 },
@@ -69,7 +69,7 @@ mod presentation {
 
     /// Like [`host`], also returning the playback so a test can end it.
     fn host_with_playback(effect: ResolvedNavigationTransition, context: &BuildContext) -> (AnyElement, Rc<Playback>) {
-        let controller = AnimationController::new(Duration::from_millis(100), Curve::Linear);
+        let controller = AnimationController::new(Duration::from_millis(100), curves::LINEAR);
         controller.forward_from_first_tick();
         let playback = Rc::new(Playback {
             controller,
@@ -86,7 +86,7 @@ mod presentation {
     }
 
     fn fixed_effect(on_top: bool) -> ResolvedNavigationTransition {
-        ResolvedNavigationTransition::new(Duration::from_millis(100), Curve::Linear, |_, _| {
+        ResolvedNavigationTransition::new(Duration::from_millis(100), curves::LINEAR, |_, _| {
             NavigationTransitionFrame { outgoing: opacity(0.25), incoming: opacity(0.75) }
         })
         .unwrap()
@@ -144,7 +144,7 @@ mod presentation {
         let recorded = seen.clone();
         let effect = ResolvedNavigationTransition::positioned(
             Duration::from_millis(100),
-            Curve::Linear,
+            curves::LINEAR,
             move |_, _, origin| {
                 recorded.set(origin);
                 NavigationTransitionFrame::FINISHED
@@ -163,7 +163,7 @@ mod presentation {
         let content = aimer_animation::SharedContent::new(|| ErrorWidget::new("copy").boxed());
         ResolvedNavigationTransition::anchored(
             Duration::from_millis(100),
-            Curve::Linear,
+            curves::LINEAR,
             AnchorContent::new(content, ResolvedSize { width: 40.0, height: 30.0 }),
             |_, _, _| AnchoredFrame {
                 frame: NavigationTransitionFrame { outgoing: opacity(0.25), incoming: opacity(0.75) },

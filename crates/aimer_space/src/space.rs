@@ -4,6 +4,7 @@
 //! their children
 
 pub mod align;
+mod hug;
 pub mod positioned;
 pub mod stack;
 

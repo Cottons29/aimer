@@ -5,7 +5,7 @@
 
 use std::rc::Rc;
 
-use aimer::animation::{Curve, SharedElement};
+use aimer::animation::{curves, SharedElement};
 use aimer::input::button::Button;
 use aimer::macros::widget;
 use aimer::router::{ContainerTransform, ContainerTransition, Navigator, NavigatorController, Router};
@@ -198,9 +198,9 @@ impl State<StandalonePreview> for StandaloneState {
         // A linear timeline with an element curve each: the item copy eases out
         // as it travels to the card, then the page eases in and out as it grows.
         ContainerTransform::new()
-            .curve(Curve::Linear)
-            .anchor_curve(Curve::EaseOut)
-            .page_curve(Curve::EaseInOut)
+            .curve(curves::LINEAR)
+            .anchor_curve(curves::EASE_OUT)
+            .page_curve(curves::EASE_IN_OUT)
             .page(self.selected.map(|id| (standalone_tag(id), album_page(id, close, white))))
             .child(grid(move |id| tile(id, standalone_tag(id), open(id), white)))
     }

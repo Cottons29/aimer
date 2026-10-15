@@ -85,7 +85,7 @@ All three WGPU failures reproduce in an unchanged `HEAD` snapshot:
 
 The web check (`--no-default-features --features web --target wasm32-unknown-unknown`)
 is blocked by an existing incorrect path to `animation_only_stub.rs` in
-`crates/aimer_widget/src/components/element.rs`. Android's native check
+`../crates/aimer_widget/src/components/element.rs`. Android's native check
 (`--no-default-features --features native --target aarch64-linux-android`) is
 blocked by existing missing shader include paths in `aimer_cupid/src/backend.rs`.
 These were left unchanged. No full workspace test suite or Windows/Linux/iOS/

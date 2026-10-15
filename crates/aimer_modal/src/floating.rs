@@ -243,7 +243,7 @@ impl<W: Widget + 'static> Floating<W> {
     /// Calls made before the first application frame are queued and presented
     /// as soon as the root host is built.
     pub fn show(self) -> ModalHandle {
-        let animation = self.animation;
+        let animation = self.animation.clone();
         host::show(
             animation,
             Box::new(move |ctx, id, timeline| self.to_raw_element(ctx, Some(id), timeline)),
@@ -257,22 +257,23 @@ impl<W: Widget + 'static> Floating<W> {
         timeline: Rc<RefCell<ModalTimeline>>,
     ) -> AnyElement {
         let barrier_animation = (self.barrier_color.to_rgba().3 != 0)
-            .then_some(self.animation)
+            .then(|| self.animation.clone())
             .flatten();
         let barrier = Container::new()
             .color(self.barrier_color)
             .child(ZeroSizedBox)
             .to_element(ctx);
+        let animate_barrier = barrier_animation.is_some();
         let barrier = wrap_animated_content(barrier, barrier_animation, timeline.clone(), false);
         let child = wrap_animated_content(
             self.child.to_element(ctx),
-            self.animation,
+            self.animation.clone(),
             timeline.clone(),
             true,
         );
         RawFloating {
             barrier,
-            animate_barrier: barrier_animation.is_some(),
+            animate_barrier,
             timeline,
             last_barrier_progress: Cell::new(f32::NAN),
             child,
@@ -308,7 +309,7 @@ impl<W: Widget + 'static> Floating<W> {
 
     #[cfg(test)]
     pub(crate) fn animation_config(&self) -> Option<ModalAnimation> {
-        self.animation
+        self.animation.clone()
     }
 }
 
@@ -609,7 +610,7 @@ impl VisitorElement for RawFloating {
 mod tests {
     use std::time::Duration;
 
-    use aimer_animation::Curve;
+    use aimer_animation::curves;
     use aimer_container::ZeroSizedBox;
 
     use super::*;
@@ -639,7 +640,7 @@ mod tests {
         let anchor = Anchor::new().child(ZeroSizedBox).handle_value();
         let animation = ModalAnimation::new()
             .enter_duration(Duration::from_millis(120))
-            .enter_curve(Curve::EaseOut);
+            .enter_curve(curves::EASE_OUT);
         let floating = Floating::new()
             .anchor(anchor.clone())
             .side(FloatingSide::Right)
@@ -648,7 +649,7 @@ mod tests {
             .offset(Vec2d { x: 2.0, y: -3.0 })
             .overflow(OverflowPolicy::Shift)
             .barrier_color(Color::BLACK.with_opacity(40))
-            .animation(animation)
+            .animation(animation.clone())
             .child(ZeroSizedBox);
 
         assert_eq!(floating.anchor_value(), anchor);

@@ -45,7 +45,7 @@ impl AnimatedOverlayContent {
             (timeline.progress(), timeline.is_active())
         };
         let size = self.child.computed_size(ctx);
-        animation_frame(progress, active, self.animation, self.scale_content, size)
+        animation_frame(progress, active, &self.animation, self.scale_content, size)
     }
 }
 
@@ -149,7 +149,7 @@ impl VisitorElement for AnimatedOverlayContent {
 fn animation_frame(
     progress: f32,
     active: bool,
-    animation: ModalAnimation,
+    animation: &ModalAnimation,
     scale_content: bool,
     size: ResolvedSize,
 ) -> CompositorAnimationFrame {
@@ -193,7 +193,7 @@ mod tests {
         let frame = animation_frame(
             0.0,
             true,
-            ModalAnimation::new().content_scale_from(0.8),
+            &ModalAnimation::new().content_scale_from(0.8),
             true,
             ResolvedSize {
                 width: 200.0,
@@ -223,7 +223,7 @@ mod tests {
         let frame = animation_frame(
             0.5,
             true,
-            ModalAnimation::new(),
+            &ModalAnimation::new(),
             false,
             ResolvedSize {
                 width: 200.0,

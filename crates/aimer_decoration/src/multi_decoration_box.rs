@@ -29,12 +29,12 @@ use crate::{BoxDecoration, Decoration};
 ///
 /// let widget = MultiDecorationBox::new()
 ///     .decoration(BoxDecoration::new().background_color(Color::BLUE).border_radius(24.0))
-///     .decoration(LightEdge::new().corner_radius(24.0))
+///     .decoration(LightEdge::new())
 ///     .child(SizedBox::new().width(240).height(80));
 ///
 /// let layers: Vec<Box<dyn Decoration>> = vec![
 ///     Box::new(BoxDecoration::new().background_color(Color::BLUE).border_radius(24.0)),
-///     Box::new(LightEdge::new().corner_radius(24.0)),
+///     Box::new(LightEdge::new()),
 /// ];
 /// let dynamic = MultiDecorationBox::new().decorations(layers)
 ///     .child(SizedBox::new().width(240).height(80));
@@ -257,7 +257,7 @@ impl<D: Decoration> Decoration for CollectedLayers<D> {
 }
 
 #[inline]
-fn extend_outsets(outsets: &mut [f32; 4], candidate: [f32; 4]) {
+pub(crate) fn extend_outsets(outsets: &mut [f32; 4], candidate: [f32; 4]) {
     for (outset, value) in outsets.iter_mut().zip(candidate) {
         // Sanitize before merging: an infinite layer must not erase a valid
         // finite outset when the retained wrapper sanitizes the final bounds.

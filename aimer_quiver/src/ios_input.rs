@@ -83,20 +83,63 @@ fn pointer_event(kind: u32, x: f64, y: f64, button: u32) -> Option<ElementEvent>
     }
 }
 
+/// began/moved/ended/cancelled as UIKit gesture recognizers encode them: 0/1/2/3.
+fn gesture_phase(phase: u32) -> Option<TouchPhase> {
+    match phase {
+        0 => Some(TouchPhase::Started),
+        1 => Some(TouchPhase::Moved),
+        2 => Some(TouchPhase::Ended),
+        3 => Some(TouchPhase::Cancelled),
+        _ => None,
+    }
+}
+
 fn scroll_event(x: f64, y: f64, phase: u32) -> Option<ElementEvent> {
-    let phase = match phase {
-        0 => TouchPhase::Started,
-        1 => TouchPhase::Moved,
-        2 => TouchPhase::Ended,
-        3 => TouchPhase::Cancelled,
-        _ => return None,
-    };
+    let phase = gesture_phase(phase)?;
     Some(ElementEvent::Scroll {
         delta: point(x, y)?,
         phase,
         kind: ScrollDeltaKind::Pixel,
         is_direct_manipulation: phase == TouchPhase::Started || phase == TouchPhase::Moved,
     })
+}
+
+/// A finite `f32`, or `None` for anything that would poison a widget's
+/// accumulated transform.
+fn finite_delta(value: f64) -> Option<f32> {
+    let value = value as f32;
+    value.is_finite().then_some(value)
+}
+
+fn pinch_event(x: f64, y: f64, delta: f64, phase: u32) -> Option<ElementEvent> {
+    Some(ElementEvent::Pinch {
+        pos: point(x, y)?,
+        delta: finite_delta(delta)?,
+        phase: gesture_phase(phase)?,
+    })
+}
+
+fn rotation_event(x: f64, y: f64, delta: f64, phase: u32) -> Option<ElementEvent> {
+    Some(ElementEvent::Rotate {
+        pos: point(x, y)?,
+        delta: finite_delta(delta)?,
+        phase: gesture_phase(phase)?,
+    })
+}
+
+fn pan_event(x: f64, y: f64, delta_x: f64, delta_y: f64, phase: u32) -> Option<ElementEvent> {
+    Some(ElementEvent::Pan {
+        pos: point(x, y)?,
+        delta: Vec2d {
+            x: finite_delta(delta_x)?,
+            y: finite_delta(delta_y)?,
+        },
+        phase: gesture_phase(phase)?,
+    })
+}
+
+fn smart_zoom_event(x: f64, y: f64) -> Option<ElementEvent> {
+    Some(ElementEvent::SmartZoom { pos: point(x, y)? })
 }
 
 #[cfg(target_os = "ios")]
@@ -125,6 +168,55 @@ pub extern "C" fn aimer_ios_pointer_event(kind: u32, x: f64, y: f64, button: u32
 #[unsafe(no_mangle)]
 pub extern "C" fn aimer_ios_scroll_event(x: f64, y: f64, phase: u32, flags: u64) {
     if let Some(event) = scroll_event(x, y, phase) {
+        send(event, flags);
+    }
+}
+
+/// Forwards a UIKit pinch at (`x`, `y`) in logical points. `delta` is the
+/// fractional change in scale since the previous callback — `0.1` grows the
+/// content by 10 % — not the recognizer's cumulative `scale`. Phases are
+/// 0/1/2/3 for began/changed/ended/cancelled.
+#[cfg(target_os = "ios")]
+#[unsafe(no_mangle)]
+pub extern "C" fn aimer_ios_pinch_event(x: f64, y: f64, delta: f64, phase: u32, flags: u64) {
+    if let Some(event) = pinch_event(x, y, delta, phase) {
+        send(event, flags);
+    }
+}
+
+/// Forwards a UIKit rotation at (`x`, `y`) in logical points. `delta` is the
+/// change since the previous callback in radians, clockwise positive — which is
+/// UIKit's own convention for `UIRotationGestureRecognizer.rotation`.
+#[cfg(target_os = "ios")]
+#[unsafe(no_mangle)]
+pub extern "C" fn aimer_ios_rotation_event(x: f64, y: f64, delta: f64, phase: u32, flags: u64) {
+    if let Some(event) = rotation_event(x, y, delta, phase) {
+        send(event, flags);
+    }
+}
+
+/// Forwards a UIKit multi-finger pan anchored at (`x`, `y`). The deltas are the
+/// movement since the previous callback in logical points.
+#[cfg(target_os = "ios")]
+#[unsafe(no_mangle)]
+pub extern "C" fn aimer_ios_pan_event(
+    x: f64,
+    y: f64,
+    delta_x: f64,
+    delta_y: f64,
+    phase: u32,
+    flags: u64,
+) {
+    if let Some(event) = pan_event(x, y, delta_x, delta_y, phase) {
+        send(event, flags);
+    }
+}
+
+/// Forwards a smart-zoom double tap at (`x`, `y`) in logical points.
+#[cfg(target_os = "ios")]
+#[unsafe(no_mangle)]
+pub extern "C" fn aimer_ios_smart_zoom_event(x: f64, y: f64, flags: u64) {
+    if let Some(event) = smart_zoom_event(x, y) {
         send(event, flags);
     }
 }
@@ -247,5 +339,41 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn uikit_gestures_keep_their_deltas_and_phases() {
+        assert!(matches!(
+            pinch_event(10.0, 20.0, 0.25, 1),
+            Some(ElementEvent::Pinch { pos, delta, phase: TouchPhase::Moved })
+                if pos == (Vec2d { x: 10.0, y: 20.0 }) && delta == 0.25
+        ));
+        assert!(matches!(
+            rotation_event(1.0, 2.0, -0.5, 0),
+            Some(ElementEvent::Rotate { delta, phase: TouchPhase::Started, .. }) if delta == -0.5
+        ));
+        assert!(matches!(
+            pan_event(1.0, 2.0, 3.0, -4.0, 2),
+            Some(ElementEvent::Pan { delta, phase: TouchPhase::Ended, .. })
+                if delta == (Vec2d { x: 3.0, y: -4.0 })
+        ));
+        assert!(matches!(
+            smart_zoom_event(5.0, 6.0),
+            Some(ElementEvent::SmartZoom { pos }) if pos == (Vec2d { x: 5.0, y: 6.0 })
+        ));
+    }
+
+    #[test]
+    fn malformed_gesture_payloads_are_ignored() {
+        assert!(pinch_event(0.0, 0.0, f64::NAN, 1).is_none());
+        assert!(pinch_event(0.0, 0.0, f64::INFINITY, 1).is_none());
+        assert!(pinch_event(f64::NAN, 0.0, 0.1, 1).is_none());
+        assert!(pinch_event(0.0, 0.0, 0.1, 4).is_none());
+        assert!(rotation_event(0.0, 0.0, f64::NAN, 1).is_none());
+        assert!(rotation_event(0.0, 0.0, 0.1, 9).is_none());
+        assert!(pan_event(0.0, 0.0, f64::NAN, 0.0, 1).is_none());
+        assert!(pan_event(0.0, 0.0, 0.0, f64::INFINITY, 1).is_none());
+        assert!(pan_event(0.0, 0.0, 0.0, 0.0, 4).is_none());
+        assert!(smart_zoom_event(f64::MAX, 0.0).is_none());
     }
 }

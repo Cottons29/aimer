@@ -1,4 +1,7 @@
-use aimer_canvas::{MaterialDrawRequest, MaterialKind};
+use std::cell::Cell;
+
+use aimer_canvas::{Canvas, MaterialDrawRequest, MaterialKind};
+use aimer_decoration::{AnyDecor, BorderRadius, Decoration};
 use aimer_widget::base::{BuildContext, Color, ResolvedSize, Size, Vec2d};
 use aimer_widget::{
     AnyElement, AnyWidget, Drawable, Element, EventElement, LayoutElement, PortableWidget,
@@ -36,7 +39,7 @@ pub struct GlassMaterial {
     contrast: f32,
     border_width: f32,
     border_color: Color,
-    corner_radii: [f32; 4],
+    border_radius: Option<BorderRadius>,
     shadow_color: Color,
     shadow_blur: f32,
     elevation: f32,
@@ -53,6 +56,8 @@ impl GlassMaterial {
     pub const MAX_BLUR_RADIUS: f32 = 96.0;
     /// The largest corner radius accepted before it is resolved against bounds.
     pub const MAX_CORNER_RADIUS: f32 = 1_024.0;
+    /// The corner radius used when neither a radius nor a decoration declares a shape.
+    pub const DEFAULT_CORNER_RADIUS: f32 = 16.0;
     /// The largest shadow blur accepted by the fallback path.
     pub const MAX_SHADOW_BLUR: f32 = 128.0;
     /// The largest fallback elevation accepted by the material contract.
@@ -78,7 +83,7 @@ impl GlassMaterial {
             contrast: 1.0,
             border_width: 1.0,
             border_color: Color::Rgba(255, 255, 255, 96),
-            corner_radii: [16.0; 4],
+            border_radius: None,
             shadow_color: Color::Rgba(0, 0, 0, 72),
             shadow_blur: 16.0,
             elevation: 4.0,
@@ -165,19 +170,16 @@ impl GlassMaterial {
         self
     }
 
-    /// Sets one corner radius for all four corners.
+    /// Sets the corner radii of the surface, per corner, in logical pixels.
+    ///
+    /// Percentages resolve against the surface size. Each radius is bounded to
+    /// `0.0..=MAX_CORNER_RADIUS`, nonfinite values give square corners, and the
+    /// canvas fallback fits radii within half the shorter side. An explicit
+    /// radius overrides any shape declared by the widget's decoration; without
+    /// either the surface uses [`Self::DEFAULT_CORNER_RADIUS`].
     #[inline]
-    pub fn corner_radius(mut self, corner_radius: f32) -> Self {
-        self.corner_radii = [normalize(corner_radius, 16.0, 0.0, Self::MAX_CORNER_RADIUS); 4];
-        self
-    }
-
-    /// Sets `[top-left, top-right, bottom-right, bottom-left]` radii.
-    #[inline]
-    pub fn corner_radii(mut self, corner_radii: [f32; 4]) -> Self {
-        for (slot, value) in self.corner_radii.iter_mut().zip(corner_radii) {
-            *slot = normalize(value, 0.0, 0.0, Self::MAX_CORNER_RADIUS);
-        }
+    pub fn border_radius(mut self, border_radius: impl Into<BorderRadius>) -> Self {
+        self.border_radius = Some(border_radius.into());
         self
     }
 
@@ -290,10 +292,23 @@ impl GlassMaterial {
         self.border_color
     }
 
-    /// Returns the configured per-corner radii.
+    /// Returns the explicitly configured radii, if any.
     #[inline]
-    pub fn corner_radii_value(self) -> [f32; 4] {
-        self.corner_radii
+    pub fn border_radius_value(self) -> Option<BorderRadius> {
+        self.border_radius
+    }
+
+    /// Resolves the surface's corner radii in logical pixels.
+    ///
+    /// Precedence: the explicit [`Self::border_radius`], then the shape that
+    /// the decorations painted so far declared on `canvas` (a declared square
+    /// counts), then `fallback`. Results are bounded to `0.0..=MAX_CORNER_RADIUS`.
+    pub(super) fn shape_radii(self, canvas: &Canvas, size: ResolvedSize, fallback: f32) -> [f32; 4] {
+        let radii = match self.border_radius {
+            Some(radius) => radius.resolve(size.width, size.height, 1.0),
+            None => canvas.declared_corner_radii().unwrap_or([fallback; 4]),
+        };
+        radii.map(|radius| normalize(radius, 0.0, 0.0, Self::MAX_CORNER_RADIUS))
     }
 
     /// Returns the shadow color.
@@ -360,9 +375,6 @@ impl GlassMaterial {
             Self::MAX_SPECULAR_HIGHLIGHT,
         );
         self.quality = self.quality.clamp(Self::MIN_QUALITY, Self::MAX_QUALITY);
-        for radius in &mut self.corner_radii {
-            *radius = normalize(*radius, 0.0, 0.0, Self::MAX_CORNER_RADIUS);
-        }
         self
     }
 
@@ -391,6 +403,7 @@ pub(crate) fn build_material_request(
     kind: MaterialKind,
     base: GlassMaterial,
     size: ResolvedSize,
+    corner_radii: [f32; 4],
     distortion_strength: f32,
     edge_lighting: f32,
     specular_highlight: f32,
@@ -411,7 +424,7 @@ pub(crate) fn build_material_request(
     request.contrast = base.contrast_value();
     request.border_color = color_to_array(base.border_color_value());
     request.border_width = base.border_width_value();
-    request.corner_radii = base.corner_radii_value();
+    request.corner_radii = corner_radii;
     request.shadow_color = color_to_array(base.shadow_color_value());
     request.shadow_blur = base.shadow_blur_value();
     request.elevation = base.elevation_value();
@@ -456,6 +469,7 @@ fn color_to_array(color: Color) -> [f32; 4] {
 pub struct Glass<W = RequiredChild> {
     child: W,
     material: GlassMaterial,
+    decoration: Option<AnyDecor>,
 }
 
 impl Glass {
@@ -465,6 +479,7 @@ impl Glass {
         Self {
             child: RequiredChild,
             material: GlassMaterial::new(),
+            decoration: None,
         }
     }
 
@@ -538,17 +553,33 @@ impl Glass {
         self
     }
 
-    /// Sets a uniform corner radius.
+    /// Sets the corner radii of the surface; see [`GlassMaterial::border_radius`].
     #[inline]
-    pub fn corner_radius(mut self, corner_radius: f32) -> Self {
-        self.material = self.material.corner_radius(corner_radius);
+    pub fn border_radius(mut self, border_radius: impl Into<BorderRadius>) -> Self {
+        self.material = self.material.border_radius(border_radius);
         self
     }
 
-    /// Sets per-corner radii.
+    /// Paints `decoration` behind the glass surface and adopts its shape.
+    ///
+    /// Use a stack such as `vec![BoxShadow.notype(), BorderRadius::from(20).notype()]`
+    /// for several layers. Unless [`Self::border_radius`] is set, the surface
+    /// takes the corner radii that `BoxDecoration` or `BorderRadius` layers
+    /// declared, so the glass and its decoration always share one outline.
+    /// The decoration is retained as built: rebuild the widget to change it.
+    /// It never affects layout, clipping or events.
+    ///
+    /// ```
+    /// use aimer_container::{Glass, SizedBox};
+    /// use aimer_decoration::{BorderRadius, Decoration};
+    ///
+    /// let pill = Glass::new()
+    ///     .decoration(BorderRadius::from(20))
+    ///     .child(SizedBox::new().width(120).height(40));
+    /// ```
     #[inline]
-    pub fn corner_radii(mut self, corner_radii: [f32; 4]) -> Self {
-        self.material = self.material.corner_radii(corner_radii);
+    pub fn decoration(mut self, decoration: impl Decoration + 'static) -> Self {
+        self.decoration = Some(decoration.notype());
         self
     }
 
@@ -607,6 +638,7 @@ impl Glass {
         Glass {
             child,
             material: self.material.normalized(),
+            decoration: self.decoration,
         }
     }
 
@@ -630,6 +662,8 @@ impl<W: Widget + 'static> Widget for Glass<W> {
         RawGlass {
             child: self.child.to_element(ctx),
             material: self.material.normalized(),
+            decoration: self.decoration,
+            recorded: Cell::new(None),
         }
         .boxed()
     }
@@ -642,6 +676,8 @@ impl<W: Widget + 'static> Widget for Glass<W> {
 struct RawGlass {
     child: AnyElement,
     material: GlassMaterial,
+    decoration: Option<AnyDecor>,
+    recorded: Cell<Option<u64>>,
 }
 
 impl Rebuildable for RawGlass {}
@@ -666,7 +702,9 @@ impl Drawable for RawGlass {
             && size.width > 0.0
             && size.height > 0.0
         {
-            let radii = resolved_radii(material.corner_radii_value(), size);
+            paint_decoration(self.decoration.as_ref(), &canvas, size, ctx.scale);
+            let shape = material.shape_radii(&canvas, size, GlassMaterial::DEFAULT_CORNER_RADIUS);
+            let radii = resolved_radii(shape, size);
             let shadow = material.fallback_shadow();
             if shadow.alpha() != 0 && material.shadow_blur_value() > 0.0 {
                 canvas.draw_shadow_rect(
@@ -702,6 +740,7 @@ impl Drawable for RawGlass {
                 MaterialKind::Glass,
                 material,
                 size,
+                shape,
                 0.0,
                 material.edge_lighting_value(),
                 material.specular_highlight_value(),
@@ -712,14 +751,25 @@ impl Drawable for RawGlass {
             ));
         }
         canvas.finish();
+        self.recorded.set(self.decoration.as_ref().map(|decoration| decoration.revision()));
+    }
+
+    #[inline]
+    fn local_v2_paint_needs_recording(&self, _ctx: &BuildContext) -> bool {
+        decoration_needs_recording(self.decoration.as_ref(), self.recorded.get())
     }
 
     fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
         self.child.update(ctx);
     }
 
-    fn retained_v2_paint_outsets(&self, _ctx: &BuildContext) -> Option<[f32; 4]> {
-        shadow_outsets(self.material.normalized())
+    fn retained_v2_paint_outsets(&self, ctx: &BuildContext) -> Option<[f32; 4]> {
+        surface_outsets(
+            self.material.normalized(),
+            self.decoration.as_ref(),
+            ctx,
+            self.child.computed_size(ctx),
+        )
     }
 }
 
@@ -821,6 +871,44 @@ pub(super) fn shadow_outsets(material: GlassMaterial) -> Option<[f32; 4]> {
     Some([blur, blur, blur, blur + elevation])
 }
 
+/// Paints a surface's optional decoration behind its glass.
+pub(super) fn paint_decoration(
+    decoration: Option<&AnyDecor>, canvas: &Canvas, size: ResolvedSize, scale: f32,
+) {
+    if let Some(decoration) = decoration {
+        decoration.paint_layer(canvas, Vec2d::default(), size, scale);
+    }
+}
+
+/// Whether the decoration's revision moved since it was last recorded.
+#[inline]
+pub(super) fn decoration_needs_recording(
+    decoration: Option<&AnyDecor>, recorded: Option<u64>,
+) -> bool {
+    decoration.is_some_and(|decoration| recorded != Some(decoration.revision()))
+}
+
+/// Paint outsets of the shadow and the decoration, whichever reaches farther.
+pub(super) fn surface_outsets(
+    material: GlassMaterial, decoration: Option<&AnyDecor>, ctx: &BuildContext, size: ResolvedSize,
+) -> Option<[f32; 4]> {
+    let shadow = shadow_outsets(material);
+    let Some(decoration) = decoration else {
+        return shadow;
+    };
+    let Some(size) = logical_size(ctx, size) else {
+        return shadow;
+    };
+    let mut merged = shadow.unwrap_or([0.0; 4]);
+    for (outset, candidate) in merged.iter_mut().zip(decoration.paint_outsets(size, ctx.scale)) {
+        // A nonfinite layer must not erase a valid finite outset.
+        if candidate.is_finite() {
+            *outset = outset.max(candidate);
+        }
+    }
+    (merged != [0.0; 4]).then_some(merged)
+}
+
 pub(super) fn v2_color(color: Color) -> aimer_cupid::utilities::Color {
     let (red, green, blue, alpha) = color.to_rgba();
     aimer_cupid::utilities::Color::rgba8(red, green, blue, alpha)
@@ -843,7 +931,6 @@ mod tests {
             .saturation(-1.0)
             .brightness(99.0)
             .contrast(f32::NEG_INFINITY)
-            .corner_radii([f32::NAN, -2.0, 2_000.0, f32::INFINITY])
             .shadow_blur(f32::INFINITY)
             .elevation(-5.0)
             .edge_lighting(2.0)
@@ -855,10 +942,6 @@ mod tests {
         assert_eq!(material.saturation_value(), 0.0);
         assert_eq!(material.brightness_value(), 3.0);
         assert_eq!(material.contrast_value(), 1.0);
-        assert_eq!(
-            material.corner_radii_value(),
-            [0.0, 0.0, GlassMaterial::MAX_CORNER_RADIUS, 0.0]
-        );
         assert_eq!(material.shadow_blur_value(), 16.0);
         assert_eq!(material.elevation_value(), 0.0);
         assert_eq!(
@@ -867,6 +950,17 @@ mod tests {
         );
         assert_eq!(material.specular_highlight_value(), 0.16);
         assert_eq!(material.quality_value(), GlassMaterial::MIN_QUALITY);
+    }
+
+    #[test]
+    fn border_radius_is_unset_until_configured() {
+        assert_eq!(GlassMaterial::new().border_radius_value(), None);
+        let radius = BorderRadius::new().top_left(4.0).bottom_right(9.0);
+        assert_eq!(
+            GlassMaterial::new().border_radius(radius).border_radius_value(),
+            Some(radius)
+        );
+        assert_eq!(GlassMaterial::new().border_radius(12).border_radius_value(), Some(12.into()));
     }
 
     #[test]

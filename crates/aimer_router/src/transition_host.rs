@@ -63,7 +63,7 @@ impl<R: Route> NavigationPages<R> {
             });
             let previous = self.current.replace((route, path, child));
             self.playback = effect.and_then(|effect| previous.map(|(_, _, child)| {
-                let controller = AnimationController::new(effect.duration, effect.curve);
+                let controller = AnimationController::new(effect.duration, effect.curve.clone());
                 controller.forward_from_first_tick();
                 aimer_events::window::request_animation_frame();
                 Rc::new(Playback { effect, controller, outgoing: RefCell::new(Some(child)), finished: Cell::new(false) })

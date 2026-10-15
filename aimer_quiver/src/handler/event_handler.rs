@@ -9,7 +9,7 @@ use winit::event::{
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{CursorIcon, Theme, WindowId};
 
-use crate::handler::AimerApplicationHandler;
+use crate::handler::{AimerApplicationHandler, platform_gesture};
 
 pub struct WindowEventHandler;
 
@@ -139,6 +139,27 @@ impl WindowEventHandler {
                 #[cfg(target_arch = "wasm32")]
                 let phase = Self::web_wheel_phase(app);
                 Self::handle_mouse_wheel(delta, phase, app);
+            }
+
+            // Gestures the windowing system recognized itself. winit reports no
+            // position with them, so they land where the cursor is — which on a
+            // touch device is where the last contact was.
+            WindowEvent::PinchGesture { delta, phase, .. } => {
+                let pos = app.cursor_pos;
+                Self::dispatch_platform_gesture(app, platform_gesture::pinch(pos, delta, phase));
+            }
+            WindowEvent::RotationGesture { delta, phase, .. } => {
+                let pos = app.cursor_pos;
+                Self::dispatch_platform_gesture(app, platform_gesture::rotation(pos, delta, phase));
+            }
+            WindowEvent::PanGesture { delta, phase, .. } => {
+                let pos = app.cursor_pos;
+                let event = platform_gesture::pan(pos, delta, app.window_scale, phase);
+                Self::dispatch_platform_gesture(app, event);
+            }
+            WindowEvent::DoubleTapGesture { .. } => {
+                let pos = app.cursor_pos;
+                Self::dispatch_platform_gesture(app, platform_gesture::smart_zoom(pos));
             }
 
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
@@ -703,6 +724,16 @@ impl WindowEventHandler {
             1.0
         };
         let (scroll_delta, kind) = Self::normalize_wheel_delta(delta, app.window_scale);
+
+        // Where the platform has no pinch event, `ctrl` + wheel is the zoom
+        // gesture: it is what a precision touchpad's pinch is delivered as on
+        // Windows and in the browsers, and what a mouse has always done. If no
+        // widget under the cursor zooms, the wheel scrolls as usual.
+        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+        if app.current_modifiers.ctrl && Self::dispatch_wheel_zoom(app, scroll_delta, kind) {
+            return;
+        }
+
         if app.active_root().is_some() {
             aimer_widget::record_scroll_event();
             let delta = PhysicalPosition::new(
@@ -725,6 +756,56 @@ impl WindowEventHandler {
             // until the display loop delivers it.
             crate::aimer_app::request_scroll_frame(|| app.request_animation_frame());
         }
+    }
+
+    /// Delivers a gesture the windowing system recognized to the widget tree at
+    /// the cursor, and asks for a frame if anything reacted.
+    pub(super) fn dispatch_platform_gesture<W: Widget + 'static>(
+        app: &mut AimerApplicationHandler<W>,
+        event: ElementEvent,
+    ) -> EventResult {
+        if app.active_root().is_none() {
+            return EventResult::ignored();
+        }
+        let result = app.dispatch_element_event(app.cursor_pos, &event);
+        if Self::should_redraw(result, result.is_consumed()) {
+            app.request_animation_frame();
+        }
+        result
+    }
+
+    /// Turns one `ctrl` + wheel event into a complete pinch, and reports whether
+    /// a widget took it.
+    ///
+    /// A wheel event has no beginning or end of its own, so each one is a whole
+    /// gesture — start, step, end — rather than a phase of a longer one. That
+    /// keeps a lost event from leaving a pinch open forever, and costs a
+    /// consumer nothing: it applies `delta_scale` as it arrives, or commits its
+    /// base scale at each end.
+    ///
+    /// The end is sent even if nobody consumed the start, so a detector that
+    /// merely observes does not stay mid-pinch. Only a consumed start stops the
+    /// wheel from scrolling.
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    fn dispatch_wheel_zoom<W: Widget + 'static>(
+        app: &mut AimerApplicationHandler<W>,
+        delta: Vec2d,
+        kind: aimer_events::element::ScrollDeltaKind,
+    ) -> bool {
+        let step = platform_gesture::wheel_zoom_step(delta, kind);
+        if step == 0.0 {
+            return false;
+        }
+        let pos = app.cursor_pos;
+        let started = Self::dispatch_platform_gesture(
+            app,
+            platform_gesture::pinch(pos, f64::from(step), TouchPhase::Started),
+        );
+        Self::dispatch_platform_gesture(
+            app,
+            platform_gesture::pinch(pos, 0.0, TouchPhase::Ended),
+        );
+        started.is_consumed()
     }
 
     /// Resolves the gesture phase of one browser wheel event.

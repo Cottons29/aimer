@@ -4,14 +4,14 @@ use super::*;
 
 use std::time::Duration;
 
-use aimer_animation::{AnimationController, Curve, RotationTransition};
+use aimer_animation::{AnimationController, curves, RotationTransition};
 use aimer_svg::{Svg, SvgDocument};
 use aimer_text::Text;
 
 pub(super) fn loading_page() -> impl Widget {
-    let controller = AnimationController::new(Duration::from_millis(1500), Curve::Linear);
+    let controller = AnimationController::new(Duration::from_millis(1500), curves::LINEAR);
     controller.set_repeat(true);
-    controller.set_curve(Curve::EaseInOut);
+    controller.set_curve(curves::EASE_IN_OUT);
     controller.forward_from_first_tick();
     let icon = Svg::new(
         SvgDocument::from_svg(include_bytes!(

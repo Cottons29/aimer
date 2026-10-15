@@ -299,7 +299,11 @@ impl<E: Element> RawMouseRegion<E> {
             _ => return EventResult::ignored(),
         };
 
-        let is_inside = self.cached_bounds.is_inside(pos.x, pos.y);
+        // An exit carries no position, only the placeholder origin above, which
+        // a region at the corner of the window would find itself under and so
+        // re-enter the moment it was told the pointer had gone.
+        let is_inside = !matches!(event, ElementEvent::PointerExited(..))
+            && self.cached_bounds.is_inside(pos.x, pos.y);
 
         let is_mouse = matches!(
             pointer,
@@ -412,6 +416,13 @@ impl<E: Element> EventElement for RawMouseRegion<E> {
     }
 
     fn hit_test_children_at<'b>(&'b self, _pos: Vec2d, _visitor: &mut dyn FnMut(&'b dyn Element)) {}
+
+    /// The region routes its child by hand, so the child is hidden from the
+    /// hit-test view; an occluder inside it, a button with a background say, is
+    /// still an occluder.
+    fn occlusion_children_at<'b>(&'b self, _pos: Vec2d, visitor: &mut dyn FnMut(&'b dyn Element)) {
+        visitor(&self.child);
+    }
 }
 
 impl<E: Element> LayoutElement for RawMouseRegion<E> {
@@ -778,6 +789,39 @@ mod tests {
             !result.needs_redraw(),
             "claiming the cursor repaints nothing"
         );
+    }
+
+    // A region is told the pointer left by an event that has no position, which
+    // the region reads as the window origin. One that covers the origin, as a
+    // full-window page or a sidebar does, took that for the pointer being over
+    // it and entered again at once, so the exit never lasted.
+    #[test]
+    fn a_region_at_the_window_origin_stays_exited_after_the_pointer_left() {
+        let bounds = InteractionBounds::new();
+        bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
+        let entered = Rc::new(Cell::new(0));
+        let exited = Rc::new(Cell::new(0));
+        let region = RawMouseRegion {
+            on_hover_enter: {
+                let entered = entered.clone();
+                (move || entered.set(entered.get() + 1)).into()
+            },
+            on_hover_exit: {
+                let exited = exited.clone();
+                (move || exited.set(exited.get() + 1)).into()
+            },
+            cursor: None,
+            current_state: Rc::new(Cell::new(PointerState::Inside)),
+            cached_bounds: bounds,
+            child: TestElement,
+            window: WindowHandle::headless(PhysicalSize::new(100, 100), 1.0),
+        };
+
+        region.on_event(&ElementEvent::PointerExited(PointerSource::Mouse, 0));
+
+        assert_eq!(exited.get(), 1, "the region was told the pointer left");
+        assert_eq!(entered.get(), 0, "it entered again under the placeholder origin");
+        assert!(matches!(region.current_state.get(), PointerState::Outside));
     }
 
     // With per-move redraws gone, the frame that repaints a hover decoration

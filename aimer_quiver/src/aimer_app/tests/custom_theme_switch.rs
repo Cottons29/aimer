@@ -9,7 +9,7 @@ use super::*;
 use std::cell::RefCell;
 use std::time::Duration;
 
-use aimer_animation::Curve;
+use aimer_animation::curves;
 use aimer_rubick::RcProjectExt;
 use aimer_style::{AnimatedTheme, Theme, ThemeMode};
 use aimer_widget::{StateUpdater, StatelessElement};
@@ -178,7 +178,7 @@ impl State<Shell> for ShellState {
             .adaptive(TestTheme::light(), TestTheme::dark())
             .mode(self.mode)
             .duration(Duration::from_millis(150))
-            .curve(Curve::EaseInOut)
+            .curve(curves::EASE_IN_OUT)
             .child(Row::new().children(vec![
                 SizedBox::new()
                     .width(if self.split { Dimension::Px(80.0) } else { Dimension::Px(150.0) })

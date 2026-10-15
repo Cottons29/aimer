@@ -5,7 +5,7 @@ use std::marker::PhantomData;
 use std::rc::Rc;
 use std::time::Duration;
 
-use aimer_animation::{AnimInstant, AnimationController, Curve};
+use aimer_animation::{AnimInstant, AnimationController, AnyCurve, Curve};
 use aimer_macro::PortableWidget;
 #[cfg(feature = "portable-guest")]
 use aimer_provider::with_portable_provider;
@@ -42,7 +42,7 @@ fn request_next_frame() {
 /// begins at the currently displayed theme. A zero duration applies the target
 /// immediately.
 ///
-/// The default transition lasts 200 milliseconds and uses [`Curve::Linear`].
+/// The default transition lasts 200 milliseconds and uses [`curves::LINEAR`].
 ///
 /// # Following the system
 ///
@@ -80,14 +80,14 @@ fn request_next_frame() {
 /// ```
 /// use std::time::Duration;
 ///
-/// use aimer_animation::Curve;
+/// use aimer_animation::curves;
 /// use aimer_style::{AnimatedTheme, ThemeData, ThemeMode};
 /// use aimer_widget::Widget;
 ///
 /// fn dark_app(child: impl Widget + 'static) -> impl Widget {
 ///     AnimatedTheme::new().mode(ThemeMode::Dark)
 ///                         .duration(Duration::from_millis(300))
-///                         .curve(Curve::EaseInOut)
+///                         .curve(curves::EASE_IN_OUT)
 ///                         .child(child)
 /// }
 ///
@@ -117,7 +117,7 @@ pub struct AnimatedTheme<W = RequiredChild, T = ThemeData> {
     #[portable_skip]
     duration: Duration,
     #[portable_skip]
-    curve: Curve,
+    curve: AnyCurve,
     #[portable_child]
     child: ChildBuilder,
     // `W` names the child only to keep the type-state: `RequiredChild` does not
@@ -140,7 +140,7 @@ impl AnimatedTheme {
         Self {
             selection: ThemeSelection::adaptive(ThemeData::light(), ThemeData::dark()),
             duration: Duration::from_millis(200),
-            curve: Curve::Linear,
+            curve: AnyCurve::default(),
             child: ChildBuilder::required(),
             marker: PhantomData,
         }
@@ -162,7 +162,7 @@ impl<W, T: Clone> Clone for AnimatedTheme<W, T> {
         Self {
             selection: self.selection.clone(),
             duration: self.duration,
-            curve: self.curve,
+            curve: self.curve.clone(),
             child: self.child.clone(),
             marker: PhantomData,
         }
@@ -241,8 +241,8 @@ impl<W, T> AnimatedTheme<W, T> {
 
     /// Sets the curve used to transform the transition's linear progress.
     #[inline]
-    pub fn curve(mut self, curve: Curve) -> Self {
-        self.curve = curve;
+    pub fn curve(mut self, curve: impl Curve) -> Self {
+        self.curve = curve.into_any();
         self
     }
 
@@ -287,7 +287,7 @@ impl<W, T> AnimatedTheme<W, T> {
 struct ResolvedTheme<T> {
     data: T,
     duration: Duration,
-    curve: Curve,
+    curve: AnyCurve,
     child: ChildBuilder,
     key: Option<Key>,
 }
@@ -344,7 +344,7 @@ pub struct AnimatedThemeState<T: Theme> {
     target: T,
     current: Rc<RefCell<T>>,
     duration: Duration,
-    curve: Curve,
+    curve: AnyCurve,
     child: ChildBuilder,
     controller: AnimationController,
     transition: Rc<RefCell<ThemeTransition<T>>>,
@@ -359,9 +359,9 @@ impl<T: Theme> StatefulWidget for ResolvedTheme<T> {
             target: self.data.clone(),
             current: Rc::new(RefCell::new(self.data.clone())),
             duration: self.duration,
+            controller: AnimationController::new(self.duration, self.curve.clone()),
             curve: self.curve,
             child: self.child.clone(),
-            controller: AnimationController::new(self.duration, self.curve),
             transition: Rc::new(RefCell::new(ThemeTransition::new(self.data.clone()))),
             handle: ProviderHandle::new(self.data.clone()),
         }
@@ -376,7 +376,7 @@ impl<T: Theme> State<ResolvedTheme<T>> for AnimatedThemeState<T> {
         self.curve = new.curve;
         self.child = new.child;
         self.controller.set_duration(self.duration);
-        self.controller.set_curve(self.curve);
+        self.controller.set_curve(self.curve.clone());
 
         let new_target = new.target;
         if !self
@@ -442,7 +442,7 @@ impl<W: Widget + 'static, T: Theme> AnimatedTheme<W, T> {
         ResolvedTheme {
             data: self.selection.resolve(brightness),
             duration: self.duration,
-            curve: self.curve,
+            curve: self.curve.clone(),
             // `W: Widget` on this impl is only satisfiable through `child`, so a
             // theme that reaches this point always carries a subtree.
             child: self.child.clone(),
@@ -533,7 +533,14 @@ impl<W: Widget + 'static, T: Theme> aimer_widget::PortableWidget for AnimatedThe
                 message: "animation duration does not fit the portable i64 field".to_owned(),
             }
         })?;
-        let (curve, control_points) = portable_curve(self.curve);
+        let (curve, control_points) = portable_curve(&self.curve).ok_or_else(|| {
+            aimer_widget::portable::PortableBuildError::ProviderEncoding {
+                provider: "AnimatedTheme",
+                value: type_name::<T>(),
+                source,
+                message: "custom curves cannot be lowered to a portable guest; use a standard curve or a cubic Bézier".to_owned(),
+            }
+        })?;
         let mut properties = vec![
             WidgetProperty::new(
                 PROPERTY_ANIMATED_THEME_TYPE,
@@ -595,27 +602,12 @@ fn portable_theme_mode(mode: ThemeMode) -> i64 {
     }
 }
 
+/// The portable tag and control points of `curve`, or `None` for a custom
+/// curve, which only exists natively.
 #[cfg(feature = "portable-guest")]
-fn portable_curve(curve: Curve) -> (i64, Option<[f64; 4]>) {
-    match curve {
-        Curve::Linear => (0, None),
-        Curve::EaseIn => (1, None),
-        Curve::EaseOut => (2, None),
-        Curve::EaseInOut => (3, None),
-        Curve::CubicBezier(x1, y1, x2, y2) => {
-            (4, Some([x1 as f64, y1 as f64, x2 as f64, y2 as f64]))
-        }
-        Curve::Decelerate => (5, None),
-        Curve::BounceOut => (6, None),
-        Curve::BounceIn => (7, None),
-        Curve::BounceInOut => (8, None),
-        Curve::ElasticIn => (9, None),
-        Curve::ElasticOut => (10, None),
-        Curve::ElasticInOut => (11, None),
-        Curve::FastOutSlowIn => (12, None),
-        Curve::LinearOutSlowIn => (13, None),
-        Curve::FastOutLinearIn => (14, None),
-    }
+fn portable_curve(curve: &AnyCurve) -> Option<(i64, Option<[f64; 4]>)> {
+    let descriptor = curve.descriptor()?;
+    Some((descriptor.tag, descriptor.control_points))
 }
 
 struct AnimatedThemeFrame<T: Theme> {
@@ -774,6 +766,7 @@ mod tests {
     use aimer_widget::base::WindowHandle;
 
     use super::*;
+    use aimer_animation::curves;
 
     #[derive(Clone, Debug, PartialEq)]
     struct CustomTheme {
@@ -960,7 +953,7 @@ mod tests {
             AnimatedTheme::new()
                 .mode(ThemeMode::Dark)
                 .duration(Duration::from_millis(321))
-                .curve(Curve::CubicBezier(0.1, 0.2, 0.8, 0.9))
+                .curve(curves::cubic_bezier(0.1, 0.2, 0.8, 0.9))
                 .child(PortableLeaf),
             &mut context,
             aimer_widget::portable::SourceFingerprint::new(
@@ -1170,7 +1163,7 @@ mod tests {
                 builds: Rc::new(Cell::new(0)),
             }
             .to_element(&ctx),
-            controller: AnimationController::new(Duration::ZERO, Curve::Linear),
+            controller: AnimationController::new(Duration::ZERO, curves::LINEAR),
             transition: Rc::new(RefCell::new(ThemeTransition::new(value.clone()))),
             handle: ProviderHandle::new(value),
         };

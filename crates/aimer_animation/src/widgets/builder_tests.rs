@@ -7,7 +7,7 @@ use aimer_widget::{
 };
 
 use super::{Animated, AnimatedBuilder, AnimationEffect};
-use crate::{AnimationController, Curve};
+use crate::{AnimationController, curves};
 
 const FRAME_WIDTH: u32 = 101;
 const FRAME_HEIGHT: u32 = 101;
@@ -127,7 +127,7 @@ fn animated_exposes_its_child_to_the_retained_render_tree() {
     // The render tree is built from `visit_retained_v2_children`. An element
     // that draws a child without exposing it there leaves that child without a
     // render node, so its paint is silently dropped under retained presentation.
-    let controller = AnimationController::with_millis(1000, Curve::Linear);
+    let controller = AnimationController::with_millis(1000, curves::LINEAR);
     let context = context();
     let element = Animated::new(
         controller,
@@ -149,7 +149,7 @@ fn animated_exposes_its_child_to_the_retained_render_tree() {
 
 #[test]
 fn animated_builder_updates_its_child_while_preserving_retained_identity() {
-    let controller = AnimationController::with_millis(1000, Curve::Linear);
+    let controller = AnimationController::with_millis(1000, curves::LINEAR);
     controller.set_value(0.0);
     controller.forward_from_first_tick();
     let context = context();
@@ -200,7 +200,7 @@ fn animated_builder_paints_locally_whatever_its_child_is() {
     // The builder records nothing itself: its rebuilt child owns its render
     // nodes and decides its own paint source. Declining local paint because the
     // child is not "bounded" would put the whole subtree on the legacy path.
-    let controller = AnimationController::with_millis(1000, Curve::Linear);
+    let controller = AnimationController::with_millis(1000, curves::LINEAR);
     let context = context();
     let element = AnimatedBuilder::new(controller, |_value| UnknownLeaf).to_element(&context);
 
@@ -217,7 +217,7 @@ mod typed_constructors {
 
     use super::{AnimatedBuilder, StableLeaf, context};
     use crate::{
-        Curve, KeyframeTimeline, KeyframeTrack, TimedKeyframeAnimation, TweenAnimation,
+        curves, KeyframeTimeline, KeyframeTrack, TimedKeyframeAnimation, TweenAnimation,
     };
 
     fn ms(millis: u64) -> Duration {
@@ -226,7 +226,7 @@ mod typed_constructors {
 
     #[test]
     fn tween_builder_receives_the_interpolated_value() {
-        let animation = TweenAnimation::new(10.0f32, 20.0, ms(100), Curve::Linear);
+        let animation = TweenAnimation::new(10.0f32, 20.0, ms(100), curves::LINEAR);
         animation.controller().set_value(0.5);
         let seen = Rc::new(Cell::new(f32::NAN));
         let recorded = Rc::clone(&seen);
@@ -242,7 +242,7 @@ mod typed_constructors {
 
     #[test]
     fn tween_builder_applies_the_controller_curve() {
-        let animation = TweenAnimation::new(0.0f32, 100.0, ms(100), Curve::EaseIn);
+        let animation = TweenAnimation::new(0.0f32, 100.0, ms(100), curves::EASE_IN);
         animation.controller().set_value(0.5);
         let seen = Rc::new(Cell::new(f32::NAN));
         let recorded = Rc::clone(&seen);

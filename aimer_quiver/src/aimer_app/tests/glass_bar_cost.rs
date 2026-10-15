@@ -68,7 +68,7 @@ impl State<Scene> for SceneState {
                 aimer_animation::ImplicitAnimatedBuilder::new(
                     opacity,
                     Duration::from_millis(220),
-                    aimer_animation::Curve::EaseInOut,
+                    aimer_animation::curves::EASE_IN_OUT,
                     move |_opacity| {
                         if glass {
                             Glass::new()

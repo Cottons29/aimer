@@ -38,6 +38,8 @@ pub(super) struct Labels {
     /// Collection walks every text node, so it only runs while this is set.
     pub(super) capture: Cell<bool>,
     pub(super) found: RefCell<Vec<(String, f32, f32)>>,
+    /// Text recorded with each element's actual retained paint context.
+    pub(super) painted_texts: RefCell<Vec<String>>,
     /// Time spent inside the showcase's `rebuild_if_dirty` since last reset:
     /// the rebuild pass alone, without layout, paint or presentation.
     rebuild: Cell<std::time::Duration>,
@@ -97,6 +99,13 @@ impl Drawable for CapturedElement {
     fn update(&self, ctx: &BuildContext) {
         self.child.update(ctx);
         if self.labels.capture.get() {
+            let paints = aimer_widget::testing::record_retained_paint(self.child.as_ref(), ctx);
+            *self.labels.painted_texts.borrow_mut() = paints.iter()
+                .flat_map(|paint| paint.commands.iter())
+                .filter_map(|command| match command {
+                    DrawCommand::DrawText { text, .. } => Some(text.to_string()),
+                    _ => None,
+                }).collect();
             let mut found = Vec::new();
             collect(self.child.as_ref(), ctx, &mut found, None);
             *self.labels.found.borrow_mut() = found;

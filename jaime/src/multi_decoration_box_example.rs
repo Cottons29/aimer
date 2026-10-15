@@ -113,7 +113,7 @@ fn background() -> BoxDecoration {
 }
 
 fn edge() -> LightEdge {
-    LightEdge::new().corner_radius(24.0)
+    LightEdge::new()
 }
 
 fn panel_content(title: &'static str, description: &'static str) -> impl Widget {

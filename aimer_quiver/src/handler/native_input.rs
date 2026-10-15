@@ -66,6 +66,16 @@ impl WindowEventHandler {
                     app,
                 );
             }
+            // UIKit recognizes these itself and reports where they happened, in
+            // logical points, so no scale factor applies. Anchoring the cursor
+            // first keeps later wheel events on the same widget.
+            ElementEvent::Pinch { pos, .. }
+            | ElementEvent::Rotate { pos, .. }
+            | ElementEvent::Pan { pos, .. }
+            | ElementEvent::SmartZoom { pos } => {
+                app.cursor_pos = pos;
+                Self::dispatch_platform_gesture(app, event);
+            }
             ElementEvent::KeyInput { key, action, .. } => {
                 if app.ime_composing && !app.current_modifiers.ctrl && !app.current_modifiers.meta {
                     return;

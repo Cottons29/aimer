@@ -2,12 +2,12 @@ use super::fixtures::*;
 use aimer::canvas::Canvas;
 use aimer::cupid::draw_cmd_v2::{Rect, RenderNodeId, RenderPaintSource, RenderTree};
 use aimer::cupid::frame::FramePacket;
-use aimer::{Decoration, Magnification, ResolvedSize, Vec2d};
+use aimer::{BorderRadius, Decoration, Magnification, ResolvedSize, Vec2d};
 
 fn lens_packet(
     tree: &RenderTree,
     node: RenderNodeId,
-    lens: Magnification,
+    lens: impl Decoration,
     scale: f32,
 ) -> FramePacket {
     let canvas = Canvas::of(&tree.context(node).unwrap());
@@ -60,8 +60,7 @@ pub(super) fn centered_zoom_depth_and_alpha(mut render: impl FnMut(&FramePacket)
                     node,
                     Magnification::new()
                         .zoom(zoom)
-                        .thickness(0.0)
-                        .corner_radius(0.0),
+                        .thickness(0.0),
                     scale,
                 ));
                 let center = (FILTER_X + 32) as f32 * scale;
@@ -83,8 +82,7 @@ pub(super) fn centered_zoom_depth_and_alpha(mut render: impl FnMut(&FramePacket)
                 node,
                 Magnification::new()
                     .zoom(2.0)
-                    .thickness(0.0)
-                    .corner_radius(0.0),
+                    .thickness(0.0),
                 scale,
             ));
             let thick = render(&lens_packet(
@@ -92,8 +90,7 @@ pub(super) fn centered_zoom_depth_and_alpha(mut render: impl FnMut(&FramePacket)
                 node,
                 Magnification::new()
                     .zoom(2.0)
-                    .thickness(12.0)
-                    .corner_radius(0.0),
+                    .thickness(12.0),
                 scale,
             ));
             let edge = ((FILTER_X + 2) as f32 * scale) as u32;
@@ -127,8 +124,7 @@ pub(super) fn centered_zoom_depth_and_alpha(mut render: impl FnMut(&FramePacket)
                 node,
                 Magnification::new()
                     .zoom(2.0)
-                    .thickness(512.0)
-                    .corner_radius(0.0),
+                    .thickness(512.0),
                 scale,
             ));
             let bounded = render(&lens_packet(
@@ -136,8 +132,7 @@ pub(super) fn centered_zoom_depth_and_alpha(mut render: impl FnMut(&FramePacket)
                 node,
                 Magnification::new()
                     .zoom(2.0)
-                    .thickness(16.0)
-                    .corner_radius(0.0),
+                    .thickness(16.0),
                 scale,
             ));
             assert_eq!(clamped, bounded, "depth is capped at half the shorter side");
@@ -164,11 +159,11 @@ pub(super) fn wide_action_bar_magnifies_backdrop(mut render: impl FnMut(&FramePa
         for opacity in [1.0, 0.5] {
             let canvas = Canvas::of(&tree.context(node).unwrap());
             canvas.set_alpha(opacity);
-            Magnification::new()
-                .zoom(1.6)
-                .thickness(32.0)
-                .corner_radius(16.0)
-                .paint(
+            vec![
+                BorderRadius::from(16.0).notype(),
+                Magnification::new().zoom(1.6).thickness(32.0).notype(),
+            ]
+            .paint(
                     &canvas,
                     Vec2d {
                         x: -(FILTER_X as f32),
@@ -225,10 +220,10 @@ pub(super) fn thick_rounded_corners_have_no_interior_normal_seam(
                 let pixels = render(&lens_packet(
                     &tree,
                     node,
-                    Magnification::new()
-                        .zoom(zoom)
-                        .thickness(thickness)
-                        .corner_radius(radius),
+                    vec![
+                        BorderRadius::from(radius).notype(),
+                        Magnification::new().zoom(zoom).thickness(thickness).notype(),
+                    ],
                     scale,
                 ));
                 // Past the corner's inner arc the bevel must already be flat.
@@ -287,10 +282,10 @@ pub(super) fn rounded_corner_uses_device_space_normal(
     let pixels = render(&lens_packet(
         &tree,
         node,
-        Magnification::new()
-            .zoom(2.0)
-            .thickness(12.0)
-            .corner_radius(12.0),
+        vec![
+            BorderRadius::from(12.0).notype(),
+            Magnification::new().zoom(2.0).thickness(12.0).notype(),
+        ],
         1.0,
     ));
     // Both coordinates are 7.5 pixels past the corner's inner square: the
@@ -320,10 +315,10 @@ pub(super) fn rounded_clip_foreground_and_fresh_capture(
     let rounded = render(&lens_packet(
         &tree,
         node,
-        Magnification::new()
-            .zoom(2.0)
-            .thickness(0.0)
-            .corner_radius(16.0),
+        vec![
+            BorderRadius::from(16.0).notype(),
+            Magnification::new().zoom(2.0).thickness(0.0).notype(),
+        ],
         1.0,
     ));
     assert_eq!(pixel(&rounded, FILTER_X, 0), pixel(&baseline, FILTER_X, 0));
@@ -333,7 +328,6 @@ pub(super) fn rounded_clip_foreground_and_fresh_capture(
     Magnification::new()
         .zoom(2.0)
         .thickness(0.0)
-        .corner_radius(0.0)
         .paint(
             &canvas,
             Vec2d::default(),
@@ -372,8 +366,7 @@ pub(super) fn nested_filters_and_budget_fallback(mut render: impl FnMut(&FramePa
     gradient(&tree, 255);
     let lens = Magnification::new()
         .zoom(2.0)
-        .thickness(0.0)
-        .corner_radius(0.0);
+        .thickness(0.0);
     let size = ResolvedSize {
         width: 64.0,
         height: 32.0,

@@ -2,7 +2,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
 
-use aimer_animation::Curve;
+use aimer_animation::{AnyCurve, Curve};
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_utils::AnimInstant;
@@ -187,7 +187,7 @@ pub struct ScrollState {
     /// Optional easing curve for a programmatic `animate_to`. When `Some`, the
     /// active fling interpolates through this curve instead of the default
     /// release-fling bézier; `None` = a normal touch/mouse release fling.
-    pub(crate) anim_curve: Cell<Option<Curve>>,
+    pub(crate) anim_curve: RefCell<Option<AnyCurve>>,
     /// Primary touch finger ID that owns this scrollable, or `None` for mouse.
     /// Set on first PointerDown, cleared on PointerUp/Cancel.
     pub(crate) active_touch_id: Cell<Option<u64>>,
@@ -302,7 +302,7 @@ impl ScrollState {
         self.fling_target_offset
             .set(Self::axis_only(self.axis, prev.fling_target_offset.get()));
         self.fling_duration.set(prev.fling_duration.get());
-        self.anim_curve.set(prev.anim_curve.get());
+        self.anim_curve.replace(prev.anim_curve.borrow().clone());
         self.active_touch_id.set(prev.active_touch_id.get());
         self.spring_velocity
             .set(Self::axis_only(self.axis, prev.spring_velocity.get()));
@@ -795,7 +795,7 @@ impl ScrollController {
     /// over `duration`, easing with `curve`, and request repaints. If the
     /// controller is not yet attached, the target is remembered as the initial
     /// position (no animation) and applied on attachment.
-    pub fn animate_to(&self, position: Vec2d, duration: Duration, curve: Curve) {
+    pub fn animate_to(&self, position: Vec2d, duration: Duration, curve: impl Curve) {
         let Some(state) = self.inner.state.borrow().clone() else {
             self.inner.pending.set(Some(position));
             return;
@@ -1293,7 +1293,7 @@ impl ScrollState {
     /// keep fighting the fresh interaction.
     pub(crate) fn cancel_fling(&self) {
         self.fling_start_time.set(None);
-        self.anim_curve.set(None);
+        self.anim_curve.replace(None);
     }
 
     /// Arm a programmatic animation that eases the scroll offset from its
@@ -1307,7 +1307,7 @@ impl ScrollState {
     ///
     /// `target` is an internal (scaled) scroll offset in the same convention as
     /// [`Self::scroll_offset`] (negative = content moved up).
-    pub(crate) fn start_animation(&self, target: Vec2d, duration_s: f32, curve: Curve) {
+    pub(crate) fn start_animation(&self, target: Vec2d, duration_s: f32, curve: impl Curve) {
         // Clear any live drag/momentum so the animation fully owns the motion.
         self.pointer_velocity.set(Vec2d { x: 0.0, y: 0.0 });
         self.spring_velocity.set(Vec2d { x: 0.0, y: 0.0 });
@@ -1335,7 +1335,7 @@ impl ScrollState {
         self.fling_start_offset.set(start);
         self.fling_target_offset.set(target);
         self.fling_duration.set(duration_s);
-        self.anim_curve.set(Some(curve));
+        self.anim_curve.replace(Some(curve.into_any()));
         self.fling_start_time.set(Some(AnimInstant::now()));
     }
 
@@ -1484,7 +1484,7 @@ impl ScrollState {
                 1.0
             };
 
-            let eased = match self.anim_curve.get() {
+            let eased = match self.anim_curve.borrow().as_ref() {
                 Some(curve) => curve.transform(u),
                 None => cubic_bezier_ease(
                     u,
@@ -1738,7 +1738,7 @@ impl ScrollState {
             fling_start_offset: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
             fling_target_offset: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
             fling_duration: Cell::new(0.0),
-            anim_curve: Cell::new(None),
+            anim_curve: RefCell::new(None),
             active_touch_id: Cell::new(None),
             spring_velocity: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
             momentum_start_time: Cell::new(None),
@@ -1775,6 +1775,7 @@ mod tests {
     use std::rc::Rc;
 
     use super::*;
+    use aimer_animation::curves;
 
     fn ctrl_with_offset(offset: Vec2d) -> ScrollState {
         ScrollState::for_test_at(offset)
@@ -2645,7 +2646,7 @@ mod tests {
         ctrl.animate_to(
             Vec2d { x: 0.0, y: 200.0 },
             Duration::from_millis(300),
-            Curve::Linear,
+            curves::LINEAR,
         );
 
         assert!(
@@ -2653,8 +2654,8 @@ mod tests {
             "a timed animation arms the fling"
         );
         assert_eq!(
-            state.anim_curve.get(),
-            Some(Curve::Linear),
+            state.anim_curve.borrow().clone(),
+            Some(curves::LINEAR.into_any()),
             "the requested curve drives the fling"
         );
         assert_eq!(
@@ -2673,7 +2674,7 @@ mod tests {
     #[test]
     fn controller_animate_to_zero_duration_jumps_immediately() {
         let (ctrl, state) = attached(1000.0);
-        ctrl.animate_to(Vec2d { x: 0.0, y: 300.0 }, Duration::ZERO, Curve::EaseInOut);
+        ctrl.animate_to(Vec2d { x: 0.0, y: 300.0 }, Duration::ZERO, curves::EASE_IN_OUT);
         assert_eq!(ctrl.offset().y, 300.0);
         assert!(
             state.fling_start_time.get().is_none(),
@@ -2689,7 +2690,7 @@ mod tests {
         ctrl.animate_to(
             Vec2d { x: 0.0, y: 250.0 },
             Duration::from_millis(300),
-            Curve::Linear,
+            curves::LINEAR,
         );
 
         // Pretend the whole duration has already passed.
@@ -2708,7 +2709,7 @@ mod tests {
             "the fling is cleared once complete"
         );
         assert!(
-            state.anim_curve.get().is_none(),
+            state.anim_curve.borrow().is_none(),
             "the animation curve is cleared once complete"
         );
     }
@@ -2716,7 +2717,7 @@ mod tests {
     #[test]
     fn line_wheel_delta_applies_immediately_without_momentum() {
         let (_ctrl, state) = attached(1000.0);
-        state.start_animation(Vec2d { x: 0.0, y: -100.0 }, 1.0, Curve::EaseOut);
+        state.start_animation(Vec2d { x: 0.0, y: -100.0 }, 1.0, curves::EASE_OUT);
         state.pointer_velocity.set(Vec2d { x: 0.0, y: -8.0 });
 
         state.apply_line_wheel_delta(Vec2d { x: 0.0, y: -20.0 });
@@ -2831,7 +2832,7 @@ mod tests {
         ctrl.animate_to(
             Vec2d { x: 0.0, y: 200.0 },
             Duration::from_millis(300),
-            Curve::Linear,
+            curves::LINEAR,
         );
         assert_eq!(starts.borrow().len(), 1, "animation fires start when armed");
         assert_eq!(

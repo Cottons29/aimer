@@ -24,7 +24,7 @@ pub use placement::{
 mod tests {
     use std::time::Duration;
 
-    use aimer_animation::Curve;
+    use aimer_animation::curves;
     use aimer_container::ZeroSizedBox;
     use aimer_space::Alignment;
     use aimer_widget::base::Color;
@@ -36,13 +36,13 @@ mod tests {
         let animation = ModalAnimation::new()
             .enter_duration(Duration::from_millis(240))
             .exit_duration(Duration::from_millis(120))
-            .enter_curve(Curve::EaseOut)
-            .exit_curve(Curve::EaseIn)
+            .enter_curve(curves::EASE_OUT)
+            .exit_curve(curves::EASE_IN)
             .content_scale_from(0.9);
         let modal = Modal::new()
             .barrier_color(Color::BLUE.with_opacity(160))
             .alignment(Alignment::BotRight)
-            .animation(animation)
+            .animation(animation.clone())
             .child(ZeroSizedBox);
 
         assert_eq!(modal.animation_config(), Some(animation));

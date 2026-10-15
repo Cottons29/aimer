@@ -40,6 +40,7 @@ use crate::control::keyframe_timeline::{KeyframeTimeline, TimelineFrame};
 use crate::control::timed_keyframe::TimedKeyframeAnimation;
 use crate::control::tween_animation::TweenAnimation;
 use crate::primitives::animatable::Animatable;
+use crate::primitives::curve::Curve;
 use crate::primitives::time::AnimInstant;
 
 type AnimatedElementBuilder = dyn Fn(f32, &BuildContext) -> AnyElement;
@@ -166,10 +167,10 @@ pub(crate) const ANIMATED_BUILDER_SCHEMA: PortableWidgetSchemaMetadata<'static> 
 /// ```rust
 /// use std::time::Duration;
 ///
-/// use aimer_animation::{AnimatedBuilder, AnimationController, Curve};
+/// use aimer_animation::{AnimatedBuilder, AnimationController, curves};
 /// use aimer_widget::ErrorWidget;
 ///
-/// let controller = AnimationController::new(Duration::from_millis(250), Curve::Linear);
+/// let controller = AnimationController::new(Duration::from_millis(250), curves::LINEAR);
 /// let animated = AnimatedBuilder::new(controller, |value| {
 ///     ErrorWidget::new(format!("Progress: {:.0}%", value * 100.0))
 /// });
@@ -220,10 +221,10 @@ impl AnimatedBuilder {
     /// ```rust
     /// use std::time::Duration;
     ///
-    /// use aimer_animation::{AnimatedBuilder, Curve, TweenAnimation};
+    /// use aimer_animation::{AnimatedBuilder, curves, TweenAnimation};
     /// use aimer_widget::ErrorWidget;
     ///
-    /// let slide = TweenAnimation::new(0.0f32, 120.0, Duration::from_millis(250), Curve::EaseOut);
+    /// let slide = TweenAnimation::new(0.0f32, 120.0, Duration::from_millis(250), curves::EASE_OUT);
     /// let animated = AnimatedBuilder::tween(slide.clone(), |offset| {
     ///     ErrorWidget::new(format!("offset {offset:.0}"))
     /// });
@@ -346,7 +347,16 @@ impl aimer_widget::portable::PortableWidget for AnimatedBuilder {
                 PortableBuildError::NonFiniteFloat,
             ));
         }
-        let (curve_tag, control_points) = portable_curve(self.controller.curve());
+        let (curve_tag, control_points) = portable_curve(&self.controller.curve()).ok_or_else(|| {
+            property_encoding_error(
+                PROPERTY_ANIMATED_BUILDER_CURVE,
+                ANIMATED_BUILDER_CURVE_CANONICAL_NAME,
+                source,
+                PortableBuildError::InvalidPropertyValue {
+                    rust_type: "custom Curve (only standard curves and cubic Béziers can be lowered to a portable guest)",
+                },
+            )
+        })?;
         let mut properties = vec![
             aimer_widget::portable::__anteros::WidgetProperty::new(
                 PROPERTY_ANIMATED_BUILDER_DURATION,
@@ -442,29 +452,14 @@ fn property_encoding_error(
     }
 }
 
+/// The portable tag and control points of `curve`, or `None` for a custom
+/// curve, which only exists natively.
 #[cfg(feature = "portable-guest")]
-fn portable_curve(curve: crate::primitives::curve::Curve) -> (i64, Option<[f64; 4]>) {
+fn portable_curve(curve: &crate::primitives::curve::AnyCurve) -> Option<(i64, Option<[f64; 4]>)> {
     use crate::primitives::curve::Curve;
 
-    match curve {
-        Curve::Linear => (0, None),
-        Curve::EaseIn => (1, None),
-        Curve::EaseOut => (2, None),
-        Curve::EaseInOut => (3, None),
-        Curve::CubicBezier(x1, y1, x2, y2) => {
-            (4, Some([x1 as f64, y1 as f64, x2 as f64, y2 as f64]))
-        }
-        Curve::Decelerate => (5, None),
-        Curve::BounceOut => (6, None),
-        Curve::BounceIn => (7, None),
-        Curve::BounceInOut => (8, None),
-        Curve::ElasticIn => (9, None),
-        Curve::ElasticOut => (10, None),
-        Curve::ElasticInOut => (11, None),
-        Curve::FastOutSlowIn => (12, None),
-        Curve::LinearOutSlowIn => (13, None),
-        Curve::FastOutLinearIn => (14, None),
-    }
+    let descriptor = curve.descriptor()?;
+    Some((descriptor.tag, descriptor.control_points))
 }
 
 #[cfg(feature = "portable-guest")]
@@ -544,8 +539,8 @@ pub(crate) fn materialize_animated_builder(
 fn materialize_curve(
     document: &WidgetDocumentView<'_>,
     node: &WidgetNodeView<'_>,
-) -> Result<crate::primitives::curve::Curve, PortableMaterializeError> {
-    use crate::primitives::curve::Curve;
+) -> Result<crate::primitives::curve::AnyCurve, PortableMaterializeError> {
+    use crate::primitives::curve::{AnyCurve, Curve, curves};
 
     let tag: i64 = required_materialized_property(document, node, PROPERTY_ANIMATED_BUILDER_CURVE)?;
     let x1: Option<f64> =
@@ -564,22 +559,8 @@ fn materialize_curve(
                     property: PROPERTY_ANIMATED_BUILDER_CURVE,
                 });
             }
-            Ok(match tag {
-                0 => Curve::Linear,
-                1 => Curve::EaseIn,
-                2 => Curve::EaseOut,
-                3 => Curve::EaseInOut,
-                5 => Curve::Decelerate,
-                6 => Curve::BounceOut,
-                7 => Curve::BounceIn,
-                8 => Curve::BounceInOut,
-                9 => Curve::ElasticIn,
-                10 => Curve::ElasticOut,
-                11 => Curve::ElasticInOut,
-                12 => Curve::FastOutSlowIn,
-                13 => Curve::LinearOutSlowIn,
-                14 => Curve::FastOutLinearIn,
-                _ => unreachable!("the range above excludes cubic bezier"),
+            AnyCurve::from_descriptor(tag, None).ok_or(PortableMaterializeError::InvalidPropertyValue {
+                property: PROPERTY_ANIMATED_BUILDER_CURVE,
             })
         }
         4 => {
@@ -592,7 +573,7 @@ fn materialize_curve(
             let y1 = finite_curve_coordinate(y1, PROPERTY_ANIMATED_BUILDER_CURVE_Y1)?;
             let x2 = finite_curve_coordinate(x2, PROPERTY_ANIMATED_BUILDER_CURVE_X2)?;
             let y2 = finite_curve_coordinate(y2, PROPERTY_ANIMATED_BUILDER_CURVE_Y2)?;
-            Ok(Curve::CubicBezier(x1, y1, x2, y2))
+            Ok(curves::cubic_bezier(x1, y1, x2, y2).into_any())
         }
         _ => Err(PortableMaterializeError::InvalidPropertyValue {
             property: PROPERTY_ANIMATED_BUILDER_CURVE,
@@ -853,9 +834,9 @@ mod tests {
     };
     use aimer_widget::{AnyElement, PortableWidget, Widget};
 
-    use crate::Curve;
-
     use super::*;
+    #[cfg(feature = "portable-guest")]
+    use crate::primitives::curve::curves;
 
     const WIDGET_CANONICAL_NAME: &str = "aimer.widget:aimer_animation::AnimatedBuilder";
     const PROPERTY_DURATION_CANONICAL_NAME: &str =
@@ -1040,7 +1021,7 @@ mod tests {
             aimer_widget::portable::StableId128::from_bytes([9; 16]),
         );
         let root = AnimatedBuilder::new(
-            AnimationController::with_millis(321, Curve::CubicBezier(0.1, 0.2, 0.8, 0.9)),
+            AnimationController::with_millis(321, curves::cubic_bezier(0.1, 0.2, 0.8, 0.9)),
             |_| PortableLeaf,
         )
         .to_portable_node(&mut context, source)
@@ -1096,7 +1077,7 @@ mod tests {
             aimer_widget::portable::StableId128::from_bytes([7; 16]),
         );
         let error = AnimatedBuilder::new(
-            AnimationController::with_millis(321, Curve::CubicBezier(f32::NAN, 0.2, 0.8, 0.9)),
+            AnimationController::with_millis(321, curves::cubic_bezier(f32::NAN, 0.2, 0.8, 0.9)),
             |_| PortableLeaf,
         )
         .to_portable_node(&mut context, source)

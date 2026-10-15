@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use aimer::animation::{
-    AnimatedBuilder, Curve, KeyframeTimeline, KeyframeTrack, TimedKeyframeAnimation,
+    AnimatedBuilder, curves, KeyframeTimeline, KeyframeTrack, TimedKeyframeAnimation,
     TweenAnimation,
 };
 use aimer::input::button::Button;
@@ -25,7 +25,7 @@ fn ms(millis: u64) -> Duration {
 
 /// A bar that grows to the full track width and eases out.
 fn growing_bar() -> TweenAnimation<f32> {
-    TweenAnimation::new(24.0, TRACK_WIDTH, ms(900), Curve::EaseOut)
+    TweenAnimation::new(24.0, TRACK_WIDTH, ms(900), curves::EASE_OUT)
 }
 
 /// A square that stretches wide, then tall, then settles. Each segment has its
@@ -33,9 +33,9 @@ fn growing_bar() -> TweenAnimation<f32> {
 fn stretch_track() -> KeyframeTrack<(f32, f32)> {
     KeyframeTrack::builder()
         .at(ms(0), (48.0, 48.0))
-        .at_with(ms(300), (200.0, 48.0), Curve::EaseOut)
-        .at_with(ms(700), (200.0, 120.0), Curve::EaseInOut)
-        .at_with(ms(1100), (48.0, 48.0), Curve::EaseIn)
+        .at_with(ms(300), (200.0, 48.0), curves::EASE_OUT)
+        .at_with(ms(700), (200.0, 120.0), curves::EASE_IN_OUT)
+        .at_with(ms(1100), (48.0, 48.0), curves::EASE_IN)
         .build()
         .expect("the example keyframes are not empty")
 }
@@ -45,7 +45,7 @@ fn stretch_track() -> KeyframeTrack<(f32, f32)> {
 fn fade_track() -> KeyframeTrack<f32> {
     KeyframeTrack::builder()
         .at(ms(0), 0.15)
-        .at_with(ms(300), 1.0, Curve::EaseOut)
+        .at_with(ms(300), 1.0, curves::EASE_OUT)
         .build()
         .expect("the example keyframes are not empty")
 }
@@ -53,8 +53,8 @@ fn fade_track() -> KeyframeTrack<f32> {
 fn width_track() -> KeyframeTrack<f32> {
     KeyframeTrack::builder()
         .at(ms(0), 24.0)
-        .at_with(ms(600), 200.0, Curve::EaseInOut)
-        .at_with(ms(1200), TRACK_WIDTH, Curve::EaseOut)
+        .at_with(ms(600), 200.0, curves::EASE_IN_OUT)
+        .at_with(ms(1200), TRACK_WIDTH, curves::EASE_OUT)
         .build()
         .expect("the example keyframes are not empty")
 }

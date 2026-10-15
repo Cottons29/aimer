@@ -439,6 +439,7 @@ pub struct Canvas {
     writer: Option<aimer_cupid::draw_cmd_v2::DrawListWriter>,
     commands: RefCell<Vec<aimer_cupid::draw_cmd_v2::DrawCommand>>,
     background: Cell<Color>,
+    corner_radii: Cell<Option<[f32; 4]>>,
 }
 
 /// Resolves the active element-local command list used by [`Canvas::of`].
@@ -479,6 +480,7 @@ impl Canvas {
             writer: Some(writer),
             commands: RefCell::new(Vec::new()),
             background: Cell::new(background),
+            corner_radii: Cell::new(None),
         }
     }
 
@@ -496,6 +498,35 @@ impl Canvas {
     pub fn add_background_color(&self, color: Option<Color>) {
         self.background
             .set(crate::composite_background(color, self.background.get()));
+    }
+
+    /// Returns the corner radii declared for the decorated box so far.
+    ///
+    /// Radii are logical pixels in top-left, top-right, bottom-right,
+    /// bottom-left order. A decoration that follows a shape declaration, such
+    /// as `BorderRadius`, adopts it; the default is square corners. Use
+    /// [`Self::declared_corner_radii`] to tell a declared square from none.
+    #[inline]
+    pub fn corner_radii(&self) -> [f32; 4] {
+        self.corner_radii.get().unwrap_or([0.0; 4])
+    }
+
+    /// Returns the declared corner radii, or `None` if no layer declared a shape.
+    ///
+    /// A declared `[0.0; 4]` is a deliberate square and differs from `None`,
+    /// which lets a widget apply its own default shape.
+    #[inline]
+    pub fn declared_corner_radii(&self) -> Option<[f32; 4]> {
+        self.corner_radii.get()
+    }
+
+    /// Declares the outer corner radii of the decorated box for later layers.
+    ///
+    /// The nearest declaration wins. Does not record any drawing commands.
+    /// Values are stored as given; consumers sanitize them for their own use.
+    #[inline]
+    pub fn set_corner_radii(&self, radii: [f32; 4]) {
+        self.corner_radii.set(Some(radii));
     }
 
     /// Adds a simple rectangle to this element's local paint list.

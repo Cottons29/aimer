@@ -224,7 +224,7 @@ async fn light_edge_reuses_its_recording_without_allocating() {
         tokio::runtime::Handle::current(),
     );
     let element = DecorationBox::new()
-        .decoration(aimer_decoration::LightEdge::new().corner_radius(4.0))
+        .decoration(aimer_decoration::LightEdge::new())
         .child(SizedBox::new().width(24.0).height(12.0))
         .to_element(&ctx);
     let tree = aimer_cupid::draw_cmd_v2::RenderTree::new();
@@ -303,12 +303,12 @@ async fn multi_decoration_typed_and_runtime_stacks_reuse_recording_without_alloc
     );
     let typed = MultiDecorationBox::new()
         .decoration(BoxDecoration::new().background_color(Color::BLUE))
-        .decoration(LightEdge::new().corner_radius(4.0))
+        .decoration(LightEdge::new())
         .child(SizedBox::new().width(40).height(20))
         .to_element(&ctx);
     let layers: Vec<Box<dyn Decoration>> = vec![
         Box::new(BoxDecoration::new().background_color(Color::BLUE)),
-        Box::new(LightEdge::new().corner_radius(4.0)),
+        Box::new(LightEdge::new()),
     ];
     let runtime = MultiDecorationBox::new()
         .decorations(layers)

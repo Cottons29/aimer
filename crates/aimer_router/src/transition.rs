@@ -32,13 +32,13 @@
 //!
 //! ```
 //! use std::time::Duration;
-//! use aimer_router::{Curve, NavigationContext, NavigationTransition,
+//! use aimer_router::{curves, NavigationContext, NavigationTransition,
 //!     NavigationTransitionFrame, PaintPresentation, ResolvedNavigationTransition, Route};
 //!
 //! struct FadeIn;
 //! impl<R: Route> NavigationTransition<R> for FadeIn {
 //!     fn resolve(&self, _: &NavigationContext<'_, '_, R>) -> Option<ResolvedNavigationTransition> {
-//!         ResolvedNavigationTransition::new(Duration::from_millis(200), Curve::EaseOut, |p, _| {
+//!         ResolvedNavigationTransition::new(Duration::from_millis(200), curves::EASE_OUT, |p, _| {
 //!             NavigationTransitionFrame {
 //!                 outgoing: PaintPresentation::IDENTITY_OPAQUE,
 //!                 incoming: PaintPresentation { opacity: p, ..PaintPresentation::IDENTITY_OPAQUE },
@@ -51,7 +51,7 @@
 use std::rc::Rc;
 use std::time::Duration;
 
-pub use aimer_animation::{Curve, PaintPresentation};
+pub use aimer_animation::{AnyCurve, Curve, PaintPresentation, curves};
 use aimer_animation::{SharedContent, last_shared_element};
 use aimer_canvas::Mat3;
 use aimer_widget::{AnyWidget, Key};
@@ -175,7 +175,7 @@ impl AnchoredFrame {
 /// Timing and a viewport-dependent sampler for one navigation.
 pub struct ResolvedNavigationTransition {
     pub(crate) duration: Duration,
-    pub(crate) curve: Curve,
+    pub(crate) curve: AnyCurve,
     pub(crate) outgoing_on_top: bool,
     anchor: Option<AnchorContent>,
     /// Receives eased progress, the host's logical size, and the host's
@@ -188,7 +188,7 @@ impl ResolvedNavigationTransition {
     /// A zero duration is valid and tells the host to swap immediately.
     pub fn new(
         duration: Duration,
-        curve: Curve,
+        curve: impl Curve,
         sampler: impl Fn(f32, ResolvedSize) -> NavigationTransitionFrame + 'static,
     ) -> Option<Self> {
         Self::positioned(duration, curve, move |progress, size, _| sampler(progress, size))
@@ -204,10 +204,10 @@ impl ResolvedNavigationTransition {
     /// Plain [`sample`](Self::sample) reports `(0.0, 0.0)`.
     pub fn positioned(
         duration: Duration,
-        curve: Curve,
+        curve: impl Curve,
         sampler: impl Fn(f32, ResolvedSize, (f32, f32)) -> NavigationTransitionFrame + 'static,
     ) -> Option<Self> {
-        Self::build(duration, curve, None, move |progress, size, origin| AnchoredFrame {
+        Self::build(duration, curve.into_any(), None, move |progress, size, origin| AnchoredFrame {
             frame: sampler(progress, size, origin),
             anchor: AnchoredFrame::HIDDEN_ANCHOR,
         })
@@ -221,23 +221,20 @@ impl ResolvedNavigationTransition {
     /// transition ends. Otherwise this is [`positioned`](Self::positioned).
     pub fn anchored(
         duration: Duration,
-        curve: Curve,
+        curve: impl Curve,
         anchor: AnchorContent,
         sampler: impl Fn(f32, ResolvedSize, (f32, f32)) -> AnchoredFrame + 'static,
     ) -> Option<Self> {
-        Self::build(duration, curve, Some(anchor), sampler)
+        Self::build(duration, curve.into_any(), Some(anchor), sampler)
     }
 
     fn build(
         duration: Duration,
-        curve: Curve,
+        curve: AnyCurve,
         anchor: Option<AnchorContent>,
         sampler: impl Fn(f32, ResolvedSize, (f32, f32)) -> AnchoredFrame + 'static,
     ) -> Option<Self> {
-        if let Curve::CubicBezier(a, b, c, d) = curve
-            && ![a, b, c, d].iter().all(|v| v.is_finite()) {
-            return None;
-        }
+        if !curve.is_valid() { return None; }
         Some(Self { duration, curve, outgoing_on_top: false, anchor, sampler: Box::new(sampler) })
     }
 
@@ -260,7 +257,7 @@ impl ResolvedNavigationTransition {
     pub fn duration(&self) -> Duration { self.duration }
 
     /// Returns the configured easing curve.
-    pub fn curve(&self) -> Curve { self.curve }
+    pub fn curve(&self) -> AnyCurve { self.curve.clone() }
 
     /// Samples already-eased progress, clamped to `0..=1`, for a viewport in
     /// logical pixels (physical layout dimensions divided by display scale).
@@ -293,10 +290,10 @@ impl ResolvedNavigationTransition {
 }
 
 /// Cross-fades the departing and arriving pages over 300 ms by default.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct CrossFadeTransition {
     duration: Duration,
-    curve: Curve,
+    curve: AnyCurve,
 }
 
 impl Default for CrossFadeTransition {
@@ -304,20 +301,20 @@ impl Default for CrossFadeTransition {
 }
 
 impl CrossFadeTransition {
-    /// Creates a 300 ms transition with [`Curve::EaseOut`].
+    /// Creates a 300 ms transition with [`curves::EASE_OUT`].
     #[inline]
-    pub fn new() -> Self { Self { duration: Duration::from_millis(300), curve: Curve::EaseOut } }
+    pub fn new() -> Self { Self { duration: Duration::from_millis(300), curve: curves::EASE_OUT.into_any() } }
     /// Sets the duration. Zero disables animation for this navigation.
     #[inline]
     pub fn duration(mut self, duration: Duration) -> Self { self.duration = duration; self }
     /// Sets easing. Non-finite Bézier control points disable this effect.
     #[inline]
-    pub fn curve(mut self, curve: Curve) -> Self { self.curve = curve; self }
+    pub fn curve(mut self, curve: impl Curve) -> Self { self.curve = curve.into_any(); self }
 }
 
 impl<R: Route> NavigationTransition<R> for CrossFadeTransition {
     fn resolve(&self, _: &NavigationContext<'_, '_, R>) -> Option<ResolvedNavigationTransition> {
-        ResolvedNavigationTransition::new(self.duration, self.curve, |p, _| NavigationTransitionFrame {
+        ResolvedNavigationTransition::new(self.duration, self.curve.clone(), |p, _| NavigationTransitionFrame {
             outgoing: PaintPresentation { transform: Mat3::identity(), opacity: 1.0 - p, corner_radius: 0.0 },
             incoming: PaintPresentation { transform: Mat3::identity(), opacity: p, corner_radius: 0.0 },
         })
@@ -326,20 +323,20 @@ impl<R: Route> NavigationTransition<R> for CrossFadeTransition {
 
 /// Scales pages around the viewport center while cross-fading them.
 /// Pops play the departing page's effect backwards.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct ZoomTransition(CrossFadeTransition);
 
 /// Slides between explicit route levels and cross-fades at equal levels.
 /// Increasing levels enter from the right; decreasing levels enter from the
 /// left. This direction is independent of the stack operation.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct ViewLevelTransitions(CrossFadeTransition);
 
 macro_rules! timed_transition {
     ($name:ident) => {
         impl Default for $name { fn default() -> Self { Self::new() } }
         impl $name {
-            /// Creates a 300 ms transition with [`Curve::EaseOut`].
+            /// Creates a 300 ms transition with [`curves::EASE_OUT`].
             #[inline]
             pub fn new() -> Self { Self(CrossFadeTransition::new()) }
             /// Sets the duration. Zero performs an immediate swap.
@@ -347,7 +344,7 @@ macro_rules! timed_transition {
             pub fn duration(mut self, duration: Duration) -> Self { self.0.duration = duration; self }
             /// Sets easing. Non-finite Bézier control points disable the effect.
             #[inline]
-            pub fn curve(mut self, curve: Curve) -> Self { self.0.curve = curve; self }
+            pub fn curve(mut self, curve: impl Curve) -> Self { self.0.curve = curve.into_any(); self }
         }
     };
 }
@@ -358,7 +355,7 @@ timed_transition!(ViewLevelTransitions);
 impl<R: Route> NavigationTransition<R> for ZoomTransition {
     fn resolve(&self, navigation: &NavigationContext<'_, '_, R>) -> Option<ResolvedNavigationTransition> {
         let reverse = navigation.action == NavigationAction::Pop;
-        ResolvedNavigationTransition::new(self.0.duration, self.0.curve, move |p, size| {
+        ResolvedNavigationTransition::new(self.0.duration, self.0.curve.clone(), move |p, size| {
             let p = if reverse { 1.0 - p } else { p };
             let centered = |scale| Mat3::translate(size.width * 0.5, size.height * 0.5)
                 .mul(&Mat3::scale(scale, scale))
@@ -379,7 +376,7 @@ impl<R: Route> NavigationTransition<R> for ViewLevelTransitions {
             Ordering::Greater => 1.0,
             Ordering::Less => -1.0,
         };
-        ResolvedNavigationTransition::new(self.0.duration, self.0.curve, move |p, size| {
+        ResolvedNavigationTransition::new(self.0.duration, self.0.curve.clone(), move |p, size| {
             NavigationTransitionFrame {
                 outgoing: PaintPresentation { transform: Mat3::translate(-sign * p * size.width, 0.0), opacity: 1.0, corner_radius: 0.0 },
                 incoming: PaintPresentation { transform: Mat3::translate(sign * (1.0 - p) * size.width, 0.0), opacity: 1.0, corner_radius: 0.0 },
@@ -415,8 +412,8 @@ pub struct ContainerTransition<R> {
     source_radius: f32,
     page_radius: f32,
     scrim: f32,
-    anchor_curve: Curve,
-    page_curve: Curve,
+    anchor_curve: AnyCurve,
+    page_curve: AnyCurve,
 }
 
 impl<R> Default for ContainerTransition<R> {
@@ -424,19 +421,19 @@ impl<R> Default for ContainerTransition<R> {
 }
 
 impl<R> ContainerTransition<R> {
-    /// Creates a 400 ms transition with [`Curve::EaseInOut`] and no tag.
+    /// Creates a 400 ms transition with [`curves::EASE_IN_OUT`] and no tag.
     ///
     /// Without a [`tag`](Self::tag) function it only ever zooms.
     #[inline]
     pub fn new() -> Self {
         Self {
             tag: None,
-            timing: CrossFadeTransition::new().duration(Duration::from_millis(400)).curve(Curve::EaseInOut),
+            timing: CrossFadeTransition::new().duration(Duration::from_millis(400)).curve(curves::EASE_IN_OUT),
             source_radius: 12.0,
             page_radius: 0.0,
             scrim: 0.35,
-            anchor_curve: Curve::Linear,
-            page_curve: Curve::Linear,
+            anchor_curve: AnyCurve::default(),
+            page_curve: AnyCurve::default(),
         }
     }
     /// Names the item a route is opened from, or `None` for a route that has no
@@ -451,7 +448,7 @@ impl<R> ContainerTransition<R> {
     pub fn duration(mut self, duration: Duration) -> Self { self.timing = self.timing.duration(duration); self }
     /// Sets easing. Non-finite Bézier control points disable the effect.
     #[inline]
-    pub fn curve(mut self, curve: Curve) -> Self { self.timing = self.timing.curve(curve); self }
+    pub fn curve(mut self, curve: impl Curve) -> Self { self.timing = self.timing.curve(curve); self }
     /// Sets the corner radius of the page while it sits on the item, in logical
     /// pixels as shown. The default is 12.
     #[inline]
@@ -465,16 +462,16 @@ impl<R> ContainerTransition<R> {
     pub fn scrim(mut self, scrim: f32) -> Self { self.scrim = scrim; self }
     /// Sets the easing of the item copy's travel from its slot to the page's
     /// card, over the copy's own phase. The default is linear. It composes with
-    /// [`curve`](Self::curve): use `.curve(Curve::Linear)` when the element
+    /// [`curve`](Self::curve): use `.curve(curves::LINEAR)` when the element
     /// curves should be the only easing. A pop plays it over reversed time. An
     /// invalid curve is ignored. See [`aimer_animation::ContainerTransformSpec::anchor_curve`].
     #[inline]
-    pub fn anchor_curve(mut self, curve: Curve) -> Self { self.anchor_curve = curve; self }
+    pub fn anchor_curve(mut self, curve: impl Curve) -> Self { self.anchor_curve = curve.into_any(); self }
     /// Sets the easing of the page's growth: its scale, position and corner
     /// radius. The default is linear. Composes with [`curve`](Self::curve) like
     /// [`anchor_curve`](Self::anchor_curve). See [`aimer_animation::ContainerTransformSpec::page_curve`].
     #[inline]
-    pub fn page_curve(mut self, curve: Curve) -> Self { self.page_curve = curve; self }
+    pub fn page_curve(mut self, curve: impl Curve) -> Self { self.page_curve = curve.into_any(); self }
 }
 
 impl<R: Route> NavigationTransition<R> for ContainerTransition<R> {
@@ -488,7 +485,7 @@ impl<R: Route> NavigationTransition<R> for ContainerTransition<R> {
         // known now for the effect to be this one rather than a zoom.
         let snapshot = tag.as_ref().and_then(last_shared_element);
         let (Some(tag), Some(snapshot)) = (tag, snapshot) else {
-            return ZoomTransition(self.timing).resolve(navigation);
+            return ZoomTransition(self.timing.clone()).resolve(navigation);
         };
         let resolved = snapshot.bounds;
         let motion = ItemMotion {
@@ -498,8 +495,8 @@ impl<R: Route> NavigationTransition<R> for ContainerTransition<R> {
             source_radius: self.source_radius,
             page_radius: self.page_radius,
             scrim: self.scrim,
-            anchor_curve: self.anchor_curve,
-            page_curve: self.page_curve,
+            anchor_curve: self.anchor_curve.clone(),
+            page_curve: self.page_curve.clone(),
         };
         let sample = move |p: f32, size: ResolvedSize, origin: (f32, f32)| {
             let Some(spec) = motion.spec(size, origin) else { return AnchoredFrame::FINISHED };
@@ -512,11 +509,11 @@ impl<R: Route> NavigationTransition<R> for ContainerTransition<R> {
         };
         let effect = match snapshot.content {
             Some(content) => ResolvedNavigationTransition::anchored(
-                self.timing.duration, self.timing.curve,
+                self.timing.duration, self.timing.curve.clone(),
                 AnchorContent::new(content, ResolvedSize { width: resolved.width, height: resolved.height }),
                 sample),
             None => ResolvedNavigationTransition::positioned(
-                self.timing.duration, self.timing.curve,
+                self.timing.duration, self.timing.curve.clone(),
                 move |p, size, origin| sample(p, size, origin).frame),
         };
         effect.map(|effect| effect.outgoing_on_top(reverse))

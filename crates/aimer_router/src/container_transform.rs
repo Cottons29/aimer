@@ -6,8 +6,8 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use aimer_animation::{
-    AnimatedPaint, AnimationController, AnimationStatus, ContainerTransformSpec, Curve,
-    ElementBounds, PaintPresentation, SharedContent, StatusListener, last_shared_element,
+    AnimatedPaint, AnimationController, AnimationStatus, AnyCurve, ContainerTransformSpec, Curve,
+    ElementBounds, curves, PaintPresentation, SharedContent, StatusListener, last_shared_element,
     last_shared_element_bounds,
 };
 use aimer_attribute::Dimension;
@@ -35,9 +35,9 @@ pub(crate) struct ItemMotion {
     pub scrim: f32,
     /// Easing of the item copy's travel to the card; see
     /// [`ContainerTransformSpec::anchor_curve`].
-    pub anchor_curve: Curve,
+    pub anchor_curve: AnyCurve,
     /// Easing of the page's growth; see [`ContainerTransformSpec::page_curve`].
-    pub page_curve: Curve,
+    pub page_curve: AnyCurve,
 }
 
 impl ItemMotion {
@@ -59,8 +59,8 @@ impl ItemMotion {
                 .page_radius(self.page_radius)
                 .scrim(self.scrim)
                 .anchored(self.anchored)
-                .anchor_curve(self.anchor_curve)
-                .page_curve(self.page_curve),
+                .anchor_curve(self.anchor_curve.clone())
+                .page_curve(self.page_curve.clone()),
         )
     }
 }
@@ -101,12 +101,12 @@ pub struct ContainerTransform<W = RequiredChild> {
     base: W,
     page: Option<(Key, AnyWidget)>,
     duration: Duration,
-    curve: Curve,
+    curve: AnyCurve,
     source_radius: f32,
     page_radius: f32,
     scrim: f32,
-    anchor_curve: Curve,
-    page_curve: Curve,
+    anchor_curve: AnyCurve,
+    page_curve: AnyCurve,
 }
 
 impl Default for ContainerTransform {
@@ -116,7 +116,7 @@ impl Default for ContainerTransform {
 }
 
 impl ContainerTransform {
-    /// Creates a 400 ms transition with [`Curve::EaseInOut`] and no page open.
+    /// Creates a 400 ms transition with [`curves::EASE_IN_OUT`] and no page open.
     ///
     /// Finish it with [`ContainerTransform::child`].
     #[inline]
@@ -125,12 +125,12 @@ impl ContainerTransform {
             base: RequiredChild,
             page: None,
             duration: Duration::from_millis(400),
-            curve: Curve::EaseInOut,
+            curve: curves::EASE_IN_OUT.into_any(),
             source_radius: 12.0,
             page_radius: 0.0,
             scrim: 0.35,
-            anchor_curve: Curve::Linear,
-            page_curve: Curve::Linear,
+            anchor_curve: AnyCurve::default(),
+            page_curve: AnyCurve::default(),
         }
     }
 }
@@ -153,8 +153,8 @@ impl<W> ContainerTransform<W> {
 
     /// Sets the easing of opening and closing.
     #[inline]
-    pub fn curve(mut self, curve: Curve) -> Self {
-        self.curve = curve;
+    pub fn curve(mut self, curve: impl Curve) -> Self {
+        self.curve = curve.into_any();
         self
     }
 
@@ -185,12 +185,12 @@ impl<W> ContainerTransform<W> {
     /// Sets the easing of the item copy's travel from its slot to the page's
     /// card, over the copy's own phase. The default is linear.
     ///
-    /// This composes with [`curve`](Self::curve), so use `.curve(Curve::Linear)`
+    /// This composes with [`curve`](Self::curve), so use `.curve(curves::LINEAR)`
     /// when the element curves should be the only easing. Going back plays the
     /// same curve over reversed time. See [`ContainerTransformSpec::anchor_curve`].
     #[inline]
-    pub fn anchor_curve(mut self, curve: Curve) -> Self {
-        self.anchor_curve = curve;
+    pub fn anchor_curve(mut self, curve: impl Curve) -> Self {
+        self.anchor_curve = curve.into_any();
         self
     }
 
@@ -199,8 +199,8 @@ impl<W> ContainerTransform<W> {
     /// [`anchor_curve`](Self::anchor_curve). See
     /// [`ContainerTransformSpec::page_curve`].
     #[inline]
-    pub fn page_curve(mut self, curve: Curve) -> Self {
-        self.page_curve = curve;
+    pub fn page_curve(mut self, curve: impl Curve) -> Self {
+        self.page_curve = curve.into_any();
         self
     }
 
@@ -239,7 +239,7 @@ impl<W: Widget + 'static> StatefulWidget for ContainerTransform<W> {
     type State = ContainerTransformState<W>;
 
     fn create_state(self) -> Self::State {
-        let controller = AnimationController::new(self.duration, self.curve);
+        let controller = AnimationController::new(self.duration, self.curve.clone());
         let open = self.page.is_some();
         if open {
             // Already open when first built: show it, don't animate it in.
@@ -278,8 +278,8 @@ pub struct ContainerTransformState<W> {
     source_radius: f32,
     page_radius: f32,
     scrim: f32,
-    anchor_curve: Curve,
-    page_curve: Curve,
+    anchor_curve: AnyCurve,
+    page_curve: AnyCurve,
     /// A copy of the item the page grows from, when it can be drawn again.
     anchor: Option<Anchor>,
     /// Where that item was when the page was asked for.
@@ -320,8 +320,8 @@ impl<W> ContainerTransformState<W> {
             source_radius: self.source_radius,
             page_radius: self.page_radius,
             scrim: self.scrim.clamp(0.0, 1.0),
-            anchor_curve: self.anchor_curve,
-            page_curve: self.page_curve,
+            anchor_curve: self.anchor_curve.clone(),
+            page_curve: self.page_curve.clone(),
         }
     }
 
@@ -562,7 +562,7 @@ mod tests {
         let mut live = state(None);
         let next = ContainerTransform::new()
             .duration(Duration::from_millis(900))
-            .curve(Curve::Linear)
+            .curve(curves::LINEAR)
             .source_radius(30.0)
             .page_radius(5.0)
             .scrim(0.8)
@@ -572,7 +572,7 @@ mod tests {
         live.adopt_config_from(next);
 
         assert_eq!(live.controller.duration(), Duration::from_millis(900));
-        assert_eq!(live.controller.curve(), Curve::Linear);
+        assert_eq!(live.controller.curve(), curves::LINEAR.into_any());
         assert_eq!((live.source_radius, live.page_radius, live.scrim), (30.0, 5.0, 0.8));
     }
 
@@ -580,26 +580,26 @@ mod tests {
     fn the_element_curves_follow_the_latest_configuration() {
         let mut live = state(None);
         let next = ContainerTransform::new()
-            .anchor_curve(Curve::EaseOut)
-            .page_curve(Curve::EaseIn)
+            .anchor_curve(curves::EASE_OUT)
+            .page_curve(curves::EASE_IN)
             .child(ErrorWidget::new("base"))
             .create_state();
 
         live.adopt_config_from(next);
 
-        assert_eq!((live.anchor_curve, live.page_curve), (Curve::EaseOut, Curve::EaseIn));
+        assert_eq!((live.anchor_curve.clone(), live.page_curve.clone()), (curves::EASE_OUT.into_any(), curves::EASE_IN.into_any()));
     }
 
     #[test]
     fn the_element_curves_reach_the_motion() {
         let mut live = state(None);
         live.adopt_config_from(
-            ContainerTransform::new().anchor_curve(Curve::EaseOut).page_curve(Curve::EaseIn).child(ErrorWidget::new("base")).create_state(),
+            ContainerTransform::new().anchor_curve(curves::EASE_OUT).page_curve(curves::EASE_IN).child(ErrorWidget::new("base")).create_state(),
         );
 
         let motion = live.motion(tag("curved"));
 
-        assert_eq!((motion.anchor_curve, motion.page_curve), (Curve::EaseOut, Curve::EaseIn));
+        assert_eq!((motion.anchor_curve, motion.page_curve), (curves::EASE_OUT.into_any(), curves::EASE_IN.into_any()));
     }
 
     mod anchor {

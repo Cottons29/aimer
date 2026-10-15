@@ -1,6 +1,7 @@
 #![allow(dead_code, clippy::main_recursion)]
 
 mod accessibility_example;
+mod align_example;
 mod animatable_example;
 mod animated;
 mod animated_layout_example;
@@ -28,7 +29,9 @@ mod http_request_button;
 mod i18n_example;
 mod justify_content_example;
 mod light_edge_example;
+mod liquid_tab_bar_example;
 mod loading_animation;
+mod lucide_icons_example;
 mod magnification_example;
 mod markdown_example;
 mod modal;
@@ -46,6 +49,7 @@ mod selectable_text;
 mod selection_controls_example;
 mod showcase;
 mod starter;
+mod stack_positioned_example;
 pub mod stateful;
 mod stateful_2;
 mod storage_example;

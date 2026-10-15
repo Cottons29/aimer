@@ -4,7 +4,7 @@ use crate::control::controller::AnimationController;
 use crate::control::keyframe::{Keyframe, KeyframeAnimation, KeyframeError};
 use crate::control::playback::controller_playback;
 use crate::primitives::animatable::Animatable;
-use crate::primitives::curve::Curve;
+use crate::primitives::curve::{AnyCurve, Curve};
 use crate::primitives::time::AnimInstant;
 
 /// Keyframes placed at points in time rather than at fractions.
@@ -21,11 +21,11 @@ use crate::primitives::time::AnimInstant;
 /// ```rust
 /// use std::time::Duration;
 ///
-/// use aimer_animation::{Curve, KeyframeTrack};
+/// use aimer_animation::{curves, KeyframeTrack};
 ///
 /// let bounce = KeyframeTrack::builder()
 ///     .at(Duration::ZERO, 0.0f32)
-///     .at_with(Duration::from_millis(150), 1.0, Curve::EaseOut)
+///     .at_with(Duration::from_millis(150), 1.0, curves::EASE_OUT)
 ///     .at(Duration::from_millis(400), 0.8)
 ///     .build()
 ///     .unwrap();
@@ -102,12 +102,12 @@ impl<T: Animatable + Clone> TimedKeyframeBuilder<T> {
 
     /// Adds `value` at `offset`, reached by linear interpolation.
     pub fn at(self, offset: Duration, value: T) -> Self {
-        self.at_with(offset, value, Curve::Linear)
+        self.at_with(offset, value, AnyCurve::default())
     }
 
     /// Adds `value` at `offset`, eased by `curve` on the way in from the
     /// previous keyframe.
-    pub fn at_with(mut self, offset: Duration, value: T, curve: Curve) -> Self {
+    pub fn at_with(mut self, offset: Duration, value: T, curve: impl Curve) -> Self {
         self.frames.push((offset, Keyframe::new(value, curve)));
         self
     }
@@ -180,7 +180,7 @@ pub struct TimedKeyframeAnimation<T: Animatable + Clone> {
 impl<T: Animatable + Clone> TimedKeyframeAnimation<T> {
     /// Plays `track` on a new controller. It starts stopped at the first value.
     pub fn new(track: KeyframeTrack<T>) -> Self {
-        let controller = AnimationController::new(track.duration(), Curve::Linear);
+        let controller = AnimationController::new(track.duration(), AnyCurve::default());
         Self { track, controller }
     }
 
@@ -209,6 +209,7 @@ impl<T: Animatable + Clone> TimedKeyframeAnimation<T> {
 mod tests {
     use super::*;
     use crate::control::controller::AnimationStatus;
+    use crate::primitives::curve::curves;
 
     fn ms(millis: u64) -> Duration {
         Duration::from_millis(millis)
@@ -265,7 +266,7 @@ mod tests {
     fn per_keyframe_curves_ease_the_incoming_segment() {
         let track = KeyframeTrack::builder()
             .at(ms(0), 0.0f32)
-            .at_with(ms(100), 100.0, Curve::EaseIn)
+            .at_with(ms(100), 100.0, curves::EASE_IN)
             .build()
             .unwrap();
 
@@ -328,7 +329,7 @@ mod tests {
         let animation = TimedKeyframeAnimation::new(pulse());
 
         assert_eq!(animation.controller().duration(), ms(300));
-        assert_eq!(animation.controller().curve(), Curve::Linear);
+        assert_eq!(animation.controller().curve(), curves::LINEAR.into_any());
     }
 
     #[test]

@@ -1741,7 +1741,12 @@ mod tests {
     mod retained_switcher;
     mod rows_in_resizable;
     mod scoped_sync;
+    mod stack_overlays;
+    mod shadow_clip_origin;
+    mod stack_bar_touch;
+    mod stack_occlusion;
     mod scalable_overflow;
+    mod scalable_text;
     mod scroll_frame_kind;
     mod scroll_one_step;
     mod settled_skip;
@@ -1749,6 +1754,7 @@ mod tests {
     mod skeleton_to_rows;
     mod theme_switch;
     mod touch_scroll;
+    mod trackpad_gestures;
     mod window_resize;
 
     static VIRTUALIZED_RENDER_TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -3137,14 +3143,14 @@ mod tests {
     /// slice used to be rejected, which left the animation frozen.
     #[test]
     fn an_animation_over_most_of_the_window_still_lowers_a_plan_every_frame() {
-        use aimer_animation::{AnimationController, Curve, FadeTransition};
+        use aimer_animation::{AnimationController, curves, FadeTransition};
         use aimer_container::SizedBox;
 
         struct Page;
 
         impl Widget for Page {
             fn to_element(self, ctx: &BuildContext) -> AnyElement {
-                let controller = AnimationController::with_millis(5_000, Curve::Linear);
+                let controller = AnimationController::with_millis(5_000, curves::LINEAR);
                 controller.forward_from_first_tick();
                 FadeTransition::new(
                     controller,
@@ -3324,7 +3330,7 @@ mod tests {
     /// render node has to leave the render tree too, or the old picture stays
     /// painted behind the new one.
     fn a_finished_transition_leaves_only_the_incoming_child(morph: bool) {
-        use aimer_animation::{AnimatedSwitcher, Curve, MorphTransition};
+        use aimer_animation::{AnimatedSwitcher, curves, MorphTransition};
 
         thread_local! {
             static SWITCH: RefCell<Option<StateUpdater<SwitchState>>> = const { RefCell::new(None) };
@@ -3365,11 +3371,11 @@ mod tests {
                     .color(Color::Rgb(200, 30, 30));
                 let duration = std::time::Duration::from_millis(120);
                 if self.morph {
-                    MorphTransition::new(duration, Curve::Linear, picture)
+                    MorphTransition::new(duration, curves::LINEAR, picture)
                         .child_key(key)
                         .boxed()
                 } else {
-                    AnimatedSwitcher::new(duration, Curve::Linear, picture)
+                    AnimatedSwitcher::new(duration, curves::LINEAR, picture)
                         .child_key(key)
                         .boxed()
                 }

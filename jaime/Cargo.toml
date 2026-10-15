@@ -16,7 +16,7 @@ path = "src/main.rs"
 
 [dependencies]
 
-aimer = { path = "..", features = ["markdown", "svg", "provider"] }
+aimer = { path = "..", features = ["markdown", "icons", "provider"] }
 aimer_widget = { path = "../crates/aimer_widget" }
 uuid = { version = "1.22.0", features = ["js", "v4"] }
 reqwest.workspace = true

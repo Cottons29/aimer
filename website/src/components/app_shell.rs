@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use aimer::animation::Curve;
+use aimer::animation::curves;
 use aimer::router::Outlet;
 use aimer::style::{AnimatedTheme, Theme, ThemeData};
 use aimer::{BuildContext, widget, *};
@@ -90,7 +90,7 @@ impl State<AppShell> for AppShellState {
         AnimatedTheme::new()
             .data(self.theme_mode.theme())
             .duration(Duration::from_millis(250))
-            .curve(Curve::EaseInOut)
+            .curve(curves::EASE_IN_OUT)
             .child(ThemedAppShellFrame {
                 active_tab: self.active_tab,
                 theme_mode: self.theme_mode,

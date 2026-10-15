@@ -1,6 +1,6 @@
 use super::*;
 use super::retained::{button_context, child_geometry, decoration_paint, find_element, mounted_elements};
-use aimer_decoration::Decoration;
+use aimer_decoration::{BorderRadius, Decoration};
 
 // Intentionally neither Clone nor Default: Button must own arbitrary decorations.
 struct Surface(Color);
@@ -147,7 +147,7 @@ async fn button_accepts_light_edge_and_inherits_background_for_contrast() {
         let mut ctx = button_context();
         ctx.scale = scale;
         let root = Container::new().color(Color::WHITE)
-            .child(Button::new().decoration(LightEdge::new().corner_radius(12.0))
+            .child(Button::new().decoration(vec![BorderRadius::from(12.0).notype(), LightEdge::new().notype()])
                 .child(SizedBox::new().width(60).height(24)))
             .to_element(&ctx);
         root.update(&ctx);

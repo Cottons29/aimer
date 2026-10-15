@@ -2,7 +2,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use crate::local_cell::LocalCell;
-use crate::primitives::curve::Curve;
+use crate::primitives::curve::{AnyCurve, Curve};
 use crate::primitives::time::AnimInstant;
 
 /// The current status of an animation.
@@ -47,7 +47,7 @@ pub struct AnimationController {
 #[derive(Debug)]
 struct ControllerState {
     duration: Duration,
-    curve: Curve,
+    curve: AnyCurve,
     value: f32,
     status: AnimationStatus,
     start_time: Option<AnimInstant>,
@@ -73,11 +73,11 @@ impl std::fmt::Debug for AnimationController {
 
 impl AnimationController {
     /// Create a new controller with the given duration and curve.
-    pub fn new(duration: Duration, curve: Curve) -> Self {
+    pub fn new(duration: Duration, curve: impl Curve) -> Self {
         Self {
             state: Rc::new(LocalCell::new(ControllerState {
                 duration,
-                curve,
+                curve: curve.into_any(),
                 value: 0.0,
                 status: AnimationStatus::Dismissed,
                 start_time: None,
@@ -90,7 +90,7 @@ impl AnimationController {
     }
 
     /// Create a controller with a duration in milliseconds.
-    pub fn with_millis(millis: u64, curve: Curve) -> Self {
+    pub fn with_millis(millis: u64, curve: impl Curve) -> Self {
         Self::new(Duration::from_millis(millis), curve)
     }
 
@@ -161,11 +161,14 @@ impl AnimationController {
         self.state.with_mut(|state| state.duration = duration);
     }
 
-    pub fn curve(&self) -> Curve {
-        self.state.with(|state| state.curve)
+    /// Returns the easing curve.
+    pub fn curve(&self) -> AnyCurve {
+        self.state.with(|state| state.curve.clone())
     }
 
-    pub fn set_curve(&self, curve: Curve) {
+    /// Replaces the easing curve. Clones of the controller share it.
+    pub fn set_curve(&self, curve: impl Curve) {
+        let curve = curve.into_any();
         self.state.with_mut(|state| state.curve = curve);
     }
 
@@ -225,7 +228,7 @@ impl AnimationController {
     /// updated to `Completed` or `Dismissed` and `is_animating()` returns
     /// false.
     pub fn tick(&self, now: AnimInstant) -> f32 {
-        let (value, curve, notification) = self.state.with_mut(|state| {
+        let (curved, notification) = self.state.with_mut(|state| {
             let Some(start) = state.start_time else {
                 if matches!(
                     state.status,
@@ -233,13 +236,13 @@ impl AnimationController {
                 ) {
                     state.start_time = Some(now);
                 }
-                return (state.value, state.curve, None);
+                return (state.curve.transform(state.value), None);
             };
             if !matches!(
                 state.status,
                 AnimationStatus::Forward | AnimationStatus::Reverse
             ) {
-                return (state.value, state.curve, None);
+                return (state.curve.transform(state.value), None);
             }
 
             let elapsed = now.duration_since(start).as_secs_f32();
@@ -299,13 +302,13 @@ impl AnimationController {
                 _ => {}
             }
 
-            (state.value, state.curve, notification)
+            (state.curve.transform(state.value), notification)
         });
 
         if let Some(status) = notification {
             self.notify_if_changed(true, status);
         }
-        curve.transform(value)
+        curved
     }
 }
 
@@ -314,10 +317,11 @@ mod tests {
     use std::sync::atomic::{AtomicU8, Ordering};
 
     use super::*;
+    use crate::primitives::curve::curves;
 
     #[test]
     fn test_forward_completes() {
-        let ctrl = AnimationController::with_millis(100, Curve::Linear);
+        let ctrl = AnimationController::with_millis(100, curves::LINEAR);
         ctrl.forward();
         assert!(ctrl.is_animating());
 
@@ -332,7 +336,7 @@ mod tests {
 
     #[test]
     fn test_reverse_completes() {
-        let ctrl = AnimationController::with_millis(100, Curve::Linear);
+        let ctrl = AnimationController::with_millis(100, curves::LINEAR);
         ctrl.set_value(1.0);
         ctrl.reverse();
 
@@ -346,7 +350,7 @@ mod tests {
 
     #[test]
     fn test_reset() {
-        let ctrl = AnimationController::with_millis(100, Curve::Linear);
+        let ctrl = AnimationController::with_millis(100, curves::LINEAR);
         ctrl.forward();
         ctrl.set_value(0.5);
         ctrl.reset();
@@ -358,7 +362,7 @@ mod tests {
 
     #[test]
     fn test_repeat_forward() {
-        let ctrl = AnimationController::with_millis(100, Curve::Linear);
+        let ctrl = AnimationController::with_millis(100, curves::LINEAR);
         ctrl.set_repeat(true);
         ctrl.forward();
 
@@ -372,7 +376,7 @@ mod tests {
 
     #[test]
     fn test_repeat_auto_reverse() {
-        let ctrl = AnimationController::with_millis(100, Curve::Linear);
+        let ctrl = AnimationController::with_millis(100, curves::LINEAR);
         ctrl.set_repeat(true);
         ctrl.set_auto_reverse(true);
         ctrl.forward();
@@ -395,7 +399,7 @@ mod tests {
         }
 
         let listener = Rc::new(TestListener(AtomicU8::new(0)));
-        let ctrl = AnimationController::with_millis(100, Curve::Linear);
+        let ctrl = AnimationController::with_millis(100, curves::LINEAR);
         ctrl.add_status_listener(listener.clone());
 
         ctrl.forward();
@@ -420,7 +424,7 @@ mod tests {
         }
 
         let listener = Rc::new(TestListener(AtomicU8::new(0)));
-        let ctrl = AnimationController::with_millis(100, Curve::Linear);
+        let ctrl = AnimationController::with_millis(100, curves::LINEAR);
         ctrl.add_status_listener(listener.clone());
 
         let ctrl2 = ctrl.clone();
@@ -430,7 +434,7 @@ mod tests {
 
     #[test]
     fn clone_shares_progress_and_playback_state() {
-        let first = AnimationController::with_millis(100, Curve::Linear);
+        let first = AnimationController::with_millis(100, curves::LINEAR);
         let second = first.clone();
 
         first.forward();
@@ -447,7 +451,7 @@ mod tests {
 
     #[test]
     fn forward_continues_from_current_value() {
-        let ctrl = AnimationController::with_millis(100, Curve::Linear);
+        let ctrl = AnimationController::with_millis(100, curves::LINEAR);
         ctrl.set_value(0.4);
         ctrl.forward();
 
@@ -460,7 +464,7 @@ mod tests {
 
     #[test]
     fn reverse_continues_from_current_value() {
-        let ctrl = AnimationController::with_millis(100, Curve::Linear);
+        let ctrl = AnimationController::with_millis(100, curves::LINEAR);
         ctrl.set_value(0.6);
         ctrl.reverse();
 
@@ -473,7 +477,7 @@ mod tests {
 
     #[test]
     fn sub_millisecond_duration_advances_without_nan() {
-        let ctrl = AnimationController::new(Duration::from_micros(500), Curve::Linear);
+        let ctrl = AnimationController::new(Duration::from_micros(500), curves::LINEAR);
         ctrl.forward();
 
         let quarter =
@@ -482,5 +486,50 @@ mod tests {
 
         assert!(value.is_finite());
         assert!((value - 0.25).abs() < 0.01, "expected 0.25, got {value}");
+    }
+
+    /// A user's curve: it reaches the end at half time and stays there.
+    struct EarlyFinish;
+
+    impl Curve for EarlyFinish {
+        fn transform(&self, t: f32) -> f32 {
+            (t * 2.0).min(1.0)
+        }
+    }
+
+    #[test]
+    fn a_custom_curve_shapes_the_controller_output() {
+        let ctrl = AnimationController::with_millis(100, EarlyFinish);
+        ctrl.forward_from_first_tick();
+        let start = AnimInstant::now();
+        ctrl.tick(start);
+
+        let quarter = ctrl.tick(start + Duration::from_millis(25));
+        let three_quarters = ctrl.tick(start + Duration::from_millis(75));
+
+        assert!((quarter - 0.5).abs() < 1e-4, "got {quarter}");
+        assert_eq!(three_quarters, 1.0);
+    }
+
+    #[test]
+    fn a_custom_curve_can_replace_a_standard_one_and_back() {
+        let ctrl = AnimationController::with_millis(100, curves::LINEAR);
+
+        ctrl.set_curve(EarlyFinish);
+        assert_ne!(ctrl.curve(), curves::LINEAR.into_any());
+        assert_eq!(ctrl.curve().transform(0.25), 0.5);
+
+        ctrl.set_curve(curves::LINEAR);
+        assert_eq!(ctrl.curve(), curves::LINEAR.into_any());
+    }
+
+    #[test]
+    fn clones_share_a_custom_curve() {
+        let ctrl = AnimationController::with_millis(100, curves::LINEAR);
+        let handle = ctrl.clone();
+
+        handle.set_curve(EarlyFinish);
+
+        assert_eq!(ctrl.curve().transform(0.25), 0.5);
     }
 }

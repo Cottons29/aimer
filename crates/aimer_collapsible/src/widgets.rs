@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use aimer_animation::{AnimInstant, AnimationController, Curve, RotationTransition};
+use aimer_animation::{AnimInstant, AnimationController, AnyCurve, Curve, RotationTransition, curves};
 use aimer_container::Container;
 use aimer_events::element::ElementEvent;
 use aimer_events::window::request_animation_frame;
@@ -525,20 +525,20 @@ impl<W: Widget> PortableWidget for ListBody<W> {}
 /// ```
 /// use std::time::Duration;
 ///
-/// use aimer_animation::Curve;
+/// use aimer_animation::curves;
 /// use aimer_collapsible::{CollapsibleList, ListBody, ListHeader};
 /// use aimer_text::Text;
 ///
 /// let _list = CollapsibleList::new()
 ///     .animation_duration(Duration::from_millis(240))
-///     .animation_curve(Curve::EaseOut)
+///     .animation_curve(curves::EASE_OUT)
 ///     .header(ListHeader::new().child(Text::new("Tags")))
 ///     .body(ListBody::new().child(Text::new("Red")));
 /// ```
 pub struct CollapsibleList<H = RequiredChild, B = RequiredChild> {
     expanded: bool,
     duration: Duration,
-    curve: Curve,
+    curve: AnyCurve,
     header: H,
     body: B,
 }
@@ -550,7 +550,7 @@ impl CollapsibleList {
         Self {
             expanded: true,
             duration: Duration::from_millis(COLLAPSIBLE_ANIMATION_MILLIS),
-            curve: Curve::EaseInOut,
+            curve: curves::EASE_IN_OUT.into_any(),
             header: RequiredChild,
             body: RequiredChild,
         }
@@ -587,8 +587,8 @@ impl<H, B> CollapsibleList<H, B> {
 
     /// Sets the easing curve used by both the body reveal and chevron rotation.
     #[inline]
-    pub fn animation_curve(mut self, curve: Curve) -> Self {
-        self.curve = curve;
+    pub fn animation_curve(mut self, curve: impl Curve) -> Self {
+        self.curve = curve.into_any();
         self
     }
 
@@ -625,7 +625,7 @@ pub struct CollapsibleListState<H: Widget + 'static, B: Widget + 'static> {
     expanded: bool,
     body_mounted: bool,
     duration: Duration,
-    curve: Curve,
+    curve: AnyCurve,
     chevron_controller: AnimationController,
     body_controller: AnimationController,
     header: ChildBuilder,
@@ -675,12 +675,12 @@ impl<H: Widget + 'static, B: Widget + 'static> CollapsibleListState<H, B> {
     }
 
     #[cfg(test)]
-    pub(crate) fn chevron_curve(&self) -> Curve {
+    pub(crate) fn chevron_curve(&self) -> AnyCurve {
         self.chevron_controller.curve()
     }
 
     #[cfg(test)]
-    pub(crate) fn body_curve(&self) -> Curve {
+    pub(crate) fn body_curve(&self) -> AnyCurve {
         self.body_controller.curve()
     }
 }
@@ -689,11 +689,11 @@ impl<H: Widget + 'static, B: Widget + 'static> StatefulWidget for CollapsibleLis
     type State = CollapsibleListState<H, B>;
 
     fn create_state(self) -> Self::State {
-        let chevron_controller = AnimationController::new(self.duration, self.curve);
+        let chevron_controller = AnimationController::new(self.duration, self.curve.clone());
         if !self.expanded {
             chevron_controller.set_value(1.0);
         }
-        let body_controller = AnimationController::new(self.duration, self.curve);
+        let body_controller = AnimationController::new(self.duration, self.curve.clone());
         if self.expanded {
             body_controller.set_value(1.0);
         }
@@ -740,9 +740,9 @@ impl<H: Widget + 'static, B: Widget + 'static> State<CollapsibleList<H, B>>
         self.duration = new.duration;
         self.curve = new.curve;
         self.chevron_controller.set_duration(self.duration);
-        self.chevron_controller.set_curve(self.curve);
+        self.chevron_controller.set_curve(self.curve.clone());
         self.body_controller.set_duration(self.duration);
-        self.body_controller.set_curve(self.curve);
+        self.body_controller.set_curve(self.curve.clone());
         self.header = new.header;
         self.body = new.body;
     }

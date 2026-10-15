@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use aimer_cupid::draw_cmd_v2::{Rect, RenderNodeId, RenderTree};
 use aimer_router::{
-    Curve, ContainerTransition, NavigationAction, NavigationContext, NavigationTransition, Route,
+    Curve, curves, ContainerTransition, NavigationAction, NavigationContext, NavigationTransition, Route,
     NavigationTransitionFrame, ResolvedNavigationTransition,
 };
 use aimer_widget::base::{BuildContext, ResolvedSize, WindowHandle};
@@ -190,7 +190,7 @@ fn the_effect_is_configurable() {
     let _item = item("album-7", Rect::new(20.0, 120.0, 160.0, 160.0), &ctx);
     let configured = transition()
         .duration(Duration::from_millis(250))
-        .curve(Curve::Linear)
+        .curve(curves::LINEAR)
         .source_radius(24.0)
         .page_radius(6.0)
         .scrim(0.5);
@@ -198,7 +198,7 @@ fn the_effect_is_configurable() {
     let effect = resolve(&configured, 0, 7, NavigationAction::Push, &ctx).unwrap();
 
     assert_eq!(effect.duration(), Duration::from_millis(250));
-    assert_eq!(effect.curve(), Curve::Linear);
+    assert_eq!(effect.curve(), curves::LINEAR.into_any());
     assert_eq!(effect.sample(0.0, VIEWPORT).unwrap().incoming.corner_radius, 24.0);
     assert_eq!(effect.sample(1.0, VIEWPORT).unwrap().incoming.corner_radius, 6.0);
     assert_eq!(effect.sample(1.0, VIEWPORT).unwrap().outgoing.opacity, 0.5);
@@ -316,16 +316,16 @@ fn the_page_curve_reshapes_the_pages_growth_in_both_directions() {
     let ctx = context();
     let _item = item("album-7", Rect::new(20.0, 120.0, 160.0, 160.0), &ctx);
     let plain = resolve(&transition(), 0, 7, NavigationAction::Push, &ctx).unwrap();
-    let eased = resolve(&transition().page_curve(Curve::EaseIn), 0, 7, NavigationAction::Push, &ctx).unwrap();
+    let eased = resolve(&transition().page_curve(curves::EASE_IN), 0, 7, NavigationAction::Push, &ctx).unwrap();
 
     // Halfway through, the eased page is where the plain one is at EaseIn(0.5).
     let got = eased.sample(0.5, VIEWPORT).unwrap().incoming.transform;
-    let expected = plain.sample(Curve::EaseIn.transform(0.5), VIEWPORT).unwrap().incoming.transform;
+    let expected = plain.sample(curves::EASE_IN.transform(0.5), VIEWPORT).unwrap().incoming.transform;
     assert_eq!(got, expected);
     assert_ne!(got, plain.sample(0.5, VIEWPORT).unwrap().incoming.transform);
 
     // Going back runs the same curve over reversed time.
-    let pop = resolve(&transition().page_curve(Curve::EaseIn), 7, 0, NavigationAction::Pop, &ctx).unwrap();
+    let pop = resolve(&transition().page_curve(curves::EASE_IN), 7, 0, NavigationAction::Pop, &ctx).unwrap();
     assert_eq!(pop.sample(0.25, VIEWPORT).unwrap().outgoing.transform,
         eased.sample(0.75, VIEWPORT).unwrap().incoming.transform);
 }
@@ -335,7 +335,7 @@ fn the_anchor_curve_reshapes_the_copys_travel_and_leaves_its_fade_alone() {
     let ctx = context();
     let _item = repeatable_item("album-7", Rect::new(20.0, 120.0, 160.0, 160.0), &ctx);
     let plain = resolve(&transition(), 0, 7, NavigationAction::Push, &ctx).unwrap();
-    let eased = resolve(&transition().anchor_curve(Curve::EaseIn), 0, 7, NavigationAction::Push, &ctx).unwrap();
+    let eased = resolve(&transition().anchor_curve(curves::EASE_IN), 0, 7, NavigationAction::Push, &ctx).unwrap();
     let origin = (0.0, 0.0);
 
     let plain_frame = plain.sample_anchored_at(0.125, VIEWPORT, origin).unwrap();
@@ -352,7 +352,7 @@ fn the_anchor_curve_reshapes_the_copys_travel_and_leaves_its_fade_alone() {
 fn an_invalid_element_curve_is_ignored() {
     let ctx = context();
     let _item = repeatable_item("album-7", Rect::new(20.0, 120.0, 160.0, 160.0), &ctx);
-    let bad = Curve::CubicBezier(f32::NAN, 0.0, 1.0, 1.0);
+    let bad = curves::cubic_bezier(f32::NAN, 0.0, 1.0, 1.0);
     let plain = resolve(&transition(), 0, 7, NavigationAction::Push, &ctx).unwrap();
     let ignored = resolve(&transition().anchor_curve(bad).page_curve(bad), 0, 7, NavigationAction::Push, &ctx).unwrap();
 
@@ -360,4 +360,36 @@ fn an_invalid_element_curve_is_ignored() {
         let p = step as f32 / 10.0;
         assert_eq!(plain.sample_anchored_at(p, VIEWPORT, (0.0, 0.0)), ignored.sample_anchored_at(p, VIEWPORT, (0.0, 0.0)));
     }
+}
+
+#[test]
+fn a_users_own_curve_can_shape_the_page() {
+    /// Jumps straight to the end: the page is full size from the first frame.
+    struct Immediately;
+    impl Curve for Immediately {
+        fn transform(&self, _: f32) -> f32 { 1.0 }
+    }
+    let ctx = context();
+    let _item = item("album-7", Rect::new(20.0, 120.0, 160.0, 160.0), &ctx);
+
+    let effect = resolve(&transition().page_curve(Immediately), 0, 7, NavigationAction::Push, &ctx).unwrap();
+
+    let at_start = effect.sample(0.0, VIEWPORT).unwrap();
+    assert_eq!(at_start.incoming.transform, aimer_canvas::Mat3::identity());
+    assert_eq!(at_start.incoming.corner_radius, 0.0);
+}
+
+#[test]
+fn a_users_own_curve_can_ease_the_whole_navigation() {
+    struct Halfway;
+    impl Curve for Halfway {
+        fn transform(&self, t: f32) -> f32 { t * 0.5 }
+    }
+    let ctx = context();
+    let _item = item("album-7", Rect::new(20.0, 120.0, 160.0, 160.0), &ctx);
+
+    let effect = resolve(&transition().curve(Halfway), 0, 7, NavigationAction::Push, &ctx).unwrap();
+
+    assert_eq!(effect.curve().transform(1.0), 0.5);
+    assert!(effect.curve().descriptor().is_none(), "a custom curve has no portable description");
 }

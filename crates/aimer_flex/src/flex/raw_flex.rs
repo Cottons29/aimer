@@ -1441,6 +1441,13 @@ impl LayoutElement for RawFlex {
         self.computed_size(ctx)
     }
 
+    /// Only a size this flex was given: its extent follows from all of its
+    /// children laid out along an axis, which the default — the largest child —
+    /// would understate, and a window of lazy children has no elements to ask.
+    fn get_size_from_child(&self) -> Option<aimer_attribute::size::Size> {
+        self.size()
+    }
+
     /// Drops this container's tables and those of every child that exists.
     ///
     /// The live window itself is kept: a resize invalidates layout on every

@@ -90,7 +90,7 @@ fn navigation_retains_two_pages_without_rebuilding_them_on_animation_frames() {
     let transition = DynamicTransitions::new(move |navigation: &NavigationContext<'_, '_, Page>| {
         log.borrow_mut().push((*navigation.from, *navigation.to, navigation.action));
         let finish = finish_sampler.clone();
-        ResolvedNavigationTransition::new(Duration::from_secs(60), Curve::Linear, move |p, _| {
+        ResolvedNavigationTransition::new(Duration::from_secs(60), curves::LINEAR, move |p, _| {
             NavigationTransitionFrame {
                 incoming: PaintPresentation { transform: aimer_canvas::Mat3::identity(), opacity: if finish.get() { f32::NAN } else { p }, corner_radius: 0.0 },
                 outgoing: PaintPresentation { transform: aimer_canvas::Mat3::identity(), opacity: 1.0 - p, corner_radius: 0.0 },
@@ -281,7 +281,7 @@ fn custom_presentations_reach_retained_nodes_without_rerecording_page_lists() {
     let ctx = context();
     let navigator = Navigator::new(Page::Home, routes).transition(DynamicTransitions::new(
         |_: &NavigationContext<'_, '_, Page>| ResolvedNavigationTransition::new(
-            Duration::from_secs(60), Curve::Linear, |_, _| NavigationTransitionFrame {
+            Duration::from_secs(60), curves::LINEAR, |_, _| NavigationTransitionFrame {
                 incoming: PaintPresentation { transform: aimer_canvas::Mat3::translate(25.0, 0.0), opacity: 0.25, corner_radius: 0.0 },
                 outgoing: PaintPresentation { transform: aimer_canvas::Mat3::identity(), opacity: 0.75, corner_radius: 0.0 },
             }))).to_element(&ctx);
@@ -373,7 +373,7 @@ fn high_dpi_transitions_sample_and_clip_the_logical_viewport() {
     let navigator = Navigator::new(Page::Home, routes).transition(DynamicTransitions::new(
         move |_: &NavigationContext<'_, '_, Page>| {
             let observed = observed.clone();
-            ResolvedNavigationTransition::new(Duration::from_secs(60), Curve::Linear, move |_, size| {
+            ResolvedNavigationTransition::new(Duration::from_secs(60), curves::LINEAR, move |_, size| {
                 observed.set(size);
                 NavigationTransitionFrame {
                     outgoing: PaintPresentation::IDENTITY_OPAQUE,

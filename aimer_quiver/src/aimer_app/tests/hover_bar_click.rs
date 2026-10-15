@@ -13,7 +13,7 @@ use super::*;
 use std::cell::RefCell;
 use std::time::Duration;
 
-use aimer_animation::{Curve, ImplicitAnimatedBuilder};
+use aimer_animation::{curves, ImplicitAnimatedBuilder};
 use aimer_input::button::Button;
 use aimer_input::mouse_region::MouseRegion;
 use aimer_widget::StateUpdater;
@@ -64,7 +64,7 @@ impl State<Screen> for ScreenState {
             .box_child(ImplicitAnimatedBuilder::new(
                 opacity,
                 Duration::from_millis(220),
-                Curve::EaseInOut,
+                curves::EASE_IN_OUT,
                 move |_opacity| {
                     let counters = counters.clone();
                     aimer_container::Container::new()

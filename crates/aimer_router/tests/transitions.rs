@@ -96,8 +96,8 @@ fn dynamic_selector_can_inspect_routes_and_disable_navigation() {
 
 #[test]
 fn custom_effects_reject_non_finite_values_and_clamp_opacity() {
-    use aimer_router::{Curve, NavigationTransitionFrame, PaintPresentation, ResolvedNavigationTransition};
-    let effect = ResolvedNavigationTransition::new(Duration::ZERO, Curve::Linear, |p, _| {
+    use aimer_router::{curves, NavigationTransitionFrame, PaintPresentation, ResolvedNavigationTransition};
+    let effect = ResolvedNavigationTransition::new(Duration::ZERO, curves::LINEAR, |p, _| {
         NavigationTransitionFrame {
             incoming: PaintPresentation { transform: aimer_canvas::Mat3::identity(), opacity: p * 4.0, corner_radius: 0.0 },
             outgoing: PaintPresentation { transform: aimer_canvas::Mat3::identity(), opacity: -1.0, corner_radius: 0.0 },
@@ -111,8 +111,8 @@ fn custom_effects_reject_non_finite_values_and_clamp_opacity() {
     assert!(effect.sample(f32::NAN, size).is_none());
     assert!(effect.sample(0.0, ResolvedSize { width: f32::INFINITY, height: 1.0 }).is_none());
     assert!(ResolvedNavigationTransition::new(Duration::ZERO,
-        Curve::CubicBezier(f32::NAN, 0.0, 1.0, 1.0), move |_, _| frame).is_none());
-    let invalid = ResolvedNavigationTransition::new(Duration::ZERO, Curve::Linear, |_, _| {
+        curves::cubic_bezier(f32::NAN, 0.0, 1.0, 1.0), move |_, _| frame).is_none());
+    let invalid = ResolvedNavigationTransition::new(Duration::ZERO, curves::LINEAR, |_, _| {
         NavigationTransitionFrame {
             incoming: PaintPresentation { transform: aimer_canvas::Mat3::translate(f32::NAN, 0.0), opacity: 1.0, corner_radius: 0.0 },
             outgoing: PaintPresentation::IDENTITY_OPAQUE,
@@ -123,9 +123,9 @@ fn custom_effects_reject_non_finite_values_and_clamp_opacity() {
 
 #[test]
 fn custom_effects_carry_a_corner_radius_and_reject_invalid_ones() {
-    use aimer_router::{Curve, NavigationTransitionFrame, PaintPresentation, ResolvedNavigationTransition};
+    use aimer_router::{curves, NavigationTransitionFrame, PaintPresentation, ResolvedNavigationTransition};
     let size = ResolvedSize { width: 200.0, height: 100.0 };
-    let with_radius = |radius: f32| ResolvedNavigationTransition::new(Duration::ZERO, Curve::Linear, move |_, _| {
+    let with_radius = |radius: f32| ResolvedNavigationTransition::new(Duration::ZERO, curves::LINEAR, move |_, _| {
         NavigationTransitionFrame {
             incoming: PaintPresentation { corner_radius: radius, ..PaintPresentation::IDENTITY_OPAQUE },
             outgoing: PaintPresentation::IDENTITY_OPAQUE,
@@ -140,9 +140,9 @@ fn custom_effects_carry_a_corner_radius_and_reject_invalid_ones() {
 
 #[test]
 fn positioned_effects_receive_the_hosts_window_origin() {
-    use aimer_router::{Curve, NavigationTransitionFrame, PaintPresentation, ResolvedNavigationTransition};
+    use aimer_router::{curves, NavigationTransitionFrame, PaintPresentation, ResolvedNavigationTransition};
     let size = ResolvedSize { width: 200.0, height: 100.0 };
-    let effect = ResolvedNavigationTransition::positioned(Duration::from_millis(100), Curve::Linear, |_, _, origin| {
+    let effect = ResolvedNavigationTransition::positioned(Duration::from_millis(100), curves::LINEAR, |_, _, origin| {
         NavigationTransitionFrame {
             incoming: PaintPresentation {
                 transform: aimer_canvas::Mat3::translate(origin.0, origin.1),
@@ -162,12 +162,12 @@ fn positioned_effects_receive_the_hosts_window_origin() {
 
 #[test]
 fn painting_the_departing_page_on_top_is_opt_in() {
-    use aimer_router::{Curve, NavigationTransitionFrame, ResolvedNavigationTransition};
+    use aimer_router::{curves, NavigationTransitionFrame, ResolvedNavigationTransition};
     let frame = NavigationTransitionFrame {
         incoming: aimer_router::PaintPresentation::IDENTITY_OPAQUE,
         outgoing: aimer_router::PaintPresentation::IDENTITY_OPAQUE,
     };
-    let effect = ResolvedNavigationTransition::new(Duration::from_millis(100), Curve::Linear, move |_, _| frame).unwrap();
+    let effect = ResolvedNavigationTransition::new(Duration::from_millis(100), curves::LINEAR, move |_, _| frame).unwrap();
 
     assert!(!effect.is_outgoing_on_top());
     assert!(effect.outgoing_on_top(true).is_outgoing_on_top());

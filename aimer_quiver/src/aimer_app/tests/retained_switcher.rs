@@ -3,7 +3,7 @@ use super::*;
 use std::cell::UnsafeCell;
 use std::time::Duration;
 
-use aimer_animation::{AnimatedSwitcher, Curve};
+use aimer_animation::{AnimatedSwitcher, curves};
 use aimer_assets::img_widget::image_widget::RawImageWidget;
 use aimer_assets::{ImageProvider, ImageResult};
 use aimer_cupid::draw_cmd_v2::{DrawCommand as LocalCommand, ImageResource, RenderOp};
@@ -78,7 +78,7 @@ impl State<ImagePage> for ImagePageState {
         aimer_container::Container::new().height(80.0).child(
             AnimatedSwitcher::new(
                 self.duration,
-                Curve::Linear,
+                curves::LINEAR,
                 self.images[self.selected].clone(),
             )
             .child_key(if self.selected == 0 {

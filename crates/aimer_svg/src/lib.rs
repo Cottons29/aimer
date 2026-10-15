@@ -2,8 +2,12 @@ mod document;
 mod error;
 mod selector;
 mod source;
+mod static_svg;
 mod style;
 mod widget;
+
+#[cfg(test)]
+mod static_svg_tests;
 
 pub use aimer_cupid::svg::{
     SvgAspectAlign, SvgAspectMode, SvgBlendMode, SvgClipPath, SvgColor, SvgColorMatrix,
@@ -16,6 +20,7 @@ pub use document::{SvgDiagnostic, SvgDocument, SvgLimits, SvgNodePaint, SvgPath}
 pub use error::SvgError;
 pub use selector::SvgSelector;
 pub use source::{SvgLoadState, SvgLoader, SvgSource};
+pub use static_svg::StaticSvg;
 pub use style::SvgStyle;
 pub use widget::{RawSvg, Svg, SvgAsset, SvgCallback, SvgHit, SvgNodeMetadata};
 

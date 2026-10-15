@@ -9,7 +9,7 @@ use super::*;
 use std::cell::RefCell;
 use std::time::Duration;
 
-use aimer_animation::{Curve, ImplicitAnimatedBuilder};
+use aimer_animation::{curves, ImplicitAnimatedBuilder};
 use aimer_rubick::RcProjectExt;
 use aimer_style::{AnimatedTheme, Theme, ThemeData, ThemeMode};
 use aimer_widget::{StateUpdater, StatelessElement};
@@ -87,7 +87,7 @@ impl State<Root> for RootState {
         AnimatedTheme::new()
             .mode(self.mode)
             .duration(Duration::from_millis(120))
-            .curve(Curve::EaseInOut)
+            .curve(curves::EASE_IN_OUT)
             .child(Sidebar { seen })
     }
 }
@@ -133,7 +133,7 @@ fn sidebar_content(seen: Seen, background: Color) -> impl Widget {
             .child(ImplicitAnimatedBuilder::new(
                 0.0f32,
                 Duration::from_millis(120),
-                Curve::EaseInOut,
+                curves::EASE_IN_OUT,
                 move |_| {
                     let probe = |index: usize| {
                         Probe {
@@ -403,7 +403,7 @@ impl State<StatefulSidebar> for StatefulSidebarState {
         ImplicitAnimatedBuilder::new(
             if self.resizable { 1.0f32 } else { 0.0 },
             Duration::from_millis(120),
-            Curve::EaseInOut,
+            curves::EASE_IN_OUT,
             move |delta| {
                 let probe = |index: usize| {
                     Probe {
@@ -526,7 +526,7 @@ impl State<Shell> for ShellState {
         AnimatedTheme::new()
             .mode(self.mode)
             .duration(Duration::from_millis(120))
-            .curve(Curve::EaseInOut)
+            .curve(curves::EASE_IN_OUT)
             .child(
                 Row::new().children(vec![
                     StatefulSidebar {

@@ -254,13 +254,13 @@ mod tests {
     use std::time::Instant;
 
     use super::*;
-    use crate::primitives::curve::Curve;
+    use crate::primitives::curve::curves;
 
     #[test]
     fn test_parallel_tick() {
         let mut anim = ParallelAnimation::new(vec![
-            AnimationController::with_millis(100, Curve::Linear),
-            AnimationController::with_millis(200, Curve::Linear),
+            AnimationController::with_millis(100, curves::LINEAR),
+            AnimationController::with_millis(200, curves::LINEAR),
         ]);
         anim.forward();
 
@@ -273,8 +273,8 @@ mod tests {
     #[test]
     fn test_sequential_advances() {
         let mut anim = SequentialAnimation::new(vec![
-            AnimationController::with_millis(100, Curve::Linear),
-            AnimationController::with_millis(100, Curve::Linear),
+            AnimationController::with_millis(100, curves::LINEAR),
+            AnimationController::with_millis(100, curves::LINEAR),
         ]);
         anim.forward();
 
@@ -290,9 +290,9 @@ mod tests {
     fn test_stagger_starts_later_controllers() {
         let mut anim = StaggeredAnimation::new(
             vec![
-                AnimationController::with_millis(100, Curve::Linear),
-                AnimationController::with_millis(100, Curve::Linear),
-                AnimationController::with_millis(100, Curve::Linear),
+                AnimationController::with_millis(100, curves::LINEAR),
+                AnimationController::with_millis(100, curves::LINEAR),
+                AnimationController::with_millis(100, curves::LINEAR),
             ],
             Duration::from_millis(50),
         );
@@ -354,7 +354,7 @@ mod tests {
         for count in [1, 8, 64, 256] {
             let mut parallel = ParallelAnimation::new(
                 (0..count)
-                    .map(|_| AnimationController::with_millis(60_000, Curve::Linear))
+                    .map(|_| AnimationController::with_millis(60_000, curves::LINEAR))
                     .collect(),
             );
             parallel.forward();
@@ -364,7 +364,7 @@ mod tests {
 
             let mut staggered = StaggeredAnimation::new(
                 (0..count)
-                    .map(|_| AnimationController::with_millis(60_000, Curve::Linear))
+                    .map(|_| AnimationController::with_millis(60_000, curves::LINEAR))
                     .collect(),
                 Duration::from_millis(1),
             );

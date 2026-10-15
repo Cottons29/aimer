@@ -131,10 +131,10 @@ enum PaintEffect {
 /// ```rust
 /// use std::time::Duration;
 ///
-/// use aimer_animation::{AnimatedPaint, AnimationController, Curve};
+/// use aimer_animation::{AnimatedPaint, AnimationController, curves};
 /// use aimer_widget::ErrorWidget;
 ///
-/// let controller = AnimationController::new(Duration::from_millis(250), Curve::Linear);
+/// let controller = AnimationController::new(Duration::from_millis(250), curves::LINEAR);
 /// let animated = AnimatedPaint::new(controller, ErrorWidget::new("Loading")).opacity();
 /// ```
 pub struct AnimatedPaint<T> {
@@ -392,7 +392,7 @@ mod tests {
 
     use super::super::test_frame_requester;
     use super::{AnimatedPaint, PaintPresentation};
-    use crate::{AnimationController, Curve};
+    use crate::{AnimationController, curves};
 
     const FRAME_WIDTH: u32 = 101;
     const FRAME_HEIGHT: u32 = 101;
@@ -496,7 +496,7 @@ mod tests {
     impl aimer_widget::PortableWidget for CountingWidget {}
 
     fn controller() -> AnimationController {
-        let controller = AnimationController::with_millis(100, Curve::Linear);
+        let controller = AnimationController::with_millis(100, curves::LINEAR);
         controller.forward_from_first_tick();
         controller
     }
@@ -524,7 +524,7 @@ mod tests {
     fn effect_receives_the_controller_value() {
         let value = Rc::new(Cell::new(-1.0));
         let observed = value.clone();
-        let controller = AnimationController::with_millis(100, Curve::Linear);
+        let controller = AnimationController::with_millis(100, curves::LINEAR);
         controller.set_value(0.25);
         let context = context();
         let element = AnimatedPaint::new(controller, StableLeaf)
@@ -541,7 +541,7 @@ mod tests {
 
     #[test]
     fn effect_presentation_reaches_the_child_node() {
-        let controller = AnimationController::with_millis(100, Curve::Linear);
+        let controller = AnimationController::with_millis(100, curves::LINEAR);
         controller.set_value(0.5);
         let context = context();
         let shifted = AnimatedPaint::new(controller.clone(), StableLeaf)
@@ -602,7 +602,7 @@ mod tests {
         )
         .unwrap();
         let result = AnimatedPaint::new(
-            AnimationController::with_millis(100, Curve::Linear),
+            AnimationController::with_millis(100, curves::LINEAR),
             StableLeaf,
         )
         .to_portable_node(

@@ -9,7 +9,7 @@ use super::*;
 use std::cell::RefCell;
 use std::time::Duration;
 
-use aimer_animation::{Animatable, Curve, ImplicitAnimatedBuilder};
+use aimer_animation::{Animatable, curves, ImplicitAnimatedBuilder};
 use aimer_container::{Direction, Resizable};
 use aimer_style::{BorderSlice, BorderStyle, BoxDecoration, BoxOutline};
 use winit::event::{ElementState, MouseButton};
@@ -55,7 +55,7 @@ impl State<Sidebar> for SidebarState {
         ImplicitAnimatedBuilder::new(
             if self.resizable { 1.0 } else { 0.0 },
             Duration::from_millis(300),
-            Curve::EaseInOut,
+            curves::EASE_IN_OUT,
             move |delta: &f32| {
                 let zone_updater = zone_updater;
                 let hovered = hovered.clone();

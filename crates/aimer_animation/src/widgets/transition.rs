@@ -758,7 +758,7 @@ impl_portable_transition_lowering!(RotationTransition);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::primitives::curve::Curve;
+    use crate::primitives::curve::curves;
     use crate::widgets::test_frame_requester;
     use aimer_attribute::BoxConstraint;
 
@@ -832,7 +832,7 @@ mod tests {
     }
 
     fn controller() -> AnimationController {
-        let controller = AnimationController::with_millis(100, Curve::Linear);
+        let controller = AnimationController::with_millis(100, curves::LINEAR);
         controller.forward_from_first_tick();
         controller
     }
@@ -848,7 +848,7 @@ mod tests {
     fn a_valid_sample_goes_to_the_compositor_and_an_invalid_one_stays_live() {
         let ctx = dummy_build_context();
 
-        let controller = AnimationController::with_millis(100, Curve::Linear);
+        let controller = AnimationController::with_millis(100, curves::LINEAR);
         controller.set_value(0.5);
         let element = FadeTransition::new(controller, TestWidget).to_element(&ctx);
         assert!(matches!(
@@ -856,7 +856,7 @@ mod tests {
             CompositorAnimationDecision::Compositor(frame) if frame.valid
         ));
 
-        let controller = AnimationController::with_millis(100, Curve::Linear);
+        let controller = AnimationController::with_millis(100, curves::LINEAR);
         controller.set_value(f32::NAN);
         let element = FadeTransition::new(controller, TestWidget).to_element(&ctx);
         assert!(matches!(

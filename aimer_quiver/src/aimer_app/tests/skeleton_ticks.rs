@@ -8,7 +8,7 @@ use super::*;
 
 use std::time::Duration;
 
-use aimer_animation::{AnimatedBuilder, AnimationController, Curve};
+use aimer_animation::{AnimatedBuilder, AnimationController, curves};
 
 const ROWS: usize = 9;
 
@@ -16,7 +16,7 @@ struct SkeletonRow;
 
 impl Widget for SkeletonRow {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
-        let controller = AnimationController::new(Duration::from_millis(1000), Curve::EaseInOut);
+        let controller = AnimationController::new(Duration::from_millis(1000), curves::EASE_IN_OUT);
         controller.set_repeat(true);
         controller.set_auto_reverse(true);
         controller.forward_from_first_tick();

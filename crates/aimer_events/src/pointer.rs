@@ -1,5 +1,7 @@
 use aimer_attribute::position::Vec2d;
 
+use crate::element::TouchPhase;
+
 /// The pointer identifier reserved for a drag coming from the operating system.
 ///
 /// A file drag has no pointer of its own — there is no press to own it — but the
@@ -200,6 +202,30 @@ pub enum PointerEvent {
     Cancel,
     /// Scroll wheel or trackpad gesture.
     Scroll { delta_x: f32, delta_y: f32 },
+    /// A platform pinch: the trackpad's magnify gesture, or a pinch the
+    /// operating system recognized itself. See [`crate::element::ElementEvent::Pinch`].
+    Pinch {
+        pos: Vec2d,
+        delta: f32,
+        phase: TouchPhase,
+    },
+    /// A platform rotation, in radians, clockwise positive. See
+    /// [`crate::element::ElementEvent::Rotate`].
+    Rotate {
+        pos: Vec2d,
+        delta: f32,
+        phase: TouchPhase,
+    },
+    /// A platform multi-finger pan. See [`crate::element::ElementEvent::Pan`].
+    Pan {
+        pos: Vec2d,
+        delta_x: f32,
+        delta_y: f32,
+        phase: TouchPhase,
+    },
+    /// The platform's smart-zoom double tap. See
+    /// [`crate::element::ElementEvent::SmartZoom`].
+    SmartZoom { pos: Vec2d },
 }
 
 #[cfg(test)]

@@ -4,8 +4,8 @@ use aimer::macros::widget;
 use aimer::range::Slider;
 use aimer::style::{BoxDecoration, Color, FontWeight, LayoutSpacing, Spacing, TextStyle};
 use aimer::{
-    AimerApp, AnyWidget, BuildContext, ChildBuilder, Column, Container, DecorationBox, LightEdge,
-    Row, State, StateUpdater, StatefulWidget, Text, Widget,
+    AimerApp, AnyWidget, BorderRadius, BuildContext, ChildBuilder, Column, Container, Decoration,
+    DecorationBox, LightEdge, Row, State, StateUpdater, StatefulWidget, Text, Widget,
 };
 
 use crate::theme;
@@ -124,7 +124,8 @@ impl LightEdgeExampleState {
             )
             .child(
                 DecorationBox::new()
-                    .decoration(
+                    .decoration(vec![
+                        BorderRadius::from(self.radius as f32).notype(),
                         LightEdge::new()
                             .light_angle(self.angle as f32)
                             .width(self.width as f32)
@@ -134,8 +135,8 @@ impl LightEdgeExampleState {
                             } else {
                                 0.0
                             })
-                            .corner_radius(self.radius as f32),
-                    )
+                            .notype(),
+                    ])
                     .child(content.clone()),
             )
             .boxed()

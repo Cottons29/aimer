@@ -21,9 +21,9 @@ use crate::primitives::tween::Tween;
 /// ```rust
 /// use std::time::Duration;
 ///
-/// use aimer_animation::{AnimInstant, Curve, TweenAnimation};
+/// use aimer_animation::{AnimInstant, curves, TweenAnimation};
 ///
-/// let slide = TweenAnimation::new(0.0f32, 100.0, Duration::from_millis(200), Curve::Linear);
+/// let slide = TweenAnimation::new(0.0f32, 100.0, Duration::from_millis(200), curves::LINEAR);
 /// slide.forward_from_first_tick();
 ///
 /// let start = AnimInstant::now();
@@ -40,7 +40,7 @@ impl<T: Animatable> TweenAnimation<T> {
     /// Creates an animation from `begin` to `end`.
     ///
     /// It starts stopped at `begin`; call [`forward`](Self::forward) to play it.
-    pub fn new(begin: T, end: T, duration: Duration, curve: Curve) -> Self {
+    pub fn new(begin: T, end: T, duration: Duration, curve: impl Curve) -> Self {
         Self::from_tween(
             Tween::new(begin, end),
             AnimationController::new(duration, curve),
@@ -83,11 +83,12 @@ mod tests {
 
     use super::*;
     use crate::control::controller::{AnimationStatus, StatusListener};
+    use crate::primitives::curve::curves;
 
     const HUNDRED_MS: Duration = Duration::from_millis(100);
 
     fn linear(begin: f32, end: f32) -> TweenAnimation<f32> {
-        TweenAnimation::new(begin, end, HUNDRED_MS, Curve::Linear)
+        TweenAnimation::new(begin, end, HUNDRED_MS, curves::LINEAR)
     }
 
     /// Arms playback and starts the clock at a fixed instant so assertions do
@@ -122,7 +123,7 @@ mod tests {
 
     #[test]
     fn controller_curve_shapes_the_value() {
-        let animation = TweenAnimation::new(0.0f32, 100.0, HUNDRED_MS, Curve::EaseIn);
+        let animation = TweenAnimation::new(0.0f32, 100.0, HUNDRED_MS, curves::EASE_IN);
         let start = started(&animation);
 
         // EaseIn is t^3, so halfway through the time is 12.5% of the range.
@@ -132,7 +133,7 @@ mod tests {
 
     #[test]
     fn value_reports_the_last_ticked_value_without_advancing() {
-        let animation = TweenAnimation::new(0.0f32, 100.0, HUNDRED_MS, Curve::EaseIn);
+        let animation = TweenAnimation::new(0.0f32, 100.0, HUNDRED_MS, curves::EASE_IN);
         let start = started(&animation);
 
         let ticked = animation.tick(start + Duration::from_millis(50));
@@ -179,7 +180,7 @@ mod tests {
 
     #[test]
     fn interpolates_any_animatable_type() {
-        let animation = TweenAnimation::new((0.0f32, 10.0f32), (100.0, 30.0), HUNDRED_MS, Curve::Linear);
+        let animation = TweenAnimation::new((0.0f32, 10.0f32), (100.0, 30.0), HUNDRED_MS, curves::LINEAR);
         animation.forward_from_first_tick();
         let start = AnimInstant::now();
         animation.tick(start);
@@ -217,7 +218,7 @@ mod tests {
 
     #[test]
     fn from_tween_shares_the_supplied_controller() {
-        let controller = AnimationController::new(HUNDRED_MS, Curve::Linear);
+        let controller = AnimationController::new(HUNDRED_MS, curves::LINEAR);
         let animation = TweenAnimation::from_tween(Tween::new(0.0f32, 4.0), controller.clone());
 
         controller.set_value(0.5);

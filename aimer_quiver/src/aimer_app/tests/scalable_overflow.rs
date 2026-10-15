@@ -150,3 +150,50 @@ fn scalable_centers_the_layout_box_independently_of_shadow_outsets() {
     assert_eq!(draw.transform.transform_point(draw.origin.0 + rect.x + rect.width,
         draw.origin.1 + rect.y + rect.height), (150.0, 60.0));
 }
+
+fn text_draw<W: Widget + 'static>(app: &HeadlessAimerApp<W>) -> RenderItem {
+    app.app.render_tree().render_all().into_iter().find_map(|op| match op {
+        RenderOp::Draw(item) if item.snapshot().commands.iter().any(|cmd| matches!(cmd,
+            DrawCommand::DrawText { .. }
+        )) => Some(item),
+        _ => None,
+    }).expect("scaled text must remain visible")
+}
+
+#[test]
+fn scalable_scales_descendant_text_without_growing_its_layout() {
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let mut app = AimerApp::start_headless(Scalable::new().scale(2.0).child(
+        Container::new().width(100).height(40).color(Color::BLUE)
+            .child(aimer_text::Text::new("Back")),
+    ));
+    app.pump_frames(3);
+    let draw = text_draw(&app);
+    let (x0, _) = draw.transform.transform_point(0.0, 0.0);
+    let (x1, _) = draw.transform.transform_point(1.0, 0.0);
+    assert_eq!(x1 - x0, 2.0, "text must render at the Scalable's scale");
+    assert_eq!(blue_draw(&app).bounds, Rect::new(-50.0, -20.0, 200.0, 80.0));
+}
+
+#[test]
+fn scalable_scales_text_inside_a_decoration_box() {
+    use aimer_decoration::{BorderRadius, LightEdge, Magnification, MagnificationStyle, MultiDecorationBox};
+
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let mut app = AimerApp::start_headless(Scalable::new().scale(2.0).child(
+        MultiDecorationBox::new()
+            .decoration(BorderRadius::from(50.0))
+            .decoration(Magnification::new().zoom(1.3).thickness(15.0).bulge(0.5)
+                .style(MagnificationStyle::REFRACTION | MagnificationStyle::UNIFORM
+                    | MagnificationStyle::BULGE))
+            .decoration(LightEdge::new().strength(2.2).width(3.0))
+            .child(Container::new().width(100).height(40).color(Color::BLUE)
+                .child(aimer_text::Text::new("Back")
+                    .text_align(aimer_style::TextAlign::MidCenter))),
+    ));
+    app.pump_frames(3);
+    let draw = text_draw(&app);
+    let (x0, _) = draw.transform.transform_point(0.0, 0.0);
+    let (x1, _) = draw.transform.transform_point(1.0, 0.0);
+    assert_eq!(x1 - x0, 2.0, "text must render at the Scalable's scale");
+}

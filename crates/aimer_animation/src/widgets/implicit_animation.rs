@@ -18,7 +18,7 @@ use aimer_widget::{
 use crate::control::controller::AnimationController;
 use crate::local_cell::LocalCell;
 use crate::primitives::animatable::Animatable;
-use crate::primitives::curve::Curve;
+use crate::primitives::curve::{AnyCurve, Curve};
 use crate::primitives::time::AnimInstant;
 use crate::primitives::tween::Tween;
 
@@ -35,7 +35,7 @@ struct PortableAnimationState<T: Animatable + Clone + PartialEq + 'static> {
     begin: T,
     target: T,
     duration: Duration,
-    curve: Curve,
+    curve: AnyCurve,
     started_at: Option<AnimInstant>,
 }
 
@@ -44,7 +44,7 @@ impl<T> PortableAnimationState<T>
 where
     T: Animatable + Clone + PartialEq + 'static,
 {
-    fn new(value: T, duration: Duration, curve: Curve) -> Self {
+    fn new(value: T, duration: Duration, curve: AnyCurve) -> Self {
         Self {
             begin: value.clone(),
             target: value,
@@ -67,7 +67,7 @@ where
             .lerp(&self.target, self.curve.transform(progress))
     }
 
-    fn update(&mut self, target: T, duration: Duration, curve: Curve) -> (T, bool) {
+    fn update(&mut self, target: T, duration: Duration, curve: AnyCurve) -> (T, bool) {
         self.update_at(target, duration, curve, AnimInstant::now())
     }
 
@@ -75,7 +75,7 @@ where
         &mut self,
         target: T,
         duration: Duration,
-        curve: Curve,
+        curve: AnyCurve,
         now: AnimInstant,
     ) -> (T, bool) {
         if self.target != target {
@@ -119,20 +119,20 @@ where
 /// ```rust
 /// use std::time::Duration;
 ///
-/// use aimer_animation::{Curve, ImplicitAnimatedBuilder};
+/// use aimer_animation::{curves, ImplicitAnimatedBuilder};
 /// use aimer_widget::ErrorWidget;
 ///
 /// let animated = ImplicitAnimatedBuilder::new(
 ///     160.0_f32,
 ///     Duration::from_millis(300),
-///     Curve::Linear,
+///     curves::LINEAR,
 ///     |width| ErrorWidget::new(format!("Width: {width:.0}")),
 /// );
 /// ```
 pub struct ImplicitAnimatedBuilder<T: Animatable + Clone + PartialEq + 'static> {
     pub value: T,
     pub duration: Duration,
-    pub curve: Curve,
+    pub curve: AnyCurve,
     builder: Rc<ImplicitElementBuilder<T>>,
     #[cfg(feature = "portable-guest")]
     portable_builder: Rc<ImplicitPortableBuilder<T>>,
@@ -148,7 +148,7 @@ where
     /// `T` must support interpolation through [`Animatable`]. The builder is
     /// called with the initial value immediately and with interpolated values
     /// during drawing. `duration` and `curve` are adopted on later rebuilds.
-    pub fn new<F, W>(value: T, duration: Duration, curve: Curve, builder: F) -> Self
+    pub fn new<F, W>(value: T, duration: Duration, curve: impl Curve, builder: F) -> Self
     where
         F: Fn(&T) -> W + 'static,
         W: Widget + 'static,
@@ -166,7 +166,7 @@ where
         Self {
             value,
             duration,
-            curve,
+            curve: curve.into_any(),
             builder: element_builder,
             #[cfg(feature = "portable-guest")]
             portable_builder,
@@ -194,9 +194,9 @@ where
             target: self.value.clone(),
             current: Rc::new(LocalCell::new(self.value.clone())),
             duration: self.duration,
+            controller: AnimationController::new(self.duration, self.curve.clone()),
             curve: self.curve,
             builder: self.builder.clone(),
-            controller: AnimationController::new(self.duration, self.curve),
             tween: Rc::new(LocalCell::new(None)),
             updater: StateUpdater::empty(),
         }
@@ -237,9 +237,9 @@ where
         let portable_builder = self.portable_builder;
         ctx.with_animation_state(
             slot,
-            || PortableAnimationState::new(value.clone(), duration, curve),
+            || PortableAnimationState::new(value.clone(), duration, curve.clone()),
             |state, ctx| {
-                let (value, active) = state.update(value.clone(), duration, curve);
+                let (value, active) = state.update(value.clone(), duration, curve.clone());
                 if active {
                     ctx.request_frame();
                 }
@@ -255,7 +255,7 @@ pub struct ImplicitAnimatedState<T: Animatable + Clone + PartialEq + 'static> {
     target: T,
     current: Rc<LocalCell<T>>,
     duration: Duration,
-    curve: Curve,
+    curve: AnyCurve,
     builder: Rc<ImplicitElementBuilder<T>>,
     controller: AnimationController,
     tween: Rc<LocalCell<Option<Tween<T>>>>,
@@ -275,7 +275,7 @@ where
         self.curve = new.curve;
         self.builder = new.builder;
         self.controller.set_duration(self.duration);
-        self.controller.set_curve(self.curve);
+        self.controller.set_curve(self.curve.clone());
 
         if self.target != new.target {
             let new_target = new.target;
@@ -485,6 +485,7 @@ mod tests {
     use std::cell::{Cell, RefCell};
 
     use super::*;
+    use crate::primitives::curve::curves;
     use crate::widgets::test_frame_requester;
 
     struct TestWidget;
@@ -602,7 +603,7 @@ mod tests {
     }
 
     fn widget(value: f32) -> ImplicitAnimatedBuilder<f32> {
-        ImplicitAnimatedBuilder::new(value, Duration::from_millis(100), Curve::Linear, |_| {
+        ImplicitAnimatedBuilder::new(value, Duration::from_millis(100), curves::LINEAR, |_| {
             TestWidget
         })
     }
@@ -627,7 +628,7 @@ mod tests {
         let root = ImplicitAnimatedBuilder::new(
             1.0_f32,
             Duration::from_millis(100),
-            Curve::Linear,
+            curves::LINEAR,
             |_| ErrorWidget::new("child"),
         )
         .to_portable_node(
@@ -667,7 +668,7 @@ mod tests {
         let first = ImplicitAnimatedBuilder::new(
             0.0_f32,
             Duration::from_millis(100),
-            Curve::Linear,
+            curves::LINEAR,
             |_| ErrorWidget::new("child"),
         )
         .to_portable_node(&mut context, source)
@@ -677,7 +678,7 @@ mod tests {
         let second = ImplicitAnimatedBuilder::new(
             1.0_f32,
             Duration::from_millis(100),
-            Curve::Linear,
+            curves::LINEAR,
             |_| ErrorWidget::new("child"),
         )
         .to_portable_node(&mut context, source)
@@ -693,21 +694,21 @@ mod tests {
     fn portable_animation_state_interpolates_at_frame_times() {
         let start = AnimInstant::now();
         let mut state =
-            PortableAnimationState::new(0.0_f32, Duration::from_millis(100), Curve::Linear);
+            PortableAnimationState::new(0.0_f32, Duration::from_millis(100), curves::LINEAR.into_any());
 
         assert_eq!(
-            state.update_at(0.0, Duration::from_millis(100), Curve::Linear, start),
+            state.update_at(0.0, Duration::from_millis(100), curves::LINEAR.into_any(), start),
             (0.0, false)
         );
         assert_eq!(
-            state.update_at(1.0, Duration::from_millis(100), Curve::Linear, start),
+            state.update_at(1.0, Duration::from_millis(100), curves::LINEAR.into_any(), start),
             (0.0, true)
         );
 
         let (middle, active) = state.update_at(
             1.0,
             Duration::from_millis(100),
-            Curve::Linear,
+            curves::LINEAR.into_any(),
             start + Duration::from_millis(50),
         );
         assert!(active);
@@ -717,7 +718,7 @@ mod tests {
             state.update_at(
                 1.0,
                 Duration::from_millis(100),
-                Curve::Linear,
+                curves::LINEAR.into_any(),
                 start + Duration::from_millis(100),
             ),
             (1.0, false)
@@ -740,7 +741,7 @@ mod tests {
         test_frame_requester::install();
         test_frame_requester::reset();
         let ctx = dummy_build_context();
-        let controller = AnimationController::with_millis(100, Curve::Linear);
+        let controller = AnimationController::with_millis(100, curves::LINEAR);
         controller.forward_from_first_tick();
         let element = ImplicitAnimatedElement {
             child: UnsafeCell::new(TestElement.boxed()),
@@ -785,7 +786,7 @@ mod tests {
             });
 
         let first_child = (builder)(&0.0, &ctx);
-        let controller = AnimationController::with_millis(100, Curve::Linear);
+        let controller = AnimationController::with_millis(100, curves::LINEAR);
         controller.forward_from_first_tick();
 
         let element = ImplicitAnimatedElement {

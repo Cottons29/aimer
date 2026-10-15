@@ -1,5 +1,5 @@
 use crate::control::AnimationController;
-use crate::primitives::{AnimInstant, Curve};
+use crate::primitives::{AnimInstant, AnyCurve, Curve, curves};
 use aimer_events::window::request_animation_frame;
 use aimer_widget::Element as _;
 use std::fmt;
@@ -165,10 +165,10 @@ impl From<LayoutGeometryError> for LayoutTransitionError {
 }
 
 /// Configuration shared by scalar and keyed layout transitions.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct LayoutTransitionConfig {
     duration: Duration,
-    curve: Curve,
+    curve: AnyCurve,
     enabled: bool,
     reduced_motion: bool,
 }
@@ -177,7 +177,7 @@ impl Default for LayoutTransitionConfig {
     fn default() -> Self {
         Self {
             duration: Duration::from_millis(250),
-            curve: Curve::EaseInOut,
+            curve: curves::EASE_IN_OUT.into_any(),
             enabled: true,
             reduced_motion: false,
         }
@@ -193,7 +193,7 @@ impl LayoutTransitionConfig {
 
     /// Returns the configured duration.
     #[inline]
-    pub const fn configured_duration(self) -> Duration {
+    pub const fn configured_duration(&self) -> Duration {
         self.duration
     }
 
@@ -218,8 +218,8 @@ impl LayoutTransitionConfig {
 
     /// Returns the easing curve used for progress.
     #[inline]
-    pub const fn configured_curve(self) -> Curve {
-        self.curve
+    pub fn configured_curve(&self) -> AnyCurve {
+        self.curve.clone()
     }
 
     /// Sets the easing curve.
@@ -228,22 +228,19 @@ impl LayoutTransitionConfig {
     /// builder cannot accidentally publish invalid frame geometry. Use
     /// [`Self::try_curve`] when the caller needs an explicit error.
     #[inline]
-    pub fn curve(mut self, curve: Curve) -> Self {
-        self.curve = if curve_is_finite(curve) {
-            curve
-        } else {
-            Curve::Linear
-        };
+    pub fn curve(mut self, curve: impl Curve) -> Self {
+        let curve = curve.into_any();
+        self.curve = if curve.is_valid() { curve } else { AnyCurve::default() };
         self
     }
 
     /// Sets the easing curve and rejects non-finite cubic-bezier control
     /// points.
-    pub fn try_curve(mut self, curve: Curve) -> Result<Self, LayoutTransitionError> {
-        if !curve_is_finite(curve) {
+    pub fn try_curve(mut self, curve: impl Curve) -> Result<Self, LayoutTransitionError> {
+        if !curve.is_valid() {
             return Err(LayoutTransitionError::NonFiniteCurve);
         }
-        self.curve = curve;
+        self.curve = curve.into_any();
         Ok(self)
     }
 
@@ -256,7 +253,7 @@ impl LayoutTransitionConfig {
 
     /// Returns whether transitions are enabled.
     #[inline]
-    pub const fn is_enabled(self) -> bool {
+    pub const fn is_enabled(&self) -> bool {
         self.enabled
     }
 
@@ -270,33 +267,23 @@ impl LayoutTransitionConfig {
 
     /// Returns whether reduced motion is requested.
     #[inline]
-    pub const fn reduced_motion_enabled(self) -> bool {
+    pub const fn reduced_motion_enabled(&self) -> bool {
         self.reduced_motion
     }
 
-    fn validate(self) -> Result<(), LayoutTransitionError> {
+    fn validate(&self) -> Result<(), LayoutTransitionError> {
         if self.duration > MAX_LAYOUT_TRANSITION_DURATION {
             return Err(LayoutTransitionError::DurationTooLong);
         }
-        if !curve_is_finite(self.curve) {
+        if !self.curve.is_valid() {
             return Err(LayoutTransitionError::NonFiniteCurve);
         }
         Ok(())
     }
 
     #[inline]
-    fn allows_animation(self) -> bool {
+    fn allows_animation(&self) -> bool {
         self.enabled && !self.reduced_motion && !self.duration.is_zero()
-    }
-}
-
-#[inline]
-fn curve_is_finite(curve: Curve) -> bool {
-    match curve {
-        Curve::CubicBezier(x1, y1, x2, y2) => {
-            x1.is_finite() && y1.is_finite() && x2.is_finite() && y2.is_finite()
-        }
-        _ => true,
     }
 }
 
@@ -337,7 +324,7 @@ impl LayoutTransition {
     pub fn try_new(config: LayoutTransitionConfig) -> Result<Self, LayoutTransitionError> {
         config.validate()?;
         Ok(Self {
-            controller: AnimationController::new(config.duration, config.curve),
+            controller: AnimationController::new(config.duration, config.curve.clone()),
             config,
             start: None,
             current: None,
@@ -347,8 +334,8 @@ impl LayoutTransition {
 
     /// Returns the current configuration.
     #[inline]
-    pub const fn config(&self) -> LayoutTransitionConfig {
-        self.config
+    pub fn config(&self) -> LayoutTransitionConfig {
+        self.config.clone()
     }
 
     /// Returns the current interpolated rectangle, if a target was installed.
@@ -403,7 +390,7 @@ impl LayoutTransition {
 
         self.start = Some(from);
         self.current = Some(from);
-        self.controller = AnimationController::new(self.config.duration, self.config.curve);
+        self.controller = AnimationController::new(self.config.duration, self.config.curve.clone());
         self.controller.forward_from_first_tick();
         // Arm the controller against the caller's clock. `forward_from_first_tick`
         // deliberately waits for a tick so ordinary widgets do not spend time
@@ -470,9 +457,9 @@ impl LayoutTransition {
     ) -> Result<(), LayoutTransitionError> {
         config.validate()?;
         self.config = config;
-        self.controller.set_duration(config.duration);
-        self.controller.set_curve(config.curve);
-        if !config.allows_animation() {
+        self.controller.set_duration(self.config.duration);
+        self.controller.set_curve(self.config.curve.clone());
+        if !self.config.allows_animation() {
             self.advance(now);
             self.settle();
         }
@@ -714,7 +701,7 @@ where
     pub fn try_new(config: LayoutTransitionConfig) -> Result<Self, LayoutTransitionError> {
         config.validate()?;
         Ok(Self {
-            controller: AnimationController::new(config.duration, config.curve),
+            controller: AnimationController::new(config.duration, config.curve.clone()),
             config,
             current: None,
             target: None,
@@ -806,7 +793,7 @@ where
 
         self.plan = Some(plan);
         self.current = Some(previous);
-        self.controller = AnimationController::new(self.config.duration, self.config.curve);
+        self.controller = AnimationController::new(self.config.duration, self.config.curve.clone());
         self.controller.forward_from_first_tick();
         let _ = self.controller.tick(now);
         Ok(())
@@ -923,7 +910,7 @@ impl<T> AnimatedLayout<T> {
 
     /// Sets the easing curve used for layout progress.
     #[inline]
-    pub fn curve(mut self, curve: Curve) -> Self {
+    pub fn curve(mut self, curve: impl Curve) -> Self {
         self.config = self.config.curve(curve);
         self
     }
@@ -1166,7 +1153,7 @@ mod tests {
             Err(LayoutTransitionError::DurationTooLong)
         );
         assert_eq!(
-            LayoutTransitionConfig::default().try_curve(Curve::CubicBezier(
+            LayoutTransitionConfig::default().try_curve(curves::cubic_bezier(
                 f32::NAN,
                 0.0,
                 1.0,
@@ -1216,7 +1203,7 @@ mod tests {
         let second_target = LayoutGeometry::try_new(200.0, 0.0, 20.0, 20.0).unwrap();
         let config = LayoutTransitionConfig::default()
             .duration(Duration::from_millis(100))
-            .curve(Curve::Linear);
+            .curve(curves::LINEAR);
         let mut transition = LayoutTransition::new(config);
 
         transition.set_target(initial, now).unwrap();
@@ -1249,7 +1236,7 @@ mod tests {
         let c = LayoutGeometry::try_new(100.0, 0.0, 20.0, 20.0).unwrap();
         let config = LayoutTransitionConfig::default()
             .duration(Duration::from_millis(100))
-            .curve(Curve::Linear);
+            .curve(curves::LINEAR);
         let mut transition = KeyedLayoutTransition::new(config);
 
         transition

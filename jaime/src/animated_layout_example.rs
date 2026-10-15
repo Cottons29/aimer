@@ -6,7 +6,7 @@
 
 use std::time::Duration;
 
-use aimer::animation::Curve;
+use aimer::animation::curves;
 use aimer::animation::layout::AnimatedLayout;
 use aimer::style::*;
 use aimer::*;
@@ -20,7 +20,7 @@ pub fn start_animated_layout_example() {
 pub fn animated_layout_example() -> impl Widget {
     AnimatedLayout::new()
             .duration(Duration::from_millis(250))
-            .curve(Curve::EaseInOut)
+            .curve(curves::EASE_IN_OUT)
         .child(
             Container::new()
                 .color(Colors::White.into())

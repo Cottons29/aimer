@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use aimer_cupid::svg::{
     SvgFitPolicy, SvgGradient, SvgNodeId, SvgPaint, SvgPathCommand, SvgPreserveAspectRatio,
-    SvgResourceGraph, SvgScene, SvgTransform, SvgViewBox, parse_svg_document,
+    SvgResourceGraph, SvgScene, SvgTransform, SvgViewBox, SvgParsedDocument, parse_svg_document,
 };
 
 use crate::{SvgError, SvgSelector};
@@ -112,6 +112,30 @@ impl SvgDocument {
             .sum();
         check_limit("path commands", command_count, limits.max_path_commands)?;
 
+        let diagnostics = collect_diagnostics(
+            source,
+            &parsed.resources,
+            &parsed.scene,
+            &parsed.unsupported_elements,
+        );
+        for diagnostic in &diagnostics {
+            aimer_utils::warn!("SVG {}: {}", diagnostic.feature, diagnostic.message);
+        }
+
+        Ok(Self::from_parsed(source, parsed, diagnostics))
+    }
+
+    /// Reconstructs a document from build-time validated parser output.
+    ///
+    /// Generated code must preserve the original source and every retained
+    /// field, and reject unsupported elements or diagnostics at build time.
+    /// This entry point deliberately performs no parsing or source scanning.
+    #[doc(hidden)]
+    pub fn __from_precompiled(source: &'static str, parsed: SvgParsedDocument) -> Self {
+        Self::from_parsed(source, parsed, Vec::new())
+    }
+
+    fn from_parsed(source: &str, parsed: SvgParsedDocument, diagnostics: Vec<SvgDiagnostic>) -> Self {
         let fit_policy = if parsed.has_view_box {
             SvgFitPolicy::PreserveAspectRatio(parsed.preserve_aspect_ratio)
         } else {
@@ -132,17 +156,7 @@ impl SvgDocument {
             })
             .collect();
 
-        let diagnostics = collect_diagnostics(
-            source,
-            &parsed.resources,
-            &parsed.scene,
-            &parsed.unsupported_elements,
-        );
-        for diagnostic in &diagnostics {
-            aimer_utils::warn!("SVG {}: {}", diagnostic.feature, diagnostic.message);
-        }
-
-        Ok(Self {
+        Self {
             source: Arc::from(source),
             scene: Arc::new(parsed.scene),
             diagnostics: diagnostics.into(),
@@ -153,7 +167,7 @@ impl SvgDocument {
             gradients: parsed.gradients,
             resources: parsed.resources,
             node_paints: Arc::new(node_paints),
-        })
+        }
     }
 
     pub(crate) fn source(&self) -> &str {

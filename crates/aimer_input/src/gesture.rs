@@ -93,12 +93,57 @@ pub struct ScrollData {
     pub delta_y: f32,
 }
 
+/// One step of a pinch, rotate and two-finger pan, as handed to
+/// [`gesture_detector::GestureDetector::on_scale`].
+///
+/// It is the whole transform of the contacts, not only their spread: two fingers
+/// that pinch, twist and drift are one gesture. A consumer that only wants one
+/// part ignores the others — a zoom-only view reads `delta_scale`, a rotation
+/// dial reads `delta_rotation`.
+///
+/// The `delta_*` fields are relative to the previous update and are what a
+/// transform applies incrementally; `scale` and `rotation` are relative to the
+/// start of the gesture.
+///
+/// A trackpad pinch reports no focal movement, and a trackpad rotation reports a
+/// `delta_scale` of exactly `1.0`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ScaleData {
+    /// The midpoint of the gesture, in logical window coordinates.
     pub focal_x: f32,
     pub focal_y: f32,
+    /// The scale since the gesture began; `1.0` is unchanged.
     pub scale: f32,
+    /// The scale change since the previous update; `1.0` is unchanged.
     pub delta_scale: f32,
+    /// The rotation since the gesture began, in radians, clockwise positive.
+    pub rotation: f32,
+    /// The rotation since the previous update, in radians, clockwise positive.
+    pub delta_rotation: f32,
+    /// How far the midpoint moved since the previous update, in logical pixels.
+    pub focal_delta_x: f32,
+    pub focal_delta_y: f32,
+}
+
+/// One step of a platform multi-finger pan, as handed to
+/// [`gesture_detector::GestureDetector::on_pan`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PanData {
+    /// Where the pan is anchored, in logical window coordinates.
+    pub x: f32,
+    pub y: f32,
+    /// The movement since the previous update, in logical pixels.
+    pub delta_x: f32,
+    pub delta_y: f32,
+}
+
+/// Where a smart-zoom gesture happened, as handed to
+/// [`gesture_detector::GestureDetector::on_smart_zoom`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SmartZoomData {
+    /// The point to zoom to, in logical window coordinates.
+    pub x: f32,
+    pub y: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -114,6 +159,8 @@ pub type DragUpdateCallback = VoidParamedFunction<DragUpdateData>;
 pub type SwipeCallback = VoidParamedFunction<SwipeDirection>;
 pub type ScrollCallback = VoidParamedFunction<ScrollData>;
 pub type ScaleCallback = VoidParamedFunction<ScaleData>;
+pub type PanCallback = VoidParamedFunction<PanData>;
+pub type SmartZoomCallback = VoidParamedFunction<SmartZoomData>;
 /// Receives every recognized gesture, whatever it is.
 pub type GestureStreamCallback = VoidParamedFunction<GestureEvent>;
 
@@ -194,17 +241,37 @@ pub enum GestureEvent {
     },
     /// A wheel or trackpad scroll.
     Scroll { delta_x: f32, delta_y: f32 },
-    /// A second pointer went down: a pinch has begun.
+    /// A second pointer went down, or the platform began a pinch or rotation: a
+    /// scale gesture has begun.
     ScaleStart { focal_x: f32, focal_y: f32 },
-    /// The distance between the two pointers changed.
+    /// The contacts spread, turned or travelled; see [`ScaleData`] for the
+    /// meaning of each field.
     ScaleUpdate {
         focal_x: f32,
         focal_y: f32,
         scale: f32,
         delta_scale: f32,
+        rotation: f32,
+        delta_rotation: f32,
+        focal_delta_x: f32,
+        focal_delta_y: f32,
     },
-    /// A pinch dropped below two pointers.
+    /// A scale gesture dropped below two pointers, or the platform ended it.
     ScaleEnd,
+    /// The platform began a multi-finger pan.
+    PanStart { x: f32, y: f32 },
+    /// The platform pan moved.
+    PanUpdate {
+        x: f32,
+        y: f32,
+        delta_x: f32,
+        delta_y: f32,
+    },
+    /// The platform pan ended or was cancelled.
+    PanEnd,
+    /// The platform's smart-zoom gesture — a two-finger double tap on a macOS
+    /// trackpad.
+    SmartZoom { x: f32, y: f32 },
 }
 
 impl GestureEvent {
@@ -275,6 +342,11 @@ impl GestureMask {
     /// Press lifecycle: [`GestureEvent::TapDown`], [`GestureEvent::TapUp`] and
     /// [`GestureEvent::TapCancel`].
     pub const PRESS: Self = Self(1 << 7);
+    /// A multi-finger pan reported by the platform, as opposed to the
+    /// single-pointer [`Self::DRAG`].
+    pub const PAN: Self = Self(1 << 8);
+    /// The platform's smart-zoom double tap.
+    pub const SMART_ZOOM: Self = Self(1 << 9);
     /// Every gesture there is.
     pub const ALL: Self = Self(u16::MAX);
     /// Everything a pointer can be doing to the detector itself, but not
@@ -370,11 +442,14 @@ pub struct GestureOutput {
 impl GestureOutput {
     /// How many gestures one pointer event can produce.
     ///
-    /// Four: the worst real case is a release that ends a long-pressed drag —
-    /// `LongPressEnd`, `DragEnd`, `Swipe`, `TapUp`. Pushing beyond this is a bug
-    /// in a recognizer, and is caught by a debug assertion rather than by
-    /// growing a heap buffer on the hot path.
-    pub const CAPACITY: usize = 4;
+    /// Five: a release that ends a long-pressed drag is `LongPressEnd`,
+    /// `DragEnd`, `Swipe`, `TapUp`; a cancellation can end a drag, a press, a
+    /// pinch and a platform pan at once — `DragCancel`, `TapCancel`, `ScaleEnd`,
+    /// `PanEnd`; and a platform pinch restarting over one that never ended is
+    /// `ScaleEnd`, `ScaleStart`, `ScaleUpdate`. Pushing beyond this is a bug in a
+    /// recognizer, and is caught by a debug assertion rather than by growing a
+    /// heap buffer on the hot path.
+    pub const CAPACITY: usize = 5;
 
     /// An empty output.
     #[inline]
@@ -448,7 +523,8 @@ impl GestureOutput {
 
 impl IntoIterator for GestureOutput {
     type Item = GestureEvent;
-    type IntoIter = std::iter::Flatten<std::array::IntoIter<Option<GestureEvent>, 4>>;
+    type IntoIter =
+        std::iter::Flatten<std::array::IntoIter<Option<GestureEvent>, { GestureOutput::CAPACITY }>>;
 
     #[inline]
     fn into_iter(self) -> Self::IntoIter {

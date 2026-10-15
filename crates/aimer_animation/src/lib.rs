@@ -15,7 +15,10 @@ pub use control::{
     StaggeredAnimation, StatusListener, TimedKeyframeAnimation, TimedKeyframeBuilder,
     TimelineFrame, TweenAnimation,
 };
-pub use primitives::{AnimInstant, Animatable, AnimatableExt, Curve, Tween};
+pub use primitives::{
+    AnimInstant, Animatable, AnimatableExt, AnyCurve, AnyMotion, Curve, CurveDescriptor, Motion,
+    MotionDescriptor, MotionState, Ramp, Spring, Tween, curves, motions,
+};
 // Widget layer
 pub use widgets::AnimatedBuilder;
 #[doc(hidden)]

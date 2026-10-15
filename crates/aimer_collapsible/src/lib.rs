@@ -20,7 +20,7 @@ mod tests {
 
     use super::widgets::collapsed_height;
     use super::{CollapsibleList, ListBody, ListHeader};
-    use aimer_animation::Curve;
+    use aimer_animation::{Curve, curves};
     use aimer_canvas::{FrameCanvas, InnerCanvas};
     use aimer_events::element::ElementEvent;
     use aimer_text::Text;
@@ -116,7 +116,7 @@ mod tests {
         let replacement = CollapsibleList::new()
             .expanded(false)
             .animation_duration(Duration::from_millis(900))
-            .animation_curve(Curve::Linear)
+            .animation_curve(curves::LINEAR)
             .header(ListHeader::new().child(Text::new("Updated tags")))
             .body(ListBody::new().child(Text::new("Updated red")));
         state.adopt_config_from(replacement.create_state());
@@ -124,23 +124,23 @@ mod tests {
         assert!(state.is_expanded());
         assert_eq!(state.chevron_duration(), Duration::from_millis(900));
         assert_eq!(state.body_duration(), Duration::from_millis(900));
-        assert_eq!(state.chevron_curve(), Curve::Linear);
-        assert_eq!(state.body_curve(), Curve::Linear);
+        assert_eq!(state.chevron_curve(), curves::LINEAR.into_any());
+        assert_eq!(state.body_curve(), curves::LINEAR.into_any());
     }
 
     #[test]
     fn custom_animation_timing_is_applied_to_both_transitions() {
         let widget = CollapsibleList::new()
             .animation_millis(420)
-            .animation_curve(Curve::EaseOut)
+            .animation_curve(curves::EASE_OUT)
             .header(ListHeader::new().child(Text::new("Tags")))
             .body(ListBody::new().child(Text::new("Red")));
         let state = widget.create_state();
 
         assert_eq!(state.chevron_duration(), Duration::from_millis(420));
         assert_eq!(state.body_duration(), Duration::from_millis(420));
-        assert_eq!(state.chevron_curve(), Curve::EaseOut);
-        assert_eq!(state.body_curve(), Curve::EaseOut);
+        assert_eq!(state.chevron_curve(), curves::EASE_OUT.into_any());
+        assert_eq!(state.body_curve(), curves::EASE_OUT.into_any());
     }
 
     #[test]

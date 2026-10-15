@@ -44,6 +44,7 @@ pub use aimer_grid::*;
 pub use aimer_haptics as haptics;
 pub use aimer_haptics::{HapticFeedback, HapticKind};
 pub use aimer_i18n as i18n;
+pub use aimer_indicator as indicator;
 pub use aimer_input as input;
 pub use aimer_macro::{
     PortableValue, Router, StatefulWidget, StatelessWidget, Theme, capability, key, main,
@@ -93,11 +94,15 @@ pub use aimer_quiver::{
 
 pub use aimer_scroll::*;
 pub use aimer_space::*;
+#[cfg(feature = "icons")]
+pub use aimer_lucide as icons;
+#[cfg(feature = "icons")]
+pub use aimer_lucide::Icons;
 #[cfg(feature = "svg")]
 pub use aimer_svg as svg;
 #[cfg(feature = "svg")]
 pub use aimer_svg::{
-    RawSvg, Svg, SvgAspectAlign, SvgAspectMode, SvgCallback, SvgColor, SvgDiagnostic, SvgDocument,
+    RawSvg, StaticSvg, Svg, SvgAspectAlign, SvgAspectMode, SvgCallback, SvgColor, SvgDiagnostic, SvgDocument,
     SvgError, SvgFillRule, SvgFitError, SvgFitPolicy, SvgGradient, SvgGradientStop,
     SvgGradientUnits, SvgHit, SvgLimits, SvgLoadState, SvgLoader, SvgNodeId, SvgNodeMetadata,
     SvgNodePaint, SvgPaint, SvgPath, SvgPreserveAspectRatio, SvgSelector, SvgSource,
@@ -158,7 +163,7 @@ pub mod macros {
 
 // Styling re-export
 pub mod style {
-    pub use aimer_animation::primitives::curve::Curve;
+    pub use aimer_animation::primitives::curve::{AnyCurve, Curve, curves};
     pub use aimer_animation::{AnimationEffect, AnimationStatus};
     pub use aimer_color::prelude::{Color, Colors};
     pub use aimer_flex::{BoxAlignment, FlexDirection, OverflowBehavior};
@@ -1928,7 +1933,7 @@ mod tests {
         use std::rc::Rc;
         use std::time::Duration;
 
-        use aimer::animation::{Curve, ImplicitAnimatedBuilder};
+        use aimer::animation::{curves, ImplicitAnimatedBuilder};
         use aimer::input::button::Button;
         use aimer::quiver::aimer_app::HeadlessAimerApp;
         use aimer::quiver::winit::dpi::PhysicalPosition;
@@ -1996,7 +2001,7 @@ mod tests {
                     if self.resizable { 1.0 } else { 0.0 },
                     // Long enough that every event below lands mid-animation.
                     Duration::from_secs(30),
-                    Curve::EaseInOut,
+                    curves::EASE_IN_OUT,
                     move |_delta| {
                         let zone_updater = zone_updater;
                         let presses = presses.clone();
@@ -2582,7 +2587,7 @@ mod tests {
         use std::thread::sleep;
         use std::time::Duration;
 
-        use aimer::animation::{AnimatedSwitcher, Curve};
+        use aimer::animation::{AnimatedSwitcher, curves};
         use aimer::base::{ResolvedSize, Size, Vec2d};
         use aimer::modal::ModalHost;
         use aimer::quiver::aimer_app::HeadlessAimerApp;
@@ -2651,7 +2656,7 @@ mod tests {
         }
 
         fn transitioned_page(key: &'static str, child: AnyWidget) -> AnimatedSwitcher<AnyWidget> {
-            AnimatedSwitcher::new(Duration::from_millis(200), Curve::FastOutSlowIn, child)
+            AnimatedSwitcher::new(Duration::from_millis(200), curves::FAST_OUT_SLOW_IN, child)
                 .child_key(key)
                 .key(ROUTE_SWITCHER_KEY)
         }
@@ -2710,7 +2715,7 @@ mod tests {
                         ThemeData::light()
                     })
                     .duration(Duration::from_millis(250))
-                    .curve(Curve::EaseInOut)
+                    .curve(curves::EASE_IN_OUT)
                     .child(ThemedFrame)
             }
         }
@@ -3084,7 +3089,7 @@ mod tests {
         use std::thread::sleep;
         use std::time::Duration;
 
-        use aimer::animation::{AnimatedSwitcher, Curve};
+        use aimer::animation::{AnimatedSwitcher, curves};
         use aimer::base::{ResolvedSize, Size, Vec2d};
         use aimer::modal::ModalHost;
         use aimer::quiver::aimer_app::HeadlessAimerApp;
@@ -3147,7 +3152,7 @@ mod tests {
                 Shell::new(AppShell, |_| {
                     AnimatedSwitcher::new(
                         Duration::from_millis(200),
-                        Curve::FastOutSlowIn,
+                        curves::FAST_OUT_SLOW_IN,
                         HomePage.boxed(),
                     )
                     .child_key("home")
@@ -3197,7 +3202,7 @@ mod tests {
                         ThemeData::light()
                     })
                     .duration(Duration::from_millis(250))
-                    .curve(Curve::EaseInOut)
+                    .curve(curves::EASE_IN_OUT)
                     .child(ThemedFrame)
             }
         }
@@ -3347,7 +3352,7 @@ mod tests {
                             .child(
                                 AnimatedSwitcher::new(
                                     Duration::from_millis(350),
-                                    Curve::FastOutSlowIn,
+                                    curves::FAST_OUT_SLOW_IN,
                                     Marker::new(index),
                                 )
                                 .child_key(PLATFORMS[index % PLATFORMS.len()])

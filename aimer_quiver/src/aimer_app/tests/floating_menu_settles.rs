@@ -10,7 +10,7 @@ use super::*;
 
 use std::time::Duration;
 
-use aimer_animation::Curve;
+use aimer_animation::curves;
 use aimer_cupid::draw_cmd_v2::RenderOp;
 use aimer_cupid::utilities::Mat3;
 use aimer_input::button::Button;
@@ -108,8 +108,8 @@ fn a_floating_menu_that_has_entered_keeps_no_entry_transform() {
             ModalAnimation::new()
                 .enter_duration(Duration::from_millis(160))
                 .exit_duration(Duration::from_millis(120))
-                .enter_curve(Curve::EaseOut)
-                .exit_curve(Curve::EaseIn)
+                .enter_curve(curves::EASE_OUT)
+                .exit_curve(curves::EASE_IN)
                 .content_scale_from(0.94),
         )
         .child(panel())

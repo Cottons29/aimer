@@ -324,7 +324,7 @@ fn enter_animation() -> ModalAnimation {
     ModalAnimation::new()
         .enter_duration(Duration::from_millis(160))
         .exit_duration(Duration::from_millis(120))
-        .enter_curve(Curve::EaseOut)
-        .exit_curve(Curve::EaseIn)
+        .enter_curve(curves::EASE_OUT)
+        .exit_curve(curves::EASE_IN)
         .content_scale_from(0.94)
 }

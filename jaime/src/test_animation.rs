@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use aimer::Dimension::Percent;
-use aimer::animation::{AnimatedSwitcher, Curve};
+use aimer::animation::{AnimatedSwitcher, curves};
 use aimer::provider::media_query::MediaQuery;
 use aimer::style::{
     FontWeight, LayoutSpacing, Spacing, TextDecoration, TextStyle, Theme, ThemeData,
@@ -50,7 +50,7 @@ fn platform_image(index: usize) -> &'static str {
 fn platform_image_switcher(index: usize) -> AnimatedSwitcher<AssetImage> {
     AnimatedSwitcher::new(
         Duration::from_millis(350),
-        Curve::FastOutSlowIn,
+        curves::FAST_OUT_SLOW_IN,
         AssetImage::new(platform_image(index)),
     )
     .child_key(PLATFORMS[index % PLATFORMS.len()])

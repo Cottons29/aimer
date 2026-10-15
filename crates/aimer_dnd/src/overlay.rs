@@ -15,7 +15,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
 
-use aimer_animation::{AnimInstant, Curve};
+use aimer_animation::{AnimInstant, Curve, curves};
 use aimer_attribute::position::Vec2d;
 use aimer_events::window::request_animation_frame;
 use aimer_modal::{OverlayContentHandle, OverlayLayer, OverlayLayerHandle};
@@ -260,7 +260,7 @@ impl OverlayState {
         if t >= 1.0 {
             return None;
         }
-        let eased = Curve::EaseOut.transform(t);
+        let eased = curves::EASE_OUT.transform(t);
         Some(Vec2d {
             x: spring.from.x + (target.x - spring.from.x) * eased,
             y: spring.from.y + (target.y - spring.from.y) * eased,

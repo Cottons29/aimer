@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use aimer::animation::{AnimationController, Curve, RotationTransition};
+use aimer::animation::{AnimationController, curves, RotationTransition};
 use aimer::style::{FontWeight, TextAlign, TextStyle};
 use aimer::{
     AimerApp, BoxAlignment, Column, Container, Dimension, SizedBox, Svg, SvgDocument, SvgError,
@@ -13,9 +13,9 @@ const LOADING_CYCLE: Duration = Duration::from_millis(1500);
 const LOADING_ICON_SIZE: f32 = 96.0;
 
 fn loading_controller() -> AnimationController {
-    let controller = AnimationController::new(LOADING_CYCLE, Curve::Linear);
+    let controller = AnimationController::new(LOADING_CYCLE, curves::LINEAR);
     controller.set_repeat(true);
-    controller.set_curve(Curve::EaseInOut);
+    controller.set_curve(curves::EASE_IN_OUT);
     controller.forward_from_first_tick();
     controller
 }

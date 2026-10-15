@@ -10,7 +10,7 @@ use super::*;
 use std::cell::RefCell;
 use std::time::Duration;
 
-use aimer_animation::{AnimatedBuilder, AnimationController, Curve};
+use aimer_animation::{AnimatedBuilder, AnimationController, curves};
 use aimer_rubick::RcProjectExt;
 use aimer_widget::{StateUpdater, StatelessElement};
 
@@ -20,7 +20,7 @@ struct SkeletonRow;
 
 impl Widget for SkeletonRow {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
-        let controller = AnimationController::new(Duration::from_millis(1000), Curve::EaseInOut);
+        let controller = AnimationController::new(Duration::from_millis(1000), curves::EASE_IN_OUT);
         controller.set_repeat(true);
         controller.set_auto_reverse(true);
         controller.forward_from_first_tick();

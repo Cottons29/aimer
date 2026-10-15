@@ -478,6 +478,10 @@ private struct RustTextState {
 func aimer_ios_pointer_event(_ kind: UInt32, _ x: Double, _ y: Double, _ button: UInt32, _ flags: UInt64)
 @_silgen_name("aimer_ios_scroll_event")
 func aimer_ios_scroll_event(_ x: Double, _ y: Double, _ phase: UInt32, _ flags: UInt64)
+@_silgen_name("aimer_ios_pinch_event")
+func aimer_ios_pinch_event(_ x: Double, _ y: Double, _ delta: Double, _ phase: UInt32, _ flags: UInt64)
+@_silgen_name("aimer_ios_rotation_event")
+func aimer_ios_rotation_event(_ x: Double, _ y: Double, _ delta: Double, _ phase: UInt32, _ flags: UInt64)
 @_silgen_name("aimer_ios_key_event")
 func aimer_ios_key_event(_ usage: UInt32, _ action: UInt32, _ flags: UInt64, _ ptr: UnsafePointer<UInt8>?, _ len: Int)
 
@@ -549,7 +553,19 @@ final class HardwareInputForwarder {
         scroll.cancelsTouchesInView = false
         scroll.delegate = v
         window.addGestureRecognizer(scroll)
-        recognizers = [hover, scroll]
+        // Trackpad pinch and twist. A finger pinch already reaches the framework
+        // as two touches, so these must never fire for one or it would be
+        // reported twice; HardwareInputView.gestureRecognizer(_:shouldReceive:)
+        // turns direct touches away.
+        let pinch = UIPinchGestureRecognizer(target: v, action: #selector(HardwareInputView.pinch(_:)))
+        pinch.cancelsTouchesInView = false
+        pinch.delegate = v
+        window.addGestureRecognizer(pinch)
+        let rotation = UIRotationGestureRecognizer(target: v, action: #selector(HardwareInputView.rotation(_:)))
+        rotation.cancelsTouchesInView = false
+        rotation.delegate = v
+        window.addGestureRecognizer(rotation)
+        recognizers = [hover, scroll, pinch, rotation]
         if backgroundObserver == nil {
             backgroundObserver = NotificationCenter.default.addObserver(
                 forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
@@ -719,6 +735,41 @@ final class HardwareInputView: UIView, UIGestureRecognizerDelegate {
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
         shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool { true }
+
+    // Fingers and Pencil are the framework's own multi-touch input; only the
+    // trackpad (no touch at all, or an indirect pointer) may drive these.
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        touch.type != .direct && touch.type != .pencil
+    }
+
+    private static func phase(_ state: UIGestureRecognizer.State) -> UInt32? {
+        switch state {
+        case .began: return 0
+        case .changed: return 1
+        case .ended: return 2
+        case .cancelled, .failed: return 3
+        default: return nil
+        }
+    }
+
+    // UIKit reports pinch and rotation cumulatively. The framework wants the
+    // step since the previous callback, so read the value and reset it.
+    @objc func pinch(_ recognizer: UIPinchGestureRecognizer) {
+        guard let phase = Self.phase(recognizer.state) else { return }
+        let delta = recognizer.scale - 1
+        recognizer.scale = 1
+        // Hit test at the hover position: the gesture has no contact of its own.
+        aimer_ios_pinch_event(pointer.x, pointer.y, delta.isFinite ? delta : 0, phase,
+            UInt64(recognizer.modifierFlags.rawValue))
+    }
+
+    @objc func rotation(_ recognizer: UIRotationGestureRecognizer) {
+        guard let phase = Self.phase(recognizer.state) else { return }
+        let delta = recognizer.rotation // Radians, clockwise positive, as the framework expects.
+        recognizer.rotation = 0
+        aimer_ios_rotation_event(pointer.x, pointer.y, delta.isFinite ? delta : 0, phase,
+            UInt64(recognizer.modifierFlags.rawValue))
+    }
 
     private func updateButtons(_ next: UInt, flags: UInt64) {
         let changed = buttons ^ next

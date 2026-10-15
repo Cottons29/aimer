@@ -180,7 +180,7 @@ impl State<BarScene> for BarState {
                     .box_child(aimer_animation::ImplicitAnimatedBuilder::new(
                         opacity,
                         std::time::Duration::from_millis(220),
-                        aimer_animation::Curve::EaseInOut,
+                        aimer_animation::curves::EASE_IN_OUT,
                         move |_opacity| {
                             Glass::new().child(
                                 SizedBox::new()

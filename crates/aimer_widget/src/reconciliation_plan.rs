@@ -6,8 +6,9 @@ use smallvec::SmallVec;
 
 use crate::base::BuildContext;
 use crate::components::element::{
-    Element, ElementId, complete_generated_tree_reconciliation, identities_are_compatible,
-    structural_children,
+    Element, ElementId, ScopedCursor, complete_generated_tree_reconciliation,
+    has_scoped_rebuilds_since, identities_are_compatible, rename_scoped_rebuilds_since,
+    scoped_rebuild_cursor, structural_children,
 };
 
 /// Describes how one compatible element pair was selected during planning.
@@ -112,9 +113,10 @@ impl<'a> ReconciliationPlan<'a> {
         let old_root = self.old_root;
         let new_root = self.new_root;
         drop(self);
+        let carried_from = scoped_rebuild_cursor();
         crate::widget::stateful::carry_child_state(old_root, new_root, ctx);
         let plan = plan_element_reconciliation(old_root, new_root);
-        plan.apply_identities();
+        plan.apply_identities_since(carried_from);
         complete_generated_tree_reconciliation(old_root, new_root);
         plan.refresh_reconciled_paint_state();
         Ok(())
@@ -123,6 +125,19 @@ impl<'a> ReconciliationPlan<'a> {
     pub(crate) fn commit_generated_tree(self) -> Result<(), ReconciliationPlanError> {
         self.validate()?;
         self.apply_identities();
+        complete_generated_tree_reconciliation(self.old_root, self.new_root);
+        self.refresh_reconciled_paint_state();
+        Ok(())
+    }
+
+    /// Like [`Self::commit_generated_tree`], for a candidate that state was just
+    /// carried into. `carried_from` is the log position from before the carry.
+    pub(crate) fn commit_carried_tree(
+        self,
+        carried_from: ScopedCursor,
+    ) -> Result<(), ReconciliationPlanError> {
+        self.validate()?;
+        self.apply_identities_since(carried_from);
         complete_generated_tree_reconciliation(self.old_root, self.new_root);
         self.refresh_reconciled_paint_state();
         Ok(())
@@ -145,6 +160,33 @@ impl<'a> ReconciliationPlan<'a> {
                 element_match.new.set_element_id(old_id);
             }
         }
+    }
+
+    /// Transfers identities, and renames the replacements logged since
+    /// `carried_from` to match.
+    ///
+    /// Carrying state into the candidate reconciles the nested pairs it adopts,
+    /// and logs each under the id its new root had then. Transferring identities
+    /// afterwards changes that id, so those entries are renamed here to the id
+    /// the root now has.
+    fn apply_identities_since(&self, carried_from: ScopedCursor) {
+        if !has_scoped_rebuilds_since(carried_from) {
+            self.apply_identities();
+            return;
+        }
+        let mut renamed = HashMap::new();
+        for element_match in &self.matches {
+            let Some(old_id) = element_match.old.element_id() else {
+                continue;
+            };
+            if let Some(fresh) = element_match.new.element_id()
+                && fresh != old_id
+            {
+                renamed.insert(fresh, old_id);
+            }
+            element_match.new.set_element_id(old_id);
+        }
+        rename_scoped_rebuilds_since(carried_from, |id| renamed.get(&id).copied());
     }
 }
 

@@ -45,7 +45,7 @@ publishes each intermediate theme to descendants.
 ```rust
 use std::time::Duration;
 
-use aimer::animation::Curve;
+use aimer::animation::curves;
 use aimer::style::{AnimatedTheme, ThemeData};
 use aimer::Widget;
 
@@ -59,7 +59,7 @@ fn themed_app(child: impl Widget + 'static, dark_mode: bool) -> impl Widget {
     AnimatedTheme::new()
         .data(theme)
         .duration(Duration::from_millis(250))
-        .curve(Curve::EaseInOut)
+        .curve(curves::EASE_IN_OUT)
         .child(child)
 }
 ```
@@ -219,14 +219,14 @@ movement between values. `ImplicitAnimatedBuilder` makes the same pattern availa
 ```rust
 use std::time::Duration;
 
-use aimer::animation::{Curve, ImplicitAnimatedBuilder};
+use aimer::animation::{curves, ImplicitAnimatedBuilder};
 use aimer::{Container, Widget};
 
 fn animated_panel(target_width: f32) -> impl Widget {
     ImplicitAnimatedBuilder::new(
         target_width,
         Duration::from_millis(300),
-        Curve::FastOutSlowIn,
+        curves::FAST_OUT_SLOW_IN,
         |width: &f32| {
             Container::new()
                 .width(*width)
@@ -257,13 +257,13 @@ when an animation starts, reverses, repeats, or stops.
 ```rust
 use std::time::Duration;
 
-use aimer::animation::{AnimationController, Curve, FadeTransition};
+use aimer::animation::{AnimationController, curves, FadeTransition};
 use aimer::Widget;
 
 fn fade_in(child: impl Widget + 'static) -> impl Widget {
     let controller = AnimationController::new(
         Duration::from_millis(250),
-        Curve::EaseOut,
+        curves::EASE_OUT,
     );
     controller.forward_from_first_tick();
 
@@ -289,11 +289,11 @@ An animation controller produces normalized progress from `0.0` to `1.0`. A `Cur
 the character of the motion, while a `Tween<T>` maps it onto a useful range.
 
 ```rust
-use aimer::animation::{AnimatableExt, Curve};
+use aimer::animation::{AnimatableExt, Curve, curves};
 
 let width = 120.0_f32
     .tween_to(280.0)
-    .lerp(Curve::EaseOut.transform(0.5));
+    .lerp(curves::EASE_OUT.transform(0.5));
 ```
 
 Linear motion is useful for constant-rate changes, `EaseOut` works well for elements entering the screen, and

@@ -2,7 +2,7 @@ use aimer_attribute::{ResolvedSize, Vec2d};
 use aimer_canvas::{Canvas, MaterialDrawRequest, MaterialKind};
 use aimer_color::prelude::Color;
 
-use super::Decoration;
+use super::{Decoration, declared_corner_radii};
 
 /// Paints a softly blended glass highlight around the edges of a box.
 ///
@@ -18,16 +18,23 @@ use super::Decoration;
 /// `MultiDecorationBox` layers. Unknown backgrounds use white. It does not
 /// sample images or gradients. [`Self::color`] overrides automatic contrast.
 ///
+/// Corners are square unless a [`BorderRadius`](crate::BorderRadius) or
+/// [`BoxDecoration`](crate::BoxDecoration) radius precedes the highlight in the
+/// same stack, in which case it follows those per-corner radii, each fitted
+/// within half the shorter side. A radius that follows it does not reach back.
+///
 /// # Examples
 ///
 /// ```
 /// use aimer_container::SizedBox;
 /// use aimer_color::prelude::Color;
-/// use aimer_decoration::{DecorationBox, LightEdge};
+/// use aimer_decoration::{BorderRadius, Decoration, DecorationBox, LightEdge};
 ///
 /// let highlight = DecorationBox::new()
-///     .decoration(LightEdge::new().corner_radius(20.0).width(8.0)
-///         .strength(0.8).reflection_strength(0.35))
+///     .decoration(vec![
+///         BorderRadius::from(20).notype(),
+///         LightEdge::new().width(8.0).strength(0.8).reflection_strength(0.35).notype(),
+///     ])
 ///     .child(SizedBox::new().width(240).height(80));
 ///
 /// let colored = LightEdge::new().color(Color::Rgb(180, 220, 255));
@@ -39,7 +46,6 @@ pub struct LightEdge {
     strength: f32,
     reflection_strength: f32,
     width: f32,
-    corner_radius: f32,
     light_angle: f32,
 }
 
@@ -52,7 +58,6 @@ impl Default for LightEdge {
 
 impl LightEdge {
     /// Creates an automatically colored 8-pixel blend at 0.8 strength, lit from the upper left.
-    /// Corners are square until [`Self::corner_radius`] is set.
     #[inline]
     pub fn new() -> Self {
         Self {
@@ -60,7 +65,6 @@ impl LightEdge {
             strength: 0.8,
             reflection_strength: 0.35,
             width: 8.0,
-            corner_radius: 0.0,
             light_angle: 225.0,
         }
     }
@@ -102,15 +106,6 @@ impl LightEdge {
         self
     }
 
-    /// Sets the corner radius in logical pixels, clamped to `0.0..=1024.0`.
-    /// Nonfinite values use `0.0`. The radius fits within half the shorter
-    /// side and shapes only the highlight, without clipping the child.
-    #[inline]
-    pub fn corner_radius(mut self, radius: f32) -> Self {
-        self.corner_radius = normalize(radius, 0.0, MaterialDrawRequest::MAX_CORNER_RADIUS);
-        self
-    }
-
     /// Sets light direction in degrees clockwise from screen-right.
     /// `90.0` lights from below; the default `225.0` lights from the upper
     /// left. Finite angles wrap into `0.0..360.0`; nonfinite values use `225.0`.
@@ -139,7 +134,7 @@ impl Decoration for LightEdge {
         request.border_width = self.width.min(limit);
         request.specular_highlight = self.strength;
         request.light_angle = self.light_angle;
-        request.corner_radii = [self.corner_radius.min(limit); 4];
+        request.corner_radii = declared_corner_radii(canvas, limit.min(MaterialDrawRequest::MAX_CORNER_RADIUS));
         request.opacity = 1.0;
         request.tint = [0.0; 4];
         request.blur_radius = 0.0;

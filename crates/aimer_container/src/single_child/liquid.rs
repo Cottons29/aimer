@@ -1,3 +1,6 @@
+use std::cell::Cell;
+
+use aimer_decoration::{AnyDecor, BorderRadius, Decoration};
 use aimer_widget::base::{BuildContext, Color, ResolvedSize, Size, Vec2d};
 use aimer_widget::{
     AnyElement, AnyWidget, Drawable, Element, EventElement, LayoutElement, PortableWidget,
@@ -7,8 +10,8 @@ use aimer_widget::{
 use aimer_canvas::MaterialKind;
 
 use super::glass::{
-    GlassMaterial, MaterialMotionPolicy, build_material_request, logical_size, resolved_radii,
-    shadow_outsets, v2_color,
+    GlassMaterial, MaterialMotionPolicy, build_material_request, decoration_needs_recording,
+    logical_size, paint_decoration, resolved_radii, surface_outsets, v2_color,
 };
 
 /// Bounded values for a [`Liquid`] water-droplet surface.
@@ -64,6 +67,8 @@ impl LiquidMaterial {
     pub const MAX_CHROMATIC_ABERRATION: f32 = 1.0;
     /// The largest fake 3D bevel radius, in logical pixels, accepted by the contract.
     pub const MAX_BEVEL_RADIUS: f32 = 512.0;
+    /// The corner radius used when neither a radius nor a decoration declares a shape.
+    pub const DEFAULT_CORNER_RADIUS: f32 = 28.0;
 
     /// Creates a clear water-droplet surface with a restrained, deterministic
     /// motion field.
@@ -76,7 +81,6 @@ impl LiquidMaterial {
                 .blur_radius(0.0)
                 .border_width(1.0)
                 .border_color(Color::Rgba(255, 255, 255, 110))
-                .corner_radii([28.0; 4])
                 .shadow_color(Color::Rgba(20, 40, 60, 90))
                 .shadow_blur(18.0)
                 .elevation(6.0)
@@ -169,17 +173,13 @@ impl LiquidMaterial {
         self
     }
 
-    /// Sets a uniform corner radius, used by the rounded-rect fallback shape.
+    /// Sets the corner radii of the surface; see [`GlassMaterial::border_radius`].
+    ///
+    /// Without a radius or a shaping decoration the surface uses
+    /// [`Self::DEFAULT_CORNER_RADIUS`].
     #[inline]
-    pub fn corner_radius(mut self, corner_radius: f32) -> Self {
-        self.base = self.base.corner_radius(corner_radius);
-        self
-    }
-
-    /// Sets per-corner radii, used by the rounded-rect fallback shape.
-    #[inline]
-    pub fn corner_radii(mut self, corner_radii: [f32; 4]) -> Self {
-        self.base = self.base.corner_radii(corner_radii);
+    pub fn border_radius(mut self, border_radius: impl Into<BorderRadius>) -> Self {
+        self.base = self.base.border_radius(border_radius);
         self
     }
 
@@ -318,7 +318,7 @@ impl LiquidMaterial {
 
     /// Sets the depth, in logical pixels, of the fake 3D rounded bevel the
     /// refraction is computed from — a "Z-Radius" independent of the 2D
-    /// [`Self::corner_radius`]. A small bevel makes the surface normal tilt
+    /// [`Self::border_radius`]. A small bevel makes the surface normal tilt
     /// sharply right at the boundary (a tight, dramatic lens); a large one
     /// spreads that tilt further inward (a gentler, wider bend).
     #[inline]
@@ -485,6 +485,7 @@ impl Default for LiquidMaterial {
 pub struct Liquid<W = RequiredChild> {
     child: W,
     material: LiquidMaterial,
+    decoration: Option<AnyDecor>,
 }
 
 impl Liquid {
@@ -494,6 +495,7 @@ impl Liquid {
         Self {
             child: RequiredChild,
             material: LiquidMaterial::new(),
+            decoration: None,
         }
     }
 
@@ -567,17 +569,22 @@ impl Liquid {
         self
     }
 
-    /// Sets a uniform corner radius.
+    /// Sets the corner radii of the surface; see [`LiquidMaterial::border_radius`].
     #[inline]
-    pub fn corner_radius(mut self, corner_radius: f32) -> Self {
-        self.material = self.material.corner_radius(corner_radius);
+    pub fn border_radius(mut self, border_radius: impl Into<BorderRadius>) -> Self {
+        self.material = self.material.border_radius(border_radius);
         self
     }
 
-    /// Sets per-corner radii.
+    /// Paints `decoration` behind the liquid surface and adopts its shape.
+    ///
+    /// Behaves like [`Glass::decoration`](super::Glass::decoration): unless
+    /// [`Self::border_radius`] is set, the surface takes the corner radii that
+    /// `BoxDecoration` or `BorderRadius` layers declared. It never affects
+    /// layout, clipping or events.
     #[inline]
-    pub fn corner_radii(mut self, corner_radii: [f32; 4]) -> Self {
-        self.material = self.material.corner_radii(corner_radii);
+    pub fn decoration(mut self, decoration: impl Decoration + 'static) -> Self {
+        self.decoration = Some(decoration.notype());
         self
     }
 
@@ -706,6 +713,7 @@ impl Liquid {
         Liquid {
             child,
             material: self.material.normalized(),
+            decoration: self.decoration,
         }
     }
 
@@ -729,6 +737,8 @@ impl<W: Widget + 'static> Widget for Liquid<W> {
         RawLiquid {
             child: self.child.to_element(ctx),
             material: self.material.normalized(),
+            decoration: self.decoration,
+            recorded: Cell::new(None),
         }
         .boxed()
     }
@@ -741,6 +751,8 @@ impl<W: Widget + 'static> Widget for Liquid<W> {
 struct RawLiquid {
     child: AnyElement,
     material: LiquidMaterial,
+    decoration: Option<AnyDecor>,
+    recorded: Cell<Option<u64>>,
 }
 
 impl Rebuildable for RawLiquid {}
@@ -766,7 +778,9 @@ impl Drawable for RawLiquid {
             && size.width > 0.0
             && size.height > 0.0
         {
-            let radii = resolved_radii(base.corner_radii_value(), size);
+            paint_decoration(self.decoration.as_ref(), &canvas, size, ctx.scale);
+            let shape = base.shape_radii(&canvas, size, LiquidMaterial::DEFAULT_CORNER_RADIUS);
+            let radii = resolved_radii(shape, size);
             let shadow = with_opacity(base.shadow_color_value(), base.opacity_value());
             if shadow.alpha() != 0 && base.shadow_blur_value() > 0.0 {
                 canvas.draw_shadow_rect(
@@ -797,6 +811,7 @@ impl Drawable for RawLiquid {
                 MaterialKind::Liquid,
                 base,
                 size,
+                shape,
                 material.effective_distortion(),
                 material.edge_lighting_value(),
                 material.specular_highlight_value(),
@@ -814,14 +829,25 @@ impl Drawable for RawLiquid {
             ));
         }
         canvas.finish();
+        self.recorded.set(self.decoration.as_ref().map(|decoration| decoration.revision()));
+    }
+
+    #[inline]
+    fn local_v2_paint_needs_recording(&self, _ctx: &BuildContext) -> bool {
+        decoration_needs_recording(self.decoration.as_ref(), self.recorded.get())
     }
 
     fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
         self.child.update(ctx);
     }
 
-    fn retained_v2_paint_outsets(&self, _ctx: &BuildContext) -> Option<[f32; 4]> {
-        shadow_outsets(self.material.normalized().glass_material())
+    fn retained_v2_paint_outsets(&self, ctx: &BuildContext) -> Option<[f32; 4]> {
+        surface_outsets(
+            self.material.normalized().glass_material(),
+            self.decoration.as_ref(),
+            ctx,
+            self.child.computed_size(ctx),
+        )
     }
 }
 

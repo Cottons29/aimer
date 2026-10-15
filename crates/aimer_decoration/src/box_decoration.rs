@@ -119,6 +119,13 @@ impl BoxDecoration {
             logical_height,
         );
 
+        // Only an explicit radius declares the box shape. Border, outline and
+        // shadow decorations delegate here with a default radius and must not
+        // square off a shape an earlier layer declared.
+        if self.border_radius != BorderRadius::default() {
+            canvas.set_corner_radii(radii);
+        }
+
         for shadow in &self.box_shadow {
             if !shadow.inset {
                 shadow.record_local_v2(canvas, rect, &radii, scale);

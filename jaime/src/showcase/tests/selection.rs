@@ -92,6 +92,26 @@ fn clicking_a_row_shows_that_example() {
 }
 
 #[test]
+fn stack_positioned_and_align_pages_are_selectable() {
+    let mut scene = scene();
+    for (label, samples) in [
+        ("Stack + Positioned", ["Top / left", "Bottom / right", "Layer 2"]),
+        ("Align", ["TopLeft", "MidCenter", "BotRight"]),
+    ] {
+        let example = EXAMPLES.iter().copied().find(|example| example.label() == label)
+            .unwrap_or_else(|| panic!("{label} must be selectable in Jaime"));
+        scene.click_row(example);
+        assert_eq!(scene.page_titles(), [label]);
+        scene.texts();
+        let texts = scene.labels.painted_texts.borrow();
+        for sample in samples {
+            assert!(texts.iter().any(|text| text == sample),
+                "{label} must show the {sample} sample in the content pane: {texts:?}");
+        }
+    }
+}
+
+#[test]
 fn choosing_an_example_keeps_the_whole_sidebar() {
     let mut scene = scene();
     let before = scene.sidebar_labels();

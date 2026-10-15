@@ -15,6 +15,14 @@ mod selection;
 mod set_state_profile;
 
 #[test]
+fn lucide_gallery_is_registered_with_a_constructible_page() {
+    let example = EXAMPLES.iter().find(|example| example.key() == "lucide-icons")
+        .expect("Lucide gallery must be selectable");
+    assert_eq!(example.label(), "Lucide icons");
+    let _ = build_example(*example, theme::app_theme());
+}
+
+#[test]
 fn showcase_has_unique_registered_examples() {
     assert!(!EXAMPLES.is_empty());
     let keys = EXAMPLES

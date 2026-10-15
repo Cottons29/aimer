@@ -1,4 +1,5 @@
 use crate::accessibility_example::accessibility_example;
+use crate::align_example::align_example;
 use crate::animatable_example::animatable_example;
 use crate::animated::MyAnimatedList;
 use crate::animated_layout_example::animated_layout_example;
@@ -26,7 +27,9 @@ use crate::http_request_button::http_request_button_example;
 use crate::i18n_example::i18n_example;
 use crate::justify_content_example::justify_content_example;
 use crate::light_edge_example::light_edge_example;
+use crate::liquid_tab_bar_example::liquid_tab_bar_example;
 use crate::loading_animation::loading_animation_example;
+use crate::lucide_icons_example::lucide_icons_example;
 use crate::magnification_example::magnification_example;
 use crate::markdown_example::{custom_markdown_viewer, jaime_markdown_viewer};
 use crate::modal::modal_example;
@@ -44,6 +47,7 @@ use crate::selectable_text::selectable_text_example;
 use crate::selection_controls_example::selection_controls_example;
 use crate::stateful::CounterWidget;
 use crate::stateful_2::MyList;
+use crate::stack_positioned_example::stack_positioned_example;
 use crate::storage_example::storage_example;
 use crate::style_tokens_example::style_tokens_example;
 use crate::svg_example::svg_example as svg_completion_example;
@@ -88,10 +92,11 @@ impl ExampleShowcase {
     }
 }
 
-/// Counts `ExampleShowcaseState::build` calls so tests can prove that choosing
-/// an example does not rebuild the shell.
+
 #[cfg(test)]
 thread_local! {
+    /// Counts `ExampleShowcaseState::build` calls so tests can prove that choosing
+    /// an example does not rebuild the shell.
     static SHELL_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
@@ -413,6 +418,7 @@ fn build_example(example: ExampleId, app_theme: ThemeData) -> AnyWidget {
         ExampleId::Navigation => navigation_example().boxed(),
         ExampleId::NavigationTransitions => navigation_transitions_example().boxed(),
         ExampleId::ContainerTransform => container_transform_example().boxed(),
+        ExampleId::LiquidTabBar => liquid_tab_bar_example().boxed(),
         ExampleId::RoutingContext => routing_context_example().boxed(),
         ExampleId::Animatable => animatable_example().boxed(),
         ExampleId::DataView => data_view_example().boxed(),
@@ -420,6 +426,7 @@ fn build_example(example: ExampleId, app_theme: ThemeData) -> AnyWidget {
         ExampleId::StyleTokens => style_tokens_example().boxed(),
         ExampleId::I18n => i18n_example().boxed(),
         ExampleId::SvgCompletion => svg_completion_example().boxed(),
+        ExampleId::LucideIcons => lucide_icons_example(app_theme).boxed(),
         ExampleId::AssetsMedia => assets_media_example().boxed(),
         ExampleId::GlassLiquid => glass_liquid_example().boxed(),
         ExampleId::BackdropFilter => backdrop_filter_example().boxed(),
@@ -463,7 +470,8 @@ fn build_example(example: ExampleId, app_theme: ThemeData) -> AnyWidget {
         ExampleId::Animation => TestFadingAnimation.boxed(),
         ExampleId::Routing => state_router_widget().boxed(),
         ExampleId::Text => text_example(app_theme),
-        ExampleId::Positioned => positioned_example(app_theme),
+        ExampleId::Positioned => stack_positioned_example(app_theme).boxed(),
+        ExampleId::Align => align_example(app_theme).boxed(),
         ExampleId::BorderOutline => border_outline_example(app_theme),
         ExampleId::AssetImage => asset_image_example(app_theme),
     }
@@ -478,53 +486,6 @@ fn text_example(app_theme: ThemeData) -> AnyWidget {
                 TextStyle::new()
                     .font_size(24)
                     .color(app_theme.on_surface_color),
-            )
-            .boxed(),
-        app_theme,
-    )
-}
-
-fn positioned_example(app_theme: ThemeData) -> AnyWidget {
-    demo_card(
-        "Positioned",
-        "The cards below overlap because their offsets are resolved inside a Stack.",
-        Container::new()
-            .width(Dimension::Px(520.0))
-            .height(Dimension::Px(300.0))
-            .box_decoration(
-                BoxDecoration::new()
-                    .background_color(theme::recessed_surface(&app_theme))
-                    .border_radius(12),
-            )
-            .child(
-                Stack::new().children([
-                    Positioned::new()
-                        .top(34.0)
-                        .left(38.0)
-                        .child(
-                            Container::new()
-                                .width(Dimension::Px(260.0))
-                                .height(Dimension::Px(150.0))
-                                .color(
-                                    app_theme
-                                        .primary_color
-                                        .darken(0.18),
-                                )
-                                .child(Text::new("Top / left")),
-                        )
-                        .boxed(),
-                    Positioned::new()
-                        .top(112.0)
-                        .left(172.0)
-                        .child(
-                            Container::new()
-                                .width(Dimension::Px(260.0))
-                                .height(Dimension::Px(150.0))
-                                .color(app_theme.primary_color)
-                                .child(Text::new("Overlapping child")),
-                        )
-                        .boxed(),
-                ]),
             )
             .boxed(),
         app_theme,

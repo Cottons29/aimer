@@ -345,7 +345,7 @@ impl ContextMenu {
         let anchor = self.anchor.clone();
         let placement = self.shape.placement(self.style.gap);
         let barrier_color = self.barrier_color;
-        let animation = self.animation;
+        let animation = self.animation.clone();
 
         let mut floating = Floating::new()
             .anchor(anchor)

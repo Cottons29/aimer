@@ -670,7 +670,7 @@ impl<W: Widget + 'static> ScrollableState<W> {
             fling_start_offset: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
             fling_target_offset: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
             fling_duration: Cell::new(0.0),
-            anim_curve: Cell::new(None),
+            anim_curve: RefCell::new(None),
             active_touch_id: Cell::new(None),
             spring_velocity: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
             momentum_start_time: Cell::new(None),

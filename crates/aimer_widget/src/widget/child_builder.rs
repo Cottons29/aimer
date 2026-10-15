@@ -575,6 +575,17 @@ impl EventElement for RetainedChildElement {
         self.child()
             .is_some_and(EventElement::has_overlapping_hit_targets)
     }
+
+    fn occludes_pointer_at(&self, pos: Vec2d) -> bool {
+        self.child()
+            .is_some_and(|child| child.occludes_pointer_at(pos))
+    }
+
+    fn occlusion_children_at<'a>(&'a self, pos: Vec2d, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        if let Some(child) = self.child() {
+            child.occlusion_children_at(pos, visitor);
+        }
+    }
 }
 
 impl Drawable for RetainedChildElement {

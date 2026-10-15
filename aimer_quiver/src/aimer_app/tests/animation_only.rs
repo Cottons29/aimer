@@ -9,7 +9,7 @@ use super::*;
 use std::time::Duration;
 
 use aimer_animation::{
-    AnimatedBuilder, AnimatedPaint, AnimationController, Curve, RotationTransition,
+    AnimatedBuilder, AnimatedPaint, AnimationController, curves, RotationTransition,
 };
 
 const PROBES: usize = 24;
@@ -83,7 +83,7 @@ fn page(controller: AnimationController, updates: Rc<Cell<usize>>) -> impl Widge
 }
 
 fn looping() -> AnimationController {
-    let controller = AnimationController::new(Duration::from_millis(1500), Curve::Linear);
+    let controller = AnimationController::new(Duration::from_millis(1500), curves::LINEAR);
     controller.set_repeat(true);
     controller.forward_from_first_tick();
     controller
@@ -264,7 +264,7 @@ fn a_finished_animation_settles_and_the_frame_loop_goes_idle() {
     let _serial = VIRTUALIZED_RENDER_TEST_LOCK
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    let controller = AnimationController::new(Duration::from_millis(60), Curve::Linear);
+    let controller = AnimationController::new(Duration::from_millis(60), curves::LINEAR);
     controller.forward_from_first_tick();
     let (mut app, _updates) = start(controller.clone());
 

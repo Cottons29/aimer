@@ -14,7 +14,7 @@ use aimer_widget::{
 };
 
 use crate::control::controller::AnimationController;
-use crate::primitives::curve::Curve;
+use crate::primitives::curve::{AnyCurve, Curve};
 use crate::primitives::time::AnimInstant;
 
 fn request_next_frame() {
@@ -35,12 +35,12 @@ fn request_next_frame() {
 /// ```rust
 /// use std::time::Duration;
 ///
-/// use aimer_animation::{AnimatedSwitcher, Curve};
+/// use aimer_animation::{AnimatedSwitcher, curves};
 /// use aimer_widget::ErrorWidget;
 ///
 /// let switcher =
 ///     AnimatedSwitcher::new(Duration::from_millis(300),
-///                           Curve::Linear,
+///                           curves::LINEAR,
 ///                           ErrorWidget::new("Current page")).child_key("current-page");
 /// ```
 pub struct AnimatedSwitcher<T: Widget + 'static> {
@@ -48,9 +48,9 @@ pub struct AnimatedSwitcher<T: Widget + 'static> {
     /// once per frame, for as long as the fade lasts.
     pub child: ChildBuilder,
     pub duration: Duration,
-    pub curve: Curve,
+    pub curve: AnyCurve,
     /// Optional separate curve for the outgoing child. Defaults to `curve`.
-    pub switch_out_curve: Option<Curve>,
+    pub switch_out_curve: Option<AnyCurve>,
     transition_key: Option<Key>,
     widget_key: Option<Key>,
     /// The child's type, which the builder erases.
@@ -69,11 +69,11 @@ impl<T: Widget + 'static> AnimatedSwitcher<T> {
     /// child's own [`Widget::key`] is used as its identity by default; the
     /// builder the child is stored in reports that key as its own.
     #[inline]
-    pub fn new(duration: Duration, curve: Curve, child: T) -> Self {
+    pub fn new(duration: Duration, curve: impl Curve, child: T) -> Self {
         Self {
             child: ChildBuilder::from_widget(child),
             duration,
-            curve,
+            curve: curve.into_any(),
             switch_out_curve: None,
             transition_key: None,
             widget_key: None,
@@ -86,8 +86,8 @@ impl<T: Widget + 'static> AnimatedSwitcher<T> {
     /// If omitted, the incoming [`curve`](Self::curve) is used for both
     /// directions.
     #[inline]
-    pub fn with_switch_out_curve(mut self, curve: Curve) -> Self {
-        self.switch_out_curve = Some(curve);
+    pub fn with_switch_out_curve(mut self, curve: impl Curve) -> Self {
+        self.switch_out_curve = Some(curve.into_any());
         self
     }
 
@@ -120,8 +120,9 @@ impl<T: Widget + 'static> StatefulWidget for AnimatedSwitcher<T> {
     type State = AnimatedSwitcherState<T>;
 
     fn create_state(self) -> Self::State {
-        let in_controller = AnimationController::new(self.duration, self.curve);
+        let in_controller = AnimationController::new(self.duration, self.curve.clone());
         in_controller.set_value(1.0);
+        let switch_out_curve = self.switch_out_curve.unwrap_or_else(|| self.curve.clone());
         AnimatedSwitcherState {
             current_child: self.child.clone(),
             old_child: None,
@@ -129,12 +130,9 @@ impl<T: Widget + 'static> StatefulWidget for AnimatedSwitcher<T> {
             child_key: self.transition_key.clone().or_else(|| self.child.key()),
             duration: self.duration,
             curve: self.curve,
-            switch_out_curve: self.switch_out_curve.unwrap_or(self.curve),
+            switch_out_curve: switch_out_curve.clone(),
             in_controller,
-            out_controller: AnimationController::new(
-                self.duration,
-                self.switch_out_curve.unwrap_or(self.curve),
-            ),
+            out_controller: AnimationController::new(self.duration, switch_out_curve),
             updater: StateUpdater::empty(),
             marker: PhantomData,
         }
@@ -173,8 +171,8 @@ pub struct AnimatedSwitcherState<T: Widget + 'static> {
     old_child_key: Option<Key>,
     child_key: Option<Key>,
     duration: Duration,
-    curve: Curve,
-    switch_out_curve: Curve,
+    curve: AnyCurve,
+    switch_out_curve: AnyCurve,
     in_controller: AnimationController,
     out_controller: AnimationController,
     updater: StateUpdater<Self>,
@@ -191,9 +189,9 @@ impl<T: Widget + 'static> State<AnimatedSwitcher<T>> for AnimatedSwitcherState<T
         self.curve = new.curve;
         self.switch_out_curve = new.switch_out_curve;
         self.in_controller.set_duration(self.duration);
-        self.in_controller.set_curve(self.curve);
+        self.in_controller.set_curve(self.curve.clone());
         self.out_controller.set_duration(self.duration);
-        self.out_controller.set_curve(self.switch_out_curve);
+        self.out_controller.set_curve(self.switch_out_curve.clone());
 
         if self.child_key != new.child_key {
             self.old_child = Some(self.current_child.clone());
@@ -423,6 +421,8 @@ impl LayoutElement for AnimatedSwitcherElement {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::primitives::curve::curves;
+
     use crate::widgets::test_frame_requester;
 
     struct TestWidget(&'static str);
@@ -440,8 +440,26 @@ mod tests {
     impl aimer_widget::PortableWidget for TestWidget {}
 
     fn state(key: &'static str) -> AnimatedSwitcherState<TestWidget> {
-        AnimatedSwitcher::new(Duration::from_millis(100), Curve::Linear, TestWidget(key))
+        AnimatedSwitcher::new(Duration::from_millis(100), curves::LINEAR, TestWidget(key))
             .create_state()
+    }
+
+        #[test]
+    fn a_custom_curve_is_stored_for_both_directions() {
+        use crate::primitives::curve::Curve;
+
+        struct Halfway;
+        impl Curve for Halfway {
+            fn transform(&self, t: f32) -> f32 {
+                t * 0.5
+            }
+        }
+
+        let switcher = AnimatedSwitcher::new(Duration::from_millis(100), Halfway, TestWidget("a"))
+            .with_switch_out_curve(curves::LINEAR);
+
+        assert_eq!(switcher.curve.transform(1.0), 0.5);
+        assert_eq!(switcher.switch_out_curve.as_ref().unwrap().transform(1.0), 1.0);
     }
 
     #[test]
@@ -526,7 +544,7 @@ mod tests {
             PortableLimits::new(8, 16, 64, 128, 1_024),
         )
         .unwrap();
-        let root = AnimatedSwitcher::new(Duration::from_millis(100), Curve::Linear, PortableLeaf)
+        let root = AnimatedSwitcher::new(Duration::from_millis(100), curves::LINEAR, PortableLeaf)
             .to_portable_node(
                 &mut context,
                 SourceFingerprint::new(StableId128::from_bytes([9; 16])),
@@ -612,7 +630,7 @@ mod tests {
         ) -> AnimatedSwitcher<Probe> {
             AnimatedSwitcher::new(
                 duration,
-                Curve::Linear,
+                curves::LINEAR,
                 Probe {
                     key,
                     builds: Rc::clone(builds),
@@ -679,7 +697,7 @@ mod tests {
 
             let mut current = AnimatedSwitcher::new(
                 Duration::from_millis(100),
-                Curve::Linear,
+                curves::LINEAR,
                 ErrorWidget::new("home"),
             )
             .child_key("home")
@@ -687,7 +705,7 @@ mod tests {
             current.adopt_config_from(
                 AnimatedSwitcher::new(
                     Duration::from_millis(100),
-                    Curve::Linear,
+                    curves::LINEAR,
                     ErrorWidget::new("docs"),
                 )
                 .child_key("docs")
@@ -835,7 +853,7 @@ mod tests {
                 let label = route_label(self.route);
                 AnimatedSwitcher::new(
                     Duration::from_millis(50),
-                    Curve::Linear,
+                    curves::LINEAR,
                     RecordingPage {
                         label,
                         drawn: self.drawn.clone(),

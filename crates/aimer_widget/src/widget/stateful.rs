@@ -12,7 +12,7 @@ use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 #[cfg(not(aimer_portable_guest))]
 use aimer_events::window::{request_animation_frame, request_scoped_frame};
-use aimer_utils::error;
+use aimer_utils::{debug, error};
 
 use crate::base::*;
 use crate::components::element::{
@@ -1349,10 +1349,10 @@ impl StatefulElement {
             BuildPhase::ReconcileChildren,
             || {
                 let old_child = unsafe { &*self.child.0.get() };
-                carry_child_state(old_child.as_ref(), new_child.as_ref(), ctx);
-                crate::components::element::reconcile_generated_tree(
+                crate::components::element::reconcile_carried_tree(
                     old_child.as_ref(),
                     new_child.as_ref(),
+                    ctx,
                 );
             },
         );
@@ -1855,10 +1855,10 @@ impl StatefulElement {
             BuildPhase::ReconcileChildren,
             || {
                 let old_child = unsafe { &*self.child.0.get() };
-                carry_child_state(old_child.as_ref(), new_child.as_ref(), ctx);
-                crate::components::element::reconcile_generated_tree(
+                crate::components::element::reconcile_carried_tree(
                     old_child.as_ref(),
                     new_child.as_ref(),
+                    ctx,
                 );
             },
         );

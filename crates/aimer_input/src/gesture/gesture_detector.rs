@@ -27,8 +27,8 @@ use crate::gesture::handlers::GestureHandlers;
 use crate::gesture::recognize::{poll, recognize};
 use crate::gesture::state::GestureState;
 use crate::gesture::{
-    DragCallback, DragUpdateCallback, GestureStreamCallback, ScaleCallback, ScrollCallback,
-    SwipeCallback,
+    DragCallback, DragUpdateCallback, GestureMask, GestureStreamCallback, PanCallback,
+    ScaleCallback, ScrollCallback, SmartZoomCallback, SwipeCallback,
 };
 
 /// Controls whether a [`GestureDetector`] also exposes its child to event
@@ -80,6 +80,32 @@ impl Default for GestureDetectorBehavior {
 ///     .child(Text::new("Tap me"));
 /// ```
 ///
+/// Pinch, rotation and two-finger pan arrive together through
+/// [`GestureDetector::on_scale`], whether they come from two fingers on a touch
+/// screen or from a trackpad, so one handler serves both. The trackpad's
+/// smart-zoom double tap has a handler of its own, as does the platform's
+/// multi-finger pan ([`GestureDetector::on_pan`]):
+///
+/// ```
+/// use aimer_input::gesture::gesture_detector::GestureDetector;
+/// use aimer_input::gesture::{ScaleData, SmartZoomData};
+/// use aimer_text::Text;
+///
+/// let photo = GestureDetector::new()
+///     .on_scale(|zoom: ScaleData| {
+///         // Incremental: multiply the zoom, add the turn, follow the midpoint.
+///         println!(
+///             "x{:.2}, {:.0} degrees, moved by ({}, {})",
+///             zoom.delta_scale,
+///             zoom.delta_rotation.to_degrees(),
+///             zoom.focal_delta_x,
+///             zoom.focal_delta_y,
+///         );
+///     })
+///     .on_smart_zoom(|at: SmartZoomData| println!("toggle zoom around {}, {}", at.x, at.y))
+///     .child(Text::new("Photo"));
+/// ```
+///
 /// Anything the setters do not cover — press feedback, the long-press
 /// lifecycle, drag cancellation, a middle click — is reached through
 /// [`GestureDetector::on_gesture`], which sees the whole stream:
@@ -128,6 +154,10 @@ pub struct GestureDetector<W = RequiredChild> {
     #[portable_skip]
     on_scale: ScaleCallback,
     #[portable_skip]
+    on_pan: PanCallback,
+    #[portable_skip]
+    on_smart_zoom: SmartZoomCallback,
+    #[portable_skip]
     on_gesture: GestureStreamCallback,
     #[portable_skip]
     handlers: Rc<GestureHandlers>,
@@ -158,6 +188,8 @@ impl GestureDetector {
             on_swipe: SwipeCallback::default(),
             on_scroll: ScrollCallback::default(),
             on_scale: ScaleCallback::default(),
+            on_pan: PanCallback::default(),
+            on_smart_zoom: SmartZoomCallback::default(),
             on_gesture: GestureStreamCallback::default(),
             handlers: Rc::new(GestureHandlers::new()),
             behavior: GestureDetectorBehavior::PassThrough,
@@ -205,9 +237,13 @@ builder_setters! {
     on_scroll => set_on_scroll: ScrollCallback,
         "Sets the handler for mouse-wheel or trackpad scrolling over the child.\n\nInstalling this causes the detector to consume matching scroll events; without it, those events fall through to lower layers.";
     on_scale => set_on_scale: ScaleCallback,
-        "Sets the handler for a two-pointer pinch.\n\n[`crate::gesture::ScaleData`] reports the scale relative to the initial pointer distance.";
+        "Sets the handler for a pinch, rotation or two-finger pan, from touch contacts or from the trackpad.\n\n[`crate::gesture::ScaleData`] reports the scale and rotation relative to the start of the gesture and since the previous update. A touch pinch measures them between the two contacts that arrived first; a trackpad pinch or twist is reported by the platform, so the focal point stays where the cursor was and does not move. The detector consumes the trackpad's pinch and rotate events only when this is set.";
+    on_pan => set_on_pan: PanCallback,
+        "Sets the handler for a platform multi-finger pan, such as an N-finger pan on iOS.\n\nThis is not the single-pointer drag: use [`Self::on_drag_update`] for that, and [`Self::on_scale`] for the pan of two touch contacts. The detector consumes the platform's pan events only when this is set.";
+    on_smart_zoom => set_on_smart_zoom: SmartZoomCallback,
+        "Sets the handler for the platform's smart-zoom gesture, a two-finger double tap on a macOS trackpad.\n\nConventionally it toggles the content between fitted and actual size around [`crate::gesture::SmartZoomData`]'s point. The detector consumes the event only when this is set.";
     on_gesture => set_on_gesture: GestureStreamCallback,
-        "Sets the handler that receives every recognized gesture.\n\nThe escape hatch: a gesture with no setter of its own — the press lifecycle, the long-press start/move/end triple, drag cancellation, the pinch boundaries, a middle click — is read here. A new gesture is therefore a new [`crate::gesture::GestureEvent`] variant, not a new field on this struct.";
+        "Sets the handler that receives every recognized gesture.\n\nThe escape hatch: a gesture with no setter of its own — the press lifecycle, the long-press start/move/end triple, drag cancellation, the scale and pan boundaries, a middle click — is read here. A new gesture is therefore a new [`crate::gesture::GestureEvent`] variant, not a new field on this struct.";
 }
 
 impl<W> GestureDetector<W> {
@@ -240,6 +276,8 @@ impl<W> GestureDetector<W> {
             on_swipe: self.on_swipe,
             on_scroll: self.on_scroll,
             on_scale: self.on_scale,
+            on_pan: self.on_pan,
+            on_smart_zoom: self.on_smart_zoom,
             on_gesture: self.on_gesture,
             handlers: self.handlers,
             behavior: self.behavior,
@@ -347,6 +385,46 @@ fn to_pointer_event(event: &ElementEvent) -> Option<PointerEvent> {
             delta_y: delta.y,
         }),
         ElementEvent::Cancel => Some(PointerEvent::Cancel),
+        _ => platform_gesture(event).map(|(pointer_event, _)| pointer_event),
+    }
+}
+
+/// The pointer event for a gesture the platform recognized itself, with the
+/// gestures a detector must be listening for to care about it.
+///
+/// These carry no contact, so unlike a press they have no pointer to capture and
+/// are not filtered by bounds: the dispatcher already hit-tested them at the
+/// cursor, exactly as it does for a scroll.
+fn platform_gesture(event: &ElementEvent) -> Option<(PointerEvent, GestureMask)> {
+    match event {
+        ElementEvent::Pinch { pos, delta, phase } => Some((
+            PointerEvent::Pinch {
+                pos: *pos,
+                delta: *delta,
+                phase: *phase,
+            },
+            GestureMask::SCALE,
+        )),
+        ElementEvent::Rotate { pos, delta, phase } => Some((
+            PointerEvent::Rotate {
+                pos: *pos,
+                delta: *delta,
+                phase: *phase,
+            },
+            GestureMask::SCALE,
+        )),
+        ElementEvent::Pan { pos, delta, phase } => Some((
+            PointerEvent::Pan {
+                pos: *pos,
+                delta_x: delta.x,
+                delta_y: delta.y,
+                phase: *phase,
+            },
+            GestureMask::PAN,
+        )),
+        ElementEvent::SmartZoom { pos } => {
+            Some((PointerEvent::SmartZoom { pos: *pos }, GestureMask::SMART_ZOOM))
+        }
         _ => None,
     }
 }
@@ -423,6 +501,22 @@ impl<E: Element> EventElement for RawGestureDetector<E> {
             });
             self.window.request_redraw();
             return EventResult::consumed().with_redraw();
+        }
+
+        if let Some((gesture, wanted)) = platform_gesture(event) {
+            // Observing is not claiming, as for a scroll: the raw `on_gesture`
+            // handler is told, but only a handler installed for the gesture
+            // itself keeps it from the widgets behind.
+            if !self.handlers.mask().intersects(wanted) {
+                return EventResult::ignored();
+            }
+            self.process(&gesture);
+            self.window.request_redraw();
+            return if self.handlers.claims(wanted) {
+                EventResult::consumed().with_redraw()
+            } else {
+                EventResult::ignored().with_redraw()
+            };
         }
 
         let Some(pointer) = event.pointer() else {
@@ -1129,5 +1223,239 @@ mod tests {
             result.needs_redraw(),
             "a live gesture keeps the frames coming"
         );
+    }
+
+    // ── Platform gestures ──────────────────────────────────────────────
+
+    use aimer_events::element::TouchPhase;
+
+    use crate::gesture::{GestureEvent, PanData, SmartZoomData};
+
+    const CURSOR: Vec2d = Vec2d { x: 30.0, y: 40.0 };
+
+    /// A laid-out detector with exactly the handlers `configure` installs.
+    fn detector_with(
+        configure: impl FnOnce(&mut GestureHandlers),
+    ) -> RawGestureDetector<TestElement> {
+        let mut handlers = GestureHandlers::new();
+        configure(&mut handlers);
+
+        let cached_bounds = InteractionBounds::new();
+        cached_bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
+
+        RawGestureDetector {
+            child: TestElement,
+            cached_bounds,
+            window: WindowHandle::headless(winit::dpi::PhysicalSize::new(100, 100), 1.0),
+            handlers: Rc::new(handlers),
+            state: RefCell::new(GestureState::default()),
+            behavior: GestureDetectorBehavior::PassThrough,
+        }
+    }
+
+    fn pinch_event(delta: f32, phase: TouchPhase) -> ElementEvent {
+        ElementEvent::Pinch {
+            pos: CURSOR,
+            delta,
+            phase,
+        }
+    }
+
+    #[test]
+    fn a_trackpad_pinch_reaches_on_scale_as_a_scale_update_and_is_consumed() {
+        let scales: Rc<RefCell<Vec<ScaleData>>> = Rc::default();
+        let recorded = scales.clone();
+        let detector = detector_with(|handlers| {
+            handlers.set_on_scale(move |data: ScaleData| recorded.borrow_mut().push(data));
+        });
+
+        let started = detector.on_event(&pinch_event(0.0, TouchPhase::Started));
+        let moved = detector.on_event(&pinch_event(0.5, TouchPhase::Moved));
+
+        assert!(started.is_consumed() && moved.is_consumed());
+        assert_eq!(
+            *scales.borrow(),
+            vec![ScaleData {
+                focal_x: 30.0,
+                focal_y: 40.0,
+                scale: 1.5,
+                delta_scale: 1.5,
+                rotation: 0.0,
+                delta_rotation: 0.0,
+                focal_delta_x: 0.0,
+                focal_delta_y: 0.0,
+            }]
+        );
+    }
+
+    #[test]
+    fn a_trackpad_rotation_reaches_on_scale_with_the_angle() {
+        let scales: Rc<RefCell<Vec<ScaleData>>> = Rc::default();
+        let recorded = scales.clone();
+        let detector = detector_with(|handlers| {
+            handlers.set_on_scale(move |data: ScaleData| recorded.borrow_mut().push(data));
+        });
+
+        detector.on_event(&ElementEvent::Rotate {
+            pos: CURSOR,
+            delta: 0.25,
+            phase: TouchPhase::Started,
+        });
+
+        let seen = scales.borrow();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].rotation, 0.25);
+        assert_eq!(seen[0].delta_rotation, 0.25);
+        assert_eq!(seen[0].delta_scale, 1.0);
+    }
+
+    // The raw handler observes the pinch, but a Button watching its press that way
+    // must not swallow the pinch meant for the canvas it sits on.
+    #[test]
+    fn the_raw_handler_observes_a_trackpad_pinch_without_claiming_it() {
+        let seen: Rc<RefCell<Vec<GestureEvent>>> = Rc::default();
+        let recorded = seen.clone();
+        let detector = detector_with(|handlers| {
+            handlers.set_on_gesture(move |event: GestureEvent| recorded.borrow_mut().push(event));
+        });
+
+        let result = detector.on_event(&pinch_event(0.2, TouchPhase::Started));
+
+        assert!(!result.is_consumed(), "observing is not claiming");
+        assert!(
+            seen.borrow()
+                .iter()
+                .any(|event| matches!(event, GestureEvent::ScaleStart { .. }))
+        );
+    }
+
+    #[test]
+    fn a_detector_that_does_not_care_about_scale_ignores_the_pinch_entirely() {
+        let detector = detector_with(|handlers| handlers.set_on_tap(|| {}));
+
+        let result = detector.on_event(&pinch_event(0.2, TouchPhase::Started));
+
+        assert!(!result.is_consumed());
+        assert_eq!(*detector.state.borrow(), GestureState::default());
+    }
+
+    #[test]
+    fn a_platform_pan_reaches_on_pan_and_is_consumed() {
+        let pans: Rc<RefCell<Vec<PanData>>> = Rc::default();
+        let recorded = pans.clone();
+        let detector = detector_with(|handlers| {
+            handlers.set_on_pan(move |data: PanData| recorded.borrow_mut().push(data));
+        });
+
+        detector.on_event(&ElementEvent::Pan {
+            pos: CURSOR,
+            delta: Vec2d::ZERO,
+            phase: TouchPhase::Started,
+        });
+        let moved = detector.on_event(&ElementEvent::Pan {
+            pos: CURSOR,
+            delta: Vec2d { x: 5.0, y: -2.0 },
+            phase: TouchPhase::Moved,
+        });
+
+        assert!(moved.is_consumed());
+        assert_eq!(
+            *pans.borrow(),
+            vec![PanData {
+                x: 30.0,
+                y: 40.0,
+                delta_x: 5.0,
+                delta_y: -2.0
+            }]
+        );
+    }
+
+    #[test]
+    fn smart_zoom_reaches_on_smart_zoom_and_is_consumed() {
+        let zooms: Rc<RefCell<Vec<SmartZoomData>>> = Rc::default();
+        let recorded = zooms.clone();
+        let detector = detector_with(|handlers| {
+            handlers.set_on_smart_zoom(move |data: SmartZoomData| recorded.borrow_mut().push(data));
+        });
+
+        let result = detector.on_event(&ElementEvent::SmartZoom { pos: CURSOR });
+
+        assert!(result.is_consumed());
+        assert_eq!(*zooms.borrow(), vec![SmartZoomData { x: 30.0, y: 40.0 }]);
+    }
+
+    #[test]
+    fn smart_zoom_falls_through_a_detector_with_no_handler_for_it() {
+        let detector = detector_with(|handlers| handlers.set_on_scale(|_: ScaleData| {}));
+
+        assert!(
+            !detector
+                .on_event(&ElementEvent::SmartZoom { pos: CURSOR })
+                .is_consumed()
+        );
+    }
+
+    // A platform gesture is not filtered by bounds: the dispatcher has already
+    // hit-tested it at the cursor, as for a scroll.
+    #[test]
+    fn a_platform_gesture_is_accepted_wherever_the_dispatcher_delivered_it() {
+        let scales: Rc<RefCell<Vec<ScaleData>>> = Rc::default();
+        let recorded = scales.clone();
+        let detector = detector_with(|handlers| {
+            handlers.set_on_scale(move |data: ScaleData| recorded.borrow_mut().push(data));
+        });
+
+        detector.on_event(&ElementEvent::Pinch {
+            pos: Vec2d {
+                x: 5000.0,
+                y: 5000.0,
+            },
+            delta: 0.1,
+            phase: TouchPhase::Started,
+        });
+
+        assert_eq!(scales.borrow().len(), 1);
+    }
+
+    #[test]
+    fn a_cancel_ends_a_trackpad_pinch_that_was_running() {
+        let seen: Rc<RefCell<Vec<GestureEvent>>> = Rc::default();
+        let recorded = seen.clone();
+        let detector = detector_with(|handlers| {
+            handlers.set_on_gesture(move |event: GestureEvent| recorded.borrow_mut().push(event));
+        });
+        detector.on_event(&pinch_event(0.0, TouchPhase::Started));
+
+        detector.on_event(&ElementEvent::Cancel);
+
+        assert_eq!(seen.borrow().last(), Some(&GestureEvent::ScaleEnd));
+    }
+
+    #[test]
+    fn platform_gestures_map_to_pointer_events() {
+        assert!(matches!(
+            to_pointer_event(&pinch_event(0.1, TouchPhase::Moved)),
+            Some(PointerEvent::Pinch { .. })
+        ));
+        assert!(matches!(
+            to_pointer_event(&ElementEvent::Rotate {
+                pos: CURSOR,
+                delta: 0.1,
+                phase: TouchPhase::Moved
+            }),
+            Some(PointerEvent::Rotate { .. })
+        ));
+        assert!(matches!(
+            to_pointer_event(&ElementEvent::Pan {
+                pos: CURSOR,
+                delta: Vec2d::ZERO,
+                phase: TouchPhase::Moved
+            }),
+            Some(PointerEvent::Pan { .. })
+        ));
+        assert!(matches!(
+            to_pointer_event(&ElementEvent::SmartZoom { pos: CURSOR }),
+            Some(PointerEvent::SmartZoom { .. })
+        ));
     }
 }

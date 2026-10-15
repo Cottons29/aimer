@@ -10,7 +10,7 @@ use super::*;
 use std::cell::RefCell;
 use std::time::Duration;
 
-use aimer_animation::{Curve, ImplicitAnimatedBuilder};
+use aimer_animation::{curves, ImplicitAnimatedBuilder};
 use aimer_widget::StateUpdater;
 
 struct RootState {
@@ -56,7 +56,7 @@ impl State<Root> for RootState {
             ImplicitAnimatedBuilder::new(
                 self.target,
                 Duration::from_millis(300),
-                Curve::Linear,
+                curves::LINEAR,
                 move |value: &f32| {
                     values.borrow_mut().push(*value);
                     SizedBox::new()
