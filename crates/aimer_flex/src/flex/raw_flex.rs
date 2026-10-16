@@ -739,7 +739,15 @@ impl RawFlex {
         }
         let probed = probe.computed_size(&child_ctx);
 
-        Some(FlexLayout::estimated(len, probed, is_row, gap_main))
+        let layout = FlexLayout::estimated(len, probed, is_row, gap_main);
+        // Asked under another constraint than the one the held table was made
+        // for, which a layout pass and the render-tree synchronization do to one
+        // container in the same frame, the held table cannot answer. What it
+        // learned still stands, so the replacement starts from it.
+        if let Some(previous) = self.layout.learned() {
+            layout.inherit_learned(&previous);
+        }
+        Some(layout)
     }
 
     /// Compares the children about to be painted with the cached table, and

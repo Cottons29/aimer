@@ -1202,6 +1202,72 @@ mod tests {
         );
     }
 
+    /// The render-tree synchronization measures a container's child under the
+    /// container's own constraint, which is wider than the child's when the
+    /// container pads it. That measure reaches a list whose table is keyed by the
+    /// constraint layout used, misses it, and used to answer with a fresh
+    /// prediction from one probed row — discarding every correction, and with them
+    /// the scroll extent a scroll view had learned, for the frame the structure
+    /// changed in.
+    #[test]
+    fn a_windowed_list_keeps_its_corrected_extent_when_measured_under_another_width() {
+        let counters = Counters::default();
+        let ctx = scrolled_context(0.0);
+        let exact = 21.0 * ROW_EXTENT;
+
+        let old = varying_column(&counters, 1, 20).to_element(&ctx);
+        old.update(&ctx);
+        assert_eq!(old.computed_size(&ctx).height, exact);
+
+        let new = varying_column(&counters, 1, 20).to_element(&ctx);
+        new.adopt_runtime_state_from(old.as_ref());
+        replace_a_generated_subtree(&ctx);
+
+        // The synchronization's measure: the same list, a wider constraint.
+        let mut wider = scrolled_context(0.0);
+        wider.box_constraint.max_width += 144.0;
+        assert_eq!(
+            new.computed_size(&wider).height,
+            exact,
+            "measuring under another width threw the corrected extent away"
+        );
+
+        // Layout then asks again under its own constraint.
+        assert_eq!(
+            new.computed_size(&ctx).height,
+            exact,
+            "the correction did not survive the round trip"
+        );
+    }
+
+    /// The same collapse from the other side: what the list had learned was not a
+    /// correction but an exact measure of every row, which a bounded pass takes
+    /// of a windowed list. A prediction made anew must start from those extents
+    /// too, not from one probed row.
+    #[test]
+    fn a_windowed_list_keeps_its_measured_extent_when_remeasured_under_another_width() {
+        let counters = Counters::default();
+        let exact = 21.0 * ROW_EXTENT;
+
+        // Bounded main axis: every row is built and measured, so the table is exact.
+        let bounded = dummy_build_context(400.0, 8.0 * VIEWPORT, Some((0.0, 0.0, 400.0, VIEWPORT)));
+        let old = varying_column(&counters, 1, 20).to_element(&bounded);
+        assert_eq!(old.computed_size(&bounded).height, exact);
+
+        let new = varying_column(&counters, 1, 20).to_element(&bounded);
+        new.adopt_runtime_state_from(old.as_ref());
+        replace_a_generated_subtree(&bounded);
+
+        // A scroll viewport's unbounded main axis, under a different width.
+        let mut unbounded = scrolled_context(0.0);
+        unbounded.box_constraint.max_width += 144.0;
+        assert_eq!(
+            new.computed_size(&unbounded).height,
+            exact,
+            "the exact extents the list had measured were replaced by a guess"
+        );
+    }
+
     /// A bounded main axis means the container is not sizing itself for a scroll
     /// view, so there is nothing to win by predicting: it measures every child
     /// and reports the exact total.
