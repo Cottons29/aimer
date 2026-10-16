@@ -116,6 +116,9 @@ impl Rebuildable for StatelessElement {
     fn mark_needs_rebuild(&self) {
         let _mark = crate::components::element::begin_rebuild_mark();
         crate::components::element::with_rebuild_invalidation(|| {
+            // Unlike a `State`, a stateless element is built from a closure, and
+            // a closure may read anything it captured, so every mark reaches it
+            // (see `StatefulElement::mark_needs_rebuild` for the stateful case).
             self.dirty_source.mark();
             // Safety: single-threaded rendering pipeline.
             let child = unsafe { &*self.child.0.get() };

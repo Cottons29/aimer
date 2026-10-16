@@ -37,6 +37,25 @@ pub trait VisitorElement {
         None
     }
 
+    /// Names the retained element this one is a placement of, if it is one.
+    ///
+    /// Two placements that name the same element stand for one subtree seen
+    /// twice, so there is nothing to carry, match or compare between them.
+    #[doc(hidden)]
+    fn retained_identity(&self) -> Option<usize> {
+        None
+    }
+
+    /// Whether this retained element is a slot its owner declared with
+    /// `BuildContext::retain`.
+    ///
+    /// A slot is a part the owner named and keeps, so it is never the stand-in
+    /// for a different retained part that happened to occupy its position.
+    #[doc(hidden)]
+    fn is_retained_slot(&self) -> bool {
+        false
+    }
+
     #[doc(hidden)]
     fn element_id(&self) -> Option<ElementId> {
         None

@@ -344,6 +344,14 @@ impl<E: Element + 'static> VisitorElement for ElementNode<E> {
         self.element.reconciliation_key()
     }
 
+    fn retained_identity(&self) -> Option<usize> {
+        self.element.retained_identity()
+    }
+
+    fn is_retained_slot(&self) -> bool {
+        self.element.is_retained_slot()
+    }
+
     fn element_id(&self) -> Option<ElementId> {
         Some(self.id.get())
     }
@@ -508,7 +516,11 @@ impl<E: Element + 'static> Rebuildable for ElementNode<E> {
         // marking itself. If that child contains an untracked custom producer,
         // the retained path index has no source to point at; fall back to the
         // conservative walk for this explicit recursive mark.
-        if outermost && has_rebuild_source && !element_has_dirty_work(&self.element) {
+        if outermost
+            && has_rebuild_source
+            && !element_has_dirty_work(&self.element)
+            && !placement_left_clean(&self.element)
+        {
             mark_paint_invalidations_unknown();
             invalidate_dirty_paths();
         }
@@ -548,6 +560,23 @@ fn element_has_rebuild_source(element: &dyn Element) -> bool {
     };
     value.is::<crate::widget::stateless::StatelessElement>()
         || value.is::<crate::widget::stateful::StatefulElement>()
+}
+
+/// Returns whether a placement mark left `element` clean on purpose.
+///
+/// A placement skips a stateful element whose last build read no inherited
+/// context. That is a known outcome, not a producer the dirty-path index lost
+/// track of, so it must not discard the index.
+fn placement_left_clean(element: &dyn Element) -> bool {
+    if !super::placement_mark_active() {
+        return false;
+    }
+    let Some(value) = element.option_any() else {
+        return false;
+    };
+    value
+        .downcast_ref::<crate::widget::stateful::StatefulElement>()
+        .is_some_and(|stateful| !stateful.dirty_source.borrow().reads_context())
 }
 
 fn element_has_dirty_work(element: &dyn Element) -> bool {
@@ -865,6 +894,14 @@ impl VisitorElement for AnyElement {
 
     fn reconciliation_key(&self) -> Option<&Key> {
         self.as_ref().reconciliation_key()
+    }
+
+    fn retained_identity(&self) -> Option<usize> {
+        self.as_ref().retained_identity()
+    }
+
+    fn is_retained_slot(&self) -> bool {
+        self.as_ref().is_retained_slot()
     }
 
     fn element_id(&self) -> Option<ElementId> {
@@ -1202,6 +1239,14 @@ impl VisitorElement for Box<dyn Element> {
     }
     fn reconciliation_key(&self) -> Option<&Key> {
         self.as_ref().reconciliation_key()
+    }
+
+    fn retained_identity(&self) -> Option<usize> {
+        self.as_ref().retained_identity()
+    }
+
+    fn is_retained_slot(&self) -> bool {
+        self.as_ref().is_retained_slot()
     }
     fn element_id(&self) -> Option<ElementId> {
         self.as_ref().element_id()

@@ -1479,7 +1479,7 @@ fn same_element(left: &dyn Element, right: &dyn Element) -> bool {
     std::ptr::eq(
         left as *const dyn Element as *const (),
         right as *const dyn Element as *const (),
-    )
+    ) || crate::components::element::same_retained_child(left, right)
 }
 
 fn element_children(element: &dyn Element) -> smallvec::SmallVec<[&dyn Element; 8]> {
@@ -1652,7 +1652,8 @@ fn carry_unkeyed_child_state(old: &dyn Element, new: &dyn Element, ctx: &BuildCo
     // pairing walk can arrive with the same element on both sides. Nothing can
     // be carried from an element into itself, and descending would carry
     // everything below it twice.
-    if same_element(old, new) {
+    if same_element(old, new) || crate::components::element::different_retained_children(old, new)
+    {
         return;
     }
     new.with_rebuild_context(ctx, &mut |ctx| {
@@ -1847,7 +1848,9 @@ impl StatefulElement {
         // whether this element is ever drawn.
         let new_child = {
             let rf = unsafe { &*self.rebuild_fn.0.get() };
-            rf(ctx)
+            // The child placed here is new content, so no placement may skip it;
+            // see `without_placement_skip`.
+            crate::components::element::without_placement_skip(|| rf(ctx))
         };
         // Carry live state from nested StatefulElements into the new tree.
         let child_reconciliation = recover_operation(
@@ -2155,7 +2158,14 @@ impl Rebuildable for StatefulElement {
             let child = unsafe { &*self.child.0.get() };
             let carries_child_state = child.is_carry_state();
             if !carries_child_state {
-                self.dirty_source.borrow().mark();
+                let source = self.dirty_source.borrow();
+                // A placement only needs to reach builds that observed inherited
+                // context; this one read none, so it cannot differ from last time.
+                if !(crate::components::element::placement_mark_active()
+                    && !source.reads_context())
+                {
+                    source.mark();
+                }
             }
             child.mark_needs_rebuild();
             if carries_child_state {

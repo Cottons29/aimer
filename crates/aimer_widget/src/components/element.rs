@@ -167,6 +167,8 @@ thread_local! {
     static REBUILD_PATH: RefCell<Vec<ElementId>> = const { RefCell::new(Vec::new()) };
     static REBUILD_FORCE_DESCEND_DEPTH: Cell<usize> = const { Cell::new(0) };
     static REBUILD_MARK_DEPTH: Cell<usize> = const { Cell::new(0) };
+    static PLACEMENT_MARK_DEPTH: Cell<usize> = const { Cell::new(0) };
+    static PLACEMENT_SKIP_SUSPENDED: Cell<usize> = const { Cell::new(0) };
     static DRAW_DEPTH: Cell<usize> = const { Cell::new(0) };
     static DRAW_INVALIDATION_OWNER: Cell<Option<ElementId>> = const { Cell::new(None) };
     /// Paint invalidation metadata is retained for the current pair of
@@ -625,6 +627,57 @@ pub(crate) fn begin_rebuild_mark() -> (RebuildMarkGuard, bool) {
     (RebuildMarkGuard, outermost)
 }
 
+struct PlacementMarkGuard;
+
+impl Drop for PlacementMarkGuard {
+    fn drop(&mut self) {
+        PLACEMENT_MARK_DEPTH.with(|depth| depth.set(depth.get() - 1));
+    }
+}
+
+/// Runs `mark` as the mark a *placement* of a retained subtree makes.
+///
+/// A parent that rebuilds itself places its retained child again, and marks it
+/// so that builds which observed inherited context run again. Only a build that
+/// read such context can differ from its last run, so while this scope is open
+/// a self-rebuilding element whose last build read none
+/// ([`DirtySource::reads_context`]) leaves itself clean and only forwards the
+/// mark to its child. Every other mark — a window resize, a theme change, an
+/// explicit invalidation — is unaffected and stays conservative.
+pub(crate) fn with_placement_mark<R>(mark: impl FnOnce() -> R) -> R {
+    PLACEMENT_MARK_DEPTH.with(|depth| depth.set(depth.get() + 1));
+    let _guard = PlacementMarkGuard;
+    mark()
+}
+
+/// Runs `build` with placement skipping suspended: every mark it makes is a full
+/// one.
+///
+/// A placement may leave a stateful element clean because its last build read no
+/// inherited context, which assumes the element is the one that built last time.
+/// That does not hold while a fresh element adopts a live element's state: the
+/// child it places then is new content, built at construction and never since,
+/// and it has to be rebuilt to show the adopted state. Reconciliation wraps its
+/// adoption-time rebuild in this.
+pub(crate) fn without_placement_skip<R>(build: impl FnOnce() -> R) -> R {
+    struct Resume;
+    impl Drop for Resume {
+        fn drop(&mut self) {
+            PLACEMENT_SKIP_SUSPENDED.with(|depth| depth.set(depth.get() - 1));
+        }
+    }
+    PLACEMENT_SKIP_SUSPENDED.with(|depth| depth.set(depth.get() + 1));
+    let _resume = Resume;
+    build()
+}
+
+/// Returns whether the mark in progress is the one a placement makes.
+#[inline]
+pub(crate) fn placement_mark_active() -> bool {
+    PLACEMENT_SKIP_SUSPENDED.with(|depth| depth.get() == 0)
+        && PLACEMENT_MARK_DEPTH.with(|depth| depth.get() != 0)
+}
+
 struct DrawGuard;
 
 impl Drop for DrawGuard {
@@ -694,6 +747,13 @@ pub(crate) struct DirtySource {
     dirty: Rc<Cell<bool>>,
     path: RefCell<Option<Rc<[ElementId]>>>,
     indexed: Cell<bool>,
+    /// Whether the last build may have observed inherited context.
+    ///
+    /// Starts `true` and is cleared only when a build runs under a
+    /// [`BuildConsumer`](crate::components::context::BuildConsumer), which sets
+    /// it again on every untracked read. A source that never saw a tracked
+    /// build therefore stays conservative.
+    reads_context: Cell<bool>,
 }
 
 impl DirtySource {
@@ -702,7 +762,26 @@ impl DirtySource {
             dirty,
             path: RefCell::new(None),
             indexed: Cell::new(false),
+            reads_context: Cell::new(true),
         })
+    }
+
+    /// Starts a build that records whether it reads inherited context.
+    #[inline]
+    pub(crate) fn begin_build(&self) {
+        self.reads_context.set(false);
+    }
+
+    /// Records that the build in progress read inherited context.
+    #[inline]
+    pub(crate) fn note_context_read(&self) {
+        self.reads_context.set(true);
+    }
+
+    /// Returns whether the last build may have observed inherited context.
+    #[inline]
+    pub(crate) fn reads_context(&self) -> bool {
+        self.reads_context.get()
     }
 
     /// Marks the source dirty and returns whether it was clean before this
@@ -1716,6 +1795,14 @@ pub(crate) fn identities_are_compatible(old: &dyn Element, new: &dyn Element) ->
         return false;
     }
 
+    // Two different retained children are two different subtrees. Their
+    // elements outlive the build that placed them, so neither is the other's
+    // replacement: pairing them by position would carry one's state into the
+    // other.
+    if different_retained_children(old, new) {
+        return false;
+    }
+
     match (old.reconciliation_key(), new.reconciliation_key()) {
         (None, None) => true,
         (Some(old), Some(new)) => old == new,
@@ -1756,6 +1843,37 @@ pub(crate) fn reconcile_carried_tree(old: &dyn Element, new: &dyn Element, ctx: 
         .expect("fresh reconciliation plan must remain valid until commit");
 }
 
+/// Returns whether `old` and `new` are two placements of one retained child.
+///
+/// Both then stand for the same subtree, so reconciling them could only
+/// compare it with itself.
+#[inline]
+pub(crate) fn same_retained_child(old: &dyn Element, new: &dyn Element) -> bool {
+    matches!(
+        (old.retained_identity(), new.retained_identity()),
+        (Some(old), Some(new)) if old == new
+    )
+}
+
+/// Returns whether `old` and `new` are placements of two *different* retained
+/// slots.
+///
+/// A slot is a part its owner declared and keeps under a name, and its element
+/// outlives the build that placed it, so neither of two different slots
+/// replaces the other: whatever state each holds is its own, and nothing may be
+/// carried from one into the other by sharing a position.
+///
+/// Only slots are isolated this way. A retained child that is not a slot (a
+/// route page, say) is routinely replaced by another at the same position, and
+/// the state below it is meant to flow across.
+#[inline]
+pub(crate) fn different_retained_children(old: &dyn Element, new: &dyn Element) -> bool {
+    matches!(
+        (old.retained_identity(), new.retained_identity()),
+        (Some(old_id), Some(new_id)) if old_id != new_id
+    ) && (old.is_retained_slot() || new.is_retained_slot())
+}
+
 pub(crate) fn complete_generated_tree_reconciliation(old: &dyn Element, new: &dyn Element) {
     clear_removed_focus(old, new);
     // The replacement changes the subtree below `new` and nothing outside it.
@@ -1768,6 +1886,9 @@ fn event_callback_enabled(element: &dyn Element) -> bool {
 }
 
 fn clear_removed_focus(old: &dyn Element, new: &dyn Element) {
+    if same_retained_child(old, new) {
+        return;
+    }
     let Some((focused_element, focused_id, focused_node)) = find_focused_element(old) else {
         return;
     };
