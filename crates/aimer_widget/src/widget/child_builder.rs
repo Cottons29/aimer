@@ -127,6 +127,9 @@ struct Child {
     /// holds its own reference, with no borrow flag on the hot path and no
     /// `unsafe`.
     element: OnceCell<AnyElement>,
+    /// Whether the owner declared this child as a named slot, through
+    /// `BuildContext::retain`.
+    slot: bool,
 }
 
 /// How a [`Child`] produces its widget.
@@ -160,7 +163,13 @@ impl Child {
                     // The child's element survives, so its state, scroll offsets
                     // and GPU resources do, but the build closures inside it are
                     // asked again so they observe the new context.
-                    Some(element) => element.mark_needs_rebuild(),
+                    // Only builds that observed inherited context can differ now, so
+                    // the mark is a placement's, which spares the others.
+                    Some(element) => {
+                        crate::components::element::with_placement_mark(|| {
+                            element.mark_needs_rebuild()
+                        })
+                    }
                 }
                 RetainedChildElement(Rc::clone(self)).boxed()
             }
@@ -198,10 +207,24 @@ impl ChildBuilder {
             source: Some(Rc::new(Child {
                 origin: Origin::Once(Cell::new(Some(widget.boxed()))),
                 element: OnceCell::new(),
+                slot: false,
             })),
             key,
             debug_name,
         }
+    }
+
+    /// Stores a widget as a slot an owner declared with `BuildContext::retain`.
+    ///
+    /// Behaves as [`ChildBuilder::from_widget`], except that reconciliation
+    /// never treats it as the stand-in for a different retained child.
+    #[inline]
+    pub(crate) fn slot_from_widget<W: Widget + 'static>(widget: W) -> Self {
+        let mut builder = Self::from_widget(widget);
+        if let Some(child) = builder.source.as_mut().and_then(Rc::get_mut) {
+            child.slot = true;
+        }
+        builder
     }
 
     /// Stores a closure that produces a fresh subtree on every call.
@@ -230,6 +253,7 @@ impl ChildBuilder {
             source: Some(Rc::new(Child {
                 origin: Origin::Every(Box::new(build)),
                 element: OnceCell::new(),
+                slot: false,
             })),
             key: None,
             debug_name: "ChildBuilder",
@@ -389,6 +413,14 @@ impl VisitorElement for RetainedChildElement {
 
     fn reconciliation_key(&self) -> Option<&Key> {
         self.child().and_then(VisitorElement::reconciliation_key)
+    }
+
+    fn retained_identity(&self) -> Option<usize> {
+        Some(Rc::as_ptr(&self.0) as usize)
+    }
+
+    fn is_retained_slot(&self) -> bool {
+        self.0.slot
     }
 
     fn element_id(&self) -> Option<ElementId> {
@@ -726,6 +758,8 @@ mod tests {
 
     mod scroll_position;
     mod forwarded_redraw;
+    mod context_reads;
+    mod retain_slots;
     use crate::base::WindowHandle;
     use crate::components::element::broadcast_event;
     use crate::portable::{

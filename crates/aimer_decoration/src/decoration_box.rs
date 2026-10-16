@@ -364,3 +364,6 @@ mod magnification_tests;
 
 #[cfg(test)]
 mod light_edge_tests;
+
+#[cfg(test)]
+mod backdrop_filter_tests;

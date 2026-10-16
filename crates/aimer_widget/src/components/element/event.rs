@@ -375,6 +375,10 @@ pub struct EventDispatcher {
     index_patching_disabled: bool,
     /// The element-tree generation the index was last brought up to date at.
     indexed_tree_generation: u64,
+    /// The live-children generation the index was last rebuilt at. A windowed
+    /// container drops and builds rows without replacing itself, which no tree
+    /// generation reports, and every pointer to a dropped row is dangling.
+    indexed_live_children: u64,
     scoped_cursor: ScopedCursor,
     /// Whether the event tree must be rebuilt because the path index was.
     event_tree_stale: bool,
@@ -419,6 +423,7 @@ impl EventDispatcher {
             index_work: (0, 0),
             index_patching_disabled: false,
             indexed_tree_generation: u64::MAX,
+            indexed_live_children: u64::MAX,
             scoped_cursor: ScopedCursor::default(),
             event_tree_stale: true,
             generation_checked_frame: None,
@@ -1414,6 +1419,8 @@ impl EventDispatcher {
         if self.indexed_subtree_generation != root.subtree_generation()
             || self.indexed_root != root.element_id()
             || self.indexed_root_address != Some(root as *const dyn Element as *const ())
+            // A row dropped since the index was built is a dangling pointer.
+            || self.indexed_live_children != live_children_generation()
         {
             return None;
         }
@@ -1471,7 +1478,11 @@ impl EventDispatcher {
             }
         };
 
-        if root_address_changed {
+        // Read on every call rather than once per event frame: windows slide
+        // during layout, after this epoch's first look at the tree.
+        let live_children = live_children_generation();
+        let live_children_changed = self.indexed_live_children != live_children;
+        if root_address_changed || live_children_changed {
             self.paths_dirty = true;
         }
         if !self.paths_dirty {
@@ -1486,7 +1497,13 @@ impl EventDispatcher {
         // change must not take them: an element that is not offered the move that
         // leaves it would stay hovered.
         self.invalidate_hit_chain();
-        if !root_address_changed && !self.index_patching_disabled && self.patch_path_index(root) {
+        // A patch only refreshes pointers of same-shaped replaced subtrees; a
+        // changed child set needs the full walk.
+        if !root_address_changed
+            && !live_children_changed
+            && !self.index_patching_disabled
+            && self.patch_path_index(root)
+        {
             self.index_work.1 += 1;
             self.indexed_subtree_generation = generation;
             self.paths_dirty = false;
@@ -1526,6 +1543,7 @@ impl EventDispatcher {
         self.indexed_root_address = Some(root_address);
         self.indexed_unscoped = unscoped_element_tree_generation();
         self.indexed_tree_generation = element_tree_generation();
+        self.indexed_live_children = live_children;
         self.scoped_cursor = scoped_rebuild_cursor();
         self.paths_dirty = false;
         self.event_tree_stale = true;

@@ -533,7 +533,7 @@ where
             }
         }
         if previous_range != (0..len) {
-            aimer_widget::notify_retained_render_structure_changed();
+            aimer_widget::notify_live_children_changed();
         }
         self.clear_recycled();
         self.eager.set(true);
@@ -569,7 +569,7 @@ where
             for index in wanted {
                 live.elements.push_back(build(index));
             }
-            aimer_widget::notify_retained_render_structure_changed();
+            aimer_widget::notify_live_children_changed();
             return;
         }
 
@@ -596,7 +596,7 @@ where
                 self.retire(leaving, element);
             }
         }
-        aimer_widget::notify_retained_render_structure_changed();
+        aimer_widget::notify_live_children_changed();
     }
 
     fn take_retained(&self) -> Vec<RetainedRow> {
@@ -694,6 +694,31 @@ mod tests {
         assert!(children.get(13).is_some());
         assert!(children.get(10 - OVERSCAN - 1).is_none());
         assert!(children.get(13 + OVERSCAN + 1).is_none());
+    }
+
+    /// Every change to the live window reaches the event index, whose pointers
+    /// to dropped rows would otherwise dangle: a jump, a slide and a full
+    /// materialization all drop or build rows in place.
+    #[test]
+    fn every_window_change_reports_the_live_children_change() {
+        let built = Rc::new(Cell::new(0));
+        let children = source(&built);
+        let ctx = dummy_build_context(100.0, 100.0, None);
+        let mut seen = aimer_widget::live_children_generation();
+        let mut advanced = |what: &str| {
+            let now = aimer_widget::live_children_generation();
+            assert_ne!(now, seen, "{what} must report the change");
+            seen = now;
+        };
+
+        children.window(100..110, &ctx);
+        advanced("the first window");
+        children.window(101..111, &ctx);
+        advanced("a slide");
+        children.window(50_000..50_004, &ctx);
+        advanced("a jump");
+        children.materialize_all(&ctx);
+        advanced("materializing every row");
     }
 
     /// Only the materialized children are visited, which is the sparse half of

@@ -16,6 +16,7 @@ use tokio::runtime::Handle;
 
 use crate::components::element::DirtySource;
 
+mod retain;
 mod type_id_hasher;
 mod window_handle;
 
@@ -177,6 +178,9 @@ pub struct BuildConsumer {
     dirty_source: Rc<DirtySource>,
     cleanups: RefCell<Vec<Box<dyn FnOnce()>>>,
     dependencies: RefCell<HashSet<usize>>,
+    /// Parts of this scope's output kept between its builds; see
+    /// [`BuildContext::retain`].
+    retained: RefCell<retain::Slots>,
 }
 
 impl BuildConsumer {
@@ -185,6 +189,7 @@ impl BuildConsumer {
             dirty_source: DirtySource::new(dirty.clone()),
             cleanups: RefCell::new(Vec::new()),
             dependencies: RefCell::new(HashSet::new()),
+            retained: RefCell::new(retain::Slots::default()),
         })
     }
 
@@ -193,6 +198,8 @@ impl BuildConsumer {
     }
 
     pub(crate) fn begin_build(&self) {
+        self.dirty_source.begin_build();
+        self.retained.borrow_mut().begin_build();
         self.dependencies.borrow_mut().clear();
         for cleanup in self.cleanups.borrow_mut().drain(..) {
             cleanup();
@@ -426,7 +433,27 @@ impl<'a> BuildContext<'a> {
             .insert(TypeId::of::<T>(), Rc::new(state));
     }
 
+    /// Returns the nearest inherited `T`, if one is in scope.
+    ///
+    /// Inside a build this records that the widget building observed inherited
+    /// context, which is what makes it rebuild when a parent places it again.
+    /// A value that announces its own changes (a provider read through
+    /// `watch` or `select`) does not need that and uses
+    /// [`BuildContext::get_state_untracked`].
     pub fn get_state<T: Any>(&self) -> Option<Rc<T>> {
+        if let Some(consumer) = self.current_build_consumer() {
+            consumer.dirty_source.note_context_read();
+        }
+        self.get_state_untracked::<T>()
+    }
+
+    /// Returns the nearest inherited `T` without recording a context read.
+    ///
+    /// Only for a caller that subscribes to the value's changes some other way:
+    /// skipping the record means a parent's rebuild will not rebuild the widget
+    /// building, so nothing but that subscription would.
+    #[doc(hidden)]
+    pub fn get_state_untracked<T: Any>(&self) -> Option<Rc<T>> {
         self.inherited_states
             .borrow()
             .get(&TypeId::of::<T>())
@@ -558,12 +585,14 @@ impl<'a> BuildContext<'a> {
         callback: impl FnOnce(&Self) -> R,
     ) -> R {
         consumer.begin_build();
-        self.with_state(CurrentBuildConsumer(consumer), callback)
+        let result = self.with_state(CurrentBuildConsumer(consumer.clone()), callback);
+        consumer.retained.borrow_mut().end_build();
+        result
     }
 
     #[doc(hidden)]
     pub fn current_build_consumer(&self) -> Option<Rc<BuildConsumer>> {
-        self.get_state::<CurrentBuildConsumer>()
+        self.get_state_untracked::<CurrentBuildConsumer>()
             .map(|consumer| consumer.0.clone())
     }
 

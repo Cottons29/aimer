@@ -265,6 +265,9 @@ fn collect_matches<'a>(
         return;
     }
     matches.push(ReconciliationMatch { old, new, kind });
+    if crate::components::element::same_retained_child(old, new) {
+        return;
+    }
     let old_children = structural_children(old);
     let new_children = structural_children(new);
     let mut claimed = SmallVec::<[bool; 8]>::from_elem(false, old_children.len());

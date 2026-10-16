@@ -1,12 +1,16 @@
 use aimer_attribute::{ResolvedSize, Vec2d};
 use aimer_canvas::{Canvas, MaterialDrawRequest, MaterialKind};
 
-use super::Decoration;
+use super::{Decoration, declared_corner_radii};
 
 /// Filters content already painted behind a [`super::DecorationBox`].
 ///
-/// The filter covers the box's rectangular bounds and leaves child layout and
-/// painting unchanged. Ancestor canvas clips apply to the filtered region.
+/// The filter covers the box's bounds and leaves child layout and painting
+/// unchanged. Its corners take the nearest preceding
+/// [`BorderRadius`](crate::BorderRadius) or [`BoxDecoration`](crate::BoxDecoration)
+/// radius in the same decoration stack, so glass is `[BorderRadius, BackdropFilter]`;
+/// a radius that follows the filter does not reach back, and with none the
+/// corners are square. Ancestor canvas clips apply to the filtered region.
 /// It adds no tint, border, shadow, highlight, or refraction. Blur uses a
 /// separable Gaussian kernel with a standard deviation of one third of the
 /// radius, truncated at the radius.
@@ -25,6 +29,17 @@ use super::Decoration;
 /// let panel = DecorationBox::new()
 ///     .decoration(BackdropFilter::new().blur_radius(16.0).saturation(0.5))
 ///     .child(SizedBox::new().width(240).height(80));
+/// ```
+///
+/// A rounded panel declares its shape first:
+///
+/// ```
+/// use aimer_container::SizedBox;
+/// use aimer_decoration::{BackdropFilter, BorderRadius, Decoration, DecorationBox};
+///
+/// let glass = DecorationBox::new()
+///     .decoration([BorderRadius::from(26).notype(), BackdropFilter::new().notype()])
+///     .child(SizedBox::new().width(240).height(52));
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BackdropFilter {
@@ -121,7 +136,8 @@ impl Decoration for BackdropFilter {
         request.opacity = 1.0;
         request.border_color = [0.0; 4];
         request.border_width = 0.0;
-        request.corner_radii = [0.0; 4];
+        request.corner_radii =
+            declared_corner_radii(canvas, MaterialDrawRequest::MAX_CORNER_RADIUS);
         request.shadow_color = [0.0; 4];
         request.shadow_blur = 0.0;
         request.elevation = 0.0;

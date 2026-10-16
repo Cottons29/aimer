@@ -821,6 +821,51 @@ impl FlexLayout {
         true
     }
 
+    /// Takes over what `previous` learned about the extent of its children.
+    ///
+    /// A prediction made anew would otherwise start from its probed row alone,
+    /// and a scroll view reading its total sees the extent it had learned
+    /// collapse back to the guess. What a prediction corrected, and what a
+    /// measured table holds for every child, is recorded against *this*
+    /// prediction's assumed size, so the total stays consistent, and a frame
+    /// that finds one of them wrong corrects it as usual.
+    ///
+    /// Does nothing unless this table is a prediction and `previous` describes
+    /// the same number of children along the same axis. A table with flex
+    /// children is not inherited from, because each share depends on what the
+    /// others consumed.
+    pub(crate) fn inherit_learned(&self, previous: &FlexLayout) {
+        if self.origin != Origin::Estimated
+            || previous.has_flex
+            || self.len != previous.len
+            || self.is_row != previous.is_row
+        {
+            return;
+        }
+        match previous.origin {
+            Origin::Estimated => {
+                let corrected: Vec<(usize, ResolvedSize)> =
+                    match previous.refinement.borrow().as_ref() {
+                        Some(refinement) => refinement
+                            .sizes
+                            .iter()
+                            .map(|(&index, &size)| (index, size))
+                            .collect(),
+                        None => return,
+                    };
+                for (index, size) in corrected {
+                    self.refine(index, size);
+                }
+            }
+            Origin::Measured => {
+                for index in 0..previous.len {
+                    self.refine(index, previous.size(index));
+                }
+            }
+            Origin::Declared => {}
+        }
+    }
+
     /// Index of the first child whose main-axis start no longer satisfies
     /// `keep`.
     ///
@@ -1074,6 +1119,21 @@ impl FlexLayoutCache {
             return None;
         }
         Some(Rc::clone(&cached.layout))
+    }
+
+    /// Returns the table held now when it is a prediction or a measure,
+    /// whatever constraint it was made under.
+    ///
+    /// A table is keyed by the constraint of the pass that made it, but what it
+    /// learned — the exact extent of every child a frame corrected, or of every
+    /// child a bounded pass measured — does not belong to that constraint
+    /// alone. This is how a replacement prediction finds what to inherit when
+    /// the constraint it is asked under differs.
+    #[inline]
+    pub(crate) fn learned(&self) -> Option<Rc<FlexLayout>> {
+        let slot = unsafe { &*self.table.get() };
+        let cached = slot.as_ref()?;
+        (!cached.layout.is_declared()).then(|| Rc::clone(&cached.layout))
     }
 
     /// Returns a measured table whose generation is stale but whose children

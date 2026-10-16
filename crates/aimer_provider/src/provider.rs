@@ -473,7 +473,7 @@ impl ProviderContext for BuildContext<'_> {
 
     #[track_caller]
     fn try_watch<T: 'static>(&self) -> Option<Snapshot<T>> {
-        let provided = self.get_state::<Provided<T>>()?;
+        let provided = self.get_state_untracked::<Provided<T>>()?;
         let Some(consumer) = self.current_build_consumer() else {
             #[cfg(feature = "portable-guest")]
             if self.is_portable() {
@@ -503,7 +503,7 @@ impl ProviderContext for BuildContext<'_> {
         &self,
         selector: impl Fn(&T) -> R + 'static,
     ) -> R {
-        let Some(provided) = self.get_state::<Provided<T>>() else {
+        let Some(provided) = self.get_state_untracked::<Provided<T>>() else {
             panic!(
                 "No provider for `{}` found in the current widget scope",
                 type_name::<T>()
