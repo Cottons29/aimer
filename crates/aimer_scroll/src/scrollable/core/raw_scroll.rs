@@ -346,6 +346,17 @@ impl<E: Element> RawScrollableContainer<E> {
             return;
         }
 
+        // What the frame just painted was drawn against this range. Only the
+        // axis the container scrolls along can show a difference, so a
+        // correction that leaves it as it was needs no frame to display it.
+        let axis = self.ctrl.axis;
+        let painted_range = self.ctrl.cached_content_size_valid.get().then(|| {
+            (
+                Self::along(axis, self.ctrl.cached_content_size.get()),
+                Self::along(axis, self.ctrl.cached_max_scroll.get()),
+            )
+        });
+
         self.ctrl.cached_content_size.set(content_size);
         self.ctrl.cached_content_size_valid.set(true);
 
@@ -383,9 +394,24 @@ impl<E: Element> RawScrollableContainer<E> {
             self.layout_cache.snapshot.set(None);
         }
 
-        // The child may have changed the extent without owning a redraw source
-        // (RawFlex requests one itself, but custom elements need this fallback).
-        ctx.window.request_redraw();
+        let corrected_range = (
+            Self::along(axis, content_size),
+            Self::along(axis, max_scroll),
+        );
+        if preserve_content_end || painted_range != Some(corrected_range) {
+            // The child may have changed the extent without owning a redraw source
+            // (RawFlex requests one itself, but custom elements need this fallback).
+            ctx.window.request_redraw();
+        }
+    }
+
+    /// The component of `value` along the scroll axis.
+    #[inline]
+    fn along<T: AxisComponents>(axis: crate::ScrollAxis, value: T) -> f32 {
+        match axis {
+            crate::ScrollAxis::Vertical => value.vertical(),
+            crate::ScrollAxis::Horizontal => value.horizontal(),
+        }
     }
 
     /// Computes the total size this scrollable occupies under `ctx`.
@@ -402,6 +428,36 @@ impl<E: Element> RawScrollableContainer<E> {
     }
 }
 
+/// A two-dimensional value whose components can be read by axis.
+trait AxisComponents: Copy {
+    fn horizontal(self) -> f32;
+    fn vertical(self) -> f32;
+}
+
+impl AxisComponents for ResolvedSize {
+    #[inline]
+    fn horizontal(self) -> f32 {
+        self.width
+    }
+
+    #[inline]
+    fn vertical(self) -> f32 {
+        self.height
+    }
+}
+
+impl AxisComponents for Vec2d {
+    #[inline]
+    fn horizontal(self) -> f32 {
+        self.x
+    }
+
+    #[inline]
+    fn vertical(self) -> f32 {
+        self.y
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
@@ -414,6 +470,8 @@ mod tests {
     };
 
     use super::*;
+
+    mod redraw_after_refresh;
 
     struct CapturingChild {
         events: Rc<Cell<usize>>,
