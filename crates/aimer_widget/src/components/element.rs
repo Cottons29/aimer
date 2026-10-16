@@ -37,6 +37,7 @@ use crate::pointer_claim;
 use crate::{AnyElement, Drawable, Key};
 
 mod event;
+mod live_children;
 mod scoped_rebuild;
 #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
 mod animation_only;
@@ -66,6 +67,7 @@ use compositor_applied::{
     compositor_animation_may_be_applied, forget_unmapped_compositor_animations,
     note_compositor_animation_applied, note_compositor_animation_cleared,
 };
+pub use live_children::{live_children_generation, notify_live_children_changed};
 pub use scoped_rebuild::{
     ScopedCursor, has_scoped_rebuilds_since, scoped_rebuild_cursor, scoped_rebuilds_since,
     unscoped_element_tree_generation,
