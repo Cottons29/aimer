@@ -1154,7 +1154,7 @@ pub fn retained_render_structure_generation() -> u64 {
 #[inline]
 pub fn notify_retained_render_structure_changed() {
     RETAINED_RENDER_STRUCTURE_GENERATION
-        .fetch_update(Ordering::Release, Ordering::Relaxed, |generation| {
+        .try_update(Ordering::Release, Ordering::Relaxed, |generation| {
             generation.checked_add(1)
         })
         .expect("exhausted all retained render structure generations");
@@ -1586,7 +1586,7 @@ pub fn notify_layout_changed() {
 #[inline]
 pub(crate) fn advance_layout_invalidation_generation() {
     LAYOUT_INVALIDATION_GENERATION
-        .fetch_update(Ordering::Release, Ordering::Relaxed, |generation| {
+        .try_update(Ordering::Release, Ordering::Relaxed, |generation| {
             generation.checked_add(1)
         })
         .expect("exhausted all layout invalidation generations");
@@ -1618,7 +1618,7 @@ pub(crate) fn advance_rebuild_invalidation_generation() {
 #[inline]
 fn advance_tracked_rebuild_invalidation_generation() {
     REBUILD_INVALIDATION_GENERATION
-        .fetch_update(Ordering::Release, Ordering::Relaxed, |generation| {
+        .try_update(Ordering::Release, Ordering::Relaxed, |generation| {
             generation.checked_add(1)
         })
         .expect("exhausted all rebuild invalidation generations");
@@ -1660,7 +1660,7 @@ fn advance_element_tree_generation_counter() {
         invalidate_dirty_paths();
     }
     ELEMENT_TREE_GENERATION
-        .fetch_update(Ordering::Release, Ordering::Relaxed, |generation| {
+        .try_update(Ordering::Release, Ordering::Relaxed, |generation| {
             generation.checked_add(1)
         })
         .expect("exhausted all element-tree generations");
