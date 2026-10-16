@@ -280,3 +280,166 @@ fn profile_showcase_set_state() {
         );
     }
 }
+
+/// Renders idle frames of the mounted showcase for `IDLE_SECONDS` seconds
+/// (default 15), so a sampling profiler can be attached to the process:
+///
+/// ```text
+/// IDLE_SECONDS=20 cargo nextest run -p jaime -j 1 -E 'test(idle_frame_loop) & binary_id(jaime)' --run-ignored only --no-capture
+/// sample "$(pgrep -n -f 'jaime-.*idle_frame_loop')" 10 -file idle.txt
+/// ```
+#[test]
+#[ignore = "profiling harness: runs until a timeout and asserts nothing"]
+fn idle_frame_loop() {
+    let labels = Rc::new(Labels::default());
+    let mut app = AimerApp::start_headless_with(
+        theme::provide(Captured { labels }),
+        HeadlessOptions {
+            size: PhysicalSize::new(1280, 4200),
+            scale_factor: 1.0,
+        },
+    );
+    app.pump_frames(8);
+    let seconds = std::env::var("IDLE_SECONDS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(15);
+    let deadline = Instant::now() + std::time::Duration::from_secs(seconds);
+    let mut samples = Vec::new();
+    while Instant::now() < deadline {
+        let start = Instant::now();
+        app.render_frame();
+        samples.push(start.elapsed().as_secs_f64() * 1e3);
+    }
+    let nodes = app.paint_source_census().map(|census| census.local_v2);
+    println!(
+        "idle frames: {}   median {:.2} ms   render nodes: {:?}",
+        samples.len(),
+        median(samples),
+        nodes
+    );
+}
+
+/// Cost of a window resize with a page mounted, next to a forced idle frame.
+///
+/// A drag delivers a stream of `Resized` events; each one rebuilds what reads
+/// the window and draws a frame. Run with:
+///
+/// ```text
+/// cargo nextest run -p jaime -j 1 -E 'test(profile_resize_frames) & binary_id(jaime)' --run-ignored only --no-capture
+/// ```
+#[test]
+#[ignore = "profiling harness: prints timings and asserts nothing"]
+fn profile_resize_frames() {
+    const PAGES: [&str; 8] = [
+        "Text basics",
+        "Selectable text",
+        "Animated list",
+        "Align",
+        "Stack + Positioned",
+        "Border and outline",
+        "Routing",
+        "Asset image",
+    ];
+    let scale = 1.0;
+    let labels = Rc::new(Labels::default());
+    let mut app = AimerApp::start_headless_with(
+        theme::provide(Captured {
+            labels: labels.clone(),
+        }),
+        HeadlessOptions {
+            size: PhysicalSize::new(1280, 4200),
+            scale_factor: scale,
+        },
+    );
+    app.pump_frames(8);
+    labels.capture.set(true);
+    app.render_frame();
+    labels.capture.set(false);
+    let sidebar: Vec<(String, f32, f32)> = labels
+        .found
+        .borrow()
+        .iter()
+        .filter(|(_, x, _)| *x < SIDEBAR_LOGICAL_WIDTH)
+        .cloned()
+        .collect();
+
+    println!(
+        "\n{:<18} {:>7} {:>9} {:>14} {:>12} {:>11} {:>8} {:>8}",
+        "page", "nodes", "idle ms", "resize ms", "settle ms", "us/node", "full", "scoped"
+    );
+    let mut width = 1280u32;
+    for page in PAGES {
+        if let Some((_, x, y)) = sidebar.iter().find(|(text, _, _)| text == page) {
+            click_at(&mut app, *x, *y, scale);
+        } else {
+            println!("{page:<18} (not found in the sidebar)");
+            continue;
+        }
+        app.pump_frames(8);
+        let idle = median(
+            (0..7)
+                .map(|_| {
+                    let start = Instant::now();
+                    app.render_frame();
+                    start.elapsed().as_secs_f64() * 1e3
+                })
+                .collect(),
+        );
+        let nodes = app.paint_source_census().map_or(0, |census| census.local_v2);
+        let syncs_before = app.sync_counts();
+        let (mut resize, mut settle, mut total) = (Vec::new(), Vec::new(), Vec::new());
+        for step in 0..21 {
+            // A drag moves the edge a few pixels at a time.
+            width = if step % 2 == 0 { width + 6 } else { width - 6 };
+            let start = Instant::now();
+            app.send_window_event(WindowEvent::Resized(PhysicalSize::new(width, 4200)));
+            let handled = start.elapsed().as_secs_f64() * 1e3;
+            let after = Instant::now();
+            app.pump_frames(4);
+            let settled = after.elapsed().as_secs_f64() * 1e3;
+            resize.push(handled);
+            settle.push(settled);
+            total.push(handled + settled);
+        }
+        let syncs = app.sync_counts();
+        let total = median(total);
+        println!(
+            "{page:<18} {nodes:>7} {idle:>9.2} {:>14.2} {:>12.2} {:>11.2} {:>8} {:>8}",
+            median(resize),
+            median(settle),
+            total * 1e3 / nodes.max(1) as f64,
+            syncs.0 - syncs_before.0,
+            syncs.1 - syncs_before.1,
+        );
+    }
+}
+
+/// Delivers resize events for `IDLE_SECONDS` seconds (default 15) on the
+/// default page, so a sampling profiler can be attached; see `idle_frame_loop`.
+#[test]
+#[ignore = "profiling harness: runs until a timeout and asserts nothing"]
+fn resize_frame_loop() {
+    let labels = Rc::new(Labels::default());
+    let mut app = AimerApp::start_headless_with(
+        theme::provide(Captured { labels }),
+        HeadlessOptions {
+            size: PhysicalSize::new(1280, 4200),
+            scale_factor: 1.0,
+        },
+    );
+    app.pump_frames(8);
+    let seconds = std::env::var("IDLE_SECONDS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(15);
+    let deadline = Instant::now() + std::time::Duration::from_secs(seconds);
+    let (mut width, mut frames) = (1280u32, 0usize);
+    while Instant::now() < deadline {
+        width = if frames % 2 == 0 { width + 6 } else { width - 6 };
+        app.send_window_event(WindowEvent::Resized(PhysicalSize::new(width, 4200)));
+        app.pump_frames(4);
+        frames += 1;
+    }
+    println!("resize frames: {frames}");
+}
