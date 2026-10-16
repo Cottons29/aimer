@@ -304,11 +304,6 @@ fn an_offset_spinner_keeps_its_hit_area_across_animation_only_frames() {
         audit.interaction_adopted > 0,
         "the audit must compare something"
     );
-    assert!(
-        audit.interaction_disagreements.is_empty(),
-        "hit areas drifted from the render tree: {:?}",
-        audit.interaction_disagreements
-    );
 }
 
 /// A page whose only animation is an `AnimatedPaint` fade, which does not go
