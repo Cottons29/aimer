@@ -57,6 +57,10 @@ mod tests {
     impl EventElement for MeasuredPositionedChild {}
 
     impl LayoutElement for MeasuredPositionedChild {
+        fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
+            self.content_size(ctx)
+        }
+
         fn content_size(&self, _ctx: &BuildContext) -> ResolvedSize {
             ResolvedSize {
                 width: 320.0,

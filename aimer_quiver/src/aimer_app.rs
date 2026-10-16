@@ -2498,6 +2498,8 @@ mod tests {
             .clone();
         assert!(caret.is_focused());
         assert!(caret.is_available());
+        let focused_caret_geometry = caret.geometry();
+        let focused_offset = caret.offset();
 
         let click = Vec2d {
             x: bounds.x + 8.0,
@@ -2522,7 +2524,11 @@ mod tests {
             controller.value().selection().focus() < text.len(),
             "deferred click moves the caret from the initial end position"
         );
-        assert_ne!(click_revision, focused_revision);
+        // The caret is a retained child: moving it leaves the field's text
+        // commands unchanged, so the field recording keeps its revision.
+        assert_eq!(click_revision, focused_revision);
+        assert_ne!(caret.offset(), focused_offset);
+        assert_ne!(caret.geometry(), focused_caret_geometry);
         assert_eq!(caret.offset(), controller.value().selection().focus());
         assert!(caret.geometry().height.is_finite() && caret.geometry().height > 0.0);
         assert_eq!(legacy_text_command_count(&click_packet), 0);

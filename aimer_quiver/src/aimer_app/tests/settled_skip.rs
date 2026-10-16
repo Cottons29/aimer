@@ -365,41 +365,42 @@ fn skipping_draws_exactly_what_a_full_revisit_draws() {
     aimer_widget::set_settled_offscreen_skip(true);
 
     for delta in script {
-        let mut skipped_frames = Vec::new();
-        let mut full_frames = Vec::new();
-        // The two scenes must be driven by the same input and drawn with their
-        // own setting, so the switch is flipped around each scene's frames.
-        aimer_widget::set_settled_offscreen_skip(true);
-        with_skip.scroll(delta, |scene, _, _| {
-            skipped_frames.push((scene.offset(), scene.plan()));
-        });
-        aimer_widget::set_settled_offscreen_skip(false);
-        without_skip.scroll(delta, |scene, _, _| {
-            full_frames.push((scene.offset(), scene.plan()));
-        });
-
-        // The smoother steps by wall-clock time, so under load the two scenes
-        // can take different frame counts on the way. Frames that landed on the
-        // same offset must be drawn the same; the settled end of the notch,
-        // whose offset only depends on the distance, must match completely.
-        for (frame, (skipped, full)) in skipped_frames.iter().zip(&full_frames).enumerate() {
-            if skipped.0 == full.0 {
-                assert_eq!(
-                    skipped.1, full.1,
-                    "plans differ at frame {frame} after {delta}"
-                );
+        // Deliver a fixed sequence at the smoother's output boundary. Using
+        // two wall-clock-driven smoothers rounds each scene's offsets
+        // differently and can change device classification under load.
+        // Exact matching inputs let every frame's plan be compared exactly.
+        for frame in 0..8 {
+            let event = ElementEvent::Scroll {
+                delta: Vec2d { x: 0.0, y: delta / 8.0 },
+                phase: match frame {
+                    0 => TouchPhase::Started,
+                    7 => TouchPhase::Ended,
+                    _ => TouchPhase::Moved,
+                },
+                kind: aimer_events::element::ScrollDeltaKind::Line,
+                is_direct_manipulation: false,
+            };
+            for (skip, scene) in [(true, &mut with_skip), (false, &mut without_skip)] {
+                aimer_widget::set_settled_offscreen_skip(skip);
+                crate::aimer_app::request_scroll_frame(|| {
+                    let result = scene.app.app.dispatch_element_event(
+                        Vec2d { x: 50.0, y: 150.0 },
+                        &event,
+                    );
+                    assert!(result.needs_redraw(), "the scroll step must move the list");
+                });
+                scene.app.render_frame();
             }
-        }
 
-        let (skipped_end, full_end) = (skipped_frames.last().unwrap(), full_frames.last().unwrap());
-        assert_eq!(
-            skipped_end.0, full_end.0,
-            "settled offsets differ after {delta}"
-        );
-        assert_eq!(
-            skipped_end.1, full_end.1,
-            "settled plans differ after {delta}"
-        );
+            assert_eq!(
+                with_skip.offset(), without_skip.offset(),
+                "offsets differ at frame {frame} after {delta}"
+            );
+            assert_eq!(
+                with_skip.plan(), without_skip.plan(),
+                "plans differ at frame {frame} after {delta}"
+            );
+        }
     }
     aimer_widget::set_settled_offscreen_skip(true);
 }

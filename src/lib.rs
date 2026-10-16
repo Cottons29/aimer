@@ -351,6 +351,7 @@ mod tests {
             Align, AnyWidget, AspectRatio, Container, Expanded, Opacity, Positioned, Scrollable,
             SizedBox, ZeroSizedBox,
         };
+
         #[cfg(feature = "provider")]
         use aimer::{Provider, StoreProvider};
 

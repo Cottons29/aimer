@@ -544,55 +544,60 @@ fn the_counter_counts() {
 #[tokio::test]
 async fn converting_a_decorated_container_adds_no_allocation() {
     let ctx = context();
+    let memory = aimer_rubick::UiMemory::new(2 * 1024 * 1024);
+    let allocator = memory.allocator();
 
-    // Warm the pooled element storage the way a running application does:
-    // the first frames pay for their blocks, the steady state reuses them.
-    for _ in 0..4 {
+    allocator.scope(|| {
+        // App builds use the UI heap, including Rubick's provenance header.
+        // Warm its storage before measuring the steady-state conversion.
+        for _ in 0..4 {
+            drop(
+                Container::new()
+                    .box_decoration(shadowed())
+                    .child(SizedBox::new())
+                    .to_element(&ctx),
+            );
+        }
+
+        let before_decoration = allocations();
+        let decoration = shadowed();
+        let describing = allocations() - before_decoration;
+
+        let committed_before_build = memory.committed_bytes();
+        let before_build = allocations();
         drop(
             Container::new()
-                .box_decoration(shadowed())
+                .box_decoration(decoration)
                 .child(SizedBox::new())
                 .to_element(&ctx),
         );
-    }
+        let building = allocations() - before_build;
+        assert_eq!(memory.committed_bytes(), committed_before_build);
 
-    let before_decoration = allocations();
-    let decoration = shadowed();
-    let describing = allocations() - before_decoration;
-
-    let before_build = allocations();
-    drop(
-        Container::new()
-            .box_decoration(decoration)
-            .child(SizedBox::new())
-            .to_element(&ctx),
-    );
-    let building = allocations() - before_build;
-
-    assert_eq!(
-        describing, 1,
-        "the shadow list is the one allocation a decorated container costs, \
-         and it is paid when the decoration is described"
-    );
-    assert_eq!(
-        building, 0,
-        "the conversion must hand the shadow list to the element rather than \
-         copy it, and must find its element block in the pool: a warm build \
-         of a decorated container reaches the allocator zero times"
-    );
+        assert_eq!(
+            describing, 1,
+            "the shadow list is the one allocation a decorated container costs, \
+             and it is paid when the decoration is described"
+        );
+        assert_eq!(
+            building, 0,
+            "the conversion must hand the shadow list to the element rather than \
+             copy it, and must reuse the UI heap: a warm build of a decorated \
+             container reaches the global allocator zero times"
+        );
+    });
 }
 
-/// A container's element has to fit the largest class the `aimer_rubick`
-/// pool serves — 512 bytes — or every build allocates it from the global
-/// allocator and every drop frees it again, because an oversized payload is
-/// unpooled and can never be recycled.
+/// Keep the container payload within its 512-byte size budget. Rubick's
+/// provenance header is additional storage; the app-owned UI heap serves
+/// the combined allocation, as checked by the conversion test above.
 ///
 /// The element is dominated by its [`BoxDecoration`], which is dominated by
 /// its eight border and outline colors. That is why a color is stored as one
 /// packed word: with a color wide enough to carry HSLA components this
 /// element measured 576 bytes and spilled out of the pool.
 #[test]
-fn a_container_element_fits_a_pooled_block() {
+fn a_container_element_stays_within_its_size_budget() {
     eprintln!("Container Size : {}", size_of::<Container>());
     eprintln!(
         "Container element size: {}",
@@ -601,7 +606,7 @@ fn a_container_element_fits_a_pooled_block() {
 
     assert!(
         size_of::<RawContainer<AnyElement>>() <= 512,
-        "a container element grew past the largest pooled class: {} bytes",
+        "a container element grew past its payload size budget: {} bytes",
         size_of::<RawContainer<AnyElement>>()
     );
 }

@@ -308,7 +308,7 @@ mod tests {
         FontFamily, FontStyle, FontWeight, TextAlign, TextDecoration, TextDecorationLine,
         TextDecorationStyle, TextOverflow,
     };
-    use aimer_style::{LineHeight, TextStyle, TextTransform};
+    use aimer_style::{LineHeight, TextAlign, TextStyle, TextTransform};
     #[cfg(feature = "portable-guest")]
     use aimer_widget::PortableWidget;
     use aimer_widget::base::{BuildContext, WindowHandle};

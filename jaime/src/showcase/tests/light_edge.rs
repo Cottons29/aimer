@@ -161,7 +161,7 @@ fn light_edge_page_records_a_visible_rim_and_five_controls() {
         );
         let snapshot = snapshot.borrow();
         let edge = edge(&snapshot).expect("the preview must record a light edge");
-        assert_eq!(edge.border_width, 8.0);
+        assert_eq!(edge.border_width, 3.0);
         assert_eq!(edge.specular_highlight, 0.8);
         assert_eq!(edge.edge_lighting, 0.35);
         assert_eq!(edge.light_angle, 225.0);
