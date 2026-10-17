@@ -3,6 +3,7 @@ pub mod animated_builder;
 pub mod animated_paint;
 pub mod animated_switcher;
 pub mod container_transform;
+pub mod expand_transform;
 pub mod implicit_animation;
 pub mod morph_transition;
 pub mod shared_element;
@@ -12,7 +13,8 @@ pub use animated::{Animated, AnimationEffect};
 pub use animated_builder::AnimatedBuilder;
 pub use animated_paint::{AnimatedPaint, PaintPresentation, PresentationClip};
 pub use animated_switcher::AnimatedSwitcher;
-pub use container_transform::{ContainerTransformFrame, ContainerTransformSpec, ElementBounds};
+pub use container_transform::{ContainerTransformFrame, ContainerTransformSpec, ElementBounds, StageSpans};
+pub use expand_transform::ExpandSpec;
 pub use implicit_animation::ImplicitAnimatedBuilder;
 pub use morph_transition::{MorphTransition, Rgba};
 pub use shared_element::{

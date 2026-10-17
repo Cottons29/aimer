@@ -1,9 +1,20 @@
 //! A page growing out of the item that opened it: standalone and routed.
 //!
-//! Both previews wrap their grid items in `SharedElement`; the page grows out
-//! of the tapped item and, on Back, shrinks into it again.
+//! The first two previews wrap their grid items in `SharedElement`; the page
+//! grows out of the tapped item and, on Back, shrinks into it again. The third
+//! does the same for the rows of a feed, which are as wide as the page: there
+//! the page cannot shrink to the item's width, so it is revealed through a
+//! window that grows out of the row instead (`reveal`).
+//!
+//! Each preview shows a different way to set the motion up. The routed grid
+//! keeps the defaults. The standalone grid runs a linear timeline with a curve
+//! for each element. The rows play it in three stages (`staged`) and tune every
+//! step: how long it takes, how much the row scales first, how the window grows
+//! last, how far the page behind dims, how much everything blurs while the row
+//! turns into the page, and how round the window's corners are.
 
 use std::rc::Rc;
+use std::time::Duration;
 
 use aimer::animation::{curves, SharedElement};
 use aimer::input::button::Button;
@@ -17,6 +28,9 @@ use crate::theme;
 const TILE: f32 = 150.0;
 const PREVIEW_WIDTH: f32 = 332.0;
 const PREVIEW_HEIGHT: f32 = 400.0;
+const ROW_HEIGHT: f32 = 72.0;
+/// How long a row takes to open and to close again.
+const ROW_DURATION: Duration = Duration::from_millis(600);
 
 fn album_color(id: u32) -> Color {
     match id % 4 {
@@ -37,6 +51,14 @@ fn routed_tag(route: &AlbumRoute) -> Option<Key> {
     match route {
         AlbumRoute::Grid => None,
         AlbumRoute::Album(id) => Some(Key::from(format!("routed-album-{id}"))),
+    }
+}
+
+/// The tag of the row a revealed page grows out of.
+fn row_tag(route: &RowRoute) -> Option<Key> {
+    match route {
+        RowRoute::Feed => None,
+        RowRoute::Row(id) => Some(Key::from(format!("routed-row-{id}"))),
     }
 }
 
@@ -63,6 +85,24 @@ fn tile(id: u32, tag: Key, on_press: impl Fn() + 'static, white: Color) -> AnyWi
                     .height(Dimension::Px(TILE))
                     .padding(LayoutSpacing::all(Spacing::Px(12)))
                     .child(label(format!("Album {id}"), 18, white)),
+            )
+    }).boxed()
+}
+
+/// One row of the feed: as wide as the page, so the page is revealed from it.
+fn feed_row(id: u32, on_press: impl Fn() + 'static, white: Color) -> AnyWidget {
+    let on_press = Rc::new(on_press);
+    let tag = row_tag(&RowRoute::Row(id)).expect("rows have tags");
+    SharedElement::new().tag(tag).child_with(move || {
+        let on_press = Rc::clone(&on_press);
+        Button::new()
+            .on_press(move || on_press())
+            .decoration(BoxDecoration::new().background_color(album_color(id)).border_radius(12))
+            .child(
+                Container::new()
+                    .height(Dimension::Px(ROW_HEIGHT))
+                    .padding(LayoutSpacing::all(Spacing::Px(12)))
+                    .child(label(format!("Row {id}"), 18, white)),
             )
     }).boxed()
 }
@@ -125,6 +165,30 @@ fn preview(title: &'static str, note: &'static str, body: impl Widget + 'static,
         .boxed()
 }
 
+/// How a row opens, in three stages with every step of the motion set.
+///
+/// The timeline is linear, and each stage is a third of it. First the row
+/// scales up a little (`lift`), easing out. Then it turns into the page, which
+/// fades in on it while everything goes out of focus and back (`blur`). Last the
+/// page scales to fit the screen as a window that grows from the row, quickly at
+/// first and settling slowly. The feed behind dims a little, and the window
+/// keeps the row's 12px corners until it fills the page, which is square.
+/// Going back plays the stages in the opposite order.
+fn row_transition() -> ContainerTransition<RowRoute> {
+    ContainerTransition::new()
+        .tag(row_tag)
+        .staged(true)
+        .lift(1.06)
+        .duration(ROW_DURATION)
+        .curve(curves::LINEAR)
+        .anchor_curve(curves::EASE_OUT)
+        .page_curve(curves::FAST_OUT_SLOW_IN)
+        .scrim(0.25)
+        .blur(10.0)
+        .source_radius(12.0)
+        .page_radius(0.0)
+}
+
 /// Builds the container-transform example without starting an application.
 pub fn container_transform_example() -> impl Widget {
     ContainerTransformExample
@@ -158,6 +222,13 @@ impl StatelessWidget for ContainerTransformExample {
                                     "ContainerTransition on a Navigator.",
                                     Navigator::new(AlbumRoute::Grid, |route| route.boxed())
                                         .transition(ContainerTransition::new().tag(routed_tag)),
+                                    theme,
+                                ),
+                                preview(
+                                    "Rows",
+                                    "reveal: a window grows out of a full-width row.",
+                                    Navigator::new(RowRoute::Feed, |route| route.boxed())
+                                        .transition(row_transition()),
                                     theme,
                                 ),
                             ])
@@ -223,6 +294,57 @@ impl Router for AlbumRoute {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Router)]
+enum RowRoute {
+    #[route("/")]
+    Feed,
+    #[route("/row/{}")]
+    Row(u32),
+}
+
+impl Router for RowRoute {
+    fn build(&self, _ctx: &BuildContext) -> AnyWidget {
+        match *self {
+            Self::Feed => RoutedFeed.boxed(),
+            Self::Row(id) => RoutedRow { id }.boxed(),
+        }
+    }
+}
+
+#[widget(Stateless)]
+struct RoutedFeed;
+
+impl StatelessWidget for RoutedFeed {
+    fn build(&self, ctx: &BuildContext) -> impl Widget {
+        let theme = ThemeData::copied(ctx);
+        let navigator = NavigatorController::<RowRoute>::of(ctx);
+        let white = theme.on_primary_color;
+        Container::new()
+            .padding(LayoutSpacing::all(Spacing::Px(8)))
+            .child(
+                Column::new()
+                    .gaps(LayoutSpacing::new().bottom(12))
+                    .children([0u32, 1, 2, 3].map(|id| {
+                        let navigator = navigator.clone();
+                        feed_row(id, move || navigator.push(RowRoute::Row(id)), white)
+                    })),
+            )
+    }
+}
+
+#[widget(Stateless)]
+struct RoutedRow {
+    id: u32,
+}
+
+impl StatelessWidget for RoutedRow {
+    fn build(&self, ctx: &BuildContext) -> impl Widget {
+        let theme = ThemeData::copied(ctx);
+        let navigator = NavigatorController::<RowRoute>::of(ctx);
+        album_page(self.id, move || navigator.pop(), theme.on_primary_color)
+    }
+}
+
 #[widget(Stateless)]
 struct RoutedGrid;
 
@@ -254,8 +376,6 @@ impl StatelessWidget for RoutedAlbum {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use aimer::animation::{ElementBounds, last_shared_element_bounds, shared_element_bounds};
     use aimer::quiver::winit::dpi::{PhysicalPosition, PhysicalSize};
     use aimer::quiver::winit::event::{DeviceId, ElementState, MouseButton, WindowEvent};
@@ -263,7 +383,7 @@ mod tests {
 
     use super::*;
 
-    const WINDOW: (u32, u32) = (1100, 700);
+    const WINDOW: (u32, u32) = (1500, 700);
 
     fn click(app: &mut aimer::HeadlessAimerApp<impl Widget + 'static>, at: (f32, f32)) {
         app.send_window_event(WindowEvent::CursorMoved {
@@ -442,6 +562,39 @@ mod tests {
             assert_ne!(standalone_tag(id), routed_tag(&AlbumRoute::Album(id)).unwrap());
         }
         assert!(routed_tag(&AlbumRoute::Grid).is_none());
+    }
+
+    #[test]
+    fn rows_are_registered_as_wide_as_the_page_they_open() {
+        let _app = app();
+
+        let rows = [0, 1, 2, 3].map(|id| {
+            shared_element_bounds(&row_tag(&RowRoute::Row(id)).unwrap())
+                .unwrap_or_else(|| panic!("row {id} is not registered"))
+        });
+        for row in rows {
+            near(row.height, ROW_HEIGHT, "row height");
+            // The grid's 8px of padding either side of a 332px preview.
+            near(row.width, PREVIEW_WIDTH - 16.0, "row width");
+        }
+        near(rows[1].y - rows[0].y, ROW_HEIGHT + 12.0, "row pitch");
+    }
+
+    #[test]
+    fn tapping_a_row_reveals_the_page_and_going_back_returns_to_the_row() {
+        let mut app = app();
+        let tag = row_tag(&RowRoute::Row(2)).unwrap();
+        let row = shared_element_bounds(&tag).expect("row 2 is registered");
+
+        click(&mut app, center(row));
+        app.pump_frames(3);
+        assert_retained_paint(&app, "rows, mid-motion");
+        assert!(settle(&mut app) > 5, "the push animates");
+
+        // The list is gone once the push finishes, but Back still knows the row.
+        let remembered = last_shared_element_bounds(&tag).expect("the row was remembered");
+        near(remembered.x, row.x, "remembered x");
+        near(remembered.y, row.y, "remembered y");
     }
 
     #[test]

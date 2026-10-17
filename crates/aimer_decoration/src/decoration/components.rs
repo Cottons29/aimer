@@ -9,6 +9,10 @@ use crate::{BorderRadius, BoxBorder, BoxDecoration, BoxOutline, BoxShadow, Decor
 /// Even a transparent color supplies an explicit background and overrides a
 /// container's fallback color. Later decoration layers inherit this background.
 ///
+/// The fill takes the shape earlier layers declared: after a [`BorderRadius`] in a
+/// list the corners are rounded, bounded to half the box. With no declared shape
+/// the fill is square.
+///
 /// ```
 /// use aimer_color::prelude::Color;
 /// use aimer_container::SizedBox;
@@ -23,7 +27,22 @@ impl Decoration for Color {
         if !scale.is_finite() || scale <= 0.0 {
             return;
         }
-        canvas.fill_color_rect(origin, size, *self);
+        // Radii are declared in logical pixels, the space the rect is in. Half the
+        // shorter side is as round as a box can get; a larger declaration is read
+        // as that.
+        let radii = crate::decoration_box::declared_corner_radii(
+            canvas,
+            (size.width.min(size.height) / 2.0).max(0.0),
+        );
+        canvas.fill_rect_styled(
+            Rect::new(origin.x, origin.y, size.width, size.height),
+            (*self).into(),
+            radii,
+            [0.0; 4],
+            Color::Transparent.into(),
+            [0.0; 4],
+            Color::Transparent.into(),
+        );
     }
 
     #[inline]

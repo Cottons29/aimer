@@ -5,10 +5,10 @@ mod fixtures;
 #[path = "backdrop_filter/wide.rs"]
 mod wide;
 use aimer::BackdropFilter;
-use aimer::cupid::backend::metal::MetalBackend;
-use aimer::cupid::backend::*;
-use aimer::cupid::frame::FramePacket;
-use aimer::cupid::renderer::RendererImpl;
+use aimer_cupid::backend::metal::MetalBackend;
+use aimer_cupid::backend::*;
+use aimer_cupid::frame::FramePacket;
+use aimer_cupid::renderer::RendererImpl;
 use fixtures::*;
 
 #[test]
@@ -59,8 +59,8 @@ fn backdrop_filter_native_metal_blends_thin_features_into_a_smooth_gaussian() {
 fn backdrop_filter_wide_ipad_toolbar() {
     let backend = MetalBackend::new().expect("Metal GPU for iPad-width backdrop validation");
     for aa in [
-        aimer::cupid::AntiAlias::Analytic,
-        aimer::cupid::AntiAlias::Msaa4x,
+        aimer_cupid::AntiAlias::Analytic,
+        aimer_cupid::AntiAlias::Msaa4x,
     ] {
         let mut renderer = RendererImpl::<MetalBackend>::with_antialiasing(
             &backend,

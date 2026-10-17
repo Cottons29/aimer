@@ -12,6 +12,7 @@ mod platform_gesture;
 #[cfg(not(target_arch = "wasm32"))]
 mod render_worker;
 mod scoped_sync;
+pub(crate) mod system_back;
 pub mod scroll_classifier;
 pub mod scroll_utils;
 #[cfg(any(target_os = "ios", test))]
@@ -1972,6 +1973,9 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent>
     for AimerApplicationHandler<W>
 {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        // Before the first frame builds the widget tree: the link that launched
+        // the app has to be waiting when the navigator is created.
+        crate::link_inbox::deliver_posted_links();
         run_startup_hooks(&mut self.startup_hooks, &mut self.startup_resources);
         if self.window.is_none() {
             self.macos_windowing = aimer_native::macos_windowing::take_pending();
@@ -2097,6 +2101,16 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent>
     }
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: AimerNativePlatformEvent) {
+        if let AimerNativePlatformEvent::Back(signal) = event {
+            // A back nothing answered is the platform's to resolve, and on
+            // Android that means leaving the app: winit never does it for us.
+            if system_back::handle_signal(signal) == system_back::BackOutcome::Unhandled
+                && system_back::UNHANDLED_BACK_EXITS
+            {
+                event_handler::WindowEventHandler::close_window(self, _event_loop);
+            }
+            return;
+        }
         if matches!(event, AimerNativePlatformEvent::ShutdownRequested) {
             // `exiting` follows, which tells the app's services to finish.
             _event_loop.exit();
@@ -2123,7 +2137,13 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent>
         // last warning before the process can be killed, and state that has not
         // reached storage by the time this returns may be lost.
         aimer_venus::notify_lifecycle(aimer_venus::Lifecycle::Background);
-        #[cfg(not(target_arch = "wasm32"))]
+        // winit reports iOS's `applicationWillResignActive:` as `suspended`, and
+        // UIKit sends that for Control Center, Notification Center, a call or the
+        // app switcher gesture while the window is still on screen. Releasing the
+        // surface here removes its layer, which blacks the window out (and the
+        // app switcher snapshot with it). Real backgrounding arrives as
+        // `Occluded(true)`, which pauses drawing without releasing anything.
+        #[cfg(all(not(target_arch = "wasm32"), not(target_os = "ios")))]
         self.render_ctx.suspend();
     }
 

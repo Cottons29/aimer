@@ -649,7 +649,24 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                             self.ctrl.clear_velocity_history();
                             self.ctrl.drag_mode.set(DragMode::Pending);
                             self.ctrl.last_pointer_pos.set(Some(*p));
+                            // The gesture is no longer this scroller's, so what it
+                            // claimed while it moved is given back to whoever
+                            // takes it next.
+                            aimer_widget::release_pointer(PointerKey::new(
+                                pointer.source,
+                                pointer.id,
+                            ));
                             return child_result;
+                        }
+                        if mode == DragMode::Content && moved {
+                            // The content is moving under this finger. Saying so
+                            // lets an ancestor that arbitrates touches, such as a
+                            // navigator that pops on a sideways swipe, leave the
+                            // gesture alone instead of inferring it.
+                            aimer_widget::claim_pointer(PointerKey::new(
+                                pointer.source,
+                                pointer.id,
+                            ));
                         }
                         self.ctrl.record_input_event();
                     }

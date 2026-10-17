@@ -107,7 +107,7 @@ impl<D: Decoration + 'static, W: Widget> Widget for DecorationBox<D, W> {
 /// Each radius is bounded to `0.0..=max`; negative and nonfinite radii yield
 /// square corners. Shared by the material decorations that adopt the box shape.
 #[inline]
-fn declared_corner_radii(canvas: &Canvas, max: f32) -> [f32; 4] {
+pub(crate) fn declared_corner_radii(canvas: &Canvas, max: f32) -> [f32; 4] {
     canvas
         .corner_radii()
         .map(|radius| if radius.is_finite() { radius.clamp(0.0, max) } else { 0.0 })

@@ -1,4 +1,8 @@
 mod container_transform;
+mod expand_transition;
+mod link;
+mod shell_swipe;
+mod swipe_back;
 pub mod navigator;
 pub mod outlet;
 pub mod router;
@@ -8,6 +12,8 @@ mod transition_host;
 mod routed_shell;
 pub use routed_shell::RoutedShell;
 pub use container_transform::ContainerTransform;
+pub use expand_transition::ExpandTransition;
+pub use swipe_back::{SwipeBack, SwipeBackArea};
 
 pub use navigator::*;
 pub use outlet::*;

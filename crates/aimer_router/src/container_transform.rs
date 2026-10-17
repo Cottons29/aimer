@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use aimer_animation::{
     AnimatedPaint, AnimationController, AnimationStatus, AnyCurve, ContainerTransformSpec, Curve,
-    ElementBounds, curves, PaintPresentation, SharedContent, StatusListener, last_shared_element,
+    ElementBounds, curves, PaintPresentation, SharedContent, StageSpans, StatusListener, last_shared_element,
     last_shared_element_bounds,
 };
 use aimer_attribute::Dimension;
@@ -30,6 +30,21 @@ pub(crate) struct ItemMotion {
     /// Whether a copy of the item leads the motion. The copy was laid out at the
     /// size the item had when `resolved`.
     pub anchored: bool,
+    /// Whether the page is revealed through a window rather than scaled; see
+    /// [`ContainerTransformSpec::reveal`].
+    pub reveal: bool,
+    /// Whether the page is scaled to fit inside the item; see
+    /// [`ContainerTransformSpec::fit`].
+    pub fit: bool,
+    /// Whether the motion plays as three stages; see
+    /// [`ContainerTransformSpec::staged`].
+    pub staged: bool,
+    /// How much the item's copy scales in a staged motion's first stage.
+    pub lift: Option<f32>,
+    /// How much the stages of a staged motion overlap.
+    pub stage_overlap: f32,
+    /// Where each stage of a staged motion runs, if placed by hand.
+    pub stage_spans: Option<StageSpans>,
     pub source_radius: f32,
     pub page_radius: f32,
     pub scrim: f32,
@@ -53,15 +68,22 @@ impl ItemMotion {
             _ => (item.width, item.height),
         };
         let item = ElementBounds::new(item.x - origin.0, item.y - origin.1, width, height);
-        Some(
-            ContainerTransformSpec::new(item, size)?
-                .source_radius(self.source_radius)
-                .page_radius(self.page_radius)
-                .scrim(self.scrim)
-                .anchored(self.anchored)
-                .anchor_curve(self.anchor_curve.clone())
-                .page_curve(self.page_curve.clone()),
-        )
+        let spec = ContainerTransformSpec::new(item, size)?
+            .source_radius(self.source_radius)
+            .page_radius(self.page_radius)
+            .scrim(self.scrim)
+            .anchored(self.anchored)
+            .reveal(self.reveal)
+            .fit(self.fit)
+            .staged(self.staged)
+            .lift(self.lift.unwrap_or(f32::NAN))
+            .stage_overlap(self.stage_overlap)
+            .anchor_curve(self.anchor_curve.clone())
+            .page_curve(self.page_curve.clone());
+        Some(match self.stage_spans {
+            Some(spans) => spec.stage_spans(spans),
+            None => spec,
+        })
     }
 }
 
@@ -105,6 +127,11 @@ pub struct ContainerTransform<W = RequiredChild> {
     source_radius: f32,
     page_radius: f32,
     scrim: f32,
+    reveal: bool,
+    staged: bool,
+    lift: Option<f32>,
+    stage_overlap: f32,
+    stage_spans: Option<StageSpans>,
     anchor_curve: AnyCurve,
     page_curve: AnyCurve,
 }
@@ -129,6 +156,11 @@ impl ContainerTransform {
             source_radius: 12.0,
             page_radius: 0.0,
             scrim: 0.35,
+            reveal: false,
+            staged: false,
+            lift: None,
+            stage_overlap: 0.0,
+            stage_spans: None,
             anchor_curve: AnyCurve::default(),
             page_curve: AnyCurve::default(),
         }
@@ -182,6 +214,55 @@ impl<W> ContainerTransform<W> {
         self
     }
 
+    /// Reveals the page through a window that grows out of the item, instead of
+    /// scaling the page to the item's width.
+    ///
+    /// Use it for an item as wide as the area, such as a row of a feed, where a
+    /// scaled page would only slide in. See [`ContainerTransformSpec::reveal`].
+    #[inline]
+    pub fn reveal(mut self, reveal: bool) -> Self {
+        self.reveal = reveal;
+        self
+    }
+
+    /// Plays the motion as three equal stages: the item scales, turns into the
+    /// page, and the page scales to fit the area. Off by default; implies
+    /// [`reveal`](Self::reveal). See [`ContainerTransformSpec::staged`].
+    ///
+    /// This widget has no layer to blur through, so the middle stage is a plain
+    /// dissolve; a [`ContainerTransition`](crate::ContainerTransition) blurs.
+    #[inline]
+    pub fn staged(mut self, staged: bool) -> Self {
+        self.staged = staged;
+        self
+    }
+
+    /// Sets how much the item's copy scales in a [staged](Self::staged) motion's
+    /// first stage. The default is `1.06`.
+    #[inline]
+    pub fn lift(mut self, lift: f32) -> Self {
+        self.lift = Some(lift);
+        self
+    }
+
+    /// Lets the stages of a [staged](Self::staged) motion run into each other,
+    /// by a fraction of a stage in `0.0..=0.9`. The default is `0.0`, one stage
+    /// after the other. See [`ContainerTransformSpec::stage_overlap`].
+    #[inline]
+    pub fn stage_overlap(mut self, overlap: f32) -> Self {
+        self.stage_overlap = overlap;
+        self
+    }
+
+    /// Places each stage of a [staged](Self::staged) motion on the timeline
+    /// yourself, replacing [`stage_overlap`](Self::stage_overlap). See
+    /// [`StageSpans`].
+    #[inline]
+    pub fn stage_spans(mut self, spans: StageSpans) -> Self {
+        self.stage_spans = Some(spans);
+        self
+    }
+
     /// Sets the easing of the item copy's travel from its slot to the page's
     /// card, over the copy's own phase. The default is linear.
     ///
@@ -215,6 +296,11 @@ impl<W> ContainerTransform<W> {
             source_radius: self.source_radius,
             page_radius: self.page_radius,
             scrim: self.scrim,
+            reveal: self.reveal,
+            staged: self.staged,
+            lift: self.lift,
+            stage_overlap: self.stage_overlap,
+            stage_spans: self.stage_spans,
             anchor_curve: self.anchor_curve,
             page_curve: self.page_curve,
         }
@@ -255,6 +341,11 @@ impl<W: Widget + 'static> StatefulWidget for ContainerTransform<W> {
             source_radius: self.source_radius,
             page_radius: self.page_radius,
             scrim: self.scrim,
+            reveal: self.reveal,
+            staged: self.staged,
+            lift: self.lift,
+            stage_overlap: self.stage_overlap,
+            stage_spans: self.stage_spans,
             anchor_curve: self.anchor_curve,
             page_curve: self.page_curve,
             anchor: None,
@@ -278,6 +369,11 @@ pub struct ContainerTransformState<W> {
     source_radius: f32,
     page_radius: f32,
     scrim: f32,
+    reveal: bool,
+    staged: bool,
+    lift: Option<f32>,
+    stage_overlap: f32,
+    stage_spans: Option<StageSpans>,
     anchor_curve: AnyCurve,
     page_curve: AnyCurve,
     /// A copy of the item the page grows from, when it can be drawn again.
@@ -320,6 +416,12 @@ impl<W> ContainerTransformState<W> {
             source_radius: self.source_radius,
             page_radius: self.page_radius,
             scrim: self.scrim.clamp(0.0, 1.0),
+            reveal: self.reveal,
+            fit: false,
+            staged: self.staged,
+            lift: self.lift,
+            stage_overlap: self.stage_overlap,
+            stage_spans: self.stage_spans,
             anchor_curve: self.anchor_curve.clone(),
             page_curve: self.page_curve.clone(),
         }
@@ -372,6 +474,11 @@ impl<W: Widget + 'static> State<ContainerTransform<W>> for ContainerTransformSta
         self.source_radius = new.source_radius;
         self.page_radius = new.page_radius;
         self.scrim = new.scrim;
+        self.reveal = new.reveal;
+        self.staged = new.staged;
+        self.lift = new.lift;
+        self.stage_overlap = new.stage_overlap;
+        self.stage_spans = new.stage_spans;
         self.anchor_curve = new.anchor_curve;
         self.page_curve = new.page_curve;
         self.controller.set_duration(new.controller.duration());

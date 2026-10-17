@@ -269,3 +269,29 @@ fn contexts_that_do_not_opt_in_never_wait_for_a_resize() {
     context.close();
     context.suspend();
 }
+
+/// iOS reports Control Center and Notification Center as a suspension. The
+/// surface has to survive them: dropping it removes the layer and the user sees
+/// (and the app switcher snapshots) a black window.
+#[test]
+fn a_paused_context_keeps_its_surface_and_records_nothing_until_resumed() {
+    let (mut context, release, _rendering) = ready_context(false);
+    assert!(context.can_begin_frame());
+
+    context.set_paused(true);
+    assert!(!context.can_begin_frame());
+    assert_eq!(
+        context.render_frame(|_, _, _| panic!("a paused context must not consume damage")),
+        PresentOutcome::Deferred
+    );
+    assert!(
+        context.worker.is_some() && context.is_ready(),
+        "pausing must not tear the worker down"
+    );
+
+    context.set_paused(false);
+    assert!(context.can_begin_frame());
+    release.send(()).unwrap();
+    context.close();
+    context.suspend();
+}

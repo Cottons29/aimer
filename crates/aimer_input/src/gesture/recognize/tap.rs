@@ -7,7 +7,7 @@
 use aimer_events::pointer::PointerInfo;
 use aimer_utils::AnimInstant;
 
-use crate::gesture::state::{GestureState, Press, Tap, moved_beyond_slop};
+use crate::gesture::state::{GestureState, Press, Tap, moved_beyond_tap_tolerance};
 use crate::gesture::{
     DOUBLE_TAP_TIMEOUT, GestureEvent, GestureMask, GestureOutput, LONG_PRESS_DURATION,
 };
@@ -77,9 +77,12 @@ pub fn is_unreported_long_press(press: &Press, now: AnimInstant, mask: GestureMa
 
 /// Settles a release that neither a drag nor a long press claimed.
 ///
-/// Either the pointer stayed within its device's slop — a tap, possibly the
-/// second half of a double tap — or it did not, in which case the press failed
-/// and is reported cancelled rather than silently forgotten.
+/// Either the pointer stayed within its device's tap tolerance — a tap, possibly
+/// the second half of a double tap — or it did not, in which case the press
+/// failed and is reported cancelled rather than silently forgotten.
+///
+/// Every gesture in `mask` is taken to own the press; see
+/// [`tap_or_cancel_claiming`].
 pub fn tap_or_cancel(
     state: &mut GestureState,
     press: &Press,
@@ -87,7 +90,23 @@ pub fn tap_or_cancel(
     now: AnimInstant,
     mask: GestureMask,
 ) -> GestureOutput {
-    if moved_beyond_slop(&press.pointer, &pointer) {
+    tap_or_cancel_claiming(state, press, pointer, now, mask, mask)
+}
+
+/// [`tap_or_cancel`], told which gestures own the press.
+///
+/// A double tap that is owned replaces the second tap. One that is only
+/// observed is reported *after* it, so the tap is not taken from a handler that
+/// never asked for a double tap.
+pub fn tap_or_cancel_claiming(
+    state: &mut GestureState,
+    press: &Press,
+    pointer: PointerInfo,
+    now: AnimInstant,
+    mask: GestureMask,
+    claims: GestureMask,
+) -> GestureOutput {
+    if moved_beyond_tap_tolerance(&press.pointer, &pointer) {
         state.last_tap = None;
         return GestureOutput::once(GestureEvent::TapCancel);
     }
@@ -97,7 +116,12 @@ pub fn tap_or_cancel(
 
     if mask.intersects(GestureMask::DOUBLE_TAP) && doubles(state.last_tap, pointer, now) {
         state.last_tap = None;
-        output.push(GestureEvent::DoubleTap { pointer });
+        if claims.intersects(GestureMask::DOUBLE_TAP) {
+            output.push(GestureEvent::DoubleTap { pointer });
+        } else {
+            output.push(GestureEvent::Tap { pointer });
+            output.push(GestureEvent::DoubleTap { pointer });
+        }
         return output;
     }
 
@@ -112,7 +136,7 @@ pub fn tap_or_cancel(
 fn doubles(last_tap: Option<Tap>, pointer: PointerInfo, now: AnimInstant) -> bool {
     last_tap.is_some_and(|last| {
         now.duration_since(last.at) < DOUBLE_TAP_TIMEOUT
-            && !moved_beyond_slop(&last.pointer, &pointer)
+            && !moved_beyond_tap_tolerance(&last.pointer, &pointer)
     })
 }
 

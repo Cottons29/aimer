@@ -690,6 +690,10 @@ impl<T: RangeValue> EventElement for RawSlider<T> {
                     && self.hit_test(pointer.pos.x, pointer.pos.y) =>
             {
                 let key = PointerKey::new(pointer.source, pointer.id);
+                // The thumb follows this finger from the press, so the gesture is
+                // the slider's: an ancestor that arbitrates touches must not take
+                // a sideways drag of it for something else.
+                aimer_widget::claim_pointer(key);
                 self.runtime.active_pointer.set(Some(key));
                 self.runtime.pressed.set(true);
                 self.runtime.request_visual_rebuild();
@@ -1327,6 +1331,8 @@ impl<T: RangeValue> EventElement for RawRangeSlider<T> {
             {
                 let key = PointerKey::new(pointer.source, pointer.id);
                 let thumb = self.choose_thumb(pointer.pos.x);
+                // See `RawSlider`: the thumb follows this finger from the press.
+                aimer_widget::claim_pointer(key);
                 self.runtime.active_pointer.set(Some(key));
                 self.runtime.active_thumb.set(Some(thumb));
                 self.runtime.pressed.set(true);

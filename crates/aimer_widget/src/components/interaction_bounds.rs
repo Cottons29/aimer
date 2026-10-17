@@ -17,6 +17,7 @@ use std::rc::Rc;
 
 use aimer_attribute::{Bounds, CacheBounds, Vec2d};
 use aimer_cupid::draw_cmd_v2::{RenderNodeId, RenderTree};
+use aimer_events::pointer::{PointerSource, last_pointer_source, min_touch_target};
 
 /// Largest disagreement, in logical pixels, that still counts as the same box.
 const TOLERANCE: f32 = 1.0;
@@ -268,6 +269,62 @@ impl InteractionBounds {
         })
     }
 
+    /// The active rectangle grown about its centre until each side is at least
+    /// [`min_touch_target`], which is what a touch hits.
+    ///
+    /// A side already that long is left alone, so the result always contains the
+    /// active rectangle.
+    pub fn touch_bounds(&self) -> Option<Bounds> {
+        let bounds = self.current()?;
+        let min = min_touch_target();
+        let grow_x = ((min - bounds.width) * 0.5).max(0.0);
+        let grow_y = ((min - bounds.height) * 0.5).max(0.0);
+        Some(Bounds::new(
+            bounds.x - grow_x,
+            bounds.y - grow_y,
+            bounds.width + grow_x * 2.0,
+            bounds.height + grow_y * 2.0,
+        ))
+    }
+
+    /// The touch rectangle as top-left and bottom-right corners.
+    #[inline]
+    pub fn touch_pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+        self.touch_bounds().map(|bound| {
+            (
+                Vec2d { x: bound.x, y: bound.y },
+                Vec2d {
+                    x: bound.x + bound.width,
+                    y: bound.y + bound.height,
+                },
+            )
+        })
+    }
+
+    /// Whether a pointer from `source` at `(x, y)` hits: the touch rectangle for
+    /// a finger, the active rectangle for anything else.
+    #[inline]
+    pub fn is_inside_for(&self, x: f32, y: f32, source: PointerSource) -> bool {
+        if self.is_inside(x, y) {
+            return true;
+        }
+        source == PointerSource::Touch && self.touch_bounds().is_some_and(|bound| bound.is_inside(x, y))
+    }
+
+    /// The rectangle hit testing should use for the pointer being routed: the
+    /// touch rectangle while a finger is, the active rectangle otherwise.
+    ///
+    /// The routed pointer is the one [`last_pointer_source`] reports, which the
+    /// dispatcher sets as each event enters the tree.
+    #[inline]
+    pub fn hit_pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+        if last_pointer_source() == PointerSource::Touch {
+            self.touch_pos_start_end()
+        } else {
+            self.pos_start_end()
+        }
+    }
+
     /// How the render tree's rectangle currently differs from the last canvas
     /// measurement, when it differs by more than a pixel.
     pub fn disagreement(&self, debug_name: &'static str) -> Option<InteractionDisagreement> {
@@ -351,6 +408,85 @@ mod tests {
             Some((Vec2d { x: 110.0, y: 110.0 }, Vec2d { x: 140.0, y: 130.0 }))
         );
         assert!(!bounds.is_inside(105.0, 105.0), "the margin does not hit");
+    }
+
+    fn with_min_touch_target<R>(size: f32, test: impl FnOnce() -> R) -> R {
+        let previous = aimer_events::pointer::min_touch_target();
+        aimer_events::pointer::set_min_touch_target(size);
+        let result = test();
+        aimer_events::pointer::set_min_touch_target(previous);
+        result
+    }
+
+    #[test]
+    fn a_small_rectangle_grows_about_its_centre_to_the_touch_target() {
+        with_min_touch_target(44.0, || {
+            let bounds = InteractionBounds::new();
+            bounds.save(1.0, 100.0, 200.0, 20.0, 30.0);
+
+            let grown = bounds.touch_bounds().expect("measured");
+
+            assert_eq!((grown.x, grown.y), (88.0, 193.0));
+            assert_eq!((grown.width, grown.height), (44.0, 44.0));
+        });
+    }
+
+    #[test]
+    fn a_rectangle_already_at_the_touch_target_does_not_grow() {
+        with_min_touch_target(44.0, || {
+            let bounds = InteractionBounds::new();
+            bounds.save(1.0, 10.0, 10.0, 200.0, 44.0);
+
+            let grown = bounds.touch_bounds().expect("measured");
+
+            assert_eq!((grown.x, grown.y), (10.0, 10.0));
+            assert_eq!((grown.width, grown.height), (200.0, 44.0));
+        });
+    }
+
+    #[test]
+    fn a_turned_off_touch_target_leaves_the_rectangle_alone() {
+        with_min_touch_target(0.0, || {
+            let bounds = InteractionBounds::new();
+            bounds.save(1.0, 100.0, 200.0, 20.0, 30.0);
+
+            assert!(!bounds.is_inside_for(95.0, 215.0, PointerSource::Touch));
+            assert_eq!(bounds.touch_pos_start_end(), bounds.pos_start_end());
+        });
+    }
+
+    #[test]
+    fn only_a_touch_hits_the_extra_area() {
+        with_min_touch_target(44.0, || {
+            let bounds = InteractionBounds::new();
+            bounds.save(1.0, 100.0, 200.0, 20.0, 30.0);
+
+            // Ten pixels left of the rectangle, level with its middle.
+            assert!(bounds.is_inside_for(95.0, 215.0, PointerSource::Touch));
+            assert!(!bounds.is_inside_for(95.0, 215.0, PointerSource::Mouse));
+            // The rectangle itself answers to both.
+            assert!(bounds.is_inside_for(110.0, 215.0, PointerSource::Mouse));
+            // Beyond the grown area, nothing does.
+            assert!(!bounds.is_inside_for(80.0, 215.0, PointerSource::Touch));
+        });
+    }
+
+    #[test]
+    fn the_hit_rectangle_follows_the_last_pointer_source() {
+        with_min_touch_target(44.0, || {
+            let bounds = InteractionBounds::new();
+            bounds.save(1.0, 100.0, 200.0, 20.0, 30.0);
+            let exact = bounds.pos_start_end();
+
+            aimer_events::pointer::note_pointer_source(PointerSource::Mouse);
+            assert_eq!(bounds.hit_pos_start_end(), exact);
+
+            aimer_events::pointer::note_pointer_source(PointerSource::Touch);
+            assert_eq!(bounds.hit_pos_start_end(), bounds.touch_pos_start_end());
+            assert_ne!(bounds.hit_pos_start_end(), exact);
+
+            aimer_events::pointer::note_pointer_source(PointerSource::Mouse);
+        });
     }
 
     #[test]

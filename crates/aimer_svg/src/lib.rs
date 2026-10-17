@@ -7,6 +7,8 @@ mod style;
 mod widget;
 
 #[cfg(test)]
+mod pointer_tests;
+#[cfg(test)]
 mod static_svg_tests;
 
 pub use aimer_cupid::svg::{

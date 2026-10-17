@@ -12,7 +12,7 @@ use std::rc::Rc;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
-use aimer_events::pointer::PointerEvent;
+use aimer_events::pointer::{PointerEvent, PointerSource};
 use aimer_macro::{PortableValue, PortableWidget};
 use aimer_utils::AnimInstant;
 use aimer_widget::InteractionBounds;
@@ -24,7 +24,7 @@ use aimer_widget::{
 
 use crate::callback::VoidCallback;
 use crate::gesture::handlers::GestureHandlers;
-use crate::gesture::recognize::{poll, recognize};
+use crate::gesture::recognize::{poll, recognize_claiming};
 use crate::gesture::state::GestureState;
 use crate::gesture::{
     DragCallback, DragUpdateCallback, GestureMask, GestureStreamCallback, PanCallback,
@@ -345,7 +345,13 @@ impl<E: Element> RawGestureDetector<E> {
     fn process(&self, event: &PointerEvent) {
         let output = {
             let mut state = self.state.borrow_mut();
-            recognize(&mut state, event, AnimInstant::now(), self.handlers.mask())
+            recognize_claiming(
+                &mut state,
+                event,
+                AnimInstant::now(),
+                self.handlers.mask(),
+                self.handlers.claimed(),
+            )
         };
         self.handlers.dispatch_all(output);
     }
@@ -440,7 +446,8 @@ fn should_accept_pointer_event(
     event: &ElementEvent,
     pos: Vec2d,
 ) -> bool {
-    if cached_bounds.is_inside(pos.x, pos.y) {
+    let source = event.pointer().map_or(PointerSource::Mouse, |pointer| pointer.source);
+    if cached_bounds.is_inside_for(pos.x, pos.y, source) {
         return true;
     }
 
@@ -538,11 +545,12 @@ impl<E: Element> EventElement for RawGestureDetector<E> {
 
         let output = {
             let mut state = self.state.borrow_mut();
-            recognize(
+            recognize_claiming(
                 &mut state,
                 &pointer_event,
                 AnimInstant::now(),
                 self.handlers.mask(),
+                self.handlers.claimed(),
             )
         };
 
@@ -555,6 +563,14 @@ impl<E: Element> EventElement for RawGestureDetector<E> {
             && !self.state.borrow().is_engaged()
         {
             return EventResult::ignored();
+        }
+
+        // A drag handler that has begun a drag owns the pointer for it. Saying so
+        // is what lets an ancestor that arbitrates touches (a scroll view, a
+        // navigator that pops on a sideways swipe) leave the gesture alone,
+        // without having to infer it from what this consumed.
+        if output.iter().any(|gesture| matches!(gesture, crate::gesture::GestureEvent::DragStart { .. })) {
+            aimer_widget::claim_pointer(aimer_widget::PointerKey::new(pointer.source, pointer.id));
         }
 
         self.handlers.dispatch_all(output);
@@ -599,9 +615,12 @@ impl<E: Element> LayoutElement for RawGestureDetector<E> {
         self.child.computed_size(ctx)
     }
 
+    /// A finger hits a larger area than a cursor, so the rectangle depends on the
+    /// pointer being routed.
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
-        self.cached_bounds.pos_start_end()
+        self.cached_bounds.hit_pos_start_end()
     }
+
 }
 
 impl<E: Element> Drawable for RawGestureDetector<E> {
@@ -765,6 +784,33 @@ mod tests {
             state: RefCell::new(GestureState::default()),
             behavior: GestureDetectorBehavior::PassThrough,
         }
+    }
+
+    /// An ancestor that arbitrates touches, such as a navigator that pops on a
+    /// sideways swipe, has to be able to tell that a descendant is dragging. The
+    /// claim is how: a pointer a drag handler is dragging is not for it to take.
+    #[test]
+    fn a_detector_that_starts_a_drag_claims_the_pointer_for_it() {
+        let detector = detector_with(|handlers| handlers.set_on_drag_start(|_| {}));
+        let key = aimer_widget::PointerKey::new(PointerSource::Touch, 3);
+
+        let _ = detector.on_event(&ElementEvent::PointerDown(touch(10.0, 10.0, 3)));
+        assert!(!aimer_widget::is_pointer_claimed(key), "pressed, not yet dragging");
+        let _ = detector.on_event(&ElementEvent::PointerMove(touch(80.0, 10.0, 3)));
+        assert!(aimer_widget::is_pointer_claimed(key), "the drag began");
+
+        aimer_widget::release_pointer(key);
+    }
+
+    #[test]
+    fn a_detector_with_no_drag_handler_never_claims_a_pointer() {
+        let detector = detector_with(|handlers| handlers.set_on_tap(|| {}));
+        let key = aimer_widget::PointerKey::new(PointerSource::Touch, 4);
+
+        let _ = detector.on_event(&ElementEvent::PointerDown(touch(10.0, 10.0, 4)));
+        let _ = detector.on_event(&ElementEvent::PointerMove(touch(90.0, 10.0, 4)));
+
+        assert!(!aimer_widget::is_pointer_claimed(key), "a button dragged off is not a drag");
     }
 
     #[test]
@@ -1077,6 +1123,112 @@ mod tests {
         let pointer = PointerInfo::mouse(Vec2d { x, y }, PointerButton::Primary);
         let _ = detector.on_event(&ElementEvent::PointerDown(pointer));
         let _ = detector.on_event(&ElementEvent::PointerUp(pointer));
+    }
+
+    /// A detector over a 20x20 control, the kind of target a fingertip misses.
+    fn small_control(taps: Rc<std::cell::Cell<usize>>) -> RawGestureDetector<TestElement> {
+        let detector = counting_detector(taps);
+        detector.cached_bounds.save(1.0, 100.0, 100.0, 20.0, 20.0);
+        detector
+    }
+
+    fn tap_with(detector: &RawGestureDetector<TestElement>, pointer: PointerInfo) {
+        let _ = detector.on_event(&ElementEvent::PointerDown(pointer));
+        let _ = detector.on_event(&ElementEvent::PointerUp(pointer));
+    }
+
+    /// Runs `test` with the touch target at 44px and the pointer source restored.
+    fn with_touch_target(test: impl FnOnce()) {
+        let previous = aimer_events::pointer::min_touch_target();
+        aimer_events::pointer::set_min_touch_target(44.0);
+        test();
+        aimer_events::pointer::set_min_touch_target(previous);
+        aimer_events::pointer::note_pointer_source(PointerSource::Mouse);
+    }
+
+    #[test]
+    fn a_touch_just_outside_a_small_control_still_taps_it() {
+        with_touch_target(|| {
+            let taps = Rc::new(std::cell::Cell::new(0));
+            let detector = small_control(taps.clone());
+
+            // Ten pixels left of the control: a miss by mouse, a hit by finger.
+            tap_with(&detector, touch(90.0, 110.0, 1));
+
+            assert_eq!(taps.get(), 1);
+        });
+    }
+
+    #[test]
+    fn a_mouse_just_outside_a_small_control_does_not_tap_it() {
+        with_touch_target(|| {
+            let taps = Rc::new(std::cell::Cell::new(0));
+            let detector = small_control(taps.clone());
+
+            click(&detector, 90.0, 110.0);
+
+            assert_eq!(taps.get(), 0, "the extra area is for fingers only");
+        });
+    }
+
+    #[test]
+    fn a_touch_beyond_the_extra_area_misses() {
+        with_touch_target(|| {
+            let taps = Rc::new(std::cell::Cell::new(0));
+            let detector = small_control(taps.clone());
+
+            tap_with(&detector, touch(70.0, 110.0, 1));
+
+            assert_eq!(taps.get(), 0);
+        });
+    }
+
+    #[test]
+    fn the_routed_rectangle_is_larger_only_while_a_finger_is_routed() {
+        with_touch_target(|| {
+            let detector = small_control(Rc::new(std::cell::Cell::new(0)));
+
+            aimer_events::pointer::note_pointer_source(PointerSource::Mouse);
+            assert_eq!(
+                detector.pos_start_end(),
+                Some((Vec2d { x: 100.0, y: 100.0 }, Vec2d { x: 120.0, y: 120.0 }))
+            );
+
+            aimer_events::pointer::note_pointer_source(PointerSource::Touch);
+            assert_eq!(
+                detector.pos_start_end(),
+                Some((Vec2d { x: 88.0, y: 88.0 }, Vec2d { x: 132.0, y: 132.0 }))
+            );
+        });
+    }
+
+    #[test]
+    fn a_touch_in_the_extra_area_reaches_the_detector_through_dispatch() {
+        with_touch_target(|| {
+            let taps = Rc::new(std::cell::Cell::new(0));
+            let mut handlers = GestureHandlers::new();
+            let counted = taps.clone();
+            handlers.set_on_tap(move || counted.set(counted.get() + 1));
+            let cached_bounds = InteractionBounds::new();
+            cached_bounds.save(1.0, 100.0, 100.0, 20.0, 20.0);
+            let detector = RawGestureDetector {
+                child: RecordingElement { events: Rc::default() }.boxed(),
+                cached_bounds,
+                window: WindowHandle::headless(winit::dpi::PhysicalSize::new(100, 100), 1.0),
+                handlers: Rc::new(handlers),
+                state: RefCell::new(GestureState::default()),
+                behavior: GestureDetectorBehavior::PassThrough,
+            }
+            .boxed();
+            let pointer = touch(90.0, 110.0, 1);
+
+            // The dispatcher notes the pointer source itself as the event enters.
+            let mut dispatcher = aimer_widget::EventDispatcher::new();
+            let _ = dispatcher.dispatch(detector.as_ref(), pointer.pos, &ElementEvent::PointerDown(pointer));
+            let _ = dispatcher.dispatch(detector.as_ref(), pointer.pos, &ElementEvent::PointerUp(pointer));
+
+            assert_eq!(taps.get(), 1);
+        });
     }
 
     #[test]

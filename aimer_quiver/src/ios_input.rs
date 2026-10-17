@@ -152,6 +152,28 @@ fn send(event: ElementEvent, flags: u64) {
     }
 }
 
+/// Hands the app a link UIKit opened it with: a custom-scheme URL or a universal
+/// link. The link is queued and delivered on the event loop's own thread, so this
+/// may be called at any time, including before the loop is running.
+///
+/// # Safety
+///
+/// `ptr` must reference `len` readable, initialized bytes for this call. A null
+/// pointer is allowed only for zero length. Invalid UTF-8 is rejected.
+#[cfg(target_os = "ios")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aimer_ios_open_url(ptr: *const u8, len: usize) {
+    if len == 0 || len > isize::MAX as usize || ptr.is_null() {
+        return;
+    }
+    // SAFETY: The caller owns the readable bytes throughout this call; bounds
+    // above satisfy slice length and non-null requirements.
+    let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
+    if let Ok(url) = std::str::from_utf8(bytes) {
+        crate::link_inbox::post_link(url.to_owned());
+    }
+}
+
 /// Forwards a UIKit mouse move (0), exit (1), down (2), up (3), or cancellation (4).
 /// Coordinates are logical window points; button numbers are zero based.
 #[cfg(target_os = "ios")]

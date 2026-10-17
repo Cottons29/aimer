@@ -954,6 +954,57 @@ mod tests {
         aimer_widget::release_pointer(PointerKey::new(PointerSource::Touch, 3));
     }
 
+    /// An ancestor that arbitrates touches (a navigator that pops on a sideways
+    /// swipe) has to be able to tell that a scroller is scrolling under the
+    /// finger. The scroll view says so by claiming the pointer.
+    #[test]
+    fn a_content_drag_that_moves_the_content_claims_the_pointer() {
+        let scrollable = sized_scrollable(
+            crate::ScrollAxis::Horizontal,
+            ResolvedSize { width: 300.0, height: 100.0 },
+        );
+        scrollable.ctrl.cached_max_scroll.set(Vec2d { x: 200.0, y: 0.0 });
+        scrollable.bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
+        let finger = PointerKey::new(PointerSource::Touch, 3);
+        let pointer = |x: f32| PointerInfo::touch(Vec2d { x, y: 50.0 }, 3);
+
+        let _ = scrollable.on_event(&ElementEvent::PointerDown(pointer(80.0)));
+        assert!(!aimer_widget::is_pointer_claimed(finger), "a press is not a scroll");
+        let _ = scrollable.on_event(&ElementEvent::PointerMove(pointer(60.0)));
+        let _ = scrollable.on_event(&ElementEvent::PointerMove(pointer(40.0)));
+
+        assert_ne!(scrollable.ctrl.scroll_offset.get().x, 0.0, "the content moved");
+        assert!(aimer_widget::is_pointer_claimed(finger), "so the scroller owns this touch");
+        aimer_widget::release_pointer(finger);
+    }
+
+    #[test]
+    fn a_scroller_that_cannot_move_the_way_the_finger_goes_does_not_claim_it() {
+        // At its start, dragging right: nothing to reveal, and no rubber band.
+        let mut scrollable = sized_scrollable(
+            crate::ScrollAxis::Horizontal,
+            ResolvedSize { width: 300.0, height: 100.0 },
+        );
+        Rc::get_mut(&mut scrollable.ctrl)
+            .expect("the test state is not shared yet")
+            .scroll_behavior
+            .bouncy = false;
+        scrollable.ctrl.cached_max_scroll.set(Vec2d { x: 200.0, y: 0.0 });
+        scrollable.bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
+        let finger = PointerKey::new(PointerSource::Touch, 3);
+        let pointer = |x: f32| PointerInfo::touch(Vec2d { x, y: 50.0 }, 3);
+
+        let _ = scrollable.on_event(&ElementEvent::PointerDown(pointer(20.0)));
+        let _ = scrollable.on_event(&ElementEvent::PointerMove(pointer(45.0)));
+        let _ = scrollable.on_event(&ElementEvent::PointerMove(pointer(70.0)));
+        let _ = scrollable.on_event(&ElementEvent::PointerMove(pointer(90.0)));
+
+        assert_eq!(scrollable.ctrl.scroll_offset.get().x, 0.0);
+        assert!(!aimer_widget::is_pointer_claimed(finger),
+            "an ancestor may take a gesture this scroller cannot use");
+        aimer_widget::release_pointer(finger);
+    }
+
     #[test]
     fn content_drag_scrolls_with_touch_but_not_with_mouse() {
         let mouse = sized_scrollable(

@@ -9,6 +9,7 @@ use aimer_widget::{
     VisitorElement, Widget, request_isolated_animation_frame,
 };
 
+use super::container_transform::ElementBounds;
 use crate::control::controller::AnimationController;
 use crate::primitives::time::AnimInstant;
 
@@ -30,6 +31,15 @@ pub struct PaintPresentation {
     /// that clips itself keeps doing so. A negative or non-finite value paints
     /// nothing for that frame.
     pub corner_radius: f32,
+    /// The part of the child that shows, in the child's own coordinates before
+    /// `transform`: everything outside it is clipped away, and `corner_radius`
+    /// rounds this rectangle instead of the child's bounds. `None` shows the
+    /// whole child.
+    ///
+    /// A child that grows out of a smaller item by revealing more of itself,
+    /// rather than by scaling, animates this rectangle from the item's bounds
+    /// to the child's own.
+    pub reveal: Option<ElementBounds>,
 }
 
 impl PaintPresentation {
@@ -38,6 +48,7 @@ impl PaintPresentation {
         transform: Mat3::identity(),
         opacity: 1.0,
         corner_radius: 0.0,
+        reveal: None,
     };
 
     /// Whether every component can be shown. A presentation that is not is
@@ -47,13 +58,15 @@ impl PaintPresentation {
             && self.corner_radius.is_finite()
             && self.corner_radius >= 0.0
             && self.transform.cols.iter().flatten().all(|value| value.is_finite())
+            && self.reveal.is_none_or(|reveal| reveal.is_valid())
     }
 
     /// Applies this presentation to the retained child at `child_index` of the
     /// element being synchronized, returning whether it could be shown.
     ///
     /// `child_size` is the child's size in logical pixels; a corner radius
-    /// clips exactly that rectangle. `clip` remembers whether this host put a
+    /// clips exactly that rectangle, unless a [`reveal`](Self::reveal) names
+    /// another. `clip` remembers whether this host put a
     /// clip on the child, so that a presentation without a radius removes only
     /// what the host added.
     ///
@@ -82,11 +95,15 @@ impl PaintPresentation {
             && child_size.height.is_finite()
             && child_size.width > 0.0
             && child_size.height > 0.0;
-        if self.corner_radius > 0.0 && scale > 0.0 && fits {
+        if (self.corner_radius > 0.0 || self.reveal.is_some()) && scale > 0.0 && fits {
             clip.applied.set(true);
+            let (x, y, width, height) = match self.reveal {
+                Some(reveal) => (reveal.x, reveal.y, reveal.width, reveal.height),
+                None => (0.0, 0.0, child_size.width, child_size.height),
+            };
             ctx.set_local_v2_child_clip_at(
                 child_index,
-                Some((0.0, 0.0, child_size.width, child_size.height)),
+                Some((x, y, width, height)),
                 [self.corner_radius / scale; 4],
             )
         } else if clip.applied.replace(false) {
@@ -724,6 +741,75 @@ mod tests {
 
         assert_eq!(retained.drawn_child().clip, None);
         assert_eq!(retained.drawn_child().clip_radius, [0.0; 4]);
+    }
+
+    #[test]
+    fn a_reveal_clips_the_child_to_that_window_and_leaving_it_removes_the_clip() {
+        use aimer_cupid::draw_cmd_v2::Rect;
+
+        let window = Rc::new(Cell::new(Some(super::ElementBounds::new(2.0, 4.0, 4.0, 2.0))));
+        let shown = window.clone();
+        let context = context();
+        let element = AnimatedPaint::new(controller(), StableLeaf)
+            .effect(move |_| PaintPresentation {
+                transform: aimer_canvas::Mat3::translate(20.0, 30.0)
+                    .mul(&aimer_canvas::Mat3::scale(0.5, 0.5)),
+                corner_radius: 2.0,
+                reveal: shown.get(),
+                ..PaintPresentation::IDENTITY_OPAQUE
+            })
+            .to_element(&context);
+        let retained = Retained::new();
+
+        assert!(retained.sync(element.as_ref(), &context));
+
+        // The window is in the child's own coordinates, so it moves and shrinks
+        // with the child; the radius is still the size shown.
+        let item = retained.drawn_child();
+        assert_eq!(item.clip, Some(Rect::new(21.0, 32.0, 2.0, 1.0)));
+        assert_eq!(item.clip_radius, [2.0; 4]);
+
+        // Without a window the rounded corners go back to the child's bounds.
+        window.set(None);
+        assert!(retained.sync(element.as_ref(), &context));
+        assert_eq!(retained.drawn_child().clip, Some(Rect::new(20.0, 30.0, 5.0, 5.0)));
+    }
+
+    #[test]
+    fn a_reveal_without_a_corner_radius_still_clips() {
+        use aimer_cupid::draw_cmd_v2::Rect;
+
+        let context = context();
+        let element = AnimatedPaint::new(controller(), StableLeaf)
+            .effect(|_| PaintPresentation {
+                reveal: Some(super::ElementBounds::new(0.0, 0.0, 6.0, 3.0)),
+                ..PaintPresentation::IDENTITY_OPAQUE
+            })
+            .to_element(&context);
+        let retained = Retained::new();
+
+        assert!(retained.sync(element.as_ref(), &context));
+
+        assert_eq!(retained.drawn_child().clip, Some(Rect::new(0.0, 0.0, 6.0, 3.0)));
+    }
+
+    #[test]
+    fn an_empty_or_non_finite_reveal_declines_the_frame() {
+        let context = context();
+        for reveal in [
+            super::ElementBounds::new(0.0, 0.0, 0.0, 5.0),
+            super::ElementBounds::new(0.0, 0.0, 5.0, -1.0),
+            super::ElementBounds::new(f32::NAN, 0.0, 5.0, 5.0),
+        ] {
+            let element = AnimatedPaint::new(controller(), StableLeaf)
+                .effect(move |_| PaintPresentation {
+                    reveal: Some(reveal),
+                    ..PaintPresentation::IDENTITY_OPAQUE
+                })
+                .to_element(&context);
+
+            assert!(!Retained::new().sync(element.as_ref(), &context), "{reveal:?}");
+        }
     }
 
     #[test]

@@ -299,6 +299,9 @@ impl RawDraggable {
         if !DragSession::begin(press.pointer, payload(), press.at) {
             return false;
         }
+        // The card is being carried, so the pointer is its: see
+        // [`aimer_widget::pointer_claim`]. Released with the pointer.
+        aimer_widget::claim_pointer(press.pointer);
 
         let corner = self
             .bounds
@@ -649,6 +652,25 @@ mod tests {
         assert_eq!(result.follow_up(), FollowUp::DragOver);
         assert_eq!(DragSession::with_payload(|id: &CardId| id.0), Some(7));
 
+        fresh();
+    }
+
+    /// A card that is being carried owns the gesture. An ancestor that arbitrates
+    /// touches, such as a navigator that pops on a sideways swipe, must be able to
+    /// tell, so the pointer is claimed the moment the card is picked up.
+    #[test]
+    fn picking_a_card_up_claims_the_pointer_and_pressing_it_does_not() {
+        fresh();
+        let ctx = headless_context(400.0, 400.0);
+        let card = card_element(&ctx);
+        let pointer = PointerKey::new(PointerSource::Mouse, 0);
+
+        let _ = card.on_event(&down(10.0, 10.0));
+        assert!(!aimer_widget::is_pointer_claimed(pointer), "a press is not yet a drag");
+        let _ = card.on_event(&moved(10.0 + past_slop(PointerSource::Mouse), 12.0));
+        assert!(aimer_widget::is_pointer_claimed(pointer), "the card was picked up");
+
+        aimer_widget::release_pointer(pointer);
         fresh();
     }
 

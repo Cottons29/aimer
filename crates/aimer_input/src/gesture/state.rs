@@ -9,7 +9,7 @@ use aimer_attribute::position::Vec2d;
 use aimer_events::pointer::{PointerInfo, PointerSource};
 use aimer_utils::AnimInstant;
 
-use super::tap_slop;
+use super::{tap_slop, tap_tolerance};
 
 /// How many simultaneous contacts a detector tracks.
 ///
@@ -286,13 +286,25 @@ impl GestureState {
     }
 }
 
-/// Whether moving from `from` to `to` is far enough to stop being a tap.
+/// Whether moving from `from` to `to` is far enough to begin a drag.
 ///
 /// The threshold comes from the *moving* pointer's device: a finger is allowed
-/// eighteen pixels of wobble, a mouse barely one.
+/// eighteen pixels of wobble, a mouse barely one. Whether a release is still a
+/// tap is a separate question, answered by [`moved_beyond_tap_tolerance`].
 #[inline]
 pub fn moved_beyond_slop(from: &PointerInfo, to: &PointerInfo) -> bool {
     from.distance_to(to) > tap_slop(to.source)
+}
+
+/// Whether moving from `from` to `to` is far enough that a release there is no
+/// longer a tap.
+///
+/// Looser than [`moved_beyond_slop`] for a mouse: a click drifts by a few pixels
+/// as the button goes down, which must not cost the user the click. A press that
+/// may become a drag has already become one by then.
+#[inline]
+pub fn moved_beyond_tap_tolerance(from: &PointerInfo, to: &PointerInfo) -> bool {
+    from.distance_to(to) > tap_tolerance(to.source)
 }
 
 #[cfg(test)]

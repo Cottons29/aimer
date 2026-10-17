@@ -1,11 +1,12 @@
 //! Text behind a filtered box stays readable outside its rectangular bounds.
 
+use aimer::decoration::{BackdropFilter, DecorationBox};
 use aimer::style::{
     BorderSlice, BorderStyle, BoxBorder, BoxDecoration, Color, FontWeight, LayoutSpacing, Spacing,
     Stroke, TextStyle,
 };
 use aimer::{
-    AimerApp, BackdropFilter, Column, Container, DecorationBox, Positioned, Stack, Text, Widget,
+    AimerApp, Column, Container, Positioned, Stack, Text, Widget,
 };
 
 use crate::theme;

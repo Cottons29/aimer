@@ -1,11 +1,12 @@
 //! Typed and runtime decoration stacks sharing one retained child.
 
+use aimer::decoration::{Decoration, LightEdge, MultiDecorationBox};
 use aimer::macros::widget;
 use aimer::selection::{Checkbox, CheckboxValue};
 use aimer::style::{BoxDecoration, Color, FontWeight, LayoutSpacing, Spacing, TextStyle};
 use aimer::{
-    AimerApp, BuildContext, ChildBuilder, Column, Container, Decoration, LightEdge,
-    MultiDecorationBox, Row, State, StateUpdater, StatefulWidget, Text, Widget,
+    AimerApp, BuildContext, ChildBuilder, Column, Container, Row, State, StateUpdater,
+    StatefulWidget, Text, Widget,
 };
 
 use crate::theme;

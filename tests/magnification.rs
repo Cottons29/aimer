@@ -5,7 +5,7 @@ mod fixtures;
 mod pixels;
 #[path = "magnification/styles.rs"]
 mod styles;
-use aimer::cupid::{WgpuBackend, frame::FramePacket, renderer::Renderer};
+use aimer_cupid::{WgpuBackend, frame::FramePacket, renderer::Renderer};
 use aimer_utils::SyncFuture;
 use fixtures::*;
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -15,8 +15,8 @@ fn magnification_composable_styles() {
     let (device, queue) = gpu().expect("GPU for magnification style validation");
     let backend = WgpuBackend::new(device.clone(), queue.clone());
     for aa in [
-        aimer::cupid::AntiAlias::Analytic,
-        aimer::cupid::AntiAlias::Msaa4x,
+        aimer_cupid::AntiAlias::Analytic,
+        aimer_cupid::AntiAlias::Msaa4x,
     ] {
         let mut renderer = Renderer::with_antialiasing(&backend, FORMAT, aa);
         styles::styles_match_sampling_and_preserve_disabled_axes(|packet| {
@@ -30,8 +30,8 @@ fn magnification_centered_zoom_depth_and_alpha() {
     let (device, queue) = gpu().expect("GPU for magnification validation");
     let backend = WgpuBackend::new(device.clone(), queue.clone());
     for aa in [
-        aimer::cupid::AntiAlias::Analytic,
-        aimer::cupid::AntiAlias::Msaa4x,
+        aimer_cupid::AntiAlias::Analytic,
+        aimer_cupid::AntiAlias::Msaa4x,
     ] {
         let mut renderer = Renderer::with_antialiasing(&backend, FORMAT, aa);
         pixels::centered_zoom_depth_and_alpha(|packet| {
@@ -85,8 +85,8 @@ fn magnification_thick_rounded_corners_have_no_seam() {
     let (device, queue) = gpu().expect("GPU for rounded lens validation");
     let backend = WgpuBackend::new(device.clone(), queue.clone());
     for aa in [
-        aimer::cupid::AntiAlias::Analytic,
-        aimer::cupid::AntiAlias::Msaa4x,
+        aimer_cupid::AntiAlias::Analytic,
+        aimer_cupid::AntiAlias::Msaa4x,
     ] {
         let mut renderer = Renderer::with_antialiasing(&backend, FORMAT, aa);
         pixels::thick_rounded_corners_have_no_interior_normal_seam(|packet| {

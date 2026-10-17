@@ -23,6 +23,9 @@ reqwest.workspace = true
 
 [dev-dependencies]
 aimer_attribute.workspace = true
+# The showcase's own tests inspect the renderer's draw commands, which the
+# umbrella crate exposes only behind its `cupid` feature.
+aimer_cupid.workspace = true
 tokio = { workspace = true, features = ["rt", "macros"] }
 
 [features]

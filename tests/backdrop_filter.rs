@@ -7,10 +7,10 @@ mod wide;
 use fixtures::*;
 
 use aimer::canvas::Canvas as RetainedCanvas;
-use aimer::cupid::WgpuBackend;
-use aimer::cupid::draw_cmd_v2::{Rect, RenderPaintSource};
-use aimer::cupid::frame::FramePacket;
-use aimer::cupid::renderer::Renderer;
+use aimer_cupid::WgpuBackend;
+use aimer_cupid::draw_cmd_v2::{Rect, RenderPaintSource};
+use aimer_cupid::frame::FramePacket;
+use aimer_cupid::renderer::Renderer;
 use aimer::{BackdropFilter, Decoration, ResolvedSize, Vec2d};
 use aimer_utils::SyncFuture;
 
@@ -21,8 +21,8 @@ fn backdrop_filter_blends_thin_features_into_a_smooth_gaussian() {
     let (device, queue) = gpu().expect("a GPU is required for backdrop filter pixel validation");
     let backend = WgpuBackend::new(device.clone(), queue.clone());
     for antialiasing in [
-        aimer::cupid::AntiAlias::Analytic,
-        aimer::cupid::AntiAlias::Msaa4x,
+        aimer_cupid::AntiAlias::Analytic,
+        aimer_cupid::AntiAlias::Msaa4x,
     ] {
         let mut renderer = Renderer::with_antialiasing(&backend, FORMAT, antialiasing);
         let (tree, node) = backdrop_tree();
@@ -298,17 +298,17 @@ fn backdrop_filter_budget_fallback_leaves_the_backdrop_unchanged() {
     );
     canvas.finish();
     let packet = FramePacket::from_v2_direct(
-        aimer::cupid::draw_cmd_v2::RenderFrame {
+        aimer_cupid::draw_cmd_v2::RenderFrame {
             damage: vec![Rect::new(0.0, 0.0, 4096.0, 1025.0)],
             operations: tree.render_all(),
         },
-        aimer::cupid::frame::FrameRenderMetadata::new(
+        aimer_cupid::frame::FrameRenderMetadata::new(
             1.0,
             0,
             0,
             0,
             0,
-            aimer::cupid::damage_region::DamageSet::new(4096, 1025),
+            aimer_cupid::damage_region::DamageSet::new(4096, 1025),
         ),
     )
     .unwrap();
@@ -345,8 +345,8 @@ fn backdrop_filter_wide_ipad_toolbar() {
     let (device, queue) = gpu().expect("GPU for iPad-width backdrop validation");
     let backend = WgpuBackend::new(device.clone(), queue.clone());
     for aa in [
-        aimer::cupid::AntiAlias::Analytic,
-        aimer::cupid::AntiAlias::Msaa4x,
+        aimer_cupid::AntiAlias::Analytic,
+        aimer_cupid::AntiAlias::Msaa4x,
     ] {
         let mut renderer = Renderer::with_antialiasing(&backend, FORMAT, aa);
         wide::wide_toolbar_blurs_and_refreshes(|packet| {

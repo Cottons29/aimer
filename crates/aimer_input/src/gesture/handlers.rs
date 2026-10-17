@@ -56,6 +56,13 @@ impl GestureHandlers {
         self.mask
     }
 
+    /// The gestures a handler was installed for, which own the press they are
+    /// recognized on. The rest of [`mask`](Self::mask) is only observed.
+    #[inline]
+    pub const fn claimed(&self) -> GestureMask {
+        self.claims
+    }
+
     /// Whether a scroll event should be consumed rather than left to fall
     /// through.
     ///

@@ -1,16 +1,18 @@
 use std::cell::{Cell, RefCell, UnsafeCell};
 use std::rc::Rc;
 
-use aimer_animation::{AnimInstant, AnimationController, PresentationClip};
+use aimer_animation::{AnimInstant, AnimatedBuilder, AnimationController, Curve, PresentationClip};
 use aimer_cupid::utilities::Rect;
 use aimer_widget::base::{BuildContext, ResolvedSize, Size, Vec2d};
-use aimer_widget::{AnyElement, AnyWidget, ChildBuilder, Drawable, Element, EventElement,
+use aimer_events::element::ElementEvent;
+use aimer_widget::{AnyElement, AnyWidget, ChildBuilder, Drawable, Element, EventDispatchContext, EventElement, EventResult,
     Key, LayoutElement, Rebuildable, VisitorElement, Widget, request_isolated_animation_frame};
 
 use aimer_attribute::Dimension;
 use aimer_container::SizedBox;
 
 use crate::outlet::RouteChildContext;
+use crate::swipe_back::SwipeLink;
 use crate::{AnchoredFrame, NavigationAction, NavigationContext, NavigationTransition,
     NavigationTransitionFrame, ResolvedNavigationTransition, Route, TransitionChoice};
 
@@ -21,13 +23,24 @@ pub(crate) struct NavigationRequest(pub NavigationAction);
 #[derive(Clone)]
 pub(crate) struct RouteBoundary(pub Key);
 
+/// What a navigator (or a shell's outlet) hands its pages when it builds: the
+/// link every host of it shares, and a swipe to start, if one was asked for.
+pub(crate) struct SwipeSetup<R> {
+    /// `None` for an outlet, whose touches belong to the navigator around it.
+    pub(crate) link: Option<Rc<SwipeLink>>,
+    pub(crate) start: Option<(R, Rc<SwipeDrive>)>,
+}
+
 pub(crate) struct NavigationPages<R: Route> {
     current: Option<(R, String, ChildBuilder)>,
     playback: Option<Rc<Playback>>,
+    /// The URL of the page a swipe is uncovering, so that when the swipe commits
+    /// and history pops to it, the page already built is adopted.
+    swipe_target: Option<String>,
 }
 
 impl<R: Route> Default for NavigationPages<R> {
-    fn default() -> Self { Self { current: None, playback: None } }
+    fn default() -> Self { Self { current: None, playback: None, swipe_target: None } }
 }
 
 impl<R: Route> NavigationPages<R> {
@@ -37,12 +50,22 @@ impl<R: Route> NavigationPages<R> {
         action: NavigationAction,
         fallback: Option<&dyn NavigationTransition<R>>,
         ctx: &BuildContext,
-        build: impl FnOnce(R) -> AnyWidget,
+        swipe: Option<SwipeSetup<R>>,
+        build: impl Fn(R) -> AnyWidget,
     ) -> NavigationFrame {
         let path = route.format();
+        let (link, starting) = match swipe {
+            Some(SwipeSetup { link, start }) => (link, start),
+            None => (None, None),
+        };
+        let starting_swipe = starting.is_some();
         if self.current.as_ref().is_none_or(|(_, old_path, _)| *old_path != path) {
+            // Before the playback is finished, which would discard it: a swipe
+            // that committed has already built the page history is popping to.
+            let adopted = self.take_committed_underlay(&path);
+            self.swipe_target = None;
             if let Some(playback) = self.playback.take() { playback.finish(); }
-            let effect = self.current.as_ref().and_then(|(from, _, _)| {
+            let effect = self.current.as_ref().filter(|_| adopted.is_none()).and_then(|(from, _, _)| {
                 // A persistent shell delegates child motion to its own outlet.
                 if from.shell_key().is_some() && from.shell_key() == route.shell_key() { return None; }
                 let navigation = NavigationContext { from, to: &route, action, build_context: ctx };
@@ -58,17 +81,17 @@ impl<R: Route> NavigationPages<R> {
             let key = self.current.as_ref().filter(|(from, _, _)|
                 route.shell_key().is_some() && route.shell_key() == from.shell_key())
                 .and_then(|(_, _, child)| child.key()).unwrap_or_else(Key::unique);
-            let child = ChildBuilder::from_widget(ScopedPage {
+            let child = adopted.unwrap_or_else(|| ChildBuilder::from_widget(ScopedPage {
                 widget: build(route.clone()), context: RouteChildContext::capture_page(ctx, key.clone()), key,
-            });
+            }));
             let previous = self.current.replace((route, path, child));
             self.playback = effect.and_then(|effect| previous.map(|(_, _, child)| {
                 let controller = AnimationController::new(effect.duration, effect.curve.clone());
                 controller.forward_from_first_tick();
                 aimer_events::window::request_animation_frame();
-                Rc::new(Playback { effect, controller, outgoing: RefCell::new(Some(child)), finished: Cell::new(false) })
+                Rc::new(Playback { effect, controller, outgoing: RefCell::new(Some(child)), finished: Cell::new(false), swipe: None })
             }));
-        } else {
+        } else if !starting_swipe {
             // An explicit parent rebuild must refresh route configuration
             // (theme/provider reads and new builder props). Keep this entry's
             // identity so reconciliation carries its state and active motion.
@@ -78,10 +101,58 @@ impl<R: Route> NavigationPages<R> {
             });
             self.current = Some((route, path, child));
         }
+        // Starting a swipe rebuilds the navigator only to show the page beneath.
+        // Nothing the page reads has changed, so it is reused as it is rather
+        // than rebuilt under the user's finger.
+        if let Some((previous, drive)) = starting {
+            if !self.begin_swipe(previous, &drive, fallback, ctx, &build) { drive.cancel_if_unsettled(); }
+        }
         NavigationFrame {
             child: self.current.as_ref().expect("a page was installed").2.clone(),
             playback: self.playback.clone().filter(|playback| !playback.finished.get()),
+            swipe: link,
         }
+    }
+
+    /// Starts a swipe back: builds the page beneath `previous`, and makes the finger the
+    /// clock of the pop. Returns `false` when there is nothing to play: no page
+    /// is on screen, one is already animating, or the departing route has no
+    /// effect (or opted out of it).
+    fn begin_swipe(
+        &mut self,
+        previous: R,
+        drive: &Rc<SwipeDrive>,
+        fallback: Option<&dyn NavigationTransition<R>>,
+        ctx: &BuildContext,
+        build: &impl Fn(R) -> AnyWidget,
+    ) -> bool {
+        if self.playback.as_ref().is_some_and(|playback| !playback.finished.get()) { return false; }
+        let Some((from, _, _)) = self.current.as_ref() else { return false };
+        // A persistent shell delegates child motion to its own outlet.
+        if from.shell_key().is_some() && from.shell_key() == previous.shell_key() { return false; }
+        let navigation = NavigationContext { from, to: &previous, action: NavigationAction::Pop, build_context: ctx };
+        let effect = match from.navigation_transition() {
+            TransitionChoice::Disabled => None,
+            TransitionChoice::Inherit => fallback.and_then(|effect| effect.resolve(&navigation)),
+            TransitionChoice::Custom(effect) => effect.resolve(&navigation),
+        }.filter(|effect| !effect.duration.is_zero());
+        let Some(effect) = effect else { return false };
+        let key = Key::unique();
+        self.swipe_target = Some(previous.format());
+        let underlay = ChildBuilder::from_widget(ScopedPage {
+            widget: build(previous), context: RouteChildContext::capture_page(ctx, key.clone()), key,
+        });
+        self.playback = Some(Rc::new(Playback::swipe(effect, Rc::clone(drive), underlay)));
+        aimer_events::window::request_animation_frame();
+        true
+    }
+
+    /// The page a committed swipe uncovered, if `path` is where history went.
+    fn take_committed_underlay(&mut self, path: &str) -> Option<ChildBuilder> {
+        let playback = self.playback.as_ref()?;
+        let committed = playback.swipe.as_ref()?.outcome() == Some(true);
+        if !committed || self.swipe_target.as_deref() != Some(path) { return None; }
+        playback.outgoing.borrow_mut().take()
     }
 }
 
@@ -90,13 +161,51 @@ struct Playback {
     controller: AnimationController,
     outgoing: RefCell<Option<ChildBuilder>>,
     finished: Cell<bool>,
+    /// Set when a finger, not the clock, is what moves the pages.
+    swipe: Option<Rc<SwipeDrive>>,
 }
 
 impl Playback {
+    /// A pop driven by an edge swipe.
+    ///
+    /// The page on screen stays where it is in the tree and is presented as the
+    /// departing page; `underlay` is the page it uncovers, held in the slot a
+    /// timed navigation keeps its departing page in. Nothing here runs on a clock
+    /// until the finger lifts.
+    fn swipe(effect: ResolvedNavigationTransition, drive: Rc<SwipeDrive>, underlay: ChildBuilder) -> Self {
+        Self {
+            controller: AnimationController::new(effect.duration, effect.curve.clone()),
+            effect,
+            outgoing: RefCell::new(Some(underlay)),
+            finished: Cell::new(false),
+            swipe: Some(drive),
+        }
+    }
+
     fn finish(&self) {
         self.finished.set(true);
         self.controller.set_value(1.0);
+        if let Some(drive) = &self.swipe {
+            // Another navigation got there first: the swipe did not complete.
+            drive.cancel_if_unsettled();
+        }
         self.outgoing.borrow_mut().take();
+    }
+
+    /// Whether the page beneath must outlive this playback until the navigator
+    /// has rebuilt: a committed swipe pops, and removing it first would show an
+    /// empty frame.
+    fn holds_pages_for_rebuild(&self) -> bool {
+        self.swipe.as_ref().is_some_and(|drive| drive.outcome() == Some(true))
+    }
+
+    fn sample_swipe(&self, drive: &SwipeDrive, now: AnimInstant, size: ResolvedSize, origin: (f32, f32)) -> AnchoredFrame {
+        let (progress, done) = drive.progress(now, self.effect.duration, &self.effect.curve);
+        if done { self.finished.set(true); }
+        // A finished swipe keeps presenting where it ended rather than a blank
+        // frame, because the page that stays is still the one on screen until
+        // the navigator rebuilds around it.
+        self.effect.sample_anchored_at(progress, size, origin).unwrap_or(AnchoredFrame::FINISHED)
     }
 
     fn sample(&self, now: AnimInstant, size: ResolvedSize) -> NavigationTransitionFrame {
@@ -110,6 +219,7 @@ impl Playback {
 
     /// Like [`sample_at`](Self::sample_at), with the anchor layer's presentation.
     fn sample_anchored_at(&self, now: AnimInstant, size: ResolvedSize, origin: (f32, f32)) -> AnchoredFrame {
+        if let Some(drive) = &self.swipe { return self.sample_swipe(drive, now, size, origin); }
         if self.finished.get() { return AnchoredFrame::FINISHED; }
         let progress = self.controller.tick(now);
         if !self.controller.is_animating() { self.finish(); return AnchoredFrame::FINISHED; }
@@ -120,10 +230,101 @@ impl Playback {
     }
 }
 
+/// The finger's side of a swipe-driven pop.
+///
+/// Whoever owns the touch writes it; the [`Playback`] that presents the pop
+/// reads it every frame. They only share this, because the touch outlives the
+/// element that first saw it: building the page beneath rebuilds the host.
+pub(crate) struct SwipeDrive {
+    /// Fraction of the host the page has been dragged across, in `0.0..=1.0`.
+    finger: Cell<f32>,
+    /// Set when the finger lifts: whether the pop completes.
+    release: Cell<Option<bool>>,
+    settle: Cell<Option<Settle>>,
+    /// Final outcome, once the page has finished settling or the swipe was cut short.
+    outcome: Cell<Option<bool>>,
+    reported: Cell<bool>,
+    /// Pops the navigator's history. Called once, by the host, after a commit.
+    on_commit: Box<dyn Fn()>,
+}
+
+/// The release animation: a straight run from where the finger lifted.
+#[derive(Clone, Copy)]
+struct Settle {
+    from: f32,
+    to: f32,
+    started: Option<AnimInstant>,
+}
+
+impl SwipeDrive {
+    pub(crate) fn new(on_commit: impl Fn() + 'static) -> Rc<Self> {
+        Rc::new(Self {
+            finger: Cell::new(0.0),
+            release: Cell::new(None),
+            settle: Cell::new(None),
+            outcome: Cell::new(None),
+            reported: Cell::new(false),
+            on_commit: Box::new(on_commit),
+        })
+    }
+
+    /// Moves the page to `progress` of the host's width.
+    pub(crate) fn drag(&self, progress: f32) {
+        if self.release.get().is_none() {
+            self.finger.set(progress.clamp(0.0, 1.0));
+        }
+    }
+
+    /// The finger lifted: settle to the end if `commit`, back to the start if not.
+    pub(crate) fn release(&self, commit: bool) {
+        if self.release.get().is_none() {
+            self.release.set(Some(commit));
+        }
+    }
+
+    pub(crate) fn outcome(&self) -> Option<bool> {
+        self.outcome.get()
+    }
+
+    /// The outcome, the first time it is asked for after it is known.
+    pub(crate) fn take_settled(&self) -> Option<bool> {
+        let outcome = self.outcome.get()?;
+        (!self.reported.replace(true)).then_some(outcome)
+    }
+
+    pub(crate) fn cancel_if_unsettled(&self) {
+        if self.outcome.get().is_none() {
+            self.outcome.set(Some(false));
+        }
+    }
+
+    /// Progress to present at `now`, and whether the swipe is over.
+    fn progress(&self, now: AnimInstant, duration: std::time::Duration, curve: &aimer_animation::AnyCurve) -> (f32, bool) {
+        if let Some(commit) = self.outcome.get() {
+            return (if commit { 1.0 } else { 0.0 }, true);
+        }
+        let Some(commit) = self.release.get() else { return (self.finger.get(), false); };
+        let to = if commit { 1.0 } else { 0.0 };
+        let mut settle = self.settle.get().unwrap_or(Settle { from: self.finger.get(), to, started: None });
+        let started = *settle.started.get_or_insert(now);
+        self.settle.set(Some(settle));
+        // The same speed as the full effect, so a short remainder is quick.
+        let total = duration.as_secs_f32() * (to - settle.from).abs();
+        let elapsed = now.duration_since(started).as_secs_f32();
+        if total <= f32::EPSILON || elapsed >= total {
+            self.outcome.set(Some(commit));
+            return (to, true);
+        }
+        (settle.from + (to - settle.from) * curve.transform(elapsed / total), false)
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct NavigationFrame {
     child: ChildBuilder,
     playback: Option<Rc<Playback>>,
+    /// The navigator's edge swipe, for a host that has one to give.
+    swipe: Option<Rc<SwipeLink>>,
 }
 
 impl aimer_widget::PortableWidget for NavigationFrame {}
@@ -141,9 +342,17 @@ impl Widget for NavigationFrame {
             SizedBox::new().width(Dimension::Px(size.width)).height(Dimension::Px(size.height))
                 .child(anchor.build()).to_element(ctx)
         });
+        // A layer between the pages, such as a blur of the page underneath, that
+        // is rebuilt from the clock on every frame. A swipe has no clock.
+        let veil = self.playback.as_ref().filter(|playback| playback.swipe.is_none() && outgoing.is_some())
+            .and_then(|playback| {
+                let effect = playback.effect.veil()?.clone();
+                Some(AnimatedBuilder::new(playback.controller.clone(), move |progress| effect(progress)).to_element(ctx))
+            });
         NavigationFrameElement {
             incoming: self.child.build(ctx), outgoing: UnsafeCell::new(outgoing), anchor: UnsafeCell::new(anchor),
-            playback: self.playback,
+            veil: UnsafeCell::new(veil),
+            playback: self.playback, swipe: self.swipe,
             incoming_clip: PresentationClip::default(), outgoing_clip: PresentationClip::default(),
             anchor_clip: PresentationClip::default(),
         }.boxed()
@@ -162,12 +371,22 @@ fn clear_departing_focus(element: &dyn Element, ctx: &BuildContext) {
     });
 }
 
+/// Where each layer of a host is in the retained paint order.
+struct Ordinals {
+    incoming: usize,
+    outgoing: usize,
+    anchor: usize,
+}
+
 struct NavigationFrameElement {
     incoming: AnyElement,
     outgoing: UnsafeCell<Option<AnyElement>>,
     /// An inert copy of an item, painted above both pages while the effect runs.
     anchor: UnsafeCell<Option<AnyElement>>,
+    /// An inert layer painted between the two pages while the effect runs.
+    veil: UnsafeCell<Option<AnyElement>>,
     playback: Option<Rc<Playback>>,
+    swipe: Option<Rc<SwipeLink>>,
     /// Which pages this host has put a rounded clip on, so a radius that
     /// returns to zero removes only what the host added.
     incoming_clip: PresentationClip,
@@ -189,6 +408,36 @@ impl NavigationFrameElement {
         unsafe { (&*self.anchor.get()).as_ref() }
     }
 
+    fn veil(&self) -> Option<&AnyElement> {
+        // Safety: as for `outgoing`.
+        unsafe { (&*self.veil.get()).as_ref() }
+    }
+
+    /// Whether the veil is painted above the pages and the copy of the item.
+    fn veil_above(&self) -> bool {
+        self.playback.as_ref().is_some_and(|playback| playback.effect.veil_above())
+    }
+
+    /// The retained paint ordinals of the pages, the veil between them and the
+    /// copy above them, which are painted in that order: the page below, the
+    /// veil, the page on top, the copy. A page or layer that is not there takes
+    /// no ordinal.
+    fn ordinals(&self) -> Ordinals {
+        let has_old = self.outgoing().is_some();
+        // A veil above everything takes the last ordinal and moves no other.
+        let veil = has_old && self.veil().is_some() && !self.veil_above();
+        let (incoming, outgoing) = match (has_old, self.outgoing_on_top()) {
+            (false, _) => (0, 0),
+            (true, false) => (1 + usize::from(veil), 0),
+            (true, true) => (0, 1 + usize::from(veil)),
+        };
+        Ordinals {
+            incoming,
+            outgoing,
+            anchor: usize::from(has_old) + usize::from(veil) + 1,
+        }
+    }
+
     fn sample(&self, ctx: &BuildContext, origin: (f32, f32)) -> AnchoredFrame {
         self.playback.as_ref().map_or(AnchoredFrame::FINISHED,
             |playback| playback.sample_anchored_at(AnimInstant::now(), self.logical_size(ctx), origin))
@@ -202,9 +451,18 @@ impl NavigationFrameElement {
             .map_or((0.0, 0.0), |(x, y, _, _)| (x, y))
     }
 
-    /// Whether the departing page is painted above the arriving one.
+    /// Whether the page in the outgoing slot is painted above the one in the
+    /// incoming slot.
+    ///
+    /// A swipe reverses the slots' roles: the page on screen sits in the incoming
+    /// slot but is the one presented as departing, so "the departing page on top"
+    /// puts the *incoming* slot on top.
     fn outgoing_on_top(&self) -> bool {
-        self.playback.as_ref().is_some_and(|playback| playback.effect.outgoing_on_top)
+        self.playback.as_ref().is_some_and(|playback| playback.effect.outgoing_on_top != playback.swipe.is_some())
+    }
+
+    fn is_swipe(&self) -> bool {
+        self.playback.as_ref().is_some_and(|playback| playback.swipe.is_some())
     }
 
     fn logical_size(&self, ctx: &BuildContext) -> ResolvedSize {
@@ -213,12 +471,20 @@ impl NavigationFrameElement {
     }
 
     fn cleanup(&self) {
+        if let Some(drive) = self.playback.as_ref().and_then(|playback| playback.swipe.as_ref()) {
+            if drive.take_settled() == Some(true) {
+                // The rebuild this causes replaces the whole host, taking both pages with it.
+                (drive.on_commit)();
+            }
+        }
+        if self.playback.as_ref().is_some_and(|playback| playback.holds_pages_for_rebuild()) { return; }
         let finished = self.playback.as_ref().is_some_and(|playback| playback.finished.get());
-        if finished && (self.outgoing().is_some() || self.anchor().is_some()) {
+        if finished && (self.outgoing().is_some() || self.anchor().is_some() || self.veil().is_some()) {
             // Safety: no child traversal or callbacks are active at this point.
             unsafe {
                 (*self.outgoing.get()).take();
                 (*self.anchor.get()).take();
+                (*self.veil.get()).take();
             }
             aimer_widget::notify_hosted_element_tree_changed();
             aimer_events::window::request_animation_frame();
@@ -233,17 +499,24 @@ impl VisitorElement for NavigationFrameElement {
         visitor(self.incoming.as_ref());
         if let Some(child) = self.outgoing() { visitor(child.as_ref()); }
         if let Some(child) = self.anchor() { visitor(child.as_ref()); }
+        if let Some(child) = self.veil() { visitor(child.as_ref()); }
     }
     fn visit_retained_v2_children<'a>(&'a self, visitor: &mut dyn FnMut(usize, &'a dyn Element)) {
         // Later is painted above. The structural slot is fixed (arriving page 0,
-        // departing page 1, item copy 2); only the pages' paint order changes.
-        // The copy always leads, so it is always last.
+        // departing page 1, item copy 2, veil 3); only the paint order changes:
+        // the page below, the veil, the page on top. The copy always leads, so
+        // it is always last.
         let outgoing = self.outgoing();
         let on_top = self.outgoing_on_top();
+        let veil = self.veil().filter(|_| outgoing.is_some());
+        let (between, above) = if self.veil_above() { (None, veil) } else { (veil, None) };
         if let Some(child) = outgoing.filter(|_| !on_top) { visitor(1, child.as_ref()); }
-        visitor(0, self.incoming.as_ref());
+        if on_top { visitor(0, self.incoming.as_ref()); }
+        if let Some(child) = between { visitor(3, child.as_ref()); }
+        if !on_top { visitor(0, self.incoming.as_ref()); }
         if let Some(child) = outgoing.filter(|_| on_top) { visitor(1, child.as_ref()); }
         if let Some(child) = self.anchor() { visitor(2, child.as_ref()); }
+        if let Some(child) = above { visitor(3, child.as_ref()); }
     }
 }
 
@@ -257,19 +530,22 @@ impl Drawable for NavigationFrameElement {
         // Indices are retained visitation ordinals, not structural source indices:
         // the page painted first is ordinal 0.
         let has_old = self.outgoing().is_some();
-        let (outgoing_ordinal, incoming_ordinal) = match (has_old, self.outgoing_on_top()) {
-            (false, _) => (0, 0),
-            (true, false) => (0, 1),
-            (true, true) => (1, 0),
-        };
+        let ordinals = self.ordinals();
+        let (outgoing_ordinal, incoming_ordinal) = (ordinals.outgoing, ordinals.incoming);
         // Both pages are as large as the host, which is what a corner radius rounds.
         let size = self.logical_size(ctx);
-        if has_old && !frame.frame.outgoing.apply_to_child(ctx, outgoing_ordinal, size, &self.outgoing_clip) { return false; }
-        if !frame.frame.incoming.apply_to_child(ctx, incoming_ordinal, size, &self.incoming_clip) { return false; }
+        // During a swipe the page on screen is the departing one.
+        let (outgoing_slot, incoming_slot) = if self.is_swipe() {
+            (frame.frame.incoming, frame.frame.outgoing)
+        } else {
+            (frame.frame.outgoing, frame.frame.incoming)
+        };
+        if has_old && !outgoing_slot.apply_to_child(ctx, outgoing_ordinal, size, &self.outgoing_clip) { return false; }
+        if !incoming_slot.apply_to_child(ctx, incoming_ordinal, size, &self.incoming_clip) { return false; }
         // The item copy is last, and is as large as the item was.
         let Some(anchor) = self.playback.as_ref().and_then(|playback| playback.effect.anchor()) else { return true; };
         if self.anchor().is_none() { return true; }
-        frame.anchor.apply_to_child(ctx, usize::from(has_old) + 1, anchor.size(), &self.anchor_clip)
+        frame.anchor.apply_to_child(ctx, ordinals.anchor, anchor.size(), &self.anchor_clip)
     }
     fn retained_clip(&self, ctx: &BuildContext) -> Option<Rect> {
         let playback = self.playback.as_ref()?;
@@ -289,6 +565,7 @@ impl Drawable for NavigationFrameElement {
         if let Some(child) = self.outgoing() { child.update(ctx); }
         self.incoming.update(ctx);
         if let Some(child) = self.anchor() { child.update(ctx); }
+        if let Some(child) = self.veil() { child.update(ctx); }
         if self.playback.as_ref().is_some_and(|playback| !playback.finished.get()) {
             aimer_events::window::request_animation_frame();
         }
@@ -298,11 +575,36 @@ impl Drawable for NavigationFrameElement {
         if let Some(child) = self.outgoing() { child.update(ctx); }
         self.incoming.update(ctx);
         if let Some(child) = self.anchor() { child.update(ctx); }
+        if let Some(child) = self.veil() { child.update(ctx); }
         self.cleanup();
     }
 }
 
+impl NavigationFrameElement {
+    /// Where the host is in the window: its left edge and its width.
+    fn horizontal_extent(&self) -> (f32, f32) {
+        self.incoming.pos_start_end().map_or((0.0, 0.0), |(start, end)| (start.x, end.x - start.x))
+    }
+}
+
 impl EventElement for NavigationFrameElement {
+    /// A touch that begins at the left edge is the swipe's before it is the
+    /// page's: a button or a horizontal scroller there would otherwise take the
+    /// press, and no swipe could ever start from it. Only the *page* is hidden
+    /// from hit testing, and only there, only for a finger, and only while the
+    /// navigator has somewhere to go back to; the host then gets the press.
+    fn hit_test_children_at<'a>(&'a self, pos: Vec2d, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        if let Some(link) = &self.swipe {
+            let (left, width) = self.horizontal_extent();
+            if link.hides_page(pos, left, width) { return; }
+        }
+        self.hit_test_children(visitor);
+    }
+    fn on_event_with_context(&self, event: &ElementEvent, context: &mut EventDispatchContext<'_, '_>) -> EventResult {
+        let Some(link) = &self.swipe else { return EventResult::ignored(); };
+        let (left, width) = self.horizontal_extent();
+        link.handle(event, context, self.incoming.as_ref(), left, width)
+    }
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) { visitor(self.incoming.as_ref()); }
     /// The page that left and the copy of the item are only visual.
     fn focus_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) { visitor(self.incoming.as_ref()); }

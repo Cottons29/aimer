@@ -99,8 +99,8 @@ fn custom_effects_reject_non_finite_values_and_clamp_opacity() {
     use aimer_router::{curves, NavigationTransitionFrame, PaintPresentation, ResolvedNavigationTransition};
     let effect = ResolvedNavigationTransition::new(Duration::ZERO, curves::LINEAR, |p, _| {
         NavigationTransitionFrame {
-            incoming: PaintPresentation { transform: aimer_canvas::Mat3::identity(), opacity: p * 4.0, corner_radius: 0.0 },
-            outgoing: PaintPresentation { transform: aimer_canvas::Mat3::identity(), opacity: -1.0, corner_radius: 0.0 },
+            incoming: PaintPresentation { transform: aimer_canvas::Mat3::identity(), opacity: p * 4.0, corner_radius: 0.0, reveal: None },
+            outgoing: PaintPresentation { transform: aimer_canvas::Mat3::identity(), opacity: -1.0, corner_radius: 0.0, reveal: None },
         }
     }).unwrap();
     let size = ResolvedSize { width: 200.0, height: 100.0 };
@@ -114,7 +114,7 @@ fn custom_effects_reject_non_finite_values_and_clamp_opacity() {
         curves::cubic_bezier(f32::NAN, 0.0, 1.0, 1.0), move |_, _| frame).is_none());
     let invalid = ResolvedNavigationTransition::new(Duration::ZERO, curves::LINEAR, |_, _| {
         NavigationTransitionFrame {
-            incoming: PaintPresentation { transform: aimer_canvas::Mat3::translate(f32::NAN, 0.0), opacity: 1.0, corner_radius: 0.0 },
+            incoming: PaintPresentation { transform: aimer_canvas::Mat3::translate(f32::NAN, 0.0), opacity: 1.0, corner_radius: 0.0, reveal: None },
             outgoing: PaintPresentation::IDENTITY_OPAQUE,
         }
     }).unwrap();
@@ -171,4 +171,60 @@ fn painting_the_departing_page_on_top_is_opt_in() {
 
     assert!(!effect.is_outgoing_on_top());
     assert!(effect.outgoing_on_top(true).is_outgoing_on_top());
+}
+
+#[test]
+fn slide_pushes_from_the_right_and_parallaxes_the_page_beneath() {
+    use aimer_router::SlideTransition;
+    let ctx = context();
+    let navigation = NavigationContext {
+        from: &Page(0), to: &Page(1), action: NavigationAction::Push, build_context: &ctx,
+    };
+    let effect = SlideTransition::new().resolve(&navigation).unwrap();
+    assert!(!effect.is_outgoing_on_top(), "the arriving page covers the one it leaves");
+    let x = |presentation: aimer_router::PaintPresentation| presentation.transform.cols[2][0];
+
+    let start = effect.sample(0.0, ctx.parent_size).unwrap();
+    assert_eq!(x(start.incoming), 200.0);
+    assert_eq!(x(start.outgoing), 0.0);
+
+    let end = effect.sample(1.0, ctx.parent_size).unwrap();
+    assert_eq!(x(end.incoming), 0.0);
+    assert!((x(end.outgoing) + 60.0).abs() < 0.001, "the page beneath moves 30% as far");
+}
+
+#[test]
+fn slide_pop_carries_the_departing_page_off_to_the_right_above_the_page_returning() {
+    use aimer_router::SlideTransition;
+    let ctx = context();
+    let navigation = NavigationContext {
+        from: &Page(1), to: &Page(0), action: NavigationAction::Pop, build_context: &ctx,
+    };
+    let effect = SlideTransition::new().resolve(&navigation).unwrap();
+    assert!(effect.is_outgoing_on_top(), "the page being dragged away stays in front");
+    let x = |presentation: aimer_router::PaintPresentation| presentation.transform.cols[2][0];
+
+    let start = effect.sample(0.0, ctx.parent_size).unwrap();
+    assert_eq!(x(start.outgoing), 0.0);
+    assert!((x(start.incoming) + 60.0).abs() < 0.001);
+
+    let end = effect.sample(1.0, ctx.parent_size).unwrap();
+    assert_eq!(x(end.outgoing), 200.0);
+    assert_eq!(x(end.incoming), 0.0);
+
+    let half = effect.sample(0.5, ctx.parent_size).unwrap();
+    assert_eq!(x(half.outgoing), 100.0);
+    assert!((x(half.incoming) + 30.0).abs() < 0.001);
+}
+
+#[test]
+fn slide_is_a_350ms_effect_that_can_be_retimed_or_disabled() {
+    use aimer_router::SlideTransition;
+    let ctx = context();
+    let navigation = NavigationContext {
+        from: &Page(0), to: &Page(1), action: NavigationAction::Push, build_context: &ctx,
+    };
+    assert_eq!(SlideTransition::new().resolve(&navigation).unwrap().duration(), Duration::from_millis(350));
+    let retimed = SlideTransition::new().duration(Duration::from_millis(120)).resolve(&navigation).unwrap();
+    assert_eq!(retimed.duration(), Duration::from_millis(120));
 }

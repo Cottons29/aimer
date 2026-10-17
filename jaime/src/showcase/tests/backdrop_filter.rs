@@ -1,7 +1,7 @@
 use super::*;
 
-use aimer::cupid::draw_cmd_v2::{DrawCommand, Rect};
-use aimer::cupid::material::{MaterialKind, MaterialRequest};
+use aimer_cupid::draw_cmd_v2::{DrawCommand, Rect};
+use aimer_cupid::material::{MaterialKind, MaterialRequest};
 use aimer::quiver::winit::dpi::PhysicalSize;
 use aimer::{
     Drawable, Element, EventElement, HeadlessOptions, LayoutElement, Rebuildable, VisitorElement,

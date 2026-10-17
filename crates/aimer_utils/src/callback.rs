@@ -120,6 +120,25 @@ pub struct Callback<Args = (), Return = ()> {
 }
 
 impl<Args, Return> Callback<Args, Return> {
+    /// Whether a body was registered, synchronous or asynchronous.
+    ///
+    /// A default callback is not set. A widget that forwards an optional
+    /// callback can use this to avoid declaring interest in an event nobody
+    /// handles.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use aimer_utils::callback::Callback;
+    ///
+    /// assert!(!Callback::<i32, i32>::default().is_set());
+    /// assert!(Callback::from(|x: i32| x + 1).is_set());
+    /// ```
+    #[inline]
+    pub fn is_set(&self) -> bool {
+        self.inner.is_some()
+    }
+
     /// Invokes a **synchronous** callback with `args`, returning its result.
     ///
     /// Returns `None` when nothing was registered, and when the body is
@@ -218,6 +237,23 @@ pub type VoidParamedFunction<R> = Callback<R, ()>;
 pub struct VoidCallback(Callback<(), ()>);
 
 impl VoidCallback {
+    /// Whether a body was registered, synchronous or asynchronous.
+    ///
+    /// A default callback is not set. See [`Callback::is_set`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use aimer_utils::callback::VoidCallback;
+    ///
+    /// assert!(!VoidCallback::default().is_set());
+    /// assert!(VoidCallback::from(|| {}).is_set());
+    /// ```
+    #[inline]
+    pub fn is_set(&self) -> bool {
+        self.0.is_set()
+    }
+
     /// Registers an `async` closure, to be driven by Aimer's runtime.
     ///
     /// Unlike the `From<F>` impl — which takes an `Fn()` — this accepts an
@@ -295,6 +331,15 @@ mod tests {
         let venus = Venus::new();
         venus.install();
         venus
+    }
+
+    #[test]
+    fn a_callback_says_whether_anything_was_registered() {
+        assert!(!Callback::<i32, i32>::default().is_set());
+        assert!(Callback::from(|value: i32| value).is_set());
+        assert!(!VoidCallback::default().is_set());
+        assert!(VoidCallback::from(|| {}).is_set());
+        assert!(VoidCallback::from_async(|| async {}).is_set());
     }
 
     #[test]

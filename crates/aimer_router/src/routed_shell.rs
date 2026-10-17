@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -6,7 +7,9 @@ use aimer_widget::{AnyElement, AnyWidget, ChildBuilder, State, StateUpdater,
     StatefulElement, StatefulWidget, Widget};
 
 use crate::outlet::OutletChildBuilder;
-use crate::transition_host::{NavigationPages, NavigationRequest, RouteBoundary};
+use crate::shell_swipe::{OutletSwipe, ShellPeek, SwipePort};
+use crate::swipe_back::SwipeLink;
+use crate::transition_host::{NavigationPages, NavigationRequest, RouteBoundary, SwipeDrive, SwipeSetup};
 use crate::{MAX_REDIRECT_HOPS, NavigationAction, NavigationTransition, Route, Router, Shell,
     resolve_redirect_chain};
 
@@ -18,11 +21,16 @@ pub(crate) struct RouteOutlet<R: Route> {
     fallback: Option<Rc<dyn NavigationTransition<R>>>,
     builder: Option<RouteBuilder<R>>,
     pages: NavigationPages<R>,
+    /// A swipe the navigator asked for, started by the next build of the outlet.
+    pub(crate) swipe: Option<(R, Rc<SwipeDrive>)>,
+    /// The edge swipe of the owner of this outlet, when the touch is the outlet's
+    /// to take: a stateful shell has no navigator around it to own the touch.
+    pub(crate) swipe_link: Option<Rc<SwipeLink>>,
 }
 
 impl<R: Route> Default for RouteOutlet<R> {
     fn default() -> Self {
-        Self { route: None, action: NavigationAction::Push, fallback: None, builder: None, pages: NavigationPages::default() }
+        Self { route: None, action: NavigationAction::Push, fallback: None, builder: None, pages: NavigationPages::default(), swipe: None, swipe_link: None }
     }
 }
 
@@ -48,8 +56,14 @@ pub(crate) fn route_outlet_builder<R: Route>(outlet: &Rc<RefCell<RouteOutlet<R>>
         let action = outlet.action;
         let fallback = outlet.fallback.clone();
         let builder = outlet.builder.clone().expect("the shell configured its builder");
+        // A routed shell has no edge swipe of its own: the touch belongs to the
+        // navigator around it, which hands the swipe in through here. A stateful
+        // shell has no navigator, so its outlet carries the link itself.
+        let start = outlet.swipe.take();
+        let swipe = (start.is_some() || outlet.swipe_link.is_some())
+            .then(|| SwipeSetup { link: outlet.swipe_link.clone(), start });
         ctx.with_state(NavigationRequest(action), |ctx| {
-            outlet.pages.build(effective, action, fallback.as_deref(), ctx, |route| builder(route, ctx)).boxed()
+            outlet.pages.build(effective, action, fallback.as_deref(), ctx, swipe, |route| builder(route, ctx)).boxed()
         })
     })
 }
@@ -90,8 +104,31 @@ impl<R: Route + Router> aimer_widget::PortableWidget for RoutedShell<R> {
     }
 }
 
+/// The shell's outlet as a navigator's swipe port sees it.
+struct OutletHandle<R: Route + Router> {
+    outlet: Rc<RefCell<RouteOutlet<R>>>,
+    updater: StateUpdater<RoutedShellState<R>>,
+}
+
+impl<R: Route + Router> OutletSwipe for OutletHandle<R> {
+    fn begin(&self, previous: &dyn Any, drive: Rc<SwipeDrive>) -> bool {
+        let Some(previous) = previous.downcast_ref::<R>().cloned() else { return false };
+        self.outlet.borrow_mut().swipe = Some((previous, drive));
+        // The outlet rebuilds exactly as it does for a route change, and starts
+        // the swipe while it does.
+        self.updater.set_state(|_| {});
+        true
+    }
+}
+
 impl<R: Route + Router> Widget for RoutedShell<R> {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
+        // A navigator is only asking which child this shell shows, to start a
+        // swipe back to it. Report the child instead of mounting a second shell.
+        if let Some(peek) = ctx.get_state::<ShellPeek>() {
+            peek.deposit(Rc::new(self.route));
+            return aimer_container::SizedBox::new().to_element(ctx);
+        }
         let key = ctx.get_state::<RouteBoundary>().map(|boundary| boundary.0.clone());
         StatefulElement::new_with_name(self, ctx, "RoutedShell", key).0.boxed()
     }
@@ -103,6 +140,7 @@ impl<R: Route + Router> StatefulWidget for RoutedShell<R> {
         RoutedShellState {
             frame: ChildBuilder::from_widget(self.frame), builder: self.builder,
             route: self.route, transition: self.transition, outlet: Rc::new(RefCell::new(RouteOutlet::default())),
+            handle: None,
         }
     }
 }
@@ -114,10 +152,14 @@ pub struct RoutedShellState<R: Route + Router> {
     route: R,
     transition: Option<Rc<dyn NavigationTransition<R>>>,
     outlet: Rc<RefCell<RouteOutlet<R>>>,
+    /// What the navigator's swipe port reaches this outlet through.
+    handle: Option<Rc<dyn OutletSwipe>>,
 }
 
 impl<R: Route + Router> State<RoutedShell<R>> for RoutedShellState<R> {
-    fn init_state(&mut self, _: StateUpdater<Self>) {}
+    fn init_state(&mut self, updater: StateUpdater<Self>) {
+        self.handle = Some(Rc::new(OutletHandle { outlet: self.outlet.clone(), updater }));
+    }
     fn adopt_config_from(&mut self, new: Self) {
         self.builder = new.builder;
         self.route = new.route;
@@ -127,6 +169,12 @@ impl<R: Route + Router> State<RoutedShell<R>> for RoutedShellState<R> {
         let route = self.route.clone();
         let path = route.format();
         let builder = self.builder.clone();
+        if let (Some(port), Some(handle)) = (ctx.get_state::<SwipePort>(), &self.handle) {
+            port.attach(handle);
+            // The outlet's host owns the touch, so a drag that begins on the
+            // frame around it is not a swipe.
+            self.outlet.borrow_mut().swipe_link = Some(port.link());
+        }
         let action = ctx.get_state::<NavigationRequest>().map(|request| request.0).unwrap_or(NavigationAction::History);
         self.outlet.borrow_mut().configure(route, action, self.transition.clone(), Rc::new(move |route, ctx| {
             if route.format() == path { builder(ctx) } else { Router::build(&route, ctx) }

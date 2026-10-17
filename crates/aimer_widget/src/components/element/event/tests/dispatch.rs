@@ -1509,3 +1509,32 @@ fn invalid_saved_path_clears_capture_without_falling_back() {
     assert_eq!(dispatcher.captured_owner(pointer), None);
     assert_eq!(events.get(), 0);
 }
+
+/// Hit testing sees a position and nothing else, so an element that must treat a
+/// finger differently from a cursor (an edge swipe) reads which one spoke last.
+/// It has to be known *before* the event is routed, hence the dispatcher noting
+/// it on the way in.
+#[test]
+fn the_dispatcher_notes_which_kind_of_pointer_spoke_last() {
+    use aimer_events::pointer::{PointerSource, last_pointer_source};
+
+    let root = RoutedElement {
+        children: Vec::new(),
+        bounds: Some((Vec2d::default(), Vec2d { x: 100.0, y: 100.0 })),
+        events: Rc::new(Cell::new(0)),
+        capture_on_down: false,
+        release_on_move: false,
+    }
+    .boxed();
+    let mut dispatcher = EventDispatcher::new();
+    let pos = Vec2d { x: 10.0, y: 10.0 };
+    let mouse = ElementEvent::PointerMove(PointerInfo::mouse(pos, PointerButton::Primary));
+    let touch = ElementEvent::PointerDown(PointerInfo::new(pos, PointerSource::Touch, 1, PointerButton::Primary));
+
+    let _ = dispatcher.dispatch(root.as_ref(), pos, &mouse);
+    assert_eq!(last_pointer_source(), PointerSource::Mouse);
+    let _ = dispatcher.dispatch(root.as_ref(), pos, &touch);
+    assert_eq!(last_pointer_source(), PointerSource::Touch);
+    let _ = dispatcher.dispatch(root.as_ref(), pos, &mouse);
+    assert_eq!(last_pointer_source(), PointerSource::Mouse);
+}

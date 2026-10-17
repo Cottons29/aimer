@@ -79,6 +79,8 @@ winit.workspace = true
 default = ["native", "web"]
 # Enables the platform's native backend dependencies. Backend selection is
 # determined by target cfgs, not by this feature.
+canvas = []
+cupid = []
 native = ["aimer_quiver/native", "aimer_cupid/native"]
 wgpu = ["aimer_quiver/wgpu"]
 # Enables the direct browser WebGPU/WebGL2 APIs. Target cfgs select the browser

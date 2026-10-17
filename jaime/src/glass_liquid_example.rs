@@ -6,12 +6,12 @@
 
 use aimer::input::button::Button;
 use aimer::macros::widget;
+use aimer::shape::{FillStyle, ShapeColor, ShapeFit, ShapePath, ShapePathBuilder};
 use aimer::style::{BoxDecoration, FontWeight, LayoutSpacing, Spacing, TextAlign, TextStyle};
 use aimer::{
     AimerApp, AnyWidget, BoxAlignment, BuildContext, Colors, Column, Container, CustomShape,
-    Dimension, FillStyle, Glass, Liquid, MaterialMotionPolicy, Positioned, Row, ShapeColor,
-    ShapeFit, ShapePath, ShapePathBuilder, Stack, State, StateUpdater, StatefulWidget, Text,
-    Widget, ZeroSizedBox,
+    Dimension, Glass, Liquid, MaterialMotionPolicy, Positioned, Row, Stack, State, StateUpdater,
+    StatefulWidget, Text, Widget, ZeroSizedBox,
 };
 
 const SURFACE_WIDTH: f32 = 720.0;

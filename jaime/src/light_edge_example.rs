@@ -1,11 +1,12 @@
 //! An adjustable glass highlight beside the same surface without a rim.
 
+use aimer::decoration::{BorderRadius, Decoration, DecorationBox, LightEdge};
 use aimer::macros::widget;
 use aimer::range::Slider;
 use aimer::style::{BoxDecoration, Color, FontWeight, LayoutSpacing, Spacing, TextStyle};
 use aimer::{
-    AimerApp, AnyWidget, BorderRadius, BuildContext, ChildBuilder, Column, Container, Decoration,
-    DecorationBox, LightEdge, Row, State, StateUpdater, StatefulWidget, Text, Widget,
+    AimerApp, AnyWidget, BuildContext, ChildBuilder, Column, Container, Row, State, StateUpdater,
+    StatefulWidget, Text, Widget,
 };
 
 use crate::theme;

@@ -435,6 +435,56 @@ async fn range_slider_state_retains_the_selected_thumb_while_adopting_values() {
     assert!(updater.read_state().is_pressed());
 }
 
+/// A slider owns the gesture from the press: its thumb follows the finger at once.
+/// An ancestor that arbitrates touches, such as a navigator that pops on a sideways
+/// swipe, must be able to tell, so the finger is claimed.
+#[tokio::test]
+async fn a_slider_claims_the_finger_that_presses_it() {
+    let ctx = context();
+    let slider = Slider::new().range(0.0..100.0).step(10.0).value(20.0).width(200.0).to_element(&ctx);
+    slider.layout(&ctx);
+    slider.update(&ctx);
+    let finger = aimer_widget::PointerKey::new(aimer_events::pointer::PointerSource::Touch, 5);
+    let down = PointerInfo::touch(Vec2d { x: 20.0, y: 20.0 }, 5);
+
+    let mut dispatcher = EventDispatcher::new();
+    let _ = dispatcher.dispatch(slider.as_ref(), down.pos, &ElementEvent::PointerDown(down));
+
+    assert!(aimer_widget::is_pointer_claimed(finger));
+    aimer_widget::release_pointer(finger);
+}
+
+#[tokio::test]
+async fn a_range_slider_claims_the_finger_that_presses_it() {
+    let ctx = context();
+    let slider = RangeSlider::new().range(0.0..100.0).step(10.0).values(20.0..70.0).width(200.0).to_element(&ctx);
+    slider.layout(&ctx);
+    slider.update(&ctx);
+    let finger = aimer_widget::PointerKey::new(aimer_events::pointer::PointerSource::Touch, 6);
+    let down = PointerInfo::touch(Vec2d { x: 40.0, y: 20.0 }, 6);
+
+    let mut dispatcher = EventDispatcher::new();
+    let _ = dispatcher.dispatch(slider.as_ref(), down.pos, &ElementEvent::PointerDown(down));
+
+    assert!(aimer_widget::is_pointer_claimed(finger));
+    aimer_widget::release_pointer(finger);
+}
+
+#[tokio::test]
+async fn a_disabled_slider_leaves_the_finger_unclaimed() {
+    let ctx = context();
+    let slider = Slider::new().range(0.0..100.0).value(20.0).width(200.0).disabled(true).to_element(&ctx);
+    slider.layout(&ctx);
+    slider.update(&ctx);
+    let finger = aimer_widget::PointerKey::new(aimer_events::pointer::PointerSource::Touch, 7);
+    let down = PointerInfo::touch(Vec2d { x: 20.0, y: 20.0 }, 7);
+
+    let mut dispatcher = EventDispatcher::new();
+    let _ = dispatcher.dispatch(slider.as_ref(), down.pos, &ElementEvent::PointerDown(down));
+
+    assert!(!aimer_widget::is_pointer_claimed(finger), "it does nothing with the touch, so it keeps nothing from the page");
+}
+
 #[tokio::test]
 async fn disabled_slider_does_not_capture_or_propose_input() {
     let ctx = context();

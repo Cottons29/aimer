@@ -9,6 +9,7 @@ use winit::event::{
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{CursorIcon, Theme, WindowId};
 
+use crate::handler::system_back::{self, BackKey};
 use crate::handler::{AimerApplicationHandler, platform_gesture};
 
 pub struct WindowEventHandler;
@@ -61,18 +62,23 @@ impl WindowEventHandler {
         if Self::defer_uikit_frame_event(app, &event) {
             return;
         }
-        match event {
-            WindowEvent::CloseRequested => {
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    app.render_ctx.close();
-                    if app.render_ctx.is_stopped() {
-                        event_loop.exit();
+        if let WindowEvent::KeyboardInput { event: key, .. } = &event {
+            match system_back::classify(&key.logical_key, key.state, key.repeat) {
+                BackKey::NotBack => {}
+                BackKey::Swallow => return,
+                BackKey::Request => {
+                    // Nothing answering is the platform's to decide: winit tells
+                    // Android every key was handled, so without this Back would
+                    // never leave the app.
+                    if !aimer_events::back::request_back() && system_back::UNHANDLED_BACK_EXITS {
+                        Self::close_window(app, event_loop);
                     }
+                    return;
                 }
-                #[cfg(target_arch = "wasm32")]
-                event_loop.exit();
             }
+        }
+        match event {
+            WindowEvent::CloseRequested => Self::close_window(app, event_loop),
 
             WindowEvent::RedrawRequested => app.render(event_loop),
 
@@ -80,6 +86,23 @@ impl WindowEventHandler {
             WindowEvent::Resized(size) => Self::handle_resize(size, app, event_loop),
 
             other => Self::handle_common_event(app, other),
+        }
+    }
+
+    /// Closes the window: the render worker is stopped first, and the loop exits
+    /// once it has.
+    pub(crate) fn close_window<W: Widget + 'static>(app: &mut AimerApplicationHandler<W>, event_loop: &ActiveEventLoop) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            app.render_ctx.close();
+            if app.render_ctx.is_stopped() {
+                event_loop.exit();
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = app;
+            event_loop.exit();
         }
     }
 
@@ -213,7 +236,20 @@ impl WindowEventHandler {
             }
 
             // A hidden browser tab, or a window the OS has covered or minimized.
-            WindowEvent::Occluded(true) => Self::notify_attention_lost(),
+            WindowEvent::Occluded(true) => {
+                // The GPU may not be used once the app is backgrounded, but the
+                // surface must stay attached: the system snapshots it for the
+                // app switcher right after this returns.
+                #[cfg(all(target_os = "ios", not(target_arch = "wasm32")))]
+                app.render_ctx.set_paused(true);
+                Self::notify_attention_lost();
+            }
+
+            #[cfg(all(target_os = "ios", not(target_arch = "wasm32")))]
+            WindowEvent::Occluded(false) => {
+                app.render_ctx.set_paused(false);
+                app.request_full_redraw();
+            }
 
             WindowEvent::HoveredFile(path) => {
                 let pos = Self::refresh_file_drag_cursor(app);

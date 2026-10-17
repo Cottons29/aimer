@@ -1,5 +1,5 @@
 use aimer::canvas::{FrameCanvas, InnerCanvas};
-use aimer::cupid::draw_cmd_v2::{
+use aimer_cupid::draw_cmd_v2::{
     DrawCommand as V2DrawCommand, Rect, RenderOp, RenderPaintSource, RenderTree,
 };
 use aimer::widget::base::WindowHandle;
@@ -22,7 +22,7 @@ fn context<'a>(canvas: FrameCanvas<'a>, runtime: &tokio::runtime::Runtime) -> Bu
 
 /// The display transform the render tree gives the positioned child after the
 /// element synchronized its state, or `None` when it declined to paint.
-fn child_transform(transform: Transform) -> Option<aimer::cupid::utilities::Mat3> {
+fn child_transform(transform: Transform) -> Option<aimer_cupid::utilities::Mat3> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .expect("test runtime");
@@ -49,12 +49,12 @@ fn child_transform(transform: Transform) -> Option<aimer::cupid::utilities::Mat3
         .unwrap()
         .commit(vec![V2DrawCommand::FillRect {
             rect: Rect::new(0.0, 0.0, 20.0, 20.0),
-            color: aimer::cupid::utilities::Color::white(),
+            color: aimer_cupid::utilities::Color::white(),
             border_radius: [0.0; 4],
             border_width: [0.0; 4],
-            border_color: aimer::cupid::utilities::Color::transparent(),
+            border_color: aimer_cupid::utilities::Color::transparent(),
             outline_width: [0.0; 4],
-            outline_color: aimer::cupid::utilities::Color::transparent(),
+            outline_color: aimer_cupid::utilities::Color::transparent(),
         }])
         .unwrap();
 

@@ -1,5 +1,5 @@
 use aimer::canvas::{FrameCanvas, InnerCanvas};
-use aimer::cupid::draw_cmd_v2::{
+use aimer_cupid::draw_cmd_v2::{
     DrawCommand as V2DrawCommand, Rect, RenderPaintSource, RenderTree,
 };
 use aimer::widget::base::WindowHandle;
@@ -93,7 +93,7 @@ fn custom_shape_records_a_fitted_background_in_its_own_list() {
     assert_eq!(node.opacity, 0.75);
     assert_eq!(
         node.fill.as_ref().expect("fill is retained").color,
-        aimer::cupid::svg::SvgColor::rgba8(220, 40, 40, 255),
+        aimer_cupid::svg::SvgColor::rgba8(220, 40, 40, 255),
     );
     assert_eq!(
         node.stroke.as_ref().expect("stroke is retained").width,
@@ -203,12 +203,12 @@ fn scalable_keeps_its_child_as_a_scaled_retained_node() {
         .unwrap()
         .commit(vec![V2DrawCommand::FillRect {
             rect: Rect::new(0.0, 0.0, 32.0, 32.0),
-            color: aimer::cupid::utilities::Color::white(),
+            color: aimer_cupid::utilities::Color::white(),
             border_radius: [0.0; 4],
             border_width: [0.0; 4],
-            border_color: aimer::cupid::utilities::Color::transparent(),
+            border_color: aimer_cupid::utilities::Color::transparent(),
             outline_width: [0.0; 4],
-            outline_color: aimer::cupid::utilities::Color::transparent(),
+            outline_color: aimer_cupid::utilities::Color::transparent(),
         }])
         .unwrap();
     let retained_context = tree.context(root).unwrap();

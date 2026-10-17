@@ -21,10 +21,11 @@ pub use aimer_ctxmenu::{
     ContextMenu, ContextMenuDismiss, ContextMenuItem, ContextMenuRows, ContextMenuShape,
     ContextMenuStyle,
 };
+
+#[cfg(feature = "cupid")]
 pub use aimer_cupid as cupid;
 pub use aimer_data_view as data_view;
 pub use aimer_decoration as decoration;
-pub use aimer_decoration::*;
 pub use aimer_dnd as dnd;
 pub use aimer_dnd::{
     DragAxis, DragOverlay, DragPayload, DragSession, DragStartMode, DragTarget, DragTargetState,
@@ -40,7 +41,6 @@ pub use aimer_focus::{
     FocusTrap, FocusTrapId, active_focus_trap,
 };
 pub use aimer_form as form;
-pub use aimer_grid::*;
 pub use aimer_haptics as haptics;
 pub use aimer_haptics::{HapticFeedback, HapticKind};
 pub use aimer_i18n as i18n;
@@ -69,7 +69,6 @@ pub use aimer_picker as picker;
 pub use aimer_range as range;
 pub use aimer_selection as selection;
 pub use aimer_shape as shape;
-pub use aimer_shape::*;
 pub use aimer_storage as storage;
 pub mod modal {
     pub use aimer_modal::{

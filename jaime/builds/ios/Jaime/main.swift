@@ -824,6 +824,41 @@ final class HardwareInputView: UIView, UIGestureRecognizerDelegate {
     @objc func editingShortcut(_ command: UIKeyCommand) { HardwareInputForwarder.shortcut(command) }
 }
 
+// MARK: - Links
+
+@_silgen_name("aimer_ios_open_url")
+func aimer_ios_open_url(_ ptr: UnsafePointer<UInt8>?, _ len: Int)
+
+/// Hands the links UIKit opens the app with (a custom-scheme URL, a universal
+/// link) to Rust, which offers them to the app's navigators.
+///
+/// winit owns the `UIApplicationDelegate` and does not implement
+/// `application(_:open:options:)`, so the method is added to its delegate class
+/// at runtime instead of subclassing it.
+enum AimerLinks {
+    private static var installed = false
+
+    static func open(_ url: URL) {
+        let bytes = Array(url.absoluteString.utf8)
+        bytes.withUnsafeBufferPointer { aimer_ios_open_url($0.baseAddress, $0.count) }
+    }
+
+    /// Idempotent. Never replaces a delegate that already handles URLs.
+    static func installOpenURLHook() {
+        guard !installed, let delegate = UIApplication.shared.delegate,
+              let delegateClass = object_getClass(delegate) else { return }
+        installed = true
+        let selector = #selector(UIApplicationDelegate.application(_:open:options:))
+        guard class_getInstanceMethod(delegateClass, selector) == nil else { return }
+        let handler: @convention(block) (AnyObject, UIApplication, URL, [UIApplication.OpenURLOptionsKey: Any]) -> Bool = {
+            _, _, url, _ in
+            AimerLinks.open(url)
+            return true
+        }
+        class_addMethod(delegateClass, selector, imp_implementationWithBlock(handler), "c@:@@@")
+    }
+}
+
 final class KeyboardForwarder {
     static let shared = KeyboardForwarder()
     private(set) var inputView: KeyboardForwardingTextView?
@@ -993,6 +1028,7 @@ final class KeyboardForwarder {
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
+                AimerLinks.installOpenURLHook()
                 self?.installIfPossible()
             })
 

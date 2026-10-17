@@ -181,8 +181,8 @@ impl Drawable for ThemedCaretElement {
                 .paint_color(composing)
                 .as_u32();
             canvas.fill_rect_styled(
-                cupid::draw_cmd_v2::Rect::new(0.0, 0.0, width, height),
-                cupid::utilities::Color::rgba8(
+                aimer::canvas::Rect::new(0.0, 0.0, width, height),
+                aimer::canvas::RenderColor::rgba8(
                     ((rgba >> 16) & 0xff) as u8,
                     ((rgba >> 8) & 0xff) as u8,
                     (rgba & 0xff) as u8,
@@ -190,9 +190,9 @@ impl Drawable for ThemedCaretElement {
                 ),
                 [width / 2.0; 4],
                 [0.0; 4],
-                cupid::utilities::Color::transparent(),
+                aimer::canvas::RenderColor::transparent(),
                 [0.0; 4],
-                cupid::utilities::Color::transparent(),
+                aimer::canvas::RenderColor::transparent(),
             );
         }
         canvas.finish();

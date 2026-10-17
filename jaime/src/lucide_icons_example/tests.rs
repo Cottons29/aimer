@@ -2,8 +2,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use aimer::cupid::draw_cmd_v2::DrawCommand;
-use aimer::cupid::svg::SvgScene;
+use aimer_cupid::draw_cmd_v2::DrawCommand;
+use aimer_cupid::svg::SvgScene;
 use aimer::quiver::winit::dpi::PhysicalSize;
 use aimer::{
     AimerApp, AnyElement, BuildContext, Drawable, Element, EventElement, HeadlessOptions,

@@ -247,15 +247,20 @@ fn tessellate(
                     "invalid stroke parameters".to_owned(),
                 ));
             }
-            let mut mesh = stroke_mesh(
+            // A stroke is painted once, as the union of its geometry. It is built as
+            // overlapping polygons and filled with the non-zero rule, so no point is
+            // covered twice: layering the pieces is invisible for an opaque colour and
+            // wrong for any translucent one.
+            let outline = stroke_outline(
                 &flatten_path(geometry, tolerance),
                 width,
                 line_cap,
                 line_join,
                 miter_limit,
             );
+            let mut mesh = scanline_fill(&outline, SvgFillRule::NonZero)?;
             if analytic_aa && fringe_width.is_finite() && fringe_width > 0.0 {
-                add_mesh_fringe(&mut mesh, fringe_width);
+                add_fill_fringe(&mut mesh, &outline, SvgFillRule::NonZero, fringe_width);
             }
             Ok(mesh)
         }
@@ -313,6 +318,8 @@ fn scanline_fill(
     let mut vertices = Vec::new();
     let mut indices = Vec::new();
     let mut active_edges = Vec::new();
+    let mut crossings = Vec::new();
+    let mut parts = Vec::new();
     let mut next_edge = 0;
     for band in levels.windows(2) {
         let (y0, y1) = (band[0], band[1]);
@@ -325,58 +332,25 @@ fn scanline_fill(
             next_edge += 1;
         }
         active_edges.retain(|&index| edges[index].max_y > mid);
-        let mut crossings = Vec::with_capacity(active_edges.len());
-        for &index in &active_edges {
-            let edge = edges[index];
-            let t = (mid - edge.a.1) / (edge.b.1 - edge.a.1);
-            let x_mid = edge.a.0 + (edge.b.0 - edge.a.0) * t;
-            let at = |y: f32| {
-                let x = if y == edge.a.1 {
-                    edge.a.0
-                } else if y == edge.b.1 {
-                    edge.b.0
-                } else {
-                    edge.a.0 + (edge.b.0 - edge.a.0) * ((y - edge.a.1) / (edge.b.1 - edge.a.1))
-                };
-                (x, y)
-            };
-            crossings.push(Crossing {
-                left: at(y0),
-                right: at(y1),
-                x_mid,
-                winding: edge.winding,
-            });
-        }
-        crossings.sort_by(|a, b| a.x_mid.total_cmp(&b.x_mid));
-        let mut start = None;
-        let mut winding = 0i32;
-        let mut parity = false;
-        for crossing in crossings {
-            let was_inside = match rule {
-                SvgFillRule::NonZero => winding != 0,
-                SvgFillRule::EvenOdd => parity,
-            };
-            winding += crossing.winding;
-            parity = !parity;
-            let is_inside = match rule {
-                SvgFillRule::NonZero => winding != 0,
-                SvgFillRule::EvenOdd => parity,
-            };
-            if !was_inside && is_inside {
-                start = Some(crossing);
+        // No edge starts or ends inside a band, but two edges can still cross
+        // inside one, and then the order they have at the middle is not the order
+        // they have at both ends. A band is split at the crossing, so that the
+        // order inside each part is the order it is filled in.
+        parts.clear();
+        parts.push((y0, y1));
+        let mut splits = 0;
+        while let Some((top, bottom)) = parts.pop() {
+            band_crossings(&edges, &active_edges, top, bottom, &mut crossings);
+            if splits < MAX_BAND_SPLITS
+                && let Some(split) = first_crossing(&crossings, top, bottom)
+            {
+                splits += 1;
+                // Popped last, so the upper part is filled first.
+                parts.push((split, bottom));
+                parts.push((top, split));
+                continue;
             }
-            if was_inside && !is_inside {
-                if let Some(left) = start.take() {
-                    append_quad(
-                        &mut vertices,
-                        &mut indices,
-                        left.left,
-                        crossing.left,
-                        crossing.right,
-                        left.right,
-                    );
-                }
-            }
+            fill_band(&crossings, rule, &mut vertices, &mut indices);
         }
     }
     let coverages = vec![1.0; vertices.len()];
@@ -385,6 +359,83 @@ fn scanline_fill(
         coverages: coverages.into(),
         indices: indices.into(),
     })
+}
+
+/// The most times one scanline band is split where its edges cross. Bounds the
+/// work for degenerate input; a band past it is filled as it is.
+const MAX_BAND_SPLITS: usize = 4_096;
+
+/// Where each active edge is across the band `top..bottom`, left to right at its
+/// middle, written into `crossings` so one buffer serves every band.
+fn band_crossings(edges: &[ScanEdge], active_edges: &[usize], top: f32, bottom: f32, crossings: &mut Vec<Crossing>) {
+    let mid = top * 0.5 + bottom * 0.5;
+    crossings.clear();
+    for &index in active_edges {
+        let edge = edges[index];
+        let t = (mid - edge.a.1) / (edge.b.1 - edge.a.1);
+        let x_mid = edge.a.0 + (edge.b.0 - edge.a.0) * t;
+        let at = |y: f32| {
+            let x = if y == edge.a.1 {
+                edge.a.0
+            } else if y == edge.b.1 {
+                edge.b.0
+            } else {
+                edge.a.0 + (edge.b.0 - edge.a.0) * ((y - edge.a.1) / (edge.b.1 - edge.a.1))
+            };
+            (x, y)
+        };
+        crossings.push(Crossing {
+            left: at(top),
+            right: at(bottom),
+            x_mid,
+            winding: edge.winding,
+        });
+    }
+    crossings.sort_by(|a, b| a.x_mid.total_cmp(&b.x_mid));
+}
+
+/// The height of the first place two neighbouring edges swap sides inside the band.
+fn first_crossing(crossings: &[Crossing], top: f32, bottom: f32) -> Option<f32> {
+    let mut first: Option<f32> = None;
+    for pair in crossings.windows(2) {
+        let at_top = pair[0].left.0 - pair[1].left.0;
+        let at_bottom = pair[0].right.0 - pair[1].right.0;
+        if at_top * at_bottom < 0.0 {
+            let height = top + (bottom - top) * (at_top / (at_top - at_bottom));
+            // Strictly inside, or the split would not make the band any smaller.
+            if height > top && height < bottom {
+                first = Some(first.map_or(height, |first| first.min(height)));
+            }
+        }
+    }
+    first
+}
+
+/// The quads covering the inside of one band, given its edges in left-to-right order.
+fn fill_band(crossings: &[Crossing], rule: SvgFillRule, vertices: &mut Vec<[f32; 2]>, indices: &mut Vec<u32>) {
+    let mut start = None;
+    let mut winding = 0i32;
+    let mut parity = false;
+    for crossing in crossings {
+        let was_inside = match rule {
+            SvgFillRule::NonZero => winding != 0,
+            SvgFillRule::EvenOdd => parity,
+        };
+        winding += crossing.winding;
+        parity = !parity;
+        let is_inside = match rule {
+            SvgFillRule::NonZero => winding != 0,
+            SvgFillRule::EvenOdd => parity,
+        };
+        if !was_inside && is_inside {
+            start = Some(*crossing);
+        }
+        if was_inside && !is_inside {
+            if let Some(left) = start.take() {
+                append_quad(vertices, indices, left.left, crossing.left, crossing.right, left.right);
+            }
+        }
+    }
 }
 
 fn close_fill_contours(mut contours: Vec<Vec<(f32, f32)>>) -> Vec<Vec<(f32, f32)>> {
@@ -645,326 +696,252 @@ fn append_quad(
     indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
 }
 
-fn stroke_mesh(
-    contours: &[Vec<(f32, f32)>],
+/// The widest turn, in radians, one segment of a round join's arc may span. Fifteen
+/// degrees keeps the arc within one percent of the stroke radius of a true circle.
+const MAX_ROUND_JOIN_STEP: f32 = std::f32::consts::PI / 12.0;
+/// Segments in a round cap, which is half a circle.
+const ROUND_CAP_STEPS: usize = 8;
+/// Cosine of the turn below which two segments are treated as one smooth bend, and
+/// joined by a single offset point. About one degree: the point is off by less than
+/// a thousandth of the stroke radius, and a flattened curve stays a strip.
+const SMOOTH_TURN_COS: f32 = 0.9998;
+
+type Point = (f32, f32);
+
+/// One segment of a stroked polyline: its direction, its left normal, and its length.
+#[derive(Clone, Copy)]
+struct StrokeSegment {
+    direction: Point,
+    normal: Point,
+    length: f32,
+}
+
+/// Polygons whose union, filled with the non-zero rule, is the stroke of `contours`.
+///
+/// Each contour is one outline: the offset of its left side walked forward, then
+/// the cap, the offset of its right side walked back, then the cap. A closed
+/// contour is two loops, a ring. Joins are added on the outside of each turn;
+/// the inside of a sharp turn passes through the vertex, which leaves a small
+/// overlap that the non-zero rule fills once. So a stroke is a handful of edges per
+/// segment, and its pieces overlap only where the path crosses itself or sharply
+/// turns, not at every join.
+fn stroke_outline(
+    contours: &[Vec<Point>],
     width: f32,
     cap: SvgLineCap,
     join: SvgLineJoin,
     miter_limit: f32,
-) -> SvgMesh {
+) -> Vec<Vec<Point>> {
     let radius = width * 0.5;
-    let mut vertices = Vec::new();
-    let mut indices = Vec::new();
+    let mut polygons = Vec::new();
     for contour in contours {
         let closed = contour.len() > 2 && contour.first() == contour.last();
-        for (index, segment) in contour.windows(2).enumerate() {
-            let (a, b) = (segment[0], segment[1]);
-            let dx = b.0 - a.0;
-            let dy = b.1 - a.1;
-            let len = dx.hypot(dy);
-            if len <= f32::EPSILON {
-                continue;
-            }
-            let (nx, ny) = (-dy / len * radius, dx / len * radius);
-            let (mut ax, mut ay, mut bx, mut by) = (a.0, a.1, b.0, b.1);
-            if !closed && cap == SvgLineCap::Square && index == 0 {
-                ax -= dx / len * radius;
-                ay -= dy / len * radius;
-            }
-            if !closed && cap == SvgLineCap::Square && index + 2 == contour.len() {
-                bx += dx / len * radius;
-                by += dy / len * radius;
-            }
-            append_quad(
-                &mut vertices,
-                &mut indices,
-                (ax + nx, ay + ny),
-                (ax - nx, ay - ny),
-                (bx - nx, by - ny),
-                (bx + nx, by + ny),
-            );
-            if index > 0 {
-                add_join(
-                    &mut vertices,
-                    &mut indices,
-                    contour[index - 1],
-                    a,
-                    b,
-                    radius,
-                    join,
-                    miter_limit,
-                );
-            }
-            if !closed && cap == SvgLineCap::Round && index == 0 {
-                append_disc(&mut vertices, &mut indices, a, radius);
-            }
-            if !closed && cap == SvgLineCap::Round && index + 2 == contour.len() {
-                append_disc(&mut vertices, &mut indices, b, radius);
+        let mut points: Vec<Point> = Vec::with_capacity(contour.len());
+        for &point in contour {
+            if points.last().is_none_or(|last| (point.0 - last.0).hypot(point.1 - last.1) > f32::EPSILON) {
+                points.push(point);
             }
         }
-        if closed && contour.len() > 3 {
-            let count = contour.len();
-            add_join(
-                &mut vertices,
-                &mut indices,
-                contour[count - 2],
-                contour[0],
-                contour[1],
-                radius,
-                join,
-                miter_limit,
-            );
+        if closed && points.len() > 1 && points.first() == points.last() {
+            points.pop();
+        }
+        if points.len() < 2 {
+            continue;
+        }
+        let reversed: Vec<Point> = points.iter().rev().copied().collect();
+        let forward = walk_side(&points, closed, radius, join, miter_limit);
+        let backward = walk_side(&reversed, closed, radius, join, miter_limit);
+        if closed {
+            push_ring(&mut polygons, forward, backward);
+        } else {
+            let count = points.len();
+            let mut outline = forward;
+            outline.extend(cap_points(points[count - 1], points[count - 2], radius, cap));
+            outline.extend(backward);
+            outline.extend(cap_points(points[0], points[1], radius, cap));
+            push_polygon(&mut polygons, outline);
         }
     }
-    let coverages = vec![1.0; vertices.len()];
-    SvgMesh {
-        vertices: vertices.into(),
-        coverages: coverages.into(),
-        indices: indices.into(),
+    polygons
+}
+
+fn segment(from: Point, to: Point) -> StrokeSegment {
+    let (dx, dy) = (to.0 - from.0, to.1 - from.1);
+    let length = dx.hypot(dy);
+    let direction = (dx / length, dy / length);
+    StrokeSegment { direction, normal: (-direction.1, direction.0), length }
+}
+
+/// The boundary of the stroke on the left of `points`, walked forward, with joins at
+/// the turns. The right side is the same walk over the reversed points.
+fn walk_side(points: &[Point], closed: bool, radius: f32, join: SvgLineJoin, miter_limit: f32) -> Vec<Point> {
+    let count = points.len();
+    let segments: Vec<StrokeSegment> = (0..if closed { count } else { count - 1 })
+        .map(|index| segment(points[index], points[(index + 1) % count]))
+        .collect();
+    let offset = |point: Point, normal: Point| (point.0 + normal.0 * radius, point.1 + normal.1 * radius);
+    let mut outline = Vec::with_capacity(count * 2);
+    if !closed {
+        outline.push(offset(points[0], segments[0].normal));
+    }
+    let joints = if closed { 0..count } else { 1..count - 1 };
+    for index in joints {
+        let incoming = segments[(index + segments.len() - 1) % segments.len()];
+        let outgoing = segments[index % segments.len()];
+        join_points(&mut outline, points[index], incoming, outgoing, radius, join, miter_limit);
+    }
+    if !closed {
+        outline.push(offset(points[count - 1], segments[segments.len() - 1].normal));
+    }
+    outline
+}
+
+/// The points that carry the left side of the stroke around the turn at `point`.
+fn join_points(
+    outline: &mut Vec<Point>,
+    point: Point,
+    incoming: StrokeSegment,
+    outgoing: StrokeSegment,
+    radius: f32,
+    join: SvgLineJoin,
+    miter_limit: f32,
+) {
+    let (n1, n2) = (incoming.normal, outgoing.normal);
+    let cross = incoming.direction.0 * outgoing.direction.1 - incoming.direction.1 * outgoing.direction.0;
+    let dot = incoming.direction.0 * outgoing.direction.0 + incoming.direction.1 * outgoing.direction.1;
+    let a = (point.0 + n1.0 * radius, point.1 + n1.1 * radius);
+    let b = (point.0 + n2.0 * radius, point.1 + n2.1 * radius);
+    // Where the two offset lines meet: the tip of a miter on the outside of a turn,
+    // the corner of the offset on the inside. It is the vertex plus the sum of the
+    // normals over one plus their dot product.
+    let scale = radius / (1.0 + dot);
+    let meeting = (point.0 + (n1.0 + n2.0) * scale, point.1 + (n1.1 + n2.1) * scale);
+    if dot > SMOOTH_TURN_COS {
+        outline.push(meeting);
+        return;
+    }
+    if cross > 0.0 {
+        // The inside of the turn. The offset lines cross inside both segments when the
+        // turn is gentle enough for the stroke's width; where they do not, the offset
+        // goes through the vertex instead, and the overlap that leaves is filled once.
+        let reach = radius * cross / (1.0 + dot);
+        if reach <= incoming.length.min(outgoing.length) {
+            outline.push(meeting);
+        } else {
+            outline.extend([a, point, b]);
+        }
+        return;
+    }
+    // The outside of the turn.
+    match join {
+        SvgLineJoin::Round => {
+            // A 180 degree turn has no cross product to say which way round to go, and
+            // the way round is forward, past the vertex.
+            let sweep = if cross == 0.0 && dot < 0.0 {
+                -std::f32::consts::PI
+            } else {
+                cross.atan2(dot)
+            };
+            let steps = ((sweep.abs() / MAX_ROUND_JOIN_STEP).ceil() as usize).max(1);
+            let start = (n1.0 * radius, n1.1 * radius);
+            for step in 0..=steps {
+                let (sin, cos) = (sweep * step as f32 / steps as f32).sin_cos();
+                outline.push((
+                    point.0 + start.0 * cos - start.1 * sin,
+                    point.1 + start.0 * sin + start.1 * cos,
+                ));
+            }
+        }
+        SvgLineJoin::Miter | SvgLineJoin::MiterClip
+            if 1.0 + dot > f32::EPSILON
+                && (meeting.0 - point.0).hypot(meeting.1 - point.1) <= miter_limit * radius =>
+        {
+            outline.extend([a, meeting, b]);
+        }
+        _ => outline.extend([a, b]),
+    }
+}
+
+/// The points that round or square the end of a stroke at `end`, whose path arrives
+/// from `previous`, between the two sides of the stroke there.
+fn cap_points(end: Point, previous: Point, radius: f32, cap: SvgLineCap) -> Vec<Point> {
+    let (dx, dy) = (end.0 - previous.0, end.1 - previous.1);
+    let length = dx.hypot(dy);
+    let direction = (dx / length, dy / length);
+    let normal = (-direction.1, direction.0);
+    match cap {
+        SvgLineCap::Butt => Vec::new(),
+        SvgLineCap::Square => vec![
+            (
+                end.0 + (normal.0 + direction.0) * radius,
+                end.1 + (normal.1 + direction.1) * radius,
+            ),
+            (
+                end.0 + (direction.0 - normal.0) * radius,
+                end.1 + (direction.1 - normal.1) * radius,
+            ),
+        ],
+        SvgLineCap::Round => (1..ROUND_CAP_STEPS)
+            .map(|step| {
+                let (sin, cos) = (std::f32::consts::PI * step as f32 / ROUND_CAP_STEPS as f32).sin_cos();
+                (
+                    end.0 + (normal.0 * cos + direction.0 * sin) * radius,
+                    end.1 + (normal.1 * cos + direction.1 * sin) * radius,
+                )
+            })
+            .collect(),
+    }
+}
+
+fn signed_area(points: &[Point]) -> f32 {
+    let mut area = 0.0_f32;
+    for (index, point) in points.iter().enumerate() {
+        let next = points[(index + 1) % points.len()];
+        area += point.0 * next.1 - next.0 * point.1;
+    }
+    area
+}
+
+/// Adds `points` as a closed polygon wound positively, dropping a degenerate one.
+fn push_polygon(polygons: &mut Vec<Vec<Point>>, mut points: Vec<Point>) {
+    let area = signed_area(&points);
+    if !area.is_finite() || area.abs() <= f32::EPSILON {
+        return;
+    }
+    if area < 0.0 {
+        points.reverse();
+    }
+    points.push(points[0]);
+    polygons.push(points);
+}
+
+/// Adds the two loops of a closed stroke. The larger is the outer edge and is wound
+/// positively like every other piece; the other is the inner edge, wound the other
+/// way, so that the non-zero rule leaves the hole inside it unfilled.
+fn push_ring(polygons: &mut Vec<Vec<Point>>, a: Vec<Point>, b: Vec<Point>) {
+    let (area_a, area_b) = (signed_area(&a), signed_area(&b));
+    if !area_a.is_finite() || !area_b.is_finite() {
+        return;
+    }
+    let (mut outer, mut inner) = if area_a.abs() >= area_b.abs() { (a, b) } else { (b, a) };
+    if signed_area(&outer) < 0.0 {
+        outer.reverse();
+    }
+    if signed_area(&inner) > 0.0 {
+        inner.reverse();
+    }
+    for mut polygon in [outer, inner] {
+        if polygon.len() >= 3 {
+            polygon.push(polygon[0]);
+            polygons.push(polygon);
+        }
     }
 }
 
 type PointKey = (u32, u32);
-type EdgeKey = (PointKey, PointKey);
 
 fn point_key(point: [f32; 2]) -> PointKey {
-    let bits = |value: f32| if value == 0.0 { 0 } else { value.to_bits() };
-    (bits(point[0]), bits(point[1]))
-}
-
-fn edge_key(a: [f32; 2], b: [f32; 2]) -> EdgeKey {
-    let a = point_key(a);
-    let b = point_key(b);
-    if a <= b { (a, b) } else { (b, a) }
-}
-
-struct TriangleGrid {
-    bounds: [f32; 4],
-    cell_size: [f32; 2],
-    cells: Vec<Vec<usize>>,
-    triangles: Vec<[usize; 3]>,
-}
-
-impl TriangleGrid {
-    const SIDE: usize = 32;
-
-    fn new(mesh: &SvgMesh) -> Self {
-        let mut bounds = [
-            f32::INFINITY,
-            f32::INFINITY,
-            f32::NEG_INFINITY,
-            f32::NEG_INFINITY,
-        ];
-        for point in mesh.vertices.iter() {
-            bounds[0] = bounds[0].min(point[0]);
-            bounds[1] = bounds[1].min(point[1]);
-            bounds[2] = bounds[2].max(point[0]);
-            bounds[3] = bounds[3].max(point[1]);
-        }
-        let cell_size = [
-            ((bounds[2] - bounds[0]) / Self::SIDE as f32).max(f32::EPSILON),
-            ((bounds[3] - bounds[1]) / Self::SIDE as f32).max(f32::EPSILON),
-        ];
-        let mut cells = (0..Self::SIDE * Self::SIDE)
-            .map(|_| Vec::new())
-            .collect::<Vec<_>>();
-        let triangles = mesh
-            .indices
-            .chunks_exact(3)
-            .map(|triangle| {
-                [
-                    triangle[0] as usize,
-                    triangle[1] as usize,
-                    triangle[2] as usize,
-                ]
-            })
-            .collect::<Vec<_>>();
-        for (triangle_index, triangle) in triangles.iter().enumerate() {
-            let a = mesh.vertices[triangle[0]];
-            let b = mesh.vertices[triangle[1]];
-            let c = mesh.vertices[triangle[2]];
-            let min_x = a[0].min(b[0]).min(c[0]);
-            let min_y = a[1].min(b[1]).min(c[1]);
-            let max_x = a[0].max(b[0]).max(c[0]);
-            let max_y = a[1].max(b[1]).max(c[1]);
-            let (x0, y0) = grid_cell([min_x, min_y], bounds, cell_size);
-            let (x1, y1) = grid_cell([max_x, max_y], bounds, cell_size);
-            for y in y0..=y1 {
-                for x in x0..=x1 {
-                    cells[y * Self::SIDE + x].push(triangle_index);
-                }
-            }
-        }
-        Self {
-            bounds,
-            cell_size,
-            cells,
-            triangles,
-        }
-    }
-
-    fn contains(&self, mesh: &SvgMesh, point: [f32; 2]) -> bool {
-        if point[0] < self.bounds[0]
-            || point[0] > self.bounds[2]
-            || point[1] < self.bounds[1]
-            || point[1] > self.bounds[3]
-        {
-            return false;
-        }
-        let (x, y) = grid_cell(point, self.bounds, self.cell_size);
-        self.cells[y * Self::SIDE + x].iter().any(|&index| {
-            let triangle = self.triangles[index];
-            point_in_triangle(
-                point,
-                mesh.vertices[triangle[0]],
-                mesh.vertices[triangle[1]],
-                mesh.vertices[triangle[2]],
-            )
-        })
-    }
-}
-
-fn grid_cell(point: [f32; 2], bounds: [f32; 4], cell_size: [f32; 2]) -> (usize, usize) {
-    let x = ((point[0] - bounds[0]) / cell_size[0]).floor() as usize;
-    let y = ((point[1] - bounds[1]) / cell_size[1]).floor() as usize;
-    (x.min(TriangleGrid::SIDE - 1), y.min(TriangleGrid::SIDE - 1))
-}
-
-fn point_in_triangle(point: [f32; 2], a: [f32; 2], b: [f32; 2], c: [f32; 2]) -> bool {
-    let cross = |from: [f32; 2], to: [f32; 2]| {
-        (to[0] - from[0]) * (point[1] - from[1]) - (to[1] - from[1]) * (point[0] - from[0])
-    };
-    let ab = cross(a, b);
-    let bc = cross(b, c);
-    let ca = cross(c, a);
-    let epsilon = f32::EPSILON * 16.0;
-    (ab >= -epsilon && bc >= -epsilon && ca >= -epsilon)
-        || (ab <= epsilon && bc <= epsilon && ca <= epsilon)
-}
-
-fn add_mesh_fringe(mesh: &mut SvgMesh, width: f32) {
-    if mesh.indices.len() < 3 || !width.is_finite() || width <= 0.0 {
-        return;
-    }
-
-    #[derive(Clone, Copy)]
-    struct BoundaryEdge {
-        a: [f32; 2],
-        b: [f32; 2],
-        interior_side: f32,
-        count: u8,
-    }
-
-    let triangle_grid = TriangleGrid::new(mesh);
-    let mut edges: HashMap<EdgeKey, BoundaryEdge> = HashMap::new();
-    for triangle in mesh.indices.chunks_exact(3) {
-        let [ia, ib, ic] = [
-            triangle[0] as usize,
-            triangle[1] as usize,
-            triangle[2] as usize,
-        ];
-        let a = mesh.vertices[ia];
-        let b = mesh.vertices[ib];
-        let c = mesh.vertices[ic];
-        let center = [(a[0] + b[0] + c[0]) / 3.0, (a[1] + b[1] + c[1]) / 3.0];
-        for (from, to) in [(a, b), (b, c), (c, a)] {
-            let key = edge_key(from, to);
-            let edge = edges.entry(key).or_insert_with(|| BoundaryEdge {
-                a: from,
-                b: to,
-                interior_side: (to[0] - from[0]) * (center[1] - from[1])
-                    - (to[1] - from[1]) * (center[0] - from[0]),
-                count: 0,
-            });
-            edge.count = edge.count.saturating_add(1);
-        }
-    }
-
-    let mut vertices = mesh.vertices.to_vec();
-    let mut coverages = if mesh.coverages.len() == mesh.vertices.len() {
-        mesh.coverages.to_vec()
-    } else {
-        vec![1.0; mesh.vertices.len()]
-    };
-    let mut indices = mesh.indices.to_vec();
-    let mut corners: HashMap<PointKey, ([f32; 2], Vec<[f32; 2]>)> = HashMap::new();
-
-    for edge in edges.values().filter(|edge| edge.count == 1) {
-        let dx = edge.b[0] - edge.a[0];
-        let dy = edge.b[1] - edge.a[1];
-        let length = dx.hypot(dy);
-        if !length.is_finite() || length <= f32::EPSILON {
-            continue;
-        }
-        // The signed area tells which side of the directed boundary edge is
-        // covered by its source triangle. Move the fringe to the other side.
-        let sign = if edge.interior_side >= 0.0 { -1.0 } else { 1.0 };
-        let normal = [sign * -dy / length, sign * dx / length];
-        let probe = [
-            (edge.a[0] + edge.b[0]) * 0.5 + normal[0] * (width * 0.25),
-            (edge.a[1] + edge.b[1]) * 0.5 + normal[1] * (width * 0.25),
-        ];
-        if triangle_grid.contains(mesh, probe) {
-            continue;
-        }
-        let outer_a = [edge.a[0] + normal[0] * width, edge.a[1] + normal[1] * width];
-        let outer_b = [edge.b[0] + normal[0] * width, edge.b[1] + normal[1] * width];
-        append_coverage_quad(
-            &mut vertices,
-            &mut coverages,
-            &mut indices,
-            edge.a,
-            edge.b,
-            outer_b,
-            outer_a,
-        );
-        corners
-            .entry(point_key(edge.a))
-            .or_insert_with(|| (edge.a, Vec::new()))
-            .1
-            .push(outer_a);
-        corners
-            .entry(point_key(edge.b))
-            .or_insert_with(|| (edge.b, Vec::new()))
-            .1
-            .push(outer_b);
-    }
-
-    for (_, (point, mut outer_points)) in corners {
-        outer_points.sort_by(|a, b| {
-            (a[1] - point[1])
-                .atan2(a[0] - point[0])
-                .total_cmp(&(b[1] - point[1]).atan2(b[0] - point[0]))
-        });
-        outer_points.dedup_by(|a, b| point_key(*a) == point_key(*b));
-        if outer_points.len() < 2 {
-            continue;
-        }
-        for pair in outer_points.windows(2) {
-            append_coverage_triangle(
-                &mut vertices,
-                &mut coverages,
-                &mut indices,
-                point,
-                pair[0],
-                pair[1],
-            );
-        }
-        if outer_points.len() > 2 {
-            append_coverage_triangle(
-                &mut vertices,
-                &mut coverages,
-                &mut indices,
-                point,
-                *outer_points.last().unwrap_or(&outer_points[0]),
-                outer_points[0],
-            );
-        }
-    }
-
-    mesh.vertices = vertices.into();
-    mesh.coverages = coverages.into();
-    mesh.indices = indices.into();
+    (point[0].to_bits(), point[1].to_bits())
 }
 
 fn append_coverage_quad(
@@ -998,97 +975,6 @@ fn append_coverage_triangle(
     vertices.extend([a, b, c]);
     coverages.extend([1.0, 0.0, 0.0]);
     indices.extend([base, base + 1, base + 2]);
-}
-
-fn add_join(
-    vertices: &mut Vec<[f32; 2]>,
-    indices: &mut Vec<u32>,
-    previous: (f32, f32),
-    point: (f32, f32),
-    next: (f32, f32),
-    radius: f32,
-    join: SvgLineJoin,
-    miter_limit: f32,
-) {
-    let d1 = (point.0 - previous.0, point.1 - previous.1);
-    let d2 = (next.0 - point.0, next.1 - point.1);
-    let l1 = d1.0.hypot(d1.1);
-    let l2 = d2.0.hypot(d2.1);
-    if l1 <= f32::EPSILON || l2 <= f32::EPSILON {
-        return;
-    }
-    let d1 = (d1.0 / l1, d1.1 / l1);
-    let d2 = (d2.0 / l2, d2.1 / l2);
-    let cross = d1.0 * d2.1 - d1.1 * d2.0;
-    if cross.abs() <= f32::EPSILON {
-        return;
-    }
-    if join == SvgLineJoin::Round {
-        append_disc(vertices, indices, point, radius);
-        return;
-    }
-    let side = if cross > 0.0 { -1.0 } else { 1.0 };
-    let a = (
-        point.0 - side * d1.1 * radius,
-        point.1 + side * d1.0 * radius,
-    );
-    let b = (
-        point.0 - side * d2.1 * radius,
-        point.1 + side * d2.0 * radius,
-    );
-    let miter = if matches!(join, SvgLineJoin::Miter | SvgLineJoin::MiterClip) {
-        let delta = (b.0 - a.0, b.1 - a.1);
-        let t = (delta.0 * d2.1 - delta.1 * d2.0) / cross;
-        let candidate = (a.0 + d1.0 * t, a.1 + d1.1 * t);
-        ((candidate.0 - point.0).hypot(candidate.1 - point.1) <= miter_limit * radius)
-            .then_some(candidate)
-    } else {
-        None
-    };
-    if let Some(miter) = miter {
-        append_triangle(vertices, indices, a, miter, b)
-    } else {
-        append_triangle(vertices, indices, point, a, b)
-    }
-}
-
-fn append_triangle(
-    vertices: &mut Vec<[f32; 2]>,
-    indices: &mut Vec<u32>,
-    a: (f32, f32),
-    b: (f32, f32),
-    c: (f32, f32),
-) {
-    let Ok(base) = u32::try_from(vertices.len()) else {
-        return;
-    };
-    vertices.extend([[a.0, a.1], [b.0, b.1], [c.0, c.1]]);
-    indices.extend([base, base + 1, base + 2]);
-}
-
-fn append_disc(
-    vertices: &mut Vec<[f32; 2]>,
-    indices: &mut Vec<u32>,
-    center: (f32, f32),
-    radius: f32,
-) {
-    const STEPS: usize = 12;
-    let Ok(base) = u32::try_from(vertices.len()) else {
-        return;
-    };
-    vertices.push([center.0, center.1]);
-    for step in 0..STEPS {
-        let angle = std::f32::consts::TAU * step as f32 / STEPS as f32;
-        vertices.push([
-            center.0 + angle.cos() * radius,
-            center.1 + angle.sin() * radius,
-        ]);
-    }
-    for step in 0..STEPS {
-        let a = base + 1 + step as u32;
-        let b = base + 1 + ((step + 1) % STEPS) as u32;
-        indices.extend([base, a, b]);
-    }
 }
 
 /// Tessellates a stroke with the SVG dash pattern retained by [`SvgStroke`].
@@ -1583,5 +1469,195 @@ mod tests {
         );
 
         assert_eq!(contour[0].len(), 2);
+    }
+
+    /// How many triangles of `mesh` cover `point`, counting only the strict
+    /// interior so a point on a shared edge is not counted twice, which is also
+    /// how the rasterizer treats it.
+    fn layers_at(mesh: &SvgMesh, point: [f32; 2]) -> usize {
+        mesh.indices
+            .chunks_exact(3)
+            .filter(|triangle| barycentric(mesh, triangle, point).is_some_and(|w| w.iter().all(|w| *w > 1e-4)))
+            .count()
+    }
+
+    /// Whether any triangle of `mesh` covers `point`, edges included. Unlike
+    /// [`layers_at`] a point on a shared edge, which a long thin triangle puts
+    /// within float error of many sample points, still counts as covered.
+    fn covered_at(mesh: &SvgMesh, point: [f32; 2]) -> bool {
+        mesh.indices
+            .chunks_exact(3)
+            .any(|triangle| barycentric(mesh, triangle, point).is_some_and(|w| w.iter().all(|w| *w >= -1e-3)))
+    }
+
+    /// Alpha of a stroke of `alpha` composited triangle by triangle at `point`,
+    /// as the GPU does, with each vertex's edge coverage interpolated.
+    fn composited_alpha(mesh: &SvgMesh, point: [f32; 2], alpha: f32) -> f32 {
+        let mut result = 0.0_f32;
+        for triangle in mesh.indices.chunks_exact(3) {
+            if let Some(w) = barycentric(mesh, triangle, point)
+                && w.iter().all(|w| *w > 1e-4)
+            {
+                let coverage: f32 = (0..3).map(|i| w[i] * mesh.coverages[triangle[i] as usize]).sum();
+                result = 1.0 - (1.0 - result) * (1.0 - alpha * coverage);
+            }
+        }
+        result
+    }
+
+    fn barycentric(mesh: &SvgMesh, triangle: &[u32], p: [f32; 2]) -> Option<[f32; 3]> {
+        let (a, b, c) = (mesh.vertices[triangle[0] as usize], mesh.vertices[triangle[1] as usize], mesh.vertices[triangle[2] as usize]);
+        let d = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1]);
+        if d.abs() < 1e-9 {
+            return None;
+        }
+        let w0 = ((b[1] - c[1]) * (p[0] - c[0]) + (c[0] - b[0]) * (p[1] - c[1])) / d;
+        let w1 = ((c[1] - a[1]) * (p[0] - c[0]) + (a[0] - c[0]) * (p[1] - c[1])) / d;
+        Some([w0, w1, 1.0 - w0 - w1])
+    }
+
+    /// The first stroked path of `path`, as an SVG `d` string, with its stroke style.
+    fn stroked(path: &str, width: f32, cap: &str, join: &str) -> (SvgGeometry, SvgMeshStyle) {
+        let svg = format!(
+            r##"<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="{path}" stroke="#000000" stroke-width="{width}" stroke-linecap="{cap}" stroke-linejoin="{join}"/></svg>"##
+        );
+        let parsed = crate::svg::parser::parse_svg_document(svg.as_bytes()).unwrap();
+        let node = parsed.scene.nodes.iter().find(|node| node.geometry.is_some()).unwrap();
+        let stroke = node.stroke.as_ref().unwrap();
+        let style = SvgMeshStyle::Stroke {
+            width: stroke.width,
+            line_cap: stroke.line_cap,
+            line_join: stroke.line_join,
+            miter_limit: stroke.miter_limit,
+        };
+        (parsed.scene.geometry(node).unwrap().clone(), style)
+    }
+
+    fn mesh_of(path: &str, width: f32, cap: &str, join: &str, analytic_aa: bool) -> SvgMesh {
+        let (geometry, style) = stroked(path, width, cap, join);
+        let mut cache = SvgGeometryCache::new(1 << 24, 4);
+        // 3.3: the copy icon at 20 logical pixels on a 2x display.
+        (*cache.mesh_for_with_analytic_aa(&geometry, style, 3.3, analytic_aa).unwrap()).clone()
+    }
+
+    /// The most layers any point of a 0.1-spaced grid over `0..24` is covered by. The
+    /// grid is offset by amounts no path coordinate has, so no sample sits on a
+    /// triangle edge or a scanline boundary.
+    fn deepest_overlap(mesh: &SvgMesh) -> (usize, [f32; 2]) {
+        let mut deepest = (0, [0.0, 0.0]);
+        for iy in 0..240 {
+            for ix in 0..240 {
+                let point = [ix as f32 * 0.1 + 0.0537, iy as f32 * 0.1 + 0.0411];
+                let layers = layers_at(mesh, point);
+                if layers > deepest.0 {
+                    deepest = (layers, point);
+                }
+            }
+        }
+        deepest
+    }
+
+    const COPY_ICON: &str = "M9 15H5C3.89543 15 3 14.1046 3 13V5C3 3.89543 3.89543 3 5 3H13C14.1046 3 15 3.89543 15 5V9M11 21H19C20.1046 21 21 20.1046 21 19V11C21 9.89543 20.1046 9 19 9H11C9.89543 9 9 9.89543 9 11V19C9 20.1046 9.89543 21 11 21Z";
+
+    /// A stroke is painted once, as the union of its geometry. Layering its pieces
+    /// is invisible for an opaque colour and wrong for any translucent one.
+    #[test]
+    fn crossing_strokes_cover_every_point_once() {
+        let mesh = mesh_of("M2 2L18 18M2 18L18 2", 2.0, "round", "round", false);
+        let (layers, at) = deepest_overlap(&mesh);
+        assert_eq!(layers, 1, "covered {layers} times at {at:?}");
+        assert_eq!(layers_at(&mesh, [10.013, 10.021]), 1, "the crossing itself is covered");
+    }
+
+    #[test]
+    fn a_joined_stroke_does_not_overlap_the_segments_it_joins() {
+        for join in ["round", "bevel", "miter"] {
+            let mesh = mesh_of("M2 2L18 2L18 18L2 18", 2.0, "round", join, false);
+            let (layers, at) = deepest_overlap(&mesh);
+            assert_eq!(layers, 1, "{join}: covered {layers} times at {at:?}");
+        }
+    }
+
+    #[test]
+    fn a_curved_stroke_does_not_overlap_itself() {
+        let mesh = mesh_of("M12 3C17 3 21 7 21 12C21 17 17 21 12 21C7 21 3 17 3 12C3 7 7 3 12 3Z", 2.0, "round", "round", false);
+        let (layers, at) = deepest_overlap(&mesh);
+        assert_eq!(layers, 1, "covered {layers} times at {at:?}");
+    }
+
+    #[test]
+    fn the_copy_icons_stroke_is_one_layer_everywhere() {
+        let mesh = mesh_of(COPY_ICON, 2.0, "round", "round", false);
+        let (layers, at) = deepest_overlap(&mesh);
+        assert_eq!(layers, 1, "covered {layers} times at {at:?}");
+    }
+
+    /// Merging the pieces must not lose any of the stroke or add any to it.
+    #[test]
+    fn the_union_covers_exactly_the_stroke_band() {
+        let mesh = mesh_of("M2 2L18 2L18 18L2 18", 2.0, "round", "round", false);
+        let segments = [([2.0_f32, 2.0], [18.0, 2.0]), ([18.0, 2.0], [18.0, 18.0]), ([18.0, 18.0], [2.0, 18.0])];
+        let distance = |p: [f32; 2]| {
+            segments.iter().map(|(a, b)| {
+                let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+                let t = (((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy)).clamp(0.0, 1.0);
+                ((p[0] - (a[0] + t * dx)).hypot(p[1] - (a[1] + t * dy))) as f32
+            }).fold(f32::MAX, f32::min)
+        };
+        for iy in 0..240 {
+            for ix in 0..240 {
+                let point = [ix as f32 * 0.1 + 0.0537, iy as f32 * 0.1 + 0.0411];
+                if distance(point) <= 0.85 {
+                    assert!(covered_at(&mesh, point), "{point:?} is inside the stroke");
+                } else if distance(point) >= 1.15 {
+                    assert!(!covered_at(&mesh, point), "{point:?} is outside the stroke");
+                }
+            }
+        }
+    }
+
+    /// With edge anti-aliasing on, a translucent stroke is one alpha throughout,
+    /// crossings included: the fringe belongs to the union's edge, not to each piece.
+    #[test]
+    fn a_translucent_stroke_has_one_alpha_across_a_crossing() {
+        let mesh = mesh_of("M2 2L18 18M2 18L18 2", 2.0, "round", "round", true);
+        // Inside the stroke, away from any edge: on a centre line, and at the crossing.
+        // Off any triangle edge or scanline band boundary, which a strict-interior
+        // test would skip.
+        for point in [[10.013, 10.021], [6.013, 6.021], [14.013, 6.021], [9.013, 9.021], [11.013, 9.021]] {
+            let alpha = composited_alpha(&mesh, point, 0.6);
+            assert!((alpha - 0.6).abs() < 0.01, "alpha {alpha} at {point:?}");
+        }
+    }
+
+    #[test]
+    fn a_translucent_copy_icon_is_one_alpha_inside_its_stroke() {
+        let mesh = mesh_of(COPY_ICON, 2.0, "round", "round", true);
+        // Centre of the front square's bottom edge, and the crossings of the two squares.
+        for point in [[15.013, 21.021], [15.013, 9.021], [9.013, 14.021], [9.013, 10.021]] {
+            let alpha = composited_alpha(&mesh, point, 0.6);
+            assert!((alpha - 0.6).abs() < 0.01, "alpha {alpha} at {point:?}");
+        }
+    }
+
+    /// The outside of a corner is filled out to the join's tip, with no notch
+    /// between the two segments' ends.
+    #[test]
+    fn a_miter_join_fills_the_whole_outer_corner() {
+        let mesh = mesh_of("M2 2L18 2L18 18", 2.0, "butt", "miter", false);
+        // The corner square [18, 19] x [1, 2], including the wedge next to the corner point.
+        for point in [[18.3, 1.7], [18.5, 1.5], [18.7, 1.3], [18.9, 1.1]] {
+            assert!(covered_at(&mesh, point), "{point:?}");
+        }
+        assert!(!covered_at(&mesh, [19.2, 0.8]), "past the tip");
+        assert_eq!(deepest_overlap(&mesh).0, 1);
+    }
+
+    #[test]
+    fn a_bevel_join_cuts_the_corner_off() {
+        let mesh = mesh_of("M2 2L18 2L18 18", 2.0, "butt", "bevel", false);
+        assert!(covered_at(&mesh, [18.3, 1.7]), "the wedge beside the corner point");
+        assert!(!covered_at(&mesh, [18.9, 1.1]), "the corner itself is cut");
+        assert_eq!(deepest_overlap(&mesh).0, 1);
     }
 }

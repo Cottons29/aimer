@@ -1,7 +1,7 @@
 use aimer::canvas::Canvas;
-use aimer::cupid::damage_region::DamageSet;
-use aimer::cupid::draw_cmd_v2::{Rect, RenderFrame, RenderPaintSource, RenderTree};
-use aimer::cupid::frame::{FramePacket, FrameRenderMetadata};
+use aimer_cupid::damage_region::DamageSet;
+use aimer_cupid::draw_cmd_v2::{Rect, RenderFrame, RenderPaintSource, RenderTree};
+use aimer_cupid::frame::{FramePacket, FrameRenderMetadata};
 use aimer::{BackdropFilter, Decoration, ResolvedSize, Vec2d};
 
 // A padded iPad-sized target also keeps GPU readback rows 256-byte aligned.

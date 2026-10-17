@@ -1,6 +1,9 @@
 //! A retained text backdrop viewed through an adjustable glass lens.
 
 use crate::theme;
+use aimer::decoration::{
+    BorderRadius, Decoration, DecorationBox, Magnification, MagnificationStyle as Style,
+};
 use aimer::macros::widget;
 use aimer::range::Slider;
 use aimer::selection::{Checkbox, CheckboxValue, ChoiceOption, Select};
@@ -9,9 +12,8 @@ use aimer::style::{
     Stroke, TextStyle,
 };
 use aimer::{
-    AimerApp, AnyWidget, BorderRadius, BuildContext, ChildBuilder, Column, Container, Decoration,
-    DecorationBox, Magnification, MagnificationStyle as Style, Positioned, Row, Stack, State, StateUpdater,
-    StatefulWidget, Text, Widget,
+    AimerApp, AnyWidget, BuildContext, ChildBuilder, Column, Container, Positioned, Row, Stack,
+    State, StateUpdater, StatefulWidget, Text, Widget,
 };
 
 /// Starts the standalone magnification example.

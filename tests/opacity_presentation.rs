@@ -1,5 +1,5 @@
 use aimer::canvas::{FrameCanvas, InnerCanvas};
-use aimer::cupid::draw_cmd_v2::{
+use aimer_cupid::draw_cmd_v2::{
     DrawCommand as V2DrawCommand, Rect, RenderOp, RenderPaintSource, RenderTree,
 };
 use aimer::widget::base::WindowHandle;
@@ -52,12 +52,12 @@ fn child_opacities(opacity: f32) -> (bool, Vec<f32>) {
         .unwrap()
         .commit(vec![V2DrawCommand::FillRect {
             rect: Rect::new(0.0, 0.0, 32.0, 32.0),
-            color: aimer::cupid::utilities::Color::white(),
+            color: aimer_cupid::utilities::Color::white(),
             border_radius: [0.0; 4],
             border_width: [0.0; 4],
-            border_color: aimer::cupid::utilities::Color::transparent(),
+            border_color: aimer_cupid::utilities::Color::transparent(),
             outline_width: [0.0; 4],
-            outline_color: aimer::cupid::utilities::Color::transparent(),
+            outline_color: aimer_cupid::utilities::Color::transparent(),
         }])
         .unwrap();
 

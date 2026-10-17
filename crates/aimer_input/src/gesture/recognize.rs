@@ -50,11 +50,35 @@ use crate::gesture::state::GestureState;
 /// listening for, and is used only to skip work whose result would be thrown
 /// away — a pinch measures two distances on every move, a swipe a velocity on
 /// every release. Pass [`GestureMask::ALL`] to recognize everything.
+///
+/// Every gesture in `mask` is also taken to own the press it recognizes. Use
+/// [`recognize_claiming`] when some of them are only being observed.
 pub fn recognize(
     state: &mut GestureState,
     event: &PointerEvent,
     now: AnimInstant,
     mask: GestureMask,
+) -> GestureOutput {
+    recognize_claiming(state, event, now, mask, mask)
+}
+
+/// [`recognize`], told which of the gestures in `mask` own the press and which
+/// are only observed.
+///
+/// A long press, a double tap or a drag that somebody *owns* ends the press as
+/// that gesture and nothing else: a long press is not also a tap, a double tap
+/// replaces the second tap, and a drag cancels the tap. One that is only
+/// *observed* — a raw `on_gesture` handler asking to be told about everything —
+/// is still reported, but the press stays a tap, so watching a button's press
+/// cannot take clicks away from it.
+///
+/// `claims` is a subset of `mask`: the gestures a handler was installed for.
+pub fn recognize_claiming(
+    state: &mut GestureState,
+    event: &PointerEvent,
+    now: AnimInstant,
+    mask: GestureMask,
+    claims: GestureMask,
 ) -> GestureOutput {
     match event {
         PointerEvent::Down(pointer) => {
@@ -81,7 +105,7 @@ pub fn recognize(
                 return scale::end(state);
             }
 
-            release(state, *pointer, now, mask)
+            release(state, *pointer, now, mask, claims)
         }
 
         PointerEvent::Move(pointer) => {
@@ -207,6 +231,7 @@ fn release(
     pointer: PointerInfo,
     now: AnimInstant,
     mask: GestureMask,
+    claims: GestureMask,
 ) -> GestureOutput {
     // No press being tracked: this is the second finger of a pinch lifting, or
     // a release for a press that was already cancelled.
@@ -215,11 +240,12 @@ fn release(
     };
     let drag = state.drag.take();
     let mut output = GestureOutput::new();
+    let long_press_owns = claims.intersects(GestureMask::LONG_PRESS);
+    let drag_owns = claims.intersects(GestureMask::DRAG.union(GestureMask::SWIPE));
 
     // Held long enough to be a long press, but nothing ever polled — the whole
     // press collapses into one burst rather than being mistaken for a slow tap.
     if drag.is_none() && tap::is_unreported_long_press(&press, now, mask) {
-        state.last_tap = None;
         output.push(GestureEvent::LongPress {
             pointer: press.pointer,
         });
@@ -227,11 +253,12 @@ fn release(
             pointer: press.pointer,
         });
         output.push(GestureEvent::LongPressEnd { pointer });
-        output.push(GestureEvent::TapCancel);
-        return output;
-    }
-
-    if press.long_pressed {
+        if long_press_owns {
+            state.last_tap = None;
+            output.push(GestureEvent::TapCancel);
+            return output;
+        }
+    } else if press.long_pressed {
         output.push(GestureEvent::LongPressEnd { pointer });
     }
 
@@ -239,18 +266,22 @@ fn release(
         for event in drag::end(&drag, pointer, now, mask) {
             output.push(event);
         }
+        if drag_owns {
+            output.push(GestureEvent::TapCancel);
+            state.last_tap = None;
+            return output;
+        }
+    }
+
+    if press.long_pressed && long_press_owns {
         output.push(GestureEvent::TapCancel);
         state.last_tap = None;
         return output;
     }
 
-    if press.long_pressed {
-        output.push(GestureEvent::TapCancel);
-        state.last_tap = None;
-        return output;
-    }
-
-    for event in tap::tap_or_cancel(state, &press, pointer, now, mask) {
+    // What is left is a press nobody owned as something else: a tap if the
+    // pointer stayed put, however much it was observed doing.
+    for event in tap::tap_or_cancel_claiming(state, &press, pointer, now, mask, claims) {
         output.push(event);
     }
     output
@@ -689,6 +720,258 @@ mod tests {
             released.iter().copied().collect::<Vec<_>>(),
             vec![GestureEvent::TapCancel]
         );
+    }
+
+    /// Presses at `start` and releases at `end` with only taps listened for, which
+    /// is what a button does: nobody asked for a drag, so none can take the press.
+    fn click(
+        state: &mut GestureState,
+        clock: &mut Clock,
+        start: PointerInfo,
+        end: PointerInfo,
+        mask: GestureMask,
+    ) -> Vec<GestureEvent> {
+        recognize(state, &PointerEvent::Down(start), clock.now, mask);
+        recognize(
+            state,
+            &PointerEvent::Move(end),
+            clock.advance(Duration::from_millis(16)),
+            mask,
+        );
+        recognize(
+            state,
+            &PointerEvent::Up(end),
+            clock.advance(Duration::from_millis(16)),
+            mask,
+        )
+        .iter()
+        .copied()
+        .collect()
+    }
+
+    #[test]
+    fn a_mouse_click_that_drifts_a_few_pixels_is_still_a_tap() {
+        // A trackpad press shifts the cursor by a pixel or three; that is not a
+        // decision to abandon the click.
+        let mut clock = Clock::new();
+        let mut state = GestureState::default();
+        let start = mouse(10.0, 10.0, PointerButton::Primary);
+        let end = mouse(13.0, 14.0, PointerButton::Primary);
+
+        let released = click(&mut state, &mut clock, start, end, GestureMask::TAP);
+
+        assert!(
+            released.contains(&GestureEvent::Tap { pointer: end }),
+            "5 px of drift is a click: {released:?}"
+        );
+        assert!(!released.contains(&GestureEvent::TapCancel));
+    }
+
+    #[test]
+    fn a_mouse_release_beyond_the_tap_tolerance_is_not_a_tap() {
+        let mut clock = Clock::new();
+        let mut state = GestureState::default();
+        let start = mouse(10.0, 10.0, PointerButton::Primary);
+        let end = mouse(30.0, 10.0, PointerButton::Primary);
+
+        let released = click(&mut state, &mut clock, start, end, GestureMask::TAP);
+
+        assert_eq!(released, vec![GestureEvent::TapCancel], "sliding off still cancels");
+    }
+
+    #[test]
+    fn a_mouse_that_may_drag_still_starts_the_drag_at_a_pixel() {
+        // The tap tolerance is not the drag slop: with a drag listened for, travel
+        // past the slop is a drag long before it could fail to be a click.
+        let mut clock = Clock::new();
+        let mut state = GestureState::default();
+        let start = mouse(0.0, 0.0, PointerButton::Primary);
+        let end = mouse(3.0, 0.0, PointerButton::Primary);
+
+        let released = click(&mut state, &mut clock, start, end, GestureMask::ALL);
+
+        assert!(released.contains(&GestureEvent::DragEnd { pointer: end }), "{released:?}");
+        assert!(!released.iter().any(|event| matches!(event, GestureEvent::Tap { .. })));
+    }
+
+    #[test]
+    fn two_mouse_clicks_a_few_pixels_apart_are_a_double_click() {
+        let mut clock = Clock::new();
+        let mut state = GestureState::default();
+        let mask = GestureMask::TAP.union(GestureMask::DOUBLE_TAP);
+        let first = mouse(10.0, 10.0, PointerButton::Primary);
+        let second = mouse(13.0, 11.0, PointerButton::Primary);
+
+        click(&mut state, &mut clock, first, first, mask);
+        let released = click(&mut state, &mut clock, second, second, mask);
+
+        assert!(
+            released.contains(&GestureEvent::DoubleTap { pointer: second }),
+            "{released:?}"
+        );
+    }
+
+    /// What a button's recognizer sees: it observes every gesture through
+    /// `on_gesture` and owns only the tap.
+    const OBSERVED: GestureMask = GestureMask::EVERY_POINTER_GESTURE;
+    const OWNED: GestureMask = GestureMask::TAP;
+
+    fn observed_press(
+        state: &mut GestureState,
+        clock: &mut Clock,
+        start: PointerInfo,
+        moves_to: PointerInfo,
+        held: Duration,
+    ) -> Vec<GestureEvent> {
+        recognize_claiming(state, &PointerEvent::Down(start), clock.now, OBSERVED, OWNED);
+        recognize_claiming(
+            state,
+            &PointerEvent::Move(moves_to),
+            clock.advance(Duration::from_millis(16)),
+            OBSERVED,
+            OWNED,
+        );
+        recognize_claiming(
+            state,
+            &PointerEvent::Up(moves_to),
+            clock.advance(held),
+            OBSERVED,
+            OWNED,
+        )
+        .iter()
+        .copied()
+        .collect()
+    }
+
+    #[test]
+    fn an_observed_double_tap_is_reported_without_replacing_the_tap() {
+        let mut clock = Clock::new();
+        let mut state = GestureState::default();
+        let at = mouse(10.0, 10.0, PointerButton::Primary);
+
+        observed_press(&mut state, &mut clock, at, at, Duration::from_millis(16));
+        let second = observed_press(&mut state, &mut clock, at, at, Duration::from_millis(16));
+
+        assert!(second.contains(&GestureEvent::Tap { pointer: at }), "{second:?}");
+        assert!(
+            second.contains(&GestureEvent::DoubleTap { pointer: at }),
+            "an observer still hears the double tap: {second:?}"
+        );
+    }
+
+    #[test]
+    fn a_claimed_double_tap_still_replaces_the_tap() {
+        let mut clock = Clock::new();
+        let mut state = GestureState::default();
+        let at = mouse(10.0, 10.0, PointerButton::Primary);
+        let claims = GestureMask::TAP.union(GestureMask::DOUBLE_TAP);
+
+        let mut release = |state: &mut GestureState| {
+            recognize_claiming(state, &PointerEvent::Down(at), clock.now, OBSERVED, claims);
+            recognize_claiming(
+                state,
+                &PointerEvent::Up(at),
+                clock.advance(Duration::from_millis(16)),
+                OBSERVED,
+                claims,
+            )
+        };
+        release(&mut state);
+        let second = release(&mut state);
+
+        assert!(second.contains(&GestureEvent::DoubleTap { pointer: at }));
+        assert!(!second.contains(&GestureEvent::Tap { pointer: at }));
+    }
+
+    #[test]
+    fn an_observed_long_press_is_reported_and_the_release_is_still_a_tap() {
+        let mut clock = Clock::new();
+        let mut state = GestureState::default();
+        let at = mouse(10.0, 10.0, PointerButton::Primary);
+
+        let released = observed_press(&mut state, &mut clock, at, at, LONG_PRESS_DURATION);
+
+        assert!(released.contains(&GestureEvent::LongPress { pointer: at }), "{released:?}");
+        assert!(released.contains(&GestureEvent::Tap { pointer: at }), "{released:?}");
+        assert!(!released.contains(&GestureEvent::TapCancel));
+    }
+
+    #[test]
+    fn a_claimed_long_press_still_ends_the_press_without_a_tap() {
+        let mut clock = Clock::new();
+        let mut state = GestureState::default();
+        let at = mouse(10.0, 10.0, PointerButton::Primary);
+        let claims = GestureMask::TAP.union(GestureMask::LONG_PRESS);
+
+        recognize_claiming(&mut state, &PointerEvent::Down(at), clock.now, OBSERVED, claims);
+        let released = recognize_claiming(
+            &mut state,
+            &PointerEvent::Up(at),
+            clock.advance(LONG_PRESS_DURATION),
+            OBSERVED,
+            claims,
+        );
+
+        assert!(released.contains(&GestureEvent::LongPress { pointer: at }));
+        assert!(released.contains(&GestureEvent::TapCancel));
+        assert!(!released.contains(&GestureEvent::Tap { pointer: at }));
+    }
+
+    #[test]
+    fn an_observed_drag_within_the_tap_tolerance_is_reported_and_still_taps() {
+        let mut clock = Clock::new();
+        let mut state = GestureState::default();
+        let start = mouse(10.0, 10.0, PointerButton::Primary);
+        let end = mouse(14.0, 10.0, PointerButton::Primary);
+
+        let released =
+            observed_press(&mut state, &mut clock, start, end, Duration::from_millis(16));
+
+        assert!(released.contains(&GestureEvent::DragEnd { pointer: end }), "{released:?}");
+        assert!(released.contains(&GestureEvent::Tap { pointer: end }), "{released:?}");
+    }
+
+    #[test]
+    fn an_observed_drag_beyond_the_tap_tolerance_cancels_the_tap() {
+        let mut clock = Clock::new();
+        let mut state = GestureState::default();
+        let start = mouse(10.0, 10.0, PointerButton::Primary);
+        let end = mouse(40.0, 10.0, PointerButton::Primary);
+
+        let released =
+            observed_press(&mut state, &mut clock, start, end, Duration::from_millis(16));
+
+        assert!(released.contains(&GestureEvent::DragEnd { pointer: end }), "{released:?}");
+        assert!(released.contains(&GestureEvent::TapCancel), "{released:?}");
+        assert!(!released.iter().any(|event| matches!(event, GestureEvent::Tap { .. })));
+    }
+
+    #[test]
+    fn a_claimed_drag_still_owns_the_press() {
+        let mut clock = Clock::new();
+        let mut state = GestureState::default();
+        let start = mouse(10.0, 10.0, PointerButton::Primary);
+        let end = mouse(14.0, 10.0, PointerButton::Primary);
+        let claims = GestureMask::TAP.union(GestureMask::DRAG);
+
+        recognize_claiming(&mut state, &PointerEvent::Down(start), clock.now, OBSERVED, claims);
+        recognize_claiming(
+            &mut state,
+            &PointerEvent::Move(end),
+            clock.advance(Duration::from_millis(16)),
+            OBSERVED,
+            claims,
+        );
+        let released = recognize_claiming(
+            &mut state,
+            &PointerEvent::Up(end),
+            clock.advance(Duration::from_millis(16)),
+            OBSERVED,
+            claims,
+        );
+
+        assert!(released.contains(&GestureEvent::TapCancel));
+        assert!(!released.iter().any(|event| matches!(event, GestureEvent::Tap { .. })));
     }
 
     #[test]

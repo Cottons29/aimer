@@ -1,10 +1,12 @@
 use std::sync::Arc;
 
+use aimer::shape::{
+    FillStyle, ShapeClip, ShapeColor, ShapeFit, ShapeHitTest, ShapePath, StrokeStyle,
+};
 use aimer::animation::{AnimatedBuilder, AnimationController, curves};
 use aimer::style::{LayoutSpacing, Spacing, TextStyle};
 use aimer::{
-    AimerApp, Colors, Column, Container, CustomShape, FillStyle, ShapeClip, ShapeColor, ShapeFit,
-    ShapeHitTest, ShapePath, StrokeStyle, Text, Widget,
+    AimerApp, Colors, Column, Container, CustomShape, Text, Widget,
 };
 
 /// Builds a finite path with lines, a quadratic curve, a cubic curve, and a
@@ -55,8 +57,8 @@ pub fn custom_shape_example() -> impl Widget {
         let fill = FillStyle::solid(ShapeColor::rgba8(55, 115, 220, 220));
         let stroke = StrokeStyle::new(4.0, ShapeColor::rgba8(16, 36, 84, 255))
             .expect("the example stroke is finite")
-            .with_line_cap(aimer::LineCap::Round)
-            .with_line_join(aimer::LineJoin::Round);
+            .with_line_cap(aimer::shape::LineCap::Round)
+            .with_line_join(aimer::shape::LineJoin::Round);
 
         CustomShape::new()
             .shared_path(path.clone())

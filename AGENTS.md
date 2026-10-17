@@ -2,6 +2,7 @@
 
 These instructions apply to the entire repository. A nested `AGENTS.md` takes precedence for files in its directory.
 
+> Do not mentioned your self in commit
 
 ## Critical Considerations
 

@@ -9,7 +9,11 @@ use aimer_widget::{
     Rebuildable, State, StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
 };
 
-use crate::{Route, Router, NavigationAction, NavigationTransition, RoutedShell};
+use aimer_events::back::{self, BackGesture, BackGuard, BackHandler};
+
+use crate::{Route, Router, NavigationAction, NavigationTransition, RoutedShell, SwipeBack, SwipeBackArea, TransitionChoice};
+use crate::swipe_back::SwipeLink;
+use crate::transition_host::SwipeDrive;
 use crate::routed_shell::{RouteOutlet, route_outlet_builder};
 use crate::outlet::{OutletChildBuilder, OutletSlot, RouteChildContext};
 
@@ -251,6 +255,8 @@ pub struct StatefulShell<R: Route> {
     pub routes: fn(R) -> AnyWidget,
     #[portable_skip]
     pub transition: Option<Rc<dyn NavigationTransition<R>>>,
+    #[portable_skip]
+    swipe_area: SwipeBackArea,
 }
 
 impl<R: Route> StatefulShell<R> {
@@ -274,7 +280,16 @@ impl<R: Route> StatefulShell<R> {
             frame,
             routes,
             transition: None,
+            swipe_area: SwipeBackArea::default(),
         }
+    }
+
+    /// Sets where on a page a swipe back may begin. The default is
+    /// [`SwipeBackArea::Anywhere`].
+    #[inline]
+    pub fn swipe_back_area(mut self, area: SwipeBackArea) -> Self {
+        self.swipe_area = area;
+        self
     }
 
     /// Sets the fallback effect for visible branch and child-route changes.
@@ -295,16 +310,79 @@ pub struct StatefulShellState<R: Route> {
     retained_frame: RefCell<Option<aimer_widget::ChildBuilder>>,
     outlet: Rc<RefCell<RouteOutlet<R>>>,
     action: NavigationAction,
+    swipe_area: SwipeBackArea,
+    /// A swipe asked for since the last build, started by the next one.
+    swipe_request: RefCell<Option<Rc<SwipeDrive>>>,
+    /// The edge swipe of the active branch, carried by the outlet's host.
+    swipe_link: Rc<SwipeLink>,
+    /// Keeps this shell answering the system's back request while it lives.
+    back_guard: Option<BackGuard>,
+}
+
+impl<R: Route> StatefulShellState<R> {
+    /// Whether the active branch has a page to go back to and an effect for a
+    /// finger to drive.
+    fn can_swipe_back(&self) -> bool {
+        let Some([.., _, top]) = self.branches.get(self.active).map(Vec::as_slice) else { return false };
+        match top.navigation_transition() {
+            TransitionChoice::Disabled => false,
+            TransitionChoice::Custom(_) => true,
+            TransitionChoice::Inherit => self.transition.is_some(),
+        }
+    }
+
+    /// Asks for a swipe back in the active branch, which the next build starts.
+    fn begin_swipe_back(&self) -> Option<SwipeBack> {
+        if !self.can_swipe_back() { return None; }
+        let updater = self.updater;
+        let drive = SwipeDrive::new(move || {
+            updater.read(|state| state.pop_active());
+        });
+        let request = drive.clone();
+        self.updater.set_state(move |state| *state.swipe_request.borrow_mut() = Some(request));
+        Some(SwipeBack(drive))
+    }
+
+    /// Pops the active branch, as a committed swipe or a back request does.
+    fn pop_active(&self) -> bool {
+        let can_pop = self.branches.get(self.active).is_some_and(|branch| branch.len() > 1);
+        if can_pop {
+            self.updater.set_state(|state| {
+                branch_pop(&mut state.branches, state.active);
+                state.action = NavigationAction::Pop;
+            });
+        }
+        can_pop
+    }
+}
+
+/// Answers the system's back request by popping the active branch, and declines
+/// at its root so an enclosing navigator, and then the platform, may answer.
+struct StatefulShellBack<R: Route> {
+    updater: StateUpdater<StatefulShellState<R>>,
+}
+
+impl<R: Route> BackHandler for StatefulShellBack<R> {
+    fn on_back(&self) -> bool {
+        self.updater.read(|state| state.pop_active())
+    }
+
+    fn on_back_started(&self) -> Option<Box<dyn BackGesture>> {
+        self.updater.read(|state| state.begin_swipe_back()).map(|swipe| Box::new(swipe) as Box<dyn BackGesture>)
+    }
 }
 
 impl<R: Route> State<StatefulShell<R>> for StatefulShellState<R> {
     fn adopt_config_from(&mut self, new: Self) {
         self.routes = new.routes;
         self.transition = new.transition;
+        self.swipe_area = new.swipe_area;
     }
 
     fn init_state(&mut self, updater: StateUpdater<Self>) {
         self.updater = updater;
+        self.swipe_link.install(move || updater.read(|state| state.begin_swipe_back()));
+        self.back_guard = Some(back::register(StatefulShellBack { updater }));
     }
 
     fn build(&self, ctx: &BuildContext) -> impl Widget {
@@ -347,6 +425,10 @@ impl<R: Route> State<StatefulShell<R>> for StatefulShellState<R> {
                 let updater = self.updater;
                 Rc::new(move |index: usize| updater.read(|state| state.branches.get(index).map(|b| b.len()).unwrap_or(0)))
             },
+            begin_swipe_back_fn: {
+                let updater = self.updater;
+                Rc::new(move || updater.read(|state| state.begin_swipe_back()))
+            },
         });
 
         // Feed only the active branch's top route into the `Outlet`.
@@ -354,6 +436,16 @@ impl<R: Route> State<StatefulShell<R>> for StatefulShellState<R> {
         let routes = self.routes;
         self.outlet.borrow_mut().configure(top, self.action, self.transition.clone(),
             Rc::new(move |route, _| routes(route)));
+        // A swipe back to the page beneath the active branch's top, if one was
+        // asked for and there still is one.
+        self.swipe_link.set_enabled(self.can_swipe_back());
+        self.swipe_link.set_anywhere(self.swipe_area == SwipeBackArea::Anywhere);
+        if let Some(drive) = self.swipe_request.borrow_mut().take() {
+            match self.branches.get(self.active).and_then(|branch| branch.len().checked_sub(2).map(|index| branch[index].clone())) {
+                Some(previous) => self.outlet.borrow_mut().swipe = Some((previous, drive)),
+                None => drive.cancel_if_unsettled(),
+            }
+        }
         let child_builder = route_outlet_builder(&self.outlet);
 
         // Reflect the active branch's top route in the browser address bar.
@@ -374,6 +466,7 @@ pub struct StatefulShellController<R> {
     pop_in_branch_fn: Rc<dyn Fn(usize)>,
     active_branch_fn: Rc<dyn Fn() -> usize>,
     branch_len_fn: Rc<dyn Fn(usize) -> usize>,
+    begin_swipe_back_fn: Rc<dyn Fn() -> Option<SwipeBack>>,
 }
 
 impl<R> Clone for StatefulShellController<R> {
@@ -384,6 +477,7 @@ impl<R> Clone for StatefulShellController<R> {
             pop_in_branch_fn: self.pop_in_branch_fn.clone(),
             active_branch_fn: self.active_branch_fn.clone(),
             branch_len_fn: self.branch_len_fn.clone(),
+            begin_swipe_back_fn: self.begin_swipe_back_fn.clone(),
         }
     }
 }
@@ -424,11 +518,25 @@ impl<R: 'static> StatefulShellController<R> {
     pub fn branch_len(&self, index: usize) -> usize {
         (self.branch_len_fn)(index)
     }
+
+    /// Starts popping the active branch under a finger's control.
+    ///
+    /// The page beneath is built and shown, and the returned [`SwipeBack`] moves
+    /// the current page across it with the effect the departing route selects.
+    /// Returns `None`, and does nothing, when the active branch is at its root or
+    /// has no effect to play. An edge swipe on the shell's outlet calls this
+    /// itself. See [`crate::NavigatorController::begin_swipe_back`].
+    pub fn begin_swipe_back(&self) -> Option<SwipeBack> {
+        (self.begin_swipe_back_fn)()
+    }
 }
 
 impl<R: Route> StatefulWidget for StatefulShell<R> {
     type State = StatefulShellState<R>;
     fn create_state(self) -> Self::State {
+        let swipe_link = SwipeLink::detached();
+        let outlet = Rc::new(RefCell::new(RouteOutlet::default()));
+        outlet.borrow_mut().swipe_link = Some(swipe_link.clone());
         StatefulShellState::<R> {
             branches: self.branches.clone(),
             active: self.active,
@@ -437,8 +545,12 @@ impl<R: Route> StatefulWidget for StatefulShell<R> {
             routes: self.routes,
             transition: self.transition,
             retained_frame: RefCell::new(None),
-            outlet: Rc::new(RefCell::new(RouteOutlet::default())),
+            outlet,
             action: NavigationAction::Push,
+            swipe_area: self.swipe_area,
+            swipe_request: RefCell::new(None),
+            swipe_link,
+            back_guard: None,
         }
     }
 }

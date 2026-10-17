@@ -52,6 +52,10 @@ pub struct NativeRenderContext {
     waiting: bool,
     closing: bool,
     suspended: bool,
+    /// The window is alive but must not be drawn to, as on iOS while the app is
+    /// backgrounded. Unlike `suspended`, nothing is torn down: the surface stays
+    /// attached so the system can still snapshot it.
+    paused: bool,
     /// Whether a frame that changes the surface size is presented before the
     /// call that submitted it returns. See [`Self::settle_resized_frame`].
     sync_resize: bool,
@@ -85,6 +89,7 @@ impl NativeRenderContext {
             waiting: false,
             closing: false,
             suspended: false,
+            paused: false,
             sync_resize: false,
             submitted_size: PhysicalSize::new(0, 0),
             carried: CompletionStatus::default(),
@@ -133,7 +138,18 @@ impl NativeRenderContext {
         self.is_ready()
             && self.size.width != 0
             && self.size.height != 0
+            && !self.paused
             && self.worker.as_ref().is_none_or(FrameWorker::can_submit)
+    }
+
+    /// Stops (or resumes) recording frames without releasing the surface.
+    ///
+    /// Damage is not consumed while paused, so the first frame after resuming
+    /// paints everything that changed in the meantime. Resuming does not wake the
+    /// event loop; the caller asks for a redraw.
+    #[inline]
+    pub(crate) fn set_paused(&mut self, paused: bool) {
+        self.paused = paused;
     }
 
     pub(crate) fn defer_frame(&mut self) {
@@ -234,6 +250,9 @@ impl NativeRenderContext {
         draw: impl FnOnce(&CupidCanvas, u32, u32) -> (f32, DamageSet),
     ) -> PresentOutcome {
         if let Some(inline) = &mut self.inline {
+            if self.paused {
+                return PresentOutcome::Dropped;
+            }
             let ui = PhaseTimer::start();
             let outcome = inline.render_frame_packet(draw);
             ui.finish_ui_frame();

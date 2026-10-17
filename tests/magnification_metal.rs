@@ -5,9 +5,9 @@ mod fixtures;
 mod pixels;
 #[path = "magnification/styles.rs"]
 mod styles;
-use aimer::cupid::backend::metal::MetalBackend;
-use aimer::cupid::backend::*;
-use aimer::cupid::{frame::FramePacket, renderer::RendererImpl};
+use aimer_cupid::backend::metal::MetalBackend;
+use aimer_cupid::backend::*;
+use aimer_cupid::{frame::FramePacket, renderer::RendererImpl};
 use fixtures::*;
 
 #[test]

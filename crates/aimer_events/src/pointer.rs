@@ -18,6 +18,83 @@ use crate::element::TouchPhase;
 /// ```
 pub const FILE_DRAG_POINTER_ID: u64 = u64::MAX;
 
+thread_local! {
+    static LAST_SOURCE: std::cell::Cell<PointerSource> = const { std::cell::Cell::new(PointerSource::Mouse) };
+}
+
+/// Records which kind of pointer produced the event now being routed.
+///
+/// The dispatcher calls this as an event enters the tree. Hit testing is by
+/// position alone, so an element that has to treat a finger differently from a
+/// cursor learns it here, before the event is routed.
+#[inline]
+pub fn note_pointer_source(source: PointerSource) {
+    LAST_SOURCE.with(|last| last.set(source));
+}
+
+/// The kind of pointer that produced the most recent pointer event on this
+/// thread: [`PointerSource::Mouse`] until a finger touches the window.
+///
+/// # Examples
+///
+/// ```
+/// use aimer_events::pointer::{PointerSource, last_pointer_source, note_pointer_source};
+///
+/// note_pointer_source(PointerSource::Touch);
+/// assert_eq!(last_pointer_source(), PointerSource::Touch);
+/// ```
+#[inline]
+pub fn last_pointer_source() -> PointerSource {
+    LAST_SOURCE.with(std::cell::Cell::get)
+}
+
+/// The smallest touch target, in logical pixels, a platform's guidelines ask for:
+/// 44 on Apple platforms (Human Interface Guidelines) and 48 elsewhere
+/// (Material Design).
+pub const DEFAULT_MIN_TOUCH_TARGET: f32 = if cfg!(any(target_os = "ios", target_os = "macos")) {
+    44.0
+} else {
+    48.0
+};
+
+thread_local! {
+    static MIN_TOUCH_TARGET: std::cell::Cell<f32> = const { std::cell::Cell::new(DEFAULT_MIN_TOUCH_TARGET) };
+}
+
+/// The smallest size, in logical pixels, that an interactive control's hit area
+/// grows to when it is touched.
+///
+/// A fingertip is far less precise than a cursor, so a small control keeps its
+/// painted size but answers a touch within a rectangle at least this large,
+/// centred on it. Mouse hit testing is never affected. Defaults to
+/// [`DEFAULT_MIN_TOUCH_TARGET`]; `0` means the extra area is off.
+///
+/// The value is per thread, like the rest of the UI state, so read and set it on
+/// the UI thread.
+#[inline]
+pub fn min_touch_target() -> f32 {
+    MIN_TOUCH_TARGET.with(std::cell::Cell::get)
+}
+
+/// Sets the minimum touch target, in logical pixels. See [`min_touch_target`].
+///
+/// A negative or non-finite `size` is treated as `0`, which turns the extra
+/// area off.
+///
+/// # Examples
+///
+/// ```
+/// use aimer_events::pointer::{min_touch_target, set_min_touch_target};
+///
+/// set_min_touch_target(56.0);
+/// assert_eq!(min_touch_target(), 56.0);
+/// ```
+#[inline]
+pub fn set_min_touch_target(size: f32) {
+    let size = if size.is_finite() && size > 0.0 { size } else { 0.0 };
+    MIN_TOUCH_TARGET.with(|target| target.set(size));
+}
+
 /// Identifies the origin of a pointer event.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 #[repr(u8)]
@@ -255,6 +332,40 @@ mod tests {
 
         assert_eq!(a.distance_to(&b), 5.0);
         assert_eq!(b.distance_to(&a), 5.0);
+    }
+
+    #[test]
+    fn the_default_touch_target_follows_the_platform_guideline() {
+        // Apple's HIG asks for 44pt, Material for 48dp.
+        let expected = if cfg!(any(target_os = "ios", target_os = "macos")) {
+            44.0
+        } else {
+            48.0
+        };
+
+        assert_eq!(DEFAULT_MIN_TOUCH_TARGET, expected);
+        assert_eq!(min_touch_target(), DEFAULT_MIN_TOUCH_TARGET);
+    }
+
+    #[test]
+    fn the_touch_target_can_be_overridden_and_disabled() {
+        set_min_touch_target(56.0);
+        assert_eq!(min_touch_target(), 56.0);
+
+        set_min_touch_target(0.0);
+        assert_eq!(min_touch_target(), 0.0, "zero turns the extra area off");
+
+        set_min_touch_target(DEFAULT_MIN_TOUCH_TARGET);
+    }
+
+    #[test]
+    fn a_touch_target_that_is_not_a_size_is_treated_as_off() {
+        for invalid in [-4.0, f32::NAN, f32::NEG_INFINITY] {
+            set_min_touch_target(invalid);
+            assert_eq!(min_touch_target(), 0.0, "{invalid} is not a size");
+        }
+
+        set_min_touch_target(DEFAULT_MIN_TOUCH_TARGET);
     }
 
     #[test]

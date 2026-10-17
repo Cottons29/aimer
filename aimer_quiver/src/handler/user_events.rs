@@ -19,6 +19,12 @@ pub(crate) fn handle_user_event<W: Widget + 'static>(
     on_frame_ready: impl FnOnce(&mut AimerApplicationHandler<W>, crate::aimer_app::FrameRequestKind),
 ) {
     match event {
+        // Answered by the windowed loop, which can also leave the app.
+        AimerNativePlatformEvent::Back(_) => {}
+        AimerNativePlatformEvent::OpenLinks => {
+            crate::link_inbox::deliver_posted_links();
+            // Opening a link changes navigator state, which asks for its own frame.
+        }
         AimerNativePlatformEvent::NativeInput { event, modifiers } => {
             WindowEventHandler::handle_native_input(app, event, modifiers);
         }

@@ -577,6 +577,36 @@ impl<W: Widget + 'static> State<Button<W>> for ButtonState<W> {
 
 impl<W: Widget + 'static> ButtonState<W> {
     fn wrap_input<C: Widget + 'static>(&self, child: C, feedback: visual::Feedback) -> AnyWidget {
+        let mut detector = GestureDetector::new()
+            .behavior(GestureDetectorBehavior::BlockChild)
+            .on_tap(self.on_press.clone())
+            .on_right_tap(self.on_right_press.clone())
+            .on_gesture({
+                let feedback = feedback.clone();
+                move |event: GestureEvent| match event {
+                    GestureEvent::TapDown { .. } => feedback.set_pressed(true),
+                    // Either terminator ends the press: the recognizer
+                    // guarantees one of them arrives, so the highlight
+                    // cannot be left stuck on.
+                    GestureEvent::TapUp { .. } | GestureEvent::TapCancel => {
+                        feedback.set_pressed(false)
+                    }
+                    _ => {}
+                }
+            });
+        // Installing a handler, even an empty one, declares interest in its
+        // gesture, and that changes what a click means: a second click soon after
+        // the first becomes a double press and never a press, and a click held
+        // past the long-press time becomes a long press. A button whose caller
+        // never asked for either would swallow those presses, so they are only
+        // installed when there is something to run.
+        if self.on_double_press.is_set() {
+            detector = detector.on_double_press(self.on_double_press.clone());
+        }
+        if self.on_long_press.is_set() {
+            detector = detector.on_long_press(self.on_long_press.clone());
+        }
+
         MouseRegion::new()
             .on_hover_enter({
                 let feedback = feedback.clone();
@@ -587,27 +617,7 @@ impl<W: Widget + 'static> ButtonState<W> {
                 move || feedback.set_hover(false)
             })
             .current_state(self.current_state.clone())
-            .child(
-                GestureDetector::new()
-                    .behavior(GestureDetectorBehavior::BlockChild)
-                    .on_tap(self.on_press.clone())
-                    .on_double_press(self.on_double_press.clone())
-                    .on_long_press(self.on_long_press.clone())
-                    .on_right_tap(self.on_right_press.clone())
-                    .on_gesture({
-                        move |event: GestureEvent| match event {
-                            GestureEvent::TapDown { .. } => feedback.set_pressed(true),
-                            // Either terminator ends the press: the recognizer
-                            // guarantees one of them arrives, so the highlight
-                            // cannot be left stuck on.
-                            GestureEvent::TapUp { .. } | GestureEvent::TapCancel => {
-                                feedback.set_pressed(false)
-                            }
-                            _ => {}
-                        }
-                    })
-                    .child(child),
-            )
+            .child(detector.child(child))
             .boxed()
     }
 }

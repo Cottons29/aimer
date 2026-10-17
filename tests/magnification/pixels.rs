@@ -1,7 +1,7 @@
 use super::fixtures::*;
 use aimer::canvas::Canvas;
-use aimer::cupid::draw_cmd_v2::{Rect, RenderNodeId, RenderPaintSource, RenderTree};
-use aimer::cupid::frame::FramePacket;
+use aimer_cupid::draw_cmd_v2::{Rect, RenderNodeId, RenderPaintSource, RenderTree};
+use aimer_cupid::frame::FramePacket;
 use aimer::{BorderRadius, Decoration, Magnification, ResolvedSize, Vec2d};
 
 fn lens_packet(

@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use aimer_cupid::draw_cmd_v2::{Rect, RenderNodeId, RenderTree};
 use aimer_router::{
-    Curve, curves, ContainerTransition, NavigationAction, NavigationContext, NavigationTransition, Route,
+    Curve, curves, ContainerTransition, ExpandTransition, NavigationAction, NavigationContext, NavigationTransition, Route,
     NavigationTransitionFrame, ResolvedNavigationTransition,
 };
 use aimer_widget::base::{BuildContext, ResolvedSize, WindowHandle};
@@ -392,4 +392,409 @@ fn a_users_own_curve_can_ease_the_whole_navigation() {
 
     assert_eq!(effect.curve().transform(1.0), 0.5);
     assert!(effect.curve().descriptor().is_none(), "a custom curve has no portable description");
+}
+
+/// A row as wide as the host, which a scaled page could only slide out of.
+fn revealing() -> ContainerTransition<Page> {
+    transition().reveal(true)
+}
+
+#[test]
+fn a_revealed_push_opens_a_window_on_the_item_and_never_scales_the_page() {
+    let ctx = context();
+    let _item = item("album-7", Rect::new(0.0, 260.0, 400.0, 160.0), &ctx);
+
+    let effect = resolve(&revealing(), 0, 7, NavigationAction::Push, &ctx).unwrap();
+
+    let start = effect.sample(0.0, VIEWPORT).unwrap();
+    near(corner(&start, 0.0, 0.0), (0.0, 260.0));
+    near(corner(&start, 1.0, 1.0), (1.0, 261.0));
+    let window = start.incoming.reveal.expect("the page shows through a window");
+    assert_eq!((window.width, window.height), (400.0, 160.0));
+    assert_eq!(start.incoming.corner_radius, 12.0);
+    let end = effect.sample(1.0, VIEWPORT).unwrap();
+    assert_eq!(end.incoming.transform, aimer_canvas::Mat3::identity());
+    // The window has grown to the whole page, which needs no clip.
+    assert_eq!(end.incoming.reveal, None);
+    // The page behind still dims, and a plain transition has no window at all.
+    assert!(end.outgoing.opacity < 1.0);
+    let plain = resolve(&transition(), 0, 7, NavigationAction::Push, &ctx).unwrap();
+    assert_eq!(plain.sample(0.5, VIEWPORT).unwrap().incoming.reveal, None);
+}
+
+#[test]
+fn a_revealed_pop_closes_the_window_back_onto_the_item_above_the_returning_page() {
+    let ctx = context();
+    let _item = item("album-7", Rect::new(0.0, 260.0, 400.0, 160.0), &ctx);
+
+    let effect = resolve(&revealing(), 7, 0, NavigationAction::Pop, &ctx).unwrap();
+
+    let start = effect.sample(0.0, VIEWPORT).unwrap();
+    assert_eq!(start.outgoing.transform, aimer_canvas::Mat3::identity());
+    let end = effect.sample(1.0, VIEWPORT).unwrap();
+    near(end.outgoing.transform.transform_point(0.0, 0.0), (0.0, 260.0));
+    let window = end.outgoing.reveal.unwrap();
+    assert_eq!((window.width, window.height), (400.0, 160.0));
+    assert!(effect.is_outgoing_on_top());
+}
+
+#[test]
+fn a_revealed_push_keeps_the_copy_of_the_item_in_its_slot() {
+    let ctx = context();
+    let _item = repeatable_item("album-7", Rect::new(0.0, 260.0, 400.0, 160.0), &ctx);
+    let effect = resolve(&revealing(), 0, 7, NavigationAction::Push, &ctx).unwrap();
+
+    for progress in [0.0, 0.1, 0.2] {
+        let frame = effect.sample_anchored_at(progress, VIEWPORT, (0.0, 0.0)).unwrap();
+        near(frame.anchor.transform.transform_point(0.0, 0.0), (0.0, 260.0));
+        near(frame.anchor.transform.transform_point(1.0, 1.0), (1.0, 261.0));
+    }
+    let end = effect.sample_anchored_at(1.0, VIEWPORT, (0.0, 0.0)).unwrap();
+    assert_eq!(end.anchor.opacity, 0.0);
+    assert_eq!(end.frame.incoming.opacity, 1.0);
+}
+
+#[test]
+fn the_page_behind_is_only_blurred_when_asked() {
+    let ctx = context();
+    let _item = item("album-7", Rect::new(0.0, 260.0, 400.0, 160.0), &ctx);
+
+    let plain = resolve(&revealing(), 0, 7, NavigationAction::Push, &ctx).unwrap();
+    let blurred = resolve(&revealing().blur(12.0), 0, 7, NavigationAction::Push, &ctx).unwrap();
+    let pop = resolve(&revealing().blur(12.0), 7, 0, NavigationAction::Pop, &ctx).unwrap();
+
+    assert!(!plain.has_veil());
+    assert!(blurred.has_veil() && pop.has_veil());
+    // A blur of nothing is no blur.
+    assert!(!resolve(&revealing().blur(0.0), 0, 7, NavigationAction::Push, &ctx).unwrap().has_veil());
+    assert!(!resolve(&revealing().blur(-4.0), 0, 7, NavigationAction::Push, &ctx).unwrap().has_veil());
+}
+
+#[test]
+fn a_zoom_with_nothing_to_grow_from_blurs_the_page_behind_too() {
+    let ctx = context();
+
+    // No item is registered under the tag, so the effect is a plain zoom.
+    let zoom = resolve(&revealing().blur(12.0), 0, 8, NavigationAction::Push, &ctx).unwrap();
+
+    assert!(zoom.has_veil());
+}
+
+/// A row as wide as the host, opened in three stages.
+fn staged() -> ContainerTransition<Page> {
+    transition().staged(true).curve(curves::LINEAR)
+}
+
+#[test]
+fn a_staged_push_scales_the_item_then_turns_it_into_the_page_then_grows_the_page() {
+    let ctx = context();
+    let _item = repeatable_item("album-7", Rect::new(0.0, 260.0, 400.0, 160.0), &ctx);
+    let effect = resolve(&staged(), 0, 7, NavigationAction::Push, &ctx).unwrap();
+    let at = |p: f32| effect.sample_anchored_at(p, VIEWPORT, (0.0, 0.0)).unwrap();
+
+    // First third: the copy of the item grows, and the page is not there.
+    let lifted = at(1.0 / 3.0);
+    assert!(lifted.anchor.transform.transform_point(400.0, 0.0).0 > 400.0);
+    assert_eq!((lifted.anchor.opacity, lifted.frame.incoming.opacity), (1.0, 0.0));
+    // Middle third: the copy fades out as the page fades in, both on the item.
+    let turning = at(0.5);
+    assert!((turning.anchor.opacity - 0.5).abs() < 1e-4 && turning.frame.incoming.opacity > 0.99);
+    let window = turning.frame.incoming.reveal.unwrap();
+    assert_eq!((window.width, window.height), (400.0, 160.0));
+    // Last third: the window grows to the host.
+    let growing = at(5.0 / 6.0);
+    assert!(growing.frame.incoming.reveal.unwrap().height > 400.0);
+    let end = at(1.0);
+    assert_eq!(end.frame.incoming.transform, aimer_canvas::Mat3::identity());
+    assert_eq!(end.frame.incoming.reveal, None);
+}
+
+#[test]
+fn a_staged_pop_plays_the_stages_in_the_opposite_order() {
+    let ctx = context();
+    let _item = repeatable_item("album-7", Rect::new(0.0, 260.0, 400.0, 160.0), &ctx);
+    let effect = resolve(&staged(), 7, 0, NavigationAction::Pop, &ctx).unwrap();
+    let at = |p: f32| effect.sample_anchored_at(p, VIEWPORT, (0.0, 0.0)).unwrap();
+
+    // A pop starts with the page filling the host, and its first third shrinks it.
+    assert_eq!(at(0.0).frame.outgoing.reveal, None);
+    assert!(at(1.0 / 6.0).frame.outgoing.reveal.unwrap().height > 160.0);
+    // Then the page turns back into the item, and the item scales back down.
+    let turning = at(0.5);
+    assert!((turning.anchor.opacity - 0.5).abs() < 1e-4);
+    let end = at(1.0);
+    assert_eq!(end.anchor.transform.transform_point(0.0, 0.0), (0.0, 260.0));
+    assert_eq!(end.anchor.opacity, 1.0);
+    assert!(effect.is_outgoing_on_top());
+}
+
+#[test]
+fn a_staged_blur_is_a_layer_over_everything_and_a_plain_one_is_not() {
+    let ctx = context();
+    let _item = repeatable_item("album-7", Rect::new(0.0, 260.0, 400.0, 160.0), &ctx);
+
+    let blurred = resolve(&staged().blur(12.0), 0, 7, NavigationAction::Push, &ctx).unwrap();
+    let plain = resolve(&staged(), 0, 7, NavigationAction::Push, &ctx).unwrap();
+
+    assert!(blurred.has_veil() && !plain.has_veil());
+}
+
+#[test]
+fn overlapping_stages_start_the_window_before_the_item_has_finished_turning() {
+    let ctx = context();
+    let _item = repeatable_item("album-7", Rect::new(0.0, 260.0, 400.0, 160.0), &ctx);
+    let overlapped = staged().stage_overlap(0.5);
+    let push = resolve(&overlapped, 0, 7, NavigationAction::Push, &ctx).unwrap();
+    let pop = resolve(&overlapped, 7, 0, NavigationAction::Pop, &ctx).unwrap();
+
+    // Half overlap: the copy is still fading at 0.625, and the window is
+    // already past the item's size. Without overlap it would be neither.
+    let mid = push.sample_anchored_at(0.625, VIEWPORT, (0.0, 0.0)).unwrap();
+    assert!(mid.anchor.opacity > 0.0 && mid.anchor.opacity < 1.0);
+    assert!(mid.frame.incoming.reveal.unwrap().height > 160.0);
+    let apart = resolve(&staged(), 0, 7, NavigationAction::Push, &ctx).unwrap();
+    let window = apart.sample_anchored_at(0.625, VIEWPORT, (0.0, 0.0)).unwrap().frame.incoming.reveal.unwrap();
+    assert_eq!(window.height, 160.0);
+    // A pop plays the same motion backwards: the window is still shrinking
+    // when the copy starts to come back.
+    let back = pop.sample_anchored_at(0.375, VIEWPORT, (0.0, 0.0)).unwrap();
+    assert!(back.anchor.opacity > 0.0 && back.anchor.opacity < 1.0);
+    assert!(back.frame.outgoing.reveal.unwrap().height > 160.0);
+    // It still ends where a plain staged motion does.
+    let end = push.sample_anchored_at(1.0, VIEWPORT, (0.0, 0.0)).unwrap();
+    assert_eq!((end.frame.incoming.reveal, end.anchor.opacity), (None, 0.0));
+}
+
+#[test]
+fn overlapping_stages_keep_the_blur() {
+    let ctx = context();
+    let _item = repeatable_item("album-7", Rect::new(0.0, 260.0, 400.0, 160.0), &ctx);
+
+    let blurred = resolve(&staged().stage_overlap(0.5).blur(12.0), 0, 7, NavigationAction::Push, &ctx).unwrap();
+
+    assert!(blurred.has_veil());
+}
+
+/// A long lift, with the turn at the end of it, then the window.
+fn long_lift() -> aimer_animation::StageSpans {
+    aimer_animation::StageSpans::new(0.0..0.55, 0.4..0.55, 0.55..1.0)
+}
+
+#[test]
+fn stage_spans_place_a_push_and_a_pop_on_the_timeline() {
+    let ctx = context();
+    let _item = repeatable_item("album-7", Rect::new(0.0, 260.0, 400.0, 160.0), &ctx);
+    let placed = staged().stage_spans(long_lift());
+    let push = resolve(&placed, 0, 7, NavigationAction::Push, &ctx).unwrap();
+    let pop = resolve(&placed, 7, 0, NavigationAction::Pop, &ctx).unwrap();
+    let pushed = |p: f32| push.sample_anchored_at(p, VIEWPORT, (0.0, 0.0)).unwrap();
+    let popped = |p: f32| pop.sample_anchored_at(p, VIEWPORT, (0.0, 0.0)).unwrap();
+
+    // Still lifting, and no page, well before the turn at 0.4..0.55.
+    assert_eq!((pushed(0.3).anchor.opacity, pushed(0.3).frame.incoming.opacity), (1.0, 0.0));
+    assert!(pushed(0.3).anchor.transform.transform_point(400.0, 0.0).0 > 400.0);
+    // Halfway through the turn the copy is half gone; the window has not moved.
+    assert!((pushed(0.475).anchor.opacity - 0.5).abs() < 1e-4);
+    assert_eq!(pushed(0.475).frame.incoming.reveal.unwrap().height, 160.0);
+    // The window then takes the rest.
+    assert!(pushed(0.7).frame.incoming.reveal.unwrap().height > 160.0);
+    assert_eq!(pushed(1.0).frame.incoming.reveal, None);
+    // A pop is the same motion backwards: the turn is at 0.45..0.6 of it.
+    assert!((popped(0.525).anchor.opacity - 0.5).abs() < 1e-4);
+    assert!(popped(0.3).frame.outgoing.reveal.unwrap().height > 160.0);
+    assert_eq!(popped(1.0).anchor.opacity, 1.0);
+}
+
+#[test]
+fn stage_spans_keep_the_blur() {
+    let ctx = context();
+    let _item = repeatable_item("album-7", Rect::new(0.0, 260.0, 400.0, 160.0), &ctx);
+
+    let blurred = resolve(&staged().stage_spans(long_lift()).blur(12.0), 0, 7, NavigationAction::Push, &ctx).unwrap();
+
+    assert!(blurred.has_veil());
+}
+
+#[test]
+fn the_page_behind_dims_only_over_the_dim_span_of_the_stage_spans() {
+    let ctx = context();
+    let _item = repeatable_item("album-7", Rect::new(0.0, 260.0, 400.0, 160.0), &ctx);
+    let placed = staged().scrim(0.5).stage_spans(long_lift().dimmed_over(0.7..1.0));
+    let push = resolve(&placed, 0, 7, NavigationAction::Push, &ctx).unwrap();
+    let pop = resolve(&placed, 7, 0, NavigationAction::Pop, &ctx).unwrap();
+
+    // A push leaves the page behind alone until the page starts to grow, and
+    // has it dimmed by the scrim when the page fills the host.
+    let behind = |p: f32| push.sample_anchored_at(p, VIEWPORT, (0.0, 0.0)).unwrap().frame.outgoing.opacity;
+    assert_eq!((behind(0.0), behind(0.5), behind(0.7)), (1.0, 1.0, 1.0));
+    assert!(behind(0.85) < 1.0);
+    assert!((behind(1.0) - 0.5).abs() < 1e-4);
+    // A pop plays it backwards: the page returning to view lights up first.
+    let returning = |p: f32| pop.sample_anchored_at(p, VIEWPORT, (0.0, 0.0)).unwrap().frame.incoming.opacity;
+    assert!((returning(0.0) - 0.5).abs() < 1e-4);
+    assert!(returning(0.15) > returning(0.0));
+    assert_eq!(returning(0.5), 1.0);
+}
+
+/// A row as wide as the host, opened by its window growing while it dissolves.
+fn expanding() -> ExpandTransition<Page> {
+    ExpandTransition::new().tag(|page: &Page| (page.0 != 0).then(|| Key::from(format!("album-{}", page.0))))
+}
+
+fn row() -> Rect {
+    Rect::new(0.0, 260.0, 400.0, 160.0)
+}
+
+#[test]
+fn an_expanding_push_grows_the_window_while_the_item_dissolves_into_the_page() {
+    let ctx = context();
+    let _item = repeatable_item("album-7", row(), &ctx);
+    let effect = resolve_expand(&expanding(), 0, 7, NavigationAction::Push, &ctx).unwrap();
+    let at = |p: f32| effect.sample_anchored_at(p, VIEWPORT, (0.0, 0.0)).unwrap();
+
+    // The window is the item to begin with, with the item's corners.
+    let start = at(0.0);
+    let window = start.frame.incoming.reveal.unwrap();
+    assert_eq!((window.width, window.height), (400.0, 160.0));
+    near(corner(&start.frame, 0.0, 0.0), (0.0, 260.0));
+    assert_eq!((start.frame.incoming.corner_radius, start.anchor.opacity), (12.0, 1.0));
+    // It is opening before the item has started to go.
+    assert!(at(0.1).frame.incoming.reveal.unwrap().height > 160.0);
+    assert_eq!(at(0.1).anchor.opacity, 1.0);
+    // Half way through the dissolve the item is half gone, the window still opening.
+    let middle = at(0.45);
+    assert!((middle.anchor.opacity - 0.5).abs() < 1e-4);
+    assert!(middle.frame.incoming.reveal.unwrap().height < 800.0);
+    // The page is opaque all the way, so the page behind never shows through.
+    for p in [0.0, 0.1, 0.3, 0.6, 0.9] {
+        assert_eq!(at(p).frame.incoming.opacity, 1.0, "{p}");
+    }
+    // The item itself is what grows: its copy is stretched to the window, so its
+    // far corner is the window's.
+    let middle_window = middle.frame.incoming.reveal.unwrap();
+    let origin = corner(&middle.frame, 0.0, 0.0);
+    near(middle.anchor.transform.transform_point(0.0, 0.0), origin);
+    near(middle.anchor.transform.transform_point(400.0, 160.0),
+        (origin.0 + middle_window.width, origin.1 + middle_window.height));
+    // It ends as the whole host.
+    let end = at(1.0);
+    assert_eq!((end.frame.incoming.reveal, end.anchor.opacity), (None, 0.0));
+    assert_eq!(end.frame.incoming.transform, aimer_canvas::Mat3::identity());
+    assert_eq!(end.frame.incoming.corner_radius, 0.0);
+    assert!(!effect.is_outgoing_on_top());
+}
+
+#[test]
+fn an_expanding_pop_plays_it_backwards_into_the_item() {
+    let ctx = context();
+    let _item = repeatable_item("album-7", row(), &ctx);
+    let effect = resolve_expand(&expanding(), 7, 0, NavigationAction::Pop, &ctx).unwrap();
+    let at = |p: f32| effect.sample_anchored_at(p, VIEWPORT, (0.0, 0.0)).unwrap();
+
+    // It begins with the page filling the host and the item gone...
+    let start = at(0.0);
+    assert_eq!((start.frame.outgoing.reveal, start.anchor.opacity), (None, 0.0));
+    // ...brings the item back at the mirror of where it went (0.45 of the way
+    // there is 0.55 of the way back)...
+    assert!((at(0.55).anchor.opacity - 0.5).abs() < 1e-4);
+    // ...and ends with the window back on the item, painted above the page that
+    // returns, which is fully lit again.
+    let end = at(1.0);
+    let window = end.frame.outgoing.reveal.unwrap();
+    assert_eq!((window.width, window.height, end.anchor.opacity), (400.0, 160.0, 1.0));
+    near(corner(&NavigationTransitionFrame { incoming: end.frame.outgoing, outgoing: end.frame.incoming }, 0.0, 0.0), (0.0, 260.0));
+    assert_eq!(end.frame.incoming.opacity, 1.0);
+    assert!(effect.is_outgoing_on_top());
+}
+
+#[test]
+fn the_page_behind_darkens_as_the_expanding_window_covers_it() {
+    let ctx = context();
+    let _item = repeatable_item("album-7", row(), &ctx);
+    let effect = resolve_expand(&expanding().scrim(0.5), 0, 7, NavigationAction::Push, &ctx).unwrap();
+    let behind = |p: f32| effect.sample_anchored_at(p, VIEWPORT, (0.0, 0.0)).unwrap().frame.outgoing.opacity;
+
+    assert_eq!(behind(0.0), 1.0);
+    assert!(behind(0.5) < 1.0 && behind(0.5) > behind(1.0));
+    assert!((behind(1.0) - 0.5).abs() < 1e-4);
+}
+
+#[test]
+fn expanding_spans_curves_and_corners_are_configurable() {
+    let ctx = context();
+    let _item = repeatable_item("album-7", row(), &ctx);
+    let configured = expanding().grow(0.4..0.8).dissolve(0.0..0.4).source_radius(30.0).page_radius(4.0);
+    let effect = resolve_expand(&configured, 0, 7, NavigationAction::Push, &ctx).unwrap();
+    let at = |p: f32| effect.sample_anchored_at(p, VIEWPORT, (0.0, 0.0)).unwrap();
+
+    assert_eq!(at(0.0).frame.incoming.corner_radius, 30.0);
+    // Nothing grows before 0.4, though the item is half gone at 0.2.
+    assert_eq!(at(0.3).frame.incoming.reveal.unwrap().height, 160.0);
+    assert!((at(0.2).anchor.opacity - 0.5).abs() < 1e-4);
+    // It is the whole host from 0.8, the corners the page's.
+    assert_eq!(at(0.8).frame.incoming.reveal, None);
+    assert_eq!(at(1.0).frame.incoming.corner_radius, 4.0);
+    // A curve eases only the window.
+    let eased = resolve_expand(&expanding().grow_curve(curves::EASE_OUT), 0, 7, NavigationAction::Push, &ctx).unwrap();
+    let height = |p: f32| eased.sample_anchored_at(p, VIEWPORT, (0.0, 0.0)).unwrap().frame.incoming.reveal.unwrap().height;
+    assert!(height(0.3) > effect_height(&resolve_expand(&expanding(), 0, 7, NavigationAction::Push, &ctx).unwrap(), 0.3));
+}
+
+fn effect_height(effect: &ResolvedNavigationTransition, p: f32) -> f32 {
+    effect.sample_anchored_at(p, VIEWPORT, (0.0, 0.0)).unwrap().frame.incoming.reveal.unwrap().height
+}
+
+#[test]
+fn an_expanding_item_without_a_copy_lets_the_page_fade_in_over_the_dissolve() {
+    let ctx = context();
+    // Not repeatable, so there is nothing to draw above the page.
+    let _item = item("album-7", row(), &ctx);
+    let effect = resolve_expand(&expanding(), 0, 7, NavigationAction::Push, &ctx).unwrap();
+    let at = |p: f32| effect.sample_at(p, VIEWPORT, (0.0, 0.0)).unwrap();
+
+    assert_eq!(at(0.1).incoming.opacity, 0.0);
+    assert!((at(0.45).incoming.opacity - 0.5).abs() < 1e-4);
+    assert_eq!(at(0.9).incoming.opacity, 1.0);
+    assert!(at(0.1).incoming.reveal.is_some());
+}
+
+#[test]
+fn an_expanding_route_with_nothing_to_grow_from_zooms() {
+    let ctx = context();
+
+    // No item is registered under the tag, and page 0 has no tag at all.
+    for (from, to) in [(0, 8), (0, 0)] {
+        let effect = resolve_expand(&expanding(), from, to, NavigationAction::Push, &ctx).unwrap();
+        let frame = effect.sample_anchored_at(0.5, VIEWPORT, (0.0, 0.0)).unwrap();
+
+        assert_eq!(frame.frame.incoming.reveal, None, "{from} -> {to}");
+        assert_eq!(frame.anchor.opacity, 0.0, "{from} -> {to}");
+    }
+}
+
+#[test]
+fn an_expanding_blur_is_a_layer_over_everything_only_when_asked() {
+    let ctx = context();
+    let _item = repeatable_item("album-7", row(), &ctx);
+    let has_veil = |transition: ExpandTransition<Page>, from, to, action| {
+        resolve_expand(&transition, from, to, action, &ctx).unwrap().has_veil()
+    };
+
+    assert!(!has_veil(expanding(), 0, 7, NavigationAction::Push));
+    assert!(has_veil(expanding().blur(12.0), 0, 7, NavigationAction::Push));
+    assert!(has_veil(expanding().blur(12.0).blur_held(0.5), 7, 0, NavigationAction::Pop));
+    assert!(!has_veil(expanding().blur(0.0), 0, 7, NavigationAction::Push));
+    assert!(!has_veil(expanding().blur(-4.0), 0, 7, NavigationAction::Push));
+    // A zoom with nothing to grow from blurs too.
+    assert!(has_veil(expanding().blur(12.0), 0, 8, NavigationAction::Push));
+}
+
+fn resolve_expand(
+    transition: &ExpandTransition<Page>,
+    from: u32,
+    to: u32,
+    action: NavigationAction,
+    ctx: &BuildContext,
+) -> Option<ResolvedNavigationTransition> {
+    transition.resolve(&NavigationContext { from: &Page(from), to: &Page(to), action, build_context: ctx })
 }

@@ -23,6 +23,7 @@ pub use android_storage::register_android_app;
 mod shutdown_signals;
 mod ffi_utils;
 mod first_frame;
+mod link_inbox;
 #[cfg(any(target_os = "ios", test))]
 mod ios_input;
 mod render_mode;

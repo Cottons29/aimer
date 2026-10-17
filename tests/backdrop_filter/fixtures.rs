@@ -1,7 +1,7 @@
 use aimer::canvas::{Canvas as RetainedCanvas, FrameCanvas, InnerCanvas};
-use aimer::cupid::damage_region::DamageSet;
-use aimer::cupid::draw_cmd_v2::{Rect, RenderFrame, RenderNodeId, RenderPaintSource, RenderTree};
-use aimer::cupid::frame::{FramePacket, FrameRenderMetadata};
+use aimer_cupid::damage_region::DamageSet;
+use aimer_cupid::draw_cmd_v2::{Rect, RenderFrame, RenderNodeId, RenderPaintSource, RenderTree};
+use aimer_cupid::frame::{FramePacket, FrameRenderMetadata};
 use aimer::widget::base::WindowHandle;
 use aimer::{
     BackdropFilter, BuildContext, DecorationBox, Drawable, ResolvedSize, SizedBox, Vec2d, Widget,
@@ -72,7 +72,7 @@ pub(super) fn background_node(tree: &RenderTree) -> RenderNodeId {
     tree.render_all()
         .into_iter()
         .find_map(|op| match op {
-            aimer::cupid::draw_cmd_v2::RenderOp::Draw(item) => Some(item.element),
+            aimer_cupid::draw_cmd_v2::RenderOp::Draw(item) => Some(item.element),
             _ => None,
         })
         .unwrap()

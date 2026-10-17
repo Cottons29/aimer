@@ -3,7 +3,8 @@ use std::rc::Rc;
 
 use aimer::canvas::Canvas;
 use aimer::quiver::winit::dpi::PhysicalSize;
-use aimer::{BoxDecoration, Decoration, DecorationBox, HeadlessOptions, LightEdge, SizedBox};
+use aimer::decoration::{BoxDecoration, Decoration, DecorationBox, LightEdge};
+use aimer::{HeadlessOptions, SizedBox};
 
 use super::*;
 

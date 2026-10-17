@@ -48,7 +48,7 @@ impl<'dispatcher, 'tree> EventDispatchContext<'dispatcher, 'tree> {
     /// The hit-test position supplied by the dispatcher, including for Scroll
     /// events whose payload has no pointer position.
     #[inline]
-    pub(crate) fn position(&self) -> Vec2d {
+    pub fn position(&self) -> Vec2d {
         self.position
     }
 
@@ -60,6 +60,19 @@ impl<'dispatcher, 'tree> EventDispatchContext<'dispatcher, 'tree> {
                 .nested_captures
                 .contains_key(&(boundary, pointer))
         })
+    }
+
+    /// Takes `pointer` back from everything inside this element's child view that
+    /// captured it, telling each that its interaction is cancelled.
+    ///
+    /// A forwarding element that wins an arbitration after its child has already
+    /// been pressed uses this, as a scroll does when it takes a drag from a button.
+    /// The captures are found by pointer, at any depth, because a child that is
+    /// itself a forwarding boundary (a retained child is one) records its own
+    /// descendant's capture under its own boundary, where a cancellation sent to
+    /// the child as a whole would not find it.
+    pub fn cancel_pointer(&mut self, pointer: PointerKey) -> EventResult {
+        self.dispatcher.cancel_nested_pointer(self.path_root, pointer, self.boundary)
     }
 
     /// Dispatches an event into the forwarding element's child view using the
@@ -791,6 +804,9 @@ impl EventDispatcher {
         pos: Vec2d,
         event: &ElementEvent,
     ) -> EventResult {
+        if let Some(pointer) = event.pointer() {
+            aimer_events::pointer::note_pointer_source(pointer.source);
+        }
         let result = self.route(root, pos, event);
         match event {
             ElementEvent::PointerUp(pointer) => {
@@ -1212,23 +1228,51 @@ impl EventDispatcher {
                 .without_capture_request();
         }
 
+        result.merge(self.cancel_nested_pointer(root, pointer, None))
+    }
+
+    /// Cancels `pointer` for every element that captured it inside a forwarding
+    /// element's child view, and forgets those captures.
+    ///
+    /// With `within`, only captures made inside the child view of that boundary
+    /// are touched: the boundary may itself be nested in another forwarding
+    /// element, whose record of *this* boundary holding the pointer is not
+    /// something the boundary cancels in its own child view.
+    fn cancel_nested_pointer(
+        &mut self,
+        root: &dyn Element,
+        pointer: PointerKey,
+        within: Option<ElementId>,
+    ) -> EventResult {
+        let mut result = EventResult::ignored();
         // A capture made inside a forwarding element's child view is recorded
         // only in the nested table, and the dispatcher that owns that view has no
         // capture of its own to look up. Without this a descendant that took the
         // pointer, such as a button inside a list, never learned that a scroll
         // took it back, and stayed in the state the press had put it in.
-        let nested: HashSet<ElementId> = self
+        let entries: Vec<(ElementId, ElementId)> = self
             .nested_captures
             .iter()
-            .filter_map(|((_, captured), owner)| (*captured == pointer).then_some(*owner))
+            .filter_map(|((boundary, captured), owner)| (*captured == pointer).then_some((*boundary, *owner)))
             .collect();
-        for owner in nested {
+        let mut owners: HashSet<ElementId> = HashSet::new();
+        let mut cancelled: Vec<ElementId> = Vec::new();
+        for (boundary, owner) in entries {
+            if let Some(within) = within
+                && !self.is_ancestor_or_self(root, within, boundary)
+            {
+                continue;
+            }
+            cancelled.push(boundary);
+            owners.insert(owner);
+        }
+        for owner in owners {
             if let Some(outcome) = self.dispatch_nested_captured(root, owner, &ElementEvent::Cancel) {
                 result = result.merge(outcome.result.without_capture_request());
             }
         }
         self.nested_captures
-            .retain(|(_, captured), _| *captured != pointer);
+            .retain(|(boundary, captured), _| *captured != pointer || !cancelled.contains(boundary));
         result
     }
 

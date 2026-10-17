@@ -81,6 +81,12 @@ pub enum AimerNativePlatformEvent {
     /// An editing shortcut the macOS menu bar claimed before the window could
     /// see it, handed back to the widget tree. See [`crate::menu`].
     MenuShortcut(crate::menu::MenuShortcut),
+    /// A step of the system's back, reported by a platform bridge that is not a
+    /// key: Android's predictive back arrives from Kotlin as a start, progress
+    /// and an end. See [`crate::handler::system_back`].
+    Back(crate::handler::system_back::BackSignal),
+    /// Links were posted from the platform (see [`crate::link_inbox`]).
+    OpenLinks,
 }
 
 pub static EVENT_PROXY: OnceLock<EventLoopProxy<AimerNativePlatformEvent>> = OnceLock::new();
@@ -549,6 +555,56 @@ pub extern "system" fn Java_com_aimer_AimerActivity_nativeInsertText<'caller>(
     .resolve::<jni::errors::ThrowRuntimeExAndDefault>();
 }
 
+/// A link the platform opened the app with, from `onCreate` or `onNewIntent`.
+///
+/// Called on the JVM's UI thread, possibly before the event loop exists, so the
+/// link is posted to a thread-safe inbox that the loop drains on its own thread.
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_aimer_AimerActivity_nativeOpenLink<'caller>(
+    mut env: jni::EnvUnowned<'caller>,
+    _class: jni::objects::JClass<'caller>,
+    url: jni::objects::JString<'caller>,
+) {
+    env.with_env(|env| -> Result<(), jni::errors::Error> {
+        let url = String::from(url.mutf8_chars(env)?);
+        crate::link_inbox::post_link(url);
+        Ok(())
+    })
+    .resolve::<jni::errors::ThrowRuntimeExAndDefault>();
+}
+
+/// Android's back, in the pieces predictive back reports it in.
+///
+/// `phase` is `0` started, `1` progressed (with `progress` in `0.0..=1.0`), `2`
+/// invoked and `3` cancelled, matching the constants in `AimerActivity`. It is
+/// called on the JVM's UI thread, so it only queues the signal: the app's
+/// back handlers live on the event-loop thread.
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_aimer_AimerActivity_nativeBack<'caller>(
+    _env: jni::EnvUnowned<'caller>,
+    _class: jni::objects::JClass<'caller>,
+    phase: i32,
+    progress: f32,
+) {
+    use crate::handler::system_back::BackSignal;
+    let signal = match phase {
+        0 => BackSignal::Started,
+        1 => BackSignal::Progressed(if progress.is_finite() { progress.clamp(0.0, 1.0) } else { 0.0 }),
+        2 => BackSignal::Invoked,
+        3 => BackSignal::Cancelled,
+        _ => return,
+    };
+    let Some(proxy) = EVENT_PROXY.get() else {
+        aimer_utils::debug!("nativeBack: EVENT_PROXY not initialized yet");
+        return;
+    };
+    if let Err(e) = proxy.send_event(AimerNativePlatformEvent::Back(signal)) {
+        aimer_utils::error!("nativeBack: failed to send event: {:?}", e);
+    }
+}
+
 #[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_aimer_AimerActivity_nativeTextEditingDelta<'caller>(
@@ -960,6 +1016,13 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
     #[doc(hidden)]
     pub fn paint_source_census(&self) -> Option<crate::handler::census::PaintSourceCensus> {
         self.app.paint_source_census()
+    }
+
+    /// Every render node in paint order, as the renderer would be handed them
+    /// without damage culling, for tests that check what a frame draws and where.
+    #[doc(hidden)]
+    pub fn render_ops(&self) -> Vec<aimer_cupid::draw_cmd_v2::RenderOp> {
+        self.app.render_tree().render_all()
     }
 
     /// Turns the incremental render-tree synchronization and path-index patching
@@ -1519,7 +1582,9 @@ fn start_event_loop(
         // without an explicit reference, the linker may garbage-collect them out of
         // the final `cdylib`, which would make the soft-keyboard text bridge fail
         // with `UnsatisfiedLinkError`.
-        let _keep_jni: [*const (); 4] = [
+        let _keep_jni: [*const (); 6] = [
+            Java_com_aimer_AimerActivity_nativeOpenLink as *const (),
+            Java_com_aimer_AimerActivity_nativeBack as *const (),
             Java_com_aimer_AimerActivity_nativeInsertText as *const (),
             Java_com_aimer_AimerActivity_nativeSetComposingText as *const (),
             Java_com_aimer_AimerActivity_nativeBackspace as *const (),

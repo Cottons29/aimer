@@ -42,15 +42,30 @@ pub const LONG_PRESS_DURATION: std::time::Duration = std::time::Duration::from_m
 /// value for the device.
 pub const TAP_SLOP: f32 = 18.0;
 
-/// How far a *mouse* may travel and still count as a click rather than a drag,
-/// in logical pixels.
+/// How far a *mouse* must travel before a press becomes a drag, in logical
+/// pixels.
 ///
-/// A mouse is precise and rests where it is put, so it needs almost no
-/// tolerance. Using the touch slop for it — which this crate did until the slop
+/// A mouse is precise and rests where it is put, so a drag should start almost
+/// at once. Using the touch slop for it — which this crate did until the slop
 /// became per-source — meant a deliberate short click-drag of up to 18 px was
 /// reported as a plain click and the drag never started. This is Flutter's
 /// `kPrecisePointerHitSlop`.
+///
+/// This decides when a *drag* starts, not whether a click survives: a press
+/// that nobody may drag with is judged by [`MOUSE_TAP_TOLERANCE`].
 pub const MOUSE_SLOP: f32 = 1.0;
+
+/// How far a *mouse* may drift between press and release and still be a click,
+/// in logical pixels.
+///
+/// Pressing a trackpad or a mouse button nudges the cursor by a pixel or three,
+/// and a click the user meant is not abandoned for that. It is still far smaller
+/// than the touch slop, so sliding off a control and releasing there cancels.
+///
+/// Only a press that cannot become a drag is judged by this: when a drag is
+/// listened for, travel past [`MOUSE_SLOP`] is a drag before it could fail to be
+/// a click, so the two never disagree.
+pub const MOUSE_TAP_TOLERANCE: f32 = 8.0;
 
 /// The movement tolerance for `source`, in logical pixels.
 ///
@@ -69,6 +84,29 @@ pub const fn tap_slop(source: PointerSource) -> f32 {
     match source {
         PointerSource::Touch => TAP_SLOP,
         PointerSource::Mouse => MOUSE_SLOP,
+    }
+}
+
+/// How far `source` may move between press and release and still be a tap or a
+/// click, in logical pixels.
+///
+/// Unlike [`tap_slop`], which is where a press turns into a drag, this is
+/// what a release is judged by when no drag took the press.
+///
+/// # Examples
+///
+/// ```
+/// use aimer_events::pointer::PointerSource;
+/// use aimer_input::gesture::{MOUSE_TAP_TOLERANCE, TAP_SLOP, tap_tolerance};
+///
+/// assert_eq!(tap_tolerance(PointerSource::Touch), TAP_SLOP);
+/// assert_eq!(tap_tolerance(PointerSource::Mouse), MOUSE_TAP_TOLERANCE);
+/// ```
+#[inline]
+pub const fn tap_tolerance(source: PointerSource) -> f32 {
+    match source {
+        PointerSource::Touch => TAP_SLOP,
+        PointerSource::Mouse => MOUSE_TAP_TOLERANCE,
     }
 }
 
@@ -556,6 +594,16 @@ mod tests {
         assert_eq!(tap_slop(PointerSource::Touch), TAP_SLOP);
         assert_eq!(tap_slop(PointerSource::Mouse), MOUSE_SLOP);
         assert!(tap_slop(PointerSource::Mouse) < tap_slop(PointerSource::Touch));
+    }
+
+    #[test]
+    fn a_mouse_click_tolerates_more_drift_than_a_drag_takes_to_start() {
+        // A press that has not become a drag must still be able to be a click, so
+        // the click tolerance can never be tighter than the drag slop.
+        assert!(tap_tolerance(PointerSource::Mouse) >= tap_slop(PointerSource::Mouse));
+        assert!(tap_tolerance(PointerSource::Mouse) > MOUSE_SLOP);
+        assert_eq!(tap_tolerance(PointerSource::Mouse), MOUSE_TAP_TOLERANCE);
+        assert_eq!(tap_tolerance(PointerSource::Touch), TAP_SLOP);
     }
 
     #[test]

@@ -12,6 +12,7 @@ This document is the implementation specification and current status for Aimer's
 - [x] Select nodes with `#id`, `.class`, and element-name selectors.
 - [x] Construct standalone paths from SVG path data or a selected SVG node.
 - [x] Tessellate non-zero/even-odd fills and stroke meshes with Cupid-owned geometry code.
+- [x] Paint a stroke once, as the union of its geometry: each contour becomes one outline polygon (the left offset forward, the cap, the right offset back, the cap) with joins on the outside of turns, and the polygons are filled with the non-zero rule, so a translucent stroke has one alpha even where it crosses itself. The fill splits a scanline band where two edges cross inside it. A path whose strokes overlap almost everywhere (many outlines closer together than the stroke is wide) is the expensive case: the sweep costs bands × active edges.
 - [x] Cache geometry independently from transform, opacity, and color values.
 - [x] Render SVG through a first-class Cupid command and GPU pipeline.
 - [x] Anti-alias SVG fill and stroke edges with a one-pixel coverage fringe in analytic mode, without a full-window multisample target.

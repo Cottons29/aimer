@@ -16,6 +16,16 @@ pub use aimer_cupid::text_pipeline::TextOverflowMode;
 pub use aimer_cupid::text_pipeline::text_layout::TextHorizontalAlign;
 pub use aimer_cupid::text_pipeline::text_layout::TextInteractionLayout;
 pub use aimer_cupid::utilities::Mat3;
+/// A rectangle in the canvas's own coordinates, as [`Canvas`] draws and clips with.
+pub use aimer_cupid::utilities::Rect;
+/// The renderer's colour, which [`Canvas`] paints with.
+///
+/// It is not [`aimer_color::Color`], the colour widgets are styled with: that one
+/// carries theme and alpha semantics, this one is the eight-bit-per-channel value
+/// the draw commands hold. Convert at the point of drawing, for example from a
+/// widget colour's packed `0xAARRGGBB` form with
+/// `RenderColor::rgba8(r, g, b, a)`.
+pub use aimer_cupid::utilities::Color as RenderColor;
 
 use crate::material::MaterialDrawRequest;
 mod native_impl;

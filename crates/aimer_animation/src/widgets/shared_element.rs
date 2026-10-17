@@ -123,9 +123,16 @@ pub fn last_shared_element(tag: &Key) -> Option<SharedElementSnapshot> {
         registry.borrow().get(tag).map(|entry| (entry.node.clone(), entry.content.clone()))
     });
     if let Some((node, content)) = live {
-        let (x, y, width, height) = node.world_bounds()?;
-        let bounds = ElementBounds::new(x, y, width, height);
-        return bounds.is_valid().then_some(SharedElementSnapshot { bounds, content });
+        // A registration whose node can no longer say where it is (it left the
+        // render tree before its element was dropped, or has no area) is not an
+        // answer: go on to where the tag was last seen.
+        let bounds = node
+            .world_bounds()
+            .map(|(x, y, width, height)| ElementBounds::new(x, y, width, height))
+            .filter(ElementBounds::is_valid);
+        if let Some(bounds) = bounds {
+            return Some(SharedElementSnapshot { bounds, content });
+        }
     }
     REMEMBERED.with(|remembered| {
         remembered

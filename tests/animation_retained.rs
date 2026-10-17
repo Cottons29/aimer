@@ -16,7 +16,7 @@ use aimer::animation::{
     ImplicitAnimatedBuilder, MorphTransition, RotationTransition, ScaleTransition, SlideTransition,
 };
 use aimer::canvas::Canvas;
-use aimer::cupid::utilities::{Color as V2Color, Rect};
+use aimer_cupid::utilities::{Color as V2Color, Rect};
 use aimer::{
     AimerApp, AnyElement, BuildContext, Color, Drawable, Element, EventElement, LayoutElement,
     Rebuildable, ResolvedSize, Size, State, StateUpdater, StatefulElement, StatefulWidget,

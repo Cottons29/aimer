@@ -980,6 +980,16 @@ impl RawSvg {
         )
     }
 
+    /// Whether a press on `node_id` means anything to this SVG: a press callback
+    /// or a pressed style matches it. Hover styles follow the pointer, not a press.
+    fn listens_on(&self, node_id: SvgNodeId) -> bool {
+        let Some(node) = self.document.scene().node(node_id) else {
+            return false;
+        };
+        self.callbacks.iter().any(|rule| rule.selector.matches(node))
+            || self.pressed_styles.iter().any(|rule| rule.selector.matches(node))
+    }
+
     fn set_hovered(&self, hovered: Option<SvgNodeId>) {
         if self.hovered.replace(hovered) != hovered && !self.hover_styles.is_empty() {
             request_animation_frame();
@@ -1139,7 +1149,12 @@ impl EventElement for RawSvg {
                 svg_pointer_capture_effect(result, event, false)
             }
             ElementEvent::PointerDown(pointer) => {
-                let hit = self.hit_at(pointer.x(), pointer.y());
+                // Children are offered an event before their parent, so taking a
+                // press nothing here listens for would starve the control the
+                // icon sits in — a button or a tab bar — wherever the icon is drawn.
+                let hit = self
+                    .hit_at(pointer.x(), pointer.y())
+                    .filter(|hit| self.listens_on(hit.node_id));
                 let changed = self
                     .interaction
                     .borrow_mut()
