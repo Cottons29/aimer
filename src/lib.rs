@@ -91,18 +91,18 @@ pub use aimer_quiver::{
     WindowAttr, set_first_frame_rendered_callback,
 };
 
-pub use aimer_scroll::*;
-pub use aimer_space::*;
 #[cfg(feature = "icons")]
 pub use aimer_lucide as icons;
 #[cfg(feature = "icons")]
 pub use aimer_lucide::Icons;
+pub use aimer_scroll::*;
+pub use aimer_space::*;
 #[cfg(feature = "svg")]
 pub use aimer_svg as svg;
 #[cfg(feature = "svg")]
 pub use aimer_svg::{
-    RawSvg, StaticSvg, Svg, SvgAspectAlign, SvgAspectMode, SvgCallback, SvgColor, SvgDiagnostic, SvgDocument,
-    SvgError, SvgFillRule, SvgFitError, SvgFitPolicy, SvgGradient, SvgGradientStop,
+    RawSvg, StaticSvg, Svg, SvgAspectAlign, SvgAspectMode, SvgCallback, SvgColor, SvgDiagnostic,
+    SvgDocument, SvgError, SvgFillRule, SvgFitError, SvgFitPolicy, SvgGradient, SvgGradientStop,
     SvgGradientUnits, SvgHit, SvgLimits, SvgLoadState, SvgLoader, SvgNodeId, SvgNodeMetadata,
     SvgNodePaint, SvgPaint, SvgPath, SvgPreserveAspectRatio, SvgSelector, SvgSource,
     SvgSpreadMethod, SvgStyle, SvgTransform, SvgViewBox,
@@ -1167,9 +1167,10 @@ mod tests {
         use std::rc::Rc;
 
         use aimer::{
-            AimerApp, AnyElement, BuildContext, Drawable, Element, EventElement, Grid, GridItem,
-            GridTrack, LayoutElement, Rebuildable, ResolvedSize, VisitorElement, Widget,
+            AimerApp, AnyElement, BuildContext, Drawable, Element, EventElement, LayoutElement,
+            Rebuildable, ResolvedSize, VisitorElement, Widget,
         };
+use aimer_grid::{Grid, GridItem, GridTrack};
 
         #[derive(Clone)]
         struct SizeProbe {
@@ -1933,7 +1934,7 @@ mod tests {
         use std::rc::Rc;
         use std::time::Duration;
 
-        use aimer::animation::{curves, ImplicitAnimatedBuilder};
+        use aimer::animation::{ImplicitAnimatedBuilder, curves};
         use aimer::input::button::Button;
         use aimer::quiver::aimer_app::HeadlessAimerApp;
         use aimer::quiver::winit::dpi::PhysicalPosition;

@@ -2,7 +2,9 @@ use super::fixtures::*;
 use aimer::canvas::Canvas;
 use aimer_cupid::draw_cmd_v2::Rect;
 use aimer_cupid::frame::FramePacket;
-use aimer::{BorderRadius, Decoration, Magnification, MagnificationStyle as S, ResolvedSize, Vec2d};
+use aimer::{ResolvedSize, Vec2d};
+use aimer_decoration::{Decoration, Magnification, MagnificationStyle as S};
+use aimer_style::*;
 
 fn sample(pixels: &[u8], x: f32, y: f32) -> [f32; 4] {
     let left = (x - 0.5).floor();

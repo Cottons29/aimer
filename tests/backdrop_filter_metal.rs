@@ -4,11 +4,11 @@
 mod fixtures;
 #[path = "backdrop_filter/wide.rs"]
 mod wide;
-use aimer::BackdropFilter;
 use aimer_cupid::backend::metal::MetalBackend;
 use aimer_cupid::backend::*;
 use aimer_cupid::frame::FramePacket;
 use aimer_cupid::renderer::RendererImpl;
+use aimer_decoration::BackdropFilter;
 use fixtures::*;
 
 #[test]

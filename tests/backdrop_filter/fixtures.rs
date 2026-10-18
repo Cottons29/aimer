@@ -4,8 +4,9 @@ use aimer_cupid::draw_cmd_v2::{Rect, RenderFrame, RenderNodeId, RenderPaintSourc
 use aimer_cupid::frame::{FramePacket, FrameRenderMetadata};
 use aimer::widget::base::WindowHandle;
 use aimer::{
-    BackdropFilter, BuildContext, DecorationBox, Drawable, ResolvedSize, SizedBox, Vec2d, Widget,
+     BuildContext, Drawable, ResolvedSize, SizedBox, Vec2d, Widget,
 };
+use aimer_decoration::*;
 
 pub(super) const FRAME_WIDTH: u32 = 2_176;
 pub(super) const FRAME_HEIGHT: u32 = 64;

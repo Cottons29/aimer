@@ -1,13 +1,11 @@
 use aimer::canvas::{FrameCanvas, InnerCanvas};
-use aimer_cupid::draw_cmd_v2::{
-    DrawCommand as V2DrawCommand, Rect, RenderPaintSource, RenderTree,
-};
 use aimer::widget::base::WindowHandle;
 use aimer::{
-    BuildContext, Color, CustomShape, FillStyle, Glass, LayoutElement, Liquid, ResolvedSize,
-    Scalable, ShapeClip, ShapeColor, ShapeFit, ShapeHitTest, ShapePath, SizedBox, StrokeStyle,
-    Vec2d, Widget,
+    BuildContext, Color, CustomShape, Glass, LayoutElement, Liquid, ResolvedSize, Scalable,
+    SizedBox, Vec2d, Widget,
 };
+use aimer_cupid::draw_cmd_v2::{DrawCommand as V2DrawCommand, Rect, RenderPaintSource, RenderTree};
+use aimer_shape::*;
 
 fn context<'a>(canvas: FrameCanvas<'a>, runtime: &tokio::runtime::Runtime) -> BuildContext<'a> {
     BuildContext::new(
@@ -172,6 +170,7 @@ fn custom_shape_records_svg_paint_in_its_local_v2_list() {
         element.paint_local_v2(context);
     });
 
+    
     let commands = tree.draw_list_snapshot(root).unwrap().commands;
     assert!(matches!(commands.as_ref(), [V2DrawCommand::Svg { .. }]));
 }

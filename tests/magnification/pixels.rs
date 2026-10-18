@@ -2,7 +2,9 @@ use super::fixtures::*;
 use aimer::canvas::Canvas;
 use aimer_cupid::draw_cmd_v2::{Rect, RenderNodeId, RenderPaintSource, RenderTree};
 use aimer_cupid::frame::FramePacket;
-use aimer::{BorderRadius, Decoration, Magnification, ResolvedSize, Vec2d};
+use aimer::{ ResolvedSize, Vec2d};
+use aimer_decoration::{BackdropFilter, Decoration, Magnification};
+use aimer_style::BorderRadius;
 
 fn lens_packet(
     tree: &RenderTree,
@@ -361,7 +363,7 @@ pub(super) fn rounded_clip_foreground_and_fresh_capture(
 }
 
 pub(super) fn nested_filters_and_budget_fallback(mut render: impl FnMut(&FramePacket) -> Vec<u8>) {
-    use aimer::BackdropFilter;
+    use BackdropFilter;
     let (tree, node) = backdrop_tree();
     gradient(&tree, 255);
     let lens = Magnification::new()
