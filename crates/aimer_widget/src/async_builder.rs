@@ -1,3 +1,7 @@
+mod snapshot_task;
+
+pub use snapshot_task::{AsyncSnapshotError, FutureSnapshotExt, SnapshotTask};
+
 use std::cell::{Cell, RefCell, UnsafeCell};
 use std::future::Future;
 use std::marker::PhantomData;
@@ -16,7 +20,10 @@ use crate::{
     VisitorElement, Widget,
 };
 
-/// The current state of an [`AsyncBuilder`] operation.
+/// The current state of an asynchronous operation.
+///
+/// Used by [`AsyncBuilder`] and by the live handles returned from
+/// [`FutureSnapshotExt::waitme`].
 pub enum AsyncSnapshot<T, E> {
     Waiting,
     Data(T),
@@ -36,6 +43,8 @@ pub struct SnapshotBuilder<B, T, E> {
 }
 
 /// Builds one subtree from the eventual result of an asynchronous operation.
+///
+/// For a live snapshot without a widget builder, use [`FutureSnapshotExt::waitme`].
 ///
 /// The future starts after the widget is mounted. Rebuilding a parent with the
 /// same request key keeps the current operation; changing the request key

@@ -1,6 +1,9 @@
 //! The hook a host runtime installs so futures from other ecosystems can be
 //! polled on the UI thread.
 
+use std::pin::Pin;
+use std::time::Duration;
+
 /// Something a host runtime has to be *inside of* while a task is polled.
 ///
 /// Venus polls futures on the thread that owns the frame and has no runtime
@@ -60,6 +63,18 @@
 pub trait PollContext {
     /// Runs `poll` with the host's runtime entered, and no longer.
     fn enter(&self, poll: &mut dyn FnMut());
+
+    /// Creates a cancellable host timer starting now.
+    ///
+    /// The timer must wake its waiter when it expires, including while the
+    /// event loop is parked. Dropping it must release its registration. Hosts
+    /// without timers may keep the default `None`; [`Venus::timeout`](crate::Venus::timeout)
+    /// then reports [`TimeoutError::TimerUnavailable`](crate::TimeoutError::TimerUnavailable).
+    /// This method may be called outside [`Self::enter`], so implementations
+    /// must enter their runtime when constructing a runtime-backed timer.
+    fn sleep(&self, _duration: Duration) -> Option<Pin<Box<dyn Future<Output = ()>>>> {
+        None
+    }
 }
 
 #[cfg(test)]

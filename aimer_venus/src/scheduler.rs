@@ -264,6 +264,14 @@ impl LocalScheduler {
         *self.poll_context.borrow_mut() = None;
     }
 
+    pub(crate) fn sleep(
+        &self,
+        duration: std::time::Duration,
+    ) -> Option<std::pin::Pin<Box<dyn Future<Output = ()>>>> {
+        let host = self.poll_context.borrow().clone()?;
+        host.sleep(duration)
+    }
+
     /// Runs microtasks until none are left, returning how many ran.
     ///
     /// Drained to exhaustion rather than budgeted, because budgeting this phase

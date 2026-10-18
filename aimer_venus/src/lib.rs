@@ -10,6 +10,7 @@ mod offload;
 mod poll_context;
 mod scheduler;
 mod task;
+mod timeout;
 mod venus;
 mod yielding;
 
@@ -23,6 +24,7 @@ pub use crate::panic_hook::install_panic_hook;
 pub use crate::poll_context::PollContext;
 pub use crate::scheduler::{LocalScheduler, is_polling_task};
 pub use crate::task::{Notifier, Phase, ScopeId, TaskId, TaskScope};
+pub use crate::timeout::TimeoutError;
 pub use crate::venus::{Venus, spawn_local};
 pub use crate::yielding::{YieldNow, yield_if_over_budget, yield_now};
 

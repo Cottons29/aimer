@@ -213,7 +213,9 @@ pub mod base {
     pub use crate::components::context::BuildConsumer;
     pub use crate::components::context::{BuildContext, WindowHandle};
 }
-pub use crate::async_builder::{AsyncBuilder, AsyncSnapshot};
+pub use crate::async_builder::{
+    AsyncBuilder, AsyncSnapshot, AsyncSnapshotError, FutureSnapshotExt, SnapshotTask,
+};
 pub use crate::components::element::{broadcast_event, dispatch_event, dispatch_focused_event};
 pub use crate::key::Key;
 pub use crate::pointer_occlusion::pointer_occluded_at;

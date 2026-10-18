@@ -64,6 +64,8 @@ pub mod menu;
 /// only: the browser has one task queue and no runtime to be inside of.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod poll_context;
+#[cfg(target_arch = "wasm32")]
+mod browser_poll_context;
 /// Off-thread rasterization. Native only: the browser has no thread the WebGPU
 /// objects could move to, so the web backend presents inline.
 #[cfg(not(target_arch = "wasm32"))]

@@ -157,7 +157,6 @@ required-features = ["wgpu"]
 resolver = "3"
 members = [
     ".",
-    "website",
     "aimer_quiver",
     "aimer_cupid",
     "aimer_rubick",
@@ -186,15 +185,14 @@ members = [
     "crates/aimer_macro",
     "crates/aimer_provider",
     "crates/aimer_std",
-    "website_backend",
     "crates/aimer_markdown",
     "crates/aimer_svg",
     "crates/aimer_native",
     "crates/aimer_haptics",
     "crates/aimer_modal",
     "crates/aimer_dnd",
-    "crates/aimer_ffi_utils"
-    , "crates/aimer_ctxmenu",
+    "crates/aimer_ffi_utils",
+    "crates/aimer_ctxmenu",
     "crates/aimer_reload_protocol",
     "crates/aimer_reload_server",
     "crates/aimer_wasm_guest",
@@ -212,7 +210,10 @@ members = [
     "crates/aimer_storage",
     "crates/aimer_persist",
     "crates/aimer_shape",
-    "crates/aimer_collapsible", "crates/aimer_simd", "crates/aimer_decoration", "crates/aimer_lucide",
+    "crates/aimer_collapsible", 
+    "crates/aimer_simd",
+     "crates/aimer_decoration", 
+     "crates/aimer_lucide",
 ]
 
 [workspace.dependencies]
@@ -371,8 +372,6 @@ windows = { version = "0.62.2", default-features = false, features = [
     "Win32_Graphics_Dxgi_Common",
     "Win32_System_Threading",
 ] }
-
-# Aimer cli dependencies
 
 colored = "3.1.1"
 arboard = "3.6.1"

@@ -34,6 +34,8 @@ pub struct TokioPollContext {
 
 impl TokioPollContext {
     /// Wraps the handle of the runtime the application drives its I/O with.
+    ///
+    /// Enable the runtime's time driver to support Venus task deadlines.
     #[inline]
     pub fn new(handle: Handle) -> Self {
         Self { handle }
@@ -50,6 +52,14 @@ impl PollContext for TokioPollContext {
     fn enter(&self, poll: &mut dyn FnMut()) {
         let _guard = self.handle.enter();
         poll();
+    }
+
+    fn sleep(
+        &self,
+        duration: std::time::Duration,
+    ) -> Option<std::pin::Pin<Box<dyn Future<Output = ()>>>> {
+        let _guard = self.handle.enter();
+        Some(Box::pin(tokio::time::sleep(duration)))
     }
 }
 
@@ -120,5 +130,19 @@ mod tests {
         }
 
         assert!(slept.get(), "the timer resolved on the UI thread");
+    }
+
+    #[test]
+    fn a_venus_deadline_can_be_created_outside_the_tokio_context() {
+        let runtime = Runtime::new().expect("a runtime for the test");
+        let venus = Venus::new();
+        venus.set_poll_context(TokioPollContext::new(runtime.handle().clone()));
+        assert!(Handle::try_current().is_err());
+
+        let task = venus.timeout(Duration::ZERO, std::future::pending::<()>());
+        let result = runtime.block_on(task);
+
+        assert_eq!(result, Err(aimer_venus::TimeoutError::Elapsed));
+        assert!(Handle::try_current().is_err());
     }
 }

@@ -107,6 +107,32 @@ impl Venus {
         self.scheduler.spawn(future)
     }
 
+    /// Limits how long `future` may remain pending, cancelling it on expiry.
+    ///
+    /// The deadline starts when this method is called, using the timer supplied
+    /// by [`PollContext::sleep`]. Await the result inside a Venus task, or spawn
+    /// it to run in the microtask phase. This wrapper alone does not spawn work.
+    /// The future and its output need not be [`Send`].
+    ///
+    /// A ready future wins when both it and the timer are ready. A timeout is
+    /// cooperative: it cannot interrupt blocking work inside a single poll.
+    /// The losing future or timer is dropped before this resolves. Dropping
+    /// the wrapper also cancels both.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TimeoutError::Elapsed`](crate::TimeoutError::Elapsed) on expiry,
+    /// or [`TimeoutError::TimerUnavailable`](crate::TimeoutError::TimerUnavailable)
+    /// without polling `future` if the host does not supply timers.
+    #[inline]
+    pub fn timeout<F: Future>(
+        &self,
+        duration: Duration,
+        future: F,
+    ) -> impl Future<Output = Result<F::Output, crate::TimeoutError>> + use<F> {
+        crate::timeout::run(future, self.scheduler.sleep(duration))
+    }
+
     /// Spawns `future` as a microtask owned by `scope`.
     #[inline]
     pub fn spawn_in(&self, scope: ScopeId, future: impl Future<Output = ()> + 'static) -> TaskId {

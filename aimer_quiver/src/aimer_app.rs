@@ -847,6 +847,8 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
         venus.set_poll_context(crate::poll_context::TokioPollContext::new(
             async_runtime.handle().clone(),
         ));
+        #[cfg(target_arch = "wasm32")]
+        venus.set_poll_context(crate::browser_poll_context::BrowserPollContext);
 
         let window = WindowHandle::headless(options.size, scale_factor);
         let frame_request_reason = Rc::new(Cell::new(None));
@@ -1658,6 +1660,8 @@ fn start_event_loop(
     venus.set_poll_context(crate::poll_context::TokioPollContext::new(
         async_runtime.handle().clone(),
     ));
+    #[cfg(target_arch = "wasm32")]
+    venus.set_poll_context(crate::browser_poll_context::BrowserPollContext);
 
     let run_app = || {
         info!("Creating App instance...");
