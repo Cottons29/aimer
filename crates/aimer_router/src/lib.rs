@@ -3,6 +3,7 @@ mod expand_transition;
 mod link;
 mod shell_swipe;
 mod swipe_back;
+mod trackpad_swipe;
 pub mod navigator;
 pub mod outlet;
 pub mod router;

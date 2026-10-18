@@ -807,7 +807,11 @@ impl EventDispatcher {
         if let Some(pointer) = event.pointer() {
             aimer_events::pointer::note_pointer_source(pointer.source);
         }
+        // Hit testing is by position, so an element that must see a scroll before
+        // its children can absorb it learns here that this is one.
+        aimer_events::pointer::note_routing_scroll(matches!(event, ElementEvent::Scroll { .. }));
         let result = self.route(root, pos, event);
+        aimer_events::pointer::note_routing_scroll(false);
         match event {
             ElementEvent::PointerUp(pointer) => {
                 pointer_claim::release_pointer(PointerKey::new(pointer.source, pointer.id));

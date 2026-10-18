@@ -1,7 +1,7 @@
 use std::cell::{Cell, RefCell, UnsafeCell};
 use std::rc::Rc;
 
-use aimer_animation::{AnimInstant, AnimatedBuilder, AnimationController, Curve, PresentationClip};
+use aimer_animation::{AnimInstant, AnimatedBuilder, AnimationController, Curve, PresentationClip, curves};
 use aimer_cupid::utilities::Rect;
 use aimer_widget::base::{BuildContext, ResolvedSize, Size, Vec2d};
 use aimer_events::element::ElementEvent;
@@ -174,7 +174,11 @@ impl Playback {
     /// until the finger lifts.
     fn swipe(effect: ResolvedNavigationTransition, drive: Rc<SwipeDrive>, underlay: ChildBuilder) -> Self {
         Self {
-            controller: AnimationController::new(effect.duration, effect.curve.clone()),
+            // Not a clock: the finger is. It carries the swipe's progress for the
+            // effect's layers that are built from a controller, such as a blur, and
+            // progress is already eased by the time it gets here, so this one adds
+            // no easing of its own.
+            controller: AnimationController::new(effect.duration, curves::LINEAR),
             effect,
             outgoing: RefCell::new(Some(underlay)),
             finished: Cell::new(false),
@@ -201,7 +205,16 @@ impl Playback {
 
     fn sample_swipe(&self, drive: &SwipeDrive, now: AnimInstant, size: ResolvedSize, origin: (f32, f32)) -> AnchoredFrame {
         let (progress, done) = drive.progress(now, self.effect.duration, &self.effect.curve);
-        if done { self.finished.set(true); }
+        // The effect's layers read progress from the controller, as they do when a
+        // clock runs it, so they stay where the pages are.
+        self.controller.set_value(progress);
+        if done && !self.finished.replace(true) {
+            // The host drops the page beneath on the first frame that sees the swipe
+            // finished. Nothing else is bound to ask for one: a touch keeps frames
+            // coming with its own events, but the fingers on a trackpad have lifted
+            // long before the release finishes settling.
+            aimer_events::window::request_animation_frame();
+        }
         // A finished swipe keeps presenting where it ended rather than a blank
         // frame, because the page that stays is still the one on screen until
         // the navigator rebuilds around it.
@@ -343,11 +356,16 @@ impl Widget for NavigationFrame {
                 .child(anchor.build()).to_element(ctx)
         });
         // A layer between the pages, such as a blur of the page underneath, that
-        // is rebuilt from the clock on every frame. A swipe has no clock.
-        let veil = self.playback.as_ref().filter(|playback| playback.swipe.is_none() && outgoing.is_some())
+        // is rebuilt from the clock on every frame, or from the finger's progress
+        // for a swipe, which has no clock.
+        let veil = self.playback.as_ref().filter(|_| outgoing.is_some())
             .and_then(|playback| {
                 let effect = playback.effect.veil()?.clone();
-                Some(AnimatedBuilder::new(playback.controller.clone(), move |progress| effect(progress)).to_element(ctx))
+                // A swipe's controller is set by hand from the finger, never animated,
+                // so the layer has to ask to stay in the frame's rebuild pass.
+                Some(AnimatedBuilder::new(playback.controller.clone(), move |progress| effect(progress))
+                    .live(playback.swipe.is_some())
+                    .to_element(ctx))
             });
         NavigationFrameElement {
             incoming: self.child.build(ctx), outgoing: UnsafeCell::new(outgoing), anchor: UnsafeCell::new(anchor),
@@ -523,6 +541,13 @@ impl VisitorElement for NavigationFrameElement {
 impl Drawable for NavigationFrameElement {
     fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool { ctx.scale.is_finite() && ctx.scale > 0.0 }
     fn sync_local_v2_state(&self, ctx: &BuildContext) -> bool {
+        // A trackpad swipe glides on after the fingers lift, and nothing says when it
+        // stops but the events drying up, so every frame asks whether they have.
+        if self.is_swipe() {
+            if let Some(link) = &self.swipe {
+                link.poll_trackpad(self.horizontal_extent().1);
+            }
+        }
         let frame = self.sample(ctx, Self::window_origin(ctx));
         if self.playback.as_ref().is_some_and(|playback| !playback.finished.get()) {
             request_isolated_animation_frame(ctx);
@@ -595,6 +620,8 @@ impl EventElement for NavigationFrameElement {
     /// navigator has somewhere to go back to; the host then gets the press.
     fn hit_test_children_at<'a>(&'a self, pos: Vec2d, visitor: &mut dyn FnMut(&'a dyn Element)) {
         if let Some(link) = &self.swipe {
+            // A scroll goes to the host first, which hands it to the page itself.
+            if link.hides_page_for_scroll() { return; }
             let (left, width) = self.horizontal_extent();
             if link.hides_page(pos, left, width) { return; }
         }
@@ -622,7 +649,24 @@ impl LayoutElement for NavigationFrameElement {
     fn layer(&self) -> u32 { self.incoming.layer() }
     fn flex(&self) -> Option<f32> { self.incoming.flex() }
     fn get_size_from_child(&self) -> Option<Size> { self.incoming.get_size_from_child() }
-    fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> { self.incoming.pos_start_end() }
+    /// The area the host answers to: the union of the pages it presents.
+    ///
+    /// While two are presented they slide across one another and together always
+    /// cover the host. The cursor does not slide with them, and a scroll is routed
+    /// by where the cursor is, so a host that covered only the page that is
+    /// sliding away would stop being reached once that page had left the cursor
+    /// behind, and a trackpad swipe would freeze half way with nothing to end it.
+    fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+        let incoming = self.incoming.pos_start_end();
+        let Some((outgoing_start, outgoing_end)) = self.outgoing().and_then(|page| page.pos_start_end()) else {
+            return incoming;
+        };
+        let Some((start, end)) = incoming else { return Some((outgoing_start, outgoing_end)) };
+        Some((
+            Vec2d { x: start.x.min(outgoing_start.x), y: start.y.min(outgoing_start.y) },
+            Vec2d { x: end.x.max(outgoing_end.x), y: end.y.max(outgoing_end.y) },
+        ))
+    }
 }
 
 struct ScopedPage { widget: AnyWidget, context: RouteChildContext, key: Key }

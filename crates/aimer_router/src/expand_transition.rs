@@ -129,6 +129,13 @@ impl<R> ExpandTransition<R> {
     /// `0.0..=1.0`. The default is `0.2..0.7`. See [`ExpandSpec::dissolve`].
     #[inline]
     pub fn dissolve(mut self, span: Range<f32>) -> Self { self.motion = self.motion.dissolve(span); self }
+    /// Has the page fade in as the item fades out, instead of lying opaque beneath
+    /// it. Off by default. The page then rises on the dissolve's curve exactly as
+    /// far as the item falls, so a little of the page behind shows through the
+    /// window at the crossing; it is dimmed, and a [`blur`](Self::blur) hides most
+    /// of it. See [`ExpandSpec::crossfade`].
+    #[inline]
+    pub fn crossfade(mut self, crossfade: bool) -> Self { self.motion = self.motion.crossfade(crossfade); self }
     /// Sets the easing of the window's growth over its span. The default is
     /// linear. See [`ExpandSpec::grow_curve`].
     #[inline]

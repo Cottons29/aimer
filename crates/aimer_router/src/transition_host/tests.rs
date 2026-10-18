@@ -98,6 +98,34 @@ fn a_cancelled_swipe_returns_to_the_start() {
 }
 
 #[test]
+fn a_swipe_that_finishes_asks_for_the_frame_that_cleans_up_after_it() {
+    // The host drops the page beneath on the first frame that sees the swipe
+    // finished. A trackpad's fingers lifted long before, so no input is coming to
+    // bring that frame about: the swipe has to ask for it.
+    let requests = Rc::new(Cell::new(0u32));
+    let counted = requests.clone();
+    let previous = aimer_events::window::set_thread_redraw_requester(move || counted.set(counted.get() + 1));
+
+    let (playback, drive, _) = swipe_playback();
+    let now = AnimInstant::now();
+    drive.drag(0.4);
+    drive.release(false);
+    playback.sample(now, SIZE);
+    let while_settling = requests.get();
+    playback.sample(now + Duration::from_millis(20), SIZE);
+    assert_eq!(requests.get(), while_settling, "nothing is asked for while it is still settling");
+
+    playback.sample(now + Duration::from_millis(500), SIZE);
+    assert!(playback.finished.get());
+    assert_eq!(requests.get(), while_settling + 1, "one frame, when it finishes");
+
+    playback.sample(now + Duration::from_millis(600), SIZE);
+    assert_eq!(requests.get(), while_settling + 1, "and not again");
+
+    aimer_events::window::restore_thread_redraw_requester(previous);
+}
+
+#[test]
 fn a_swipe_cut_short_by_another_navigation_counts_as_cancelled() {
     let (playback, drive, commits) = swipe_playback();
     drive.drag(0.9);
@@ -116,6 +144,127 @@ mod swipe_host {
             playback: Some(Rc::clone(playback)),
             swipe: None,
         }.to_element(ctx)
+    }
+
+    /// An effect whose layer between the pages records the progress it is built with.
+    fn veiled_effect(seen: &Rc<RefCell<Vec<f32>>>) -> ResolvedNavigationTransition {
+        let seen = Rc::clone(seen);
+        progress_effect(true).with_veil(move |progress| {
+            seen.borrow_mut().push(progress);
+            SizedBox::new().boxed()
+        })
+    }
+
+    #[test]
+    fn the_layer_between_the_pages_follows_the_finger_like_the_pages_do() {
+        // A blur that builds as a page opens has to build as it is dragged away,
+        // and has to be at the same place the page is: the effect's layer is part
+        // of the effect, not of its clock.
+        let ctx = presentation::context();
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let drive = SwipeDrive::new(|| {});
+        let playback = Rc::new(Playback::swipe(
+            veiled_effect(&seen), drive.clone(), ChildBuilder::from_widget(ErrorWidget::new("underlay")),
+        ));
+        drive.drag(0.3);
+        playback.sample(AnimInstant::now(), SIZE);
+        let element = element(&playback, &ctx);
+        assert!(!seen.borrow().is_empty(), "the layer is built for a swipe");
+        assert_eq!(seen.borrow().last().copied(), Some(0.3), "built where the finger is");
+
+        drive.drag(0.7);
+        playback.sample(AnimInstant::now(), SIZE);
+        element.rebuild_if_dirty(&ctx);
+        assert_eq!(seen.borrow().last().copied(), Some(0.7), "and rebuilt as it moves");
+
+        drive.drag(0.1);
+        playback.sample(AnimInstant::now(), SIZE);
+        element.rebuild_if_dirty(&ctx);
+        assert_eq!(seen.borrow().last().copied(), Some(0.1), "and back again");
+    }
+
+    #[test]
+    fn a_swipe_released_to_the_end_leaves_the_layer_at_the_end() {
+        let ctx = presentation::context();
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let drive = SwipeDrive::new(|| {});
+        let playback = Rc::new(Playback::swipe(
+            veiled_effect(&seen), drive.clone(), ChildBuilder::from_widget(ErrorWidget::new("underlay")),
+        ));
+        let element = element(&playback, &ctx);
+        let now = AnimInstant::now();
+        drive.drag(0.5);
+        drive.release(true);
+        playback.sample(now, SIZE);
+        element.rebuild_if_dirty(&ctx);
+        playback.sample(now + Duration::from_millis(200), SIZE);
+        element.rebuild_if_dirty(&ctx);
+
+        assert_eq!(seen.borrow().last().copied(), Some(1.0));
+    }
+
+    use aimer_attribute::Vec2d;
+    use aimer_widget::{Drawable, EventElement, LayoutElement, PortableWidget, Rebuildable, VisitorElement};
+
+    /// A page 200 wide that has been presented `offset` further along, as a page is
+    /// that is sliding away, and then `shift` more, as the page it uncovers is.
+    struct Sliding { offset: Rc<Cell<f32>>, shift: f32 }
+    impl PortableWidget for Sliding {}
+    impl Widget for Sliding {
+        fn to_element(self, _: &BuildContext) -> AnyElement { aimer_widget::Element::boxed(self) }
+    }
+    impl VisitorElement for Sliding { fn debug_name(&self) -> &'static str { "Sliding" } }
+    impl Drawable for Sliding { fn update(&self, _: &BuildContext) {} }
+    impl Rebuildable for Sliding {}
+    impl EventElement for Sliding {}
+    impl LayoutElement for Sliding {
+        fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+            let left = self.offset.get() + self.shift;
+            Some((Vec2d { x: left, y: 0.0 }, Vec2d { x: left + 200.0, y: 100.0 }))
+        }
+    }
+
+    #[test]
+    fn the_host_covers_both_pages_so_the_swipe_is_not_left_behind_by_the_page_sliding_away() {
+        // Scroll events are routed by where the cursor is. The cursor does not move
+        // with the page, so as the departing page slides off to the right it leaves
+        // the cursor behind, and a host that covered only that page would stop being
+        // reached, and the swipe would stay where it was.
+        let ctx = presentation::context();
+        let offset = Rc::new(Cell::new(0.0));
+        let drive = SwipeDrive::new(|| {});
+        let playback = Rc::new(Playback::swipe(
+            progress_effect(true),
+            drive,
+            ChildBuilder::from_widget(Sliding { offset: offset.clone(), shift: -200.0 }),
+        ));
+        let element = NavigationFrame {
+            child: ChildBuilder::from_widget(Sliding { offset: offset.clone(), shift: 0.0 }),
+            playback: Some(playback),
+            swipe: None,
+        }.to_element(&ctx);
+
+        for slid in [0.0, 50.0, 120.0, 199.0, 200.0] {
+            offset.set(slid);
+            let (start, end) = element.pos_start_end().expect("the host has an area");
+            // The host's own 0..200, which the cursor was over, is covered throughout.
+            assert!(start.x <= 0.0 && end.x >= 200.0, "slid {slid}: covers {}..{}", start.x, end.x);
+            assert!(start.y <= 0.0 && end.y >= 100.0);
+        }
+    }
+
+    #[test]
+    fn the_host_covers_just_its_page_when_there_is_only_one() {
+        let ctx = presentation::context();
+        let element = NavigationFrame {
+            child: ChildBuilder::from_widget(Sliding { offset: Rc::new(Cell::new(30.0)), shift: 0.0 }),
+            playback: None,
+            swipe: None,
+        }.to_element(&ctx);
+
+        let (start, end) = element.pos_start_end().unwrap();
+
+        assert_eq!((start.x, end.x), (30.0, 230.0));
     }
 
     #[test]
@@ -194,7 +343,7 @@ mod swipe_touch {
     use std::cell::RefCell;
 
     use aimer_attribute::Vec2d;
-    use aimer_events::element::ElementEvent;
+    use aimer_events::element::{ElementEvent, ScrollDeltaKind, TouchPhase};
     use aimer_events::pointer::{PointerButton, PointerInfo, PointerSource};
     use aimer_widget::{Drawable, EventDispatcher, EventElement, LayoutElement, PortableWidget, Rebuildable, VisitorElement};
 
@@ -222,10 +371,86 @@ mod swipe_touch {
                 ElementEvent::PointerDown(_) => "down",
                 ElementEvent::PointerMove(_) => "move",
                 ElementEvent::PointerUp(_) => "up",
+                // A page that scrolls only up and down has no use for a scroll that
+                // goes sideways: it sees it, and leaves it.
+                ElementEvent::Scroll { .. } => {
+                    self.0.borrow_mut().push("scroll");
+                    return aimer_widget::EventResult::ignored();
+                }
                 _ => return aimer_widget::EventResult::ignored(),
             };
             self.0.borrow_mut().push(name);
             aimer_widget::EventResult::consumed()
+        }
+    }
+
+    /// A page that uses every scroll it is given, as a horizontal scroller that can
+    /// still move does.
+    struct Scroller(Log);
+    impl PortableWidget for Scroller {}
+    impl Widget for Scroller {
+        fn to_element(self, _: &BuildContext) -> AnyElement { aimer_widget::Element::boxed(self) }
+    }
+    impl VisitorElement for Scroller { fn debug_name(&self) -> &'static str { "Scroller" } }
+    impl Drawable for Scroller { fn update(&self, _: &BuildContext) {} }
+    impl Rebuildable for Scroller {}
+    impl LayoutElement for Scroller {
+        fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> { Some((Vec2d::ZERO, Vec2d { x: 200.0, y: 100.0 })) }
+    }
+    impl EventElement for Scroller {
+        fn on_event(&self, event: &ElementEvent) -> aimer_widget::EventResult {
+            if !matches!(event, ElementEvent::Scroll { .. }) { return aimer_widget::EventResult::ignored(); }
+            self.0.borrow_mut().push("scroll");
+            aimer_events::pointer::note_scroll_used();
+            aimer_widget::EventResult::consumed()
+        }
+    }
+
+    /// A page like an opaque container, which absorbs any scroll nothing in front of
+    /// it used, so that it cannot fall through to a scroller behind it. It does not
+    /// redraw: nothing moved.
+    struct Occluder(Log);
+    impl PortableWidget for Occluder {}
+    impl Widget for Occluder {
+        fn to_element(self, _: &BuildContext) -> AnyElement { aimer_widget::Element::boxed(self) }
+    }
+    impl VisitorElement for Occluder { fn debug_name(&self) -> &'static str { "Occluder" } }
+    impl Drawable for Occluder { fn update(&self, _: &BuildContext) {} }
+    impl Rebuildable for Occluder {}
+    impl LayoutElement for Occluder {
+        fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> { Some((Vec2d::ZERO, Vec2d { x: 200.0, y: 100.0 })) }
+    }
+    impl EventElement for Occluder {
+        fn on_event(&self, event: &ElementEvent) -> aimer_widget::EventResult {
+            if !matches!(event, ElementEvent::Scroll { .. }) { return aimer_widget::EventResult::ignored(); }
+            self.0.borrow_mut().push("scroll");
+            aimer_widget::EventResult::consumed()
+        }
+    }
+
+    /// A page that scrolls once and then has nothing to scroll: a list that reached
+    /// its end.
+    struct UsesOnce(Log, Cell<bool>);
+    impl PortableWidget for UsesOnce {}
+    impl Widget for UsesOnce {
+        fn to_element(self, _: &BuildContext) -> AnyElement { aimer_widget::Element::boxed(self) }
+    }
+    impl VisitorElement for UsesOnce { fn debug_name(&self) -> &'static str { "UsesOnce" } }
+    impl Drawable for UsesOnce { fn update(&self, _: &BuildContext) {} }
+    impl Rebuildable for UsesOnce {}
+    impl LayoutElement for UsesOnce {
+        fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> { Some((Vec2d::ZERO, Vec2d { x: 200.0, y: 100.0 })) }
+    }
+    impl EventElement for UsesOnce {
+        fn on_event(&self, event: &ElementEvent) -> aimer_widget::EventResult {
+            if !matches!(event, ElementEvent::Scroll { .. }) { return aimer_widget::EventResult::ignored(); }
+            self.0.borrow_mut().push("scroll");
+            if self.1.replace(true) {
+                aimer_widget::EventResult::ignored()
+            } else {
+                aimer_events::pointer::note_scroll_used();
+                aimer_widget::EventResult::consumed()
+            }
         }
     }
 
@@ -346,7 +571,321 @@ mod swipe_touch {
         fn mv(&mut self, x: f32, y: f32, at: f64) { self.clock.set(at); self.send(ElementEvent::PointerMove(touch(x, y))); }
         fn up(&mut self, x: f32, y: f32, at: f64) { self.clock.set(at); self.send(ElementEvent::PointerUp(touch(x, y))); }
         fn seen(&self) -> Vec<&'static str> { self.log.borrow().clone() }
+        /// One scroll event of a trackpad gesture, over the middle of the page.
+        fn scroll(&mut self, dx: f32, dy: f32, phase: TouchPhase, direct: bool, at: f64) -> aimer_widget::EventResult {
+            self.clock.set(at);
+            let event = ElementEvent::Scroll {
+                delta: Vec2d { x: dx, y: dy },
+                phase,
+                kind: ScrollDeltaKind::Pixel,
+                is_direct_manipulation: direct,
+            };
+            self.dispatcher.dispatch(self.element.as_ref(), Vec2d { x: 100.0, y: 50.0 }, &event)
+        }
+        /// A scroll in `kind`, which a notched wheel and the unclassified opening
+        /// pulses of a trackpad gesture both report as lines.
+        fn scroll_as(&mut self, kind: ScrollDeltaKind, dx: f32, phase: TouchPhase, direct: bool, at: f64) -> aimer_widget::EventResult {
+            self.clock.set(at);
+            let event = ElementEvent::Scroll {
+                delta: Vec2d { x: dx, y: 0.0 },
+                phase,
+                kind,
+                is_direct_manipulation: direct,
+            };
+            self.dispatcher.dispatch(self.element.as_ref(), Vec2d { x: 100.0, y: 50.0 }, &event)
+        }
+        /// A trackpad gesture that has begun: fingers down and moved right.
+        fn trackpad_swipe(&mut self) {
+            let _ = self.scroll(30.0, 0.0, TouchPhase::Started, true, 0.0);
+        }
         fn finger(&self) -> f32 { self.drive.borrow().as_ref().expect("a swipe began").finger.get() }
+    }
+
+    /// A host over an [`Occluder`] page.
+    fn occluder_rig(allow: bool) -> Rig {
+        rig_over(allow, |log| ChildBuilder::from_widget(Occluder(log)))
+    }
+
+    #[test]
+    fn a_page_that_only_absorbs_the_scroll_does_not_keep_it() {
+        // Every page root that has a background is one of these. If it kept the
+        // scroll, no swipe could ever begin on a real page.
+        let mut rig = occluder_rig(true);
+
+        let result = rig.scroll(30.0, 0.0, TouchPhase::Started, true, 0.0);
+
+        assert!(result.is_consumed());
+        assert_eq!(rig.begun.get(), 1, "the swipe began though the page absorbed the scroll");
+        assert!((rig.finger() - 0.25).abs() < 1e-4, "{}", rig.finger());
+    }
+
+    #[test]
+    fn once_the_swipe_has_begun_the_page_is_not_scrolled_by_the_rest_of_the_gesture() {
+        let mut rig = occluder_rig(true);
+        let _ = rig.scroll(30.0, 0.0, TouchPhase::Started, true, 0.0);
+        let before = rig.seen().len();
+
+        for step in 1..4 {
+            let _ = rig.scroll(10.0, 0.0, TouchPhase::Moved, true, step as f64 * 0.02);
+        }
+
+        assert_eq!(rig.seen().len(), before, "the page sees nothing more of this gesture");
+        assert!((rig.finger() - 0.5).abs() < 1e-4, "while the swipe follows it: {}", rig.finger());
+    }
+
+    #[test]
+    fn a_gesture_the_page_used_stays_the_pages_even_when_it_runs_out_of_things_to_scroll() {
+        // The page scrolled on the first frame, so this is a scroll, and sliding
+        // sideways later in it must not turn it into a back swipe.
+        let mut rig = rig_over(true, |log| ChildBuilder::from_widget(UsesOnce(log, Cell::new(false))));
+
+        let _ = rig.scroll(0.0, 30.0, TouchPhase::Started, true, 0.0);
+        for step in 1..6 {
+            let result = rig.scroll(40.0, 0.0, TouchPhase::Moved, true, step as f64 * 0.02);
+            assert!(!result.is_consumed());
+        }
+
+        assert_eq!(rig.begun.get(), 0);
+    }
+
+    #[test]
+    fn a_host_over_an_absorbing_page_still_hands_the_page_a_gesture_that_is_not_a_swipe() {
+        let mut rig = occluder_rig(true);
+
+        let result = rig.scroll(2.0, 40.0, TouchPhase::Started, true, 0.0);
+
+        assert!(result.is_consumed(), "the page's own absorbing stands");
+        assert_eq!(rig.begun.get(), 0);
+        assert_eq!(rig.seen(), ["scroll"]);
+    }
+
+    /// A host over a [`Scroller`] page.
+    fn scroller_rig(allow: bool) -> Rig {
+        rig_over(allow, |log| ChildBuilder::from_widget(Scroller(log)))
+    }
+
+    #[test]
+    fn a_rightward_two_finger_swipe_pops_the_page_and_follows_the_fingers() {
+        let mut rig = rig(true);
+
+        let result = rig.scroll(30.0, 0.0, TouchPhase::Started, true, 0.0);
+        assert!(result.is_consumed(), "the swipe takes the gesture");
+        assert_eq!(rig.begun.get(), 1);
+        // The page is 200 wide, so a full pop takes 120 px of travel: 30 is a quarter.
+        assert!((rig.finger() - 0.25).abs() < 1e-4, "{}", rig.finger());
+
+        let _ = rig.scroll(30.0, 0.0, TouchPhase::Moved, true, 0.02);
+        assert!((rig.finger() - 0.5).abs() < 1e-4, "{}", rig.finger());
+        let _ = rig.scroll(-60.0, 0.0, TouchPhase::Moved, true, 0.04);
+        assert!(rig.finger() < 1e-4, "it comes back as the fingers do: {}", rig.finger());
+        assert_eq!(rig.begun.get(), 1, "one swipe, begun once");
+    }
+
+    #[test]
+    fn lifting_the_fingers_far_enough_completes_the_pop_and_short_of_it_cancels() {
+        let mut rig = rig(true);
+        rig.trackpad_swipe();
+        let _ = rig.scroll(40.0, 0.0, TouchPhase::Moved, true, 1.0);
+        let _ = rig.scroll(0.0, 0.0, TouchPhase::Ended, true, 2.0);
+        assert_eq!(rig.drive.borrow().as_ref().unwrap().release.get(), Some(true));
+
+        let mut rig = self::rig(true);
+        rig.trackpad_swipe();
+        let _ = rig.scroll(0.0, 0.0, TouchPhase::Ended, true, 2.0);
+        assert_eq!(rig.drive.borrow().as_ref().unwrap().release.get(), Some(false));
+    }
+
+    #[test]
+    fn the_glide_after_the_fingers_lift_belongs_to_the_swipe_and_not_to_anything_beyond() {
+        let mut rig = rig(true);
+        rig.trackpad_swipe();
+        let _ = rig.scroll(40.0, 0.0, TouchPhase::Moved, true, 1.0);
+        let _ = rig.scroll(0.0, 0.0, TouchPhase::Ended, true, 1.1);
+
+        // The glide, with no fingers on the surface, is swallowed for a moment...
+        assert!(rig.scroll(6.0, 0.0, TouchPhase::Moved, false, 1.2).is_consumed());
+        // ...until it goes quiet, which the host's frames notice...
+        rig.clock.set(1.6);
+        rig.link.poll_trackpad(200.0);
+        // ...and a wheel long afterwards is nobody's business here.
+        assert!(!rig.scroll(6.0, 0.0, TouchPhase::Moved, false, 4.0).is_consumed());
+    }
+
+    /// A page-width swipe, 120 px of travel from end to end, that has lifted at 0.42
+    /// of the way and at 250 px a second: slow enough to be no flick, fast enough
+    /// for a glide to follow.
+    fn lifted_with_a_glide_to_come() -> Rig {
+        let mut rig = occluder_rig(true);
+        let _ = rig.scroll(30.0, 0.0, TouchPhase::Started, true, 0.0);
+        let _ = rig.scroll(10.0, 0.0, TouchPhase::Moved, true, 0.50);
+        let _ = rig.scroll(10.0, 0.0, TouchPhase::Moved, true, 0.55);
+        let lift = rig.scroll(0.0, 0.0, TouchPhase::Ended, true, 0.58);
+        assert!(lift.is_consumed());
+        assert!(rig.drive.borrow().as_ref().unwrap().release.get().is_none(), "not yet let go: a glide is to come");
+        rig
+    }
+
+    #[test]
+    fn the_glide_after_the_lift_carries_the_swipe_on_and_decides_where_it_ends() {
+        let mut rig = lifted_with_a_glide_to_come();
+        let at_lift = rig.finger();
+        assert!(at_lift < 0.5, "short of half way when the fingers lifted: {at_lift}");
+
+        let _ = rig.scroll(6.0, 0.0, TouchPhase::Moved, false, 0.60);
+        let _ = rig.scroll(6.0, 0.0, TouchPhase::Moved, false, 0.62);
+        assert!(rig.finger() > 0.5, "the glide carried it past half way: {}", rig.finger());
+        assert!(rig.drive.borrow().as_ref().unwrap().release.get().is_none(), "still going");
+
+        let _ = rig.scroll(0.0, 0.0, TouchPhase::Ended, false, 0.64);
+        assert_eq!(rig.drive.borrow().as_ref().unwrap().release.get(), Some(true), "and completes");
+    }
+
+    #[test]
+    fn a_glide_that_never_reports_its_end_is_ended_when_the_host_asks() {
+        let mut rig = lifted_with_a_glide_to_come();
+        let _ = rig.scroll(12.0, 0.0, TouchPhase::Moved, false, 0.60);
+
+        // The frame loop asks between events. Nothing is due yet...
+        rig.clock.set(0.64);
+        rig.link.poll_trackpad(200.0);
+        assert!(rig.drive.borrow().as_ref().unwrap().release.get().is_none());
+        // ...and after a quiet moment the swipe is let go, where the glide left it.
+        rig.clock.set(0.80);
+        rig.link.poll_trackpad(200.0);
+        assert_eq!(rig.drive.borrow().as_ref().unwrap().release.get(), Some(true));
+    }
+
+    #[test]
+    fn asking_when_nothing_is_gliding_does_nothing() {
+        let mut rig = rig(true);
+        rig.link.poll_trackpad(200.0);
+        let _ = rig.scroll(30.0, 0.0, TouchPhase::Started, true, 0.0);
+
+        rig.clock.set(5.0);
+        rig.link.poll_trackpad(200.0);
+
+        assert!(rig.drive.borrow().as_ref().unwrap().release.get().is_none(), "fingers still down");
+    }
+
+    #[test]
+    fn a_line_scroll_in_the_middle_of_a_swipe_does_not_end_it() {
+        // The smoother reports the first pulses of a trackpad gesture as lines,
+        // between the pixel steps that follow. They are no part of the swipe, and
+        // no reason to let go of it.
+        let mut rig = occluder_rig(true);
+        let _ = rig.scroll(30.0, 0.0, TouchPhase::Started, true, 0.0);
+        assert!((rig.finger() - 0.25).abs() < 1e-4);
+
+        let line = rig.scroll_as(ScrollDeltaKind::Line, 0.4, TouchPhase::Moved, true, 0.01);
+        let _ = rig.scroll(30.0, 0.0, TouchPhase::Moved, true, 0.02);
+
+        assert!(line.is_consumed(), "the host holds the gesture, so the page is not scrolled by it");
+        assert_eq!(rig.begun.get(), 1, "one swipe throughout");
+        assert!((rig.finger() - 0.5).abs() < 1e-4, "and it went on: {}", rig.finger());
+        assert!(rig.drive.borrow().as_ref().unwrap().release.get().is_none(), "never let go");
+    }
+
+    #[test]
+    fn a_swipe_whose_end_is_reported_as_lines_still_ends() {
+        // After a pause of a quarter of a second the smoother no longer knows the
+        // gesture it is part of, and the fingers lifting arrives as the end of a
+        // wheel. The fingers lifted all the same.
+        let mut rig = occluder_rig(true);
+        let _ = rig.scroll(30.0, 0.0, TouchPhase::Started, true, 0.0);
+        let _ = rig.scroll(50.0, 0.0, TouchPhase::Moved, true, 0.5);
+
+        let end = rig.scroll_as(ScrollDeltaKind::Line, 0.0, TouchPhase::Ended, false, 2.0);
+
+        assert!(end.is_consumed());
+        assert_eq!(rig.drive.borrow().as_ref().unwrap().release.get(), Some(true), "far enough, so it pops");
+
+        let mut rig = self::rig(true);
+        rig.trackpad_swipe();
+        let _ = rig.scroll_as(ScrollDeltaKind::Line, 0.0, TouchPhase::Ended, true, 2.0);
+        assert_eq!(rig.drive.borrow().as_ref().unwrap().release.get(), Some(false), "and short of it, it does not");
+    }
+
+    #[test]
+    fn a_line_scroll_with_no_swipe_going_is_the_pages() {
+        let mut rig = rig(true);
+
+        let result = rig.scroll_as(ScrollDeltaKind::Line, 20.0, TouchPhase::Moved, false, 0.0);
+
+        assert!(!result.is_consumed());
+        assert_eq!(rig.seen(), ["scroll"], "the page has it, as it would have");
+        assert_eq!(rig.begun.get(), 0);
+    }
+
+    #[test]
+    fn a_vertical_scroll_is_left_to_the_page_throughout() {
+        let mut rig = rig(true);
+
+        let started = rig.scroll(2.0, 30.0, TouchPhase::Started, true, 0.0);
+        let moved = rig.scroll(40.0, 20.0, TouchPhase::Moved, true, 0.1);
+
+        assert!(!started.is_consumed() && !moved.is_consumed());
+        assert_eq!(rig.begun.get(), 0);
+        assert_eq!(rig.seen(), ["scroll", "scroll"], "the page saw both and kept scrolling");
+    }
+
+    #[test]
+    fn a_page_that_uses_the_scroll_keeps_it() {
+        // A horizontal scroller that can still move takes the event, so it never
+        // reaches the host and no swipe begins.
+        let mut rig = scroller_rig(true);
+
+        let result = rig.scroll(30.0, 0.0, TouchPhase::Started, true, 0.0);
+
+        assert!(result.is_consumed());
+        assert_eq!(rig.begun.get(), 0);
+        assert_eq!(rig.seen(), ["scroll"]);
+    }
+
+    #[test]
+    fn a_mouse_wheel_is_not_a_swipe() {
+        let mut rig = rig(true);
+
+        for step in 0..10 {
+            let result = rig.scroll(40.0, 0.0, TouchPhase::Moved, false, step as f64 * 0.01);
+            assert!(!result.is_consumed());
+        }
+        assert_eq!(rig.begun.get(), 0);
+    }
+
+    #[test]
+    fn with_nowhere_to_go_back_to_a_swipe_does_not_begin() {
+        let mut rig = rig(true);
+        rig.link.set_enabled(false);
+
+        let result = rig.scroll(30.0, 0.0, TouchPhase::Started, true, 0.0);
+
+        assert!(!result.is_consumed());
+        assert_eq!(rig.begun.get(), 0);
+    }
+
+    #[test]
+    fn a_swipe_that_cannot_begin_is_asked_for_once_and_leaves_the_gesture_to_the_page() {
+        let mut rig = rig(false);
+
+        let first = rig.scroll(30.0, 0.0, TouchPhase::Started, true, 0.0);
+        let more = rig.scroll(30.0, 0.0, TouchPhase::Moved, true, 0.02);
+
+        assert!(!first.is_consumed() && !more.is_consumed());
+        assert_eq!(rig.begun.get(), 1, "declined once, not on every event");
+        assert_eq!(rig.seen(), ["scroll", "scroll"]);
+    }
+
+    #[test]
+    fn a_touch_swipe_in_progress_is_not_disturbed_by_a_trackpad() {
+        let mut rig = rig(true);
+        rig.down(5.0, 50.0);
+        rig.mv(60.0, 50.0, 0.1);
+        assert_eq!(rig.begun.get(), 1, "the touch swipe began");
+
+        let result = rig.scroll(30.0, 0.0, TouchPhase::Started, true, 0.2);
+
+        assert!(!result.is_consumed());
+        assert_eq!(rig.begun.get(), 1, "and the trackpad did not begin a second one");
     }
 
     #[test]

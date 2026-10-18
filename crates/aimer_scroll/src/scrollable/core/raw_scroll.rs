@@ -771,6 +771,37 @@ mod tests {
     }
 
     #[test]
+    fn a_scrollable_that_moves_for_a_scroll_says_so_and_one_that_ignores_it_does_not() {
+        use aimer_events::pointer::take_scroll_used;
+
+        fn scroll(scrollable: &impl aimer_widget::EventElement, dx: f32, dy: f32) -> bool {
+            let _ = take_scroll_used();
+            let _ = scrollable.on_event(&ElementEvent::Scroll {
+                delta: Vec2d { x: dx, y: dy },
+                phase: TouchPhase::Moved,
+                kind: ScrollDeltaKind::Pixel,
+                is_direct_manipulation: true,
+            });
+            take_scroll_used()
+        }
+        let horizontal = |room: f32| {
+            let scrollable = sized_scrollable(
+                crate::ScrollAxis::Horizontal,
+                ResolvedSize { width: 200.0, height: 100.0 },
+            );
+            scrollable.ctrl.cached_max_scroll.set(Vec2d { x: room, y: 0.0 });
+            scrollable.bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
+            scrollable.ctrl.cursor_pos.set(Some(Vec2d { x: 50.0, y: 50.0 }));
+            scrollable
+        };
+
+        // Room to move sideways, and a sideways scroll: it moved, and says so.
+        assert!(scroll(&horizontal(100.0), 40.0, 0.0));
+        // The wrong direction for it: a vertical scroll is not a horizontal one's.
+        assert!(!scroll(&horizontal(100.0), 0.0, 40.0));
+    }
+
+    #[test]
     fn nested_scrollables_give_a_horizontal_dominant_frame_to_the_inner_axis() {
         let inner = sized_scrollable(
             crate::ScrollAxis::Horizontal,

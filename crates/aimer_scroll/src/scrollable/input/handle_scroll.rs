@@ -383,6 +383,10 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 let moved =
                     apply_scroll_frame(&self.ctrl, *delta, *kind, *phase, *is_direct_manipulation);
                 if moved {
+                    // Whoever stood in front of this scroller, a navigator watching
+                    // for a sideways swipe, has to be able to tell that the content
+                    // moved: a retained child reports every result as the same.
+                    aimer_events::pointer::note_scroll_used();
                     self.ctrl.begin_scroll();
                     self.ctrl.record_input_event();
                     self.ctrl.request_animation_frame();

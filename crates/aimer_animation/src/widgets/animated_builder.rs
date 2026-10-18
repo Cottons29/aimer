@@ -178,6 +178,7 @@ pub(crate) const ANIMATED_BUILDER_SCHEMA: PortableWidgetSchemaMetadata<'static> 
 pub struct AnimatedBuilder {
     pub controller: AnimationController,
     builder: Rc<AnimatedElementBuilder>,
+    live: bool,
     #[cfg(feature = "portable-guest")]
     portable_builder: Rc<AnimatedPortableBuilder>,
 }
@@ -205,9 +206,26 @@ impl AnimatedBuilder {
         Self {
             controller,
             builder,
+            live: false,
             #[cfg(feature = "portable-guest")]
             portable_builder,
         }
+    }
+
+    /// Keeps rebuilding the child from the controller's value for as long as the
+    /// element exists, even while the controller is not animating. Off by default.
+    ///
+    /// A controller that animates keeps the element in the frame's rebuild pass by
+    /// itself. One that is set by hand with
+    /// [`set_value`](AnimationController::set_value), as a finger dragging
+    /// something does, is never animating, and a pass skips an element nothing has
+    /// marked, so the child would be built once and then stay as it was however
+    /// the value moved. Use this for such a controller on an element that lives
+    /// only as long as the gesture does: while live it costs the pass a visit to
+    /// the element every frame.
+    pub fn live(mut self, live: bool) -> Self {
+        self.live = live;
+        self
     }
 
     /// Creates a builder that receives `animation`'s value instead of raw
@@ -613,6 +631,7 @@ impl Widget for AnimatedBuilder {
             child: UnsafeCell::new(child),
             controller: self.controller.clone(),
             builder: self.builder.clone(),
+            live: self.live,
             last_value: Cell::new(curved_value),
             output_changed: Cell::new(false),
             reachable: aimer_widget::KeepReachable::new(),
@@ -632,6 +651,8 @@ struct AnimatedBuilderElement {
     child: UnsafeCell<AnyElement>,
     controller: AnimationController,
     builder: Rc<AnimatedElementBuilder>,
+    /// Whether to stay reachable though the controller is not animating.
+    live: bool,
     last_value: Cell<f32>,
     output_changed: Cell<bool>,
     /// Keeps this element on the rebuild pass's dirty-path index while it
@@ -679,7 +700,7 @@ impl Drawable for AnimatedBuilderElement {
     fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
         self.output_changed.set(false);
         unsafe { &*self.child.get() }.update(ctx);
-        if self.controller.is_animating() {
+        if self.controller.is_animating() || self.live {
             if !self.reachable.is_registered() {
                 // Created while drawing, so no rebuild pass has visited it yet and
                 // none would: the index it is pruned by was built without it. Ask
@@ -716,7 +737,7 @@ impl EventElement for AnimatedBuilderElement {
 impl Rebuildable for AnimatedBuilderElement {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
         let curved_value = self.controller.tick(AnimInstant::now());
-        if self.controller.is_animating() {
+        if self.controller.is_animating() || self.live {
             // Nothing marks this element dirty while it animates, so without
             // this the rebuild pass would skip it and the animation would stop.
             self.reachable.hold();

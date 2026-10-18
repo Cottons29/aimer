@@ -23,10 +23,11 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use aimer_attribute::Vec2d;
-use aimer_events::element::ElementEvent;
+use aimer_events::element::{ElementEvent, ScrollDeltaKind, TouchPhase};
 use aimer_events::pointer::{PointerInfo, PointerSource, last_pointer_source};
 use aimer_widget::{Element, EventDispatchContext, EventResult, PointerKey};
 
+use crate::trackpad_swipe::{TrackpadConfig, TrackpadOutput, TrackpadSwipe};
 use crate::transition_host::SwipeDrive;
 
 /// A pop that a finger is in the middle of, from
@@ -93,6 +94,12 @@ pub(crate) struct SwipeLink {
     /// Whether there is a page to go back to and an effect to play.
     enabled: Cell<bool>,
     recognizer: RefCell<EdgeSwipe>,
+    /// The two-finger trackpad swipe, which shares [`Self::active`] with the touch
+    /// one: a navigator pops one page at a time, by whichever device asked first.
+    trackpad: RefCell<TrackpadSwipe>,
+    /// When the trackpad gesture being followed began, so its recognizer sees small
+    /// numbers however long the process has been up.
+    trackpad_epoch: Cell<f64>,
     /// The swipe being presented, from [`Self::begin`].
     active: RefCell<Option<SwipeBack>>,
     /// The touch whose events now go straight to the page, after the swipe
@@ -111,6 +118,8 @@ impl SwipeLink {
         Rc::new(Self {
             enabled: Cell::new(false),
             recognizer: RefCell::new(EdgeSwipe::new(SwipeConfig::default())),
+            trackpad: RefCell::new(TrackpadSwipe::new(TrackpadConfig::default())),
+            trackpad_epoch: Cell::new(0.0),
             active: RefCell::new(None),
             forwarding: Cell::new(None),
             begin: RefCell::new(Box::new(begin)),
@@ -297,7 +306,13 @@ impl SwipeLink {
                         .with_pointer_release(key(pointer)),
                 }
             }
+            ElementEvent::Scroll { delta, phase, kind, is_direct_manipulation } => {
+                self.handle_scroll(context, page, event, (*delta, *phase, *kind, *is_direct_manipulation), host_width)
+            }
             ElementEvent::Cancel | ElementEvent::PointerExited(..) => {
+                // Whatever else it was, the system took the trackpad gesture too.
+                let now = self.trackpad_now(TouchPhase::Moved);
+                self.finish_trackpad(self.trackpad.borrow_mut().cancel(now));
                 let was_forwarded = self.forwarding.take();
                 let was_watching = self.recognizer.borrow().watched_pointer();
                 if let SwipeOutput::Release { commit } = self.recognizer.borrow_mut().cancel() {
@@ -313,6 +328,154 @@ impl SwipeLink {
                 EventResult::ignored()
             }
             _ => self.pass_through(context, page, pos, event, host_left, host_width),
+        }
+    }
+
+    /// Seconds into the trackpad gesture at hand: the clock, counted from the
+    /// start of the gesture.
+    fn trackpad_now(&self, phase: TouchPhase) -> f32 {
+        let clock = (self.clock)();
+        if matches!(phase, TouchPhase::Started) && !self.trackpad.borrow().is_swiping() {
+            self.trackpad_epoch.set(clock);
+        }
+        (clock - self.trackpad_epoch.get()) as f32
+    }
+
+    /// Whether the host stands in front of its page for the scroll now being routed.
+    ///
+    /// A scroll that nothing used is absorbed by the first opaque element it
+    /// reaches, which is nearly every page root, so it never gets back out to the
+    /// host. The host therefore takes it first and hands it to the page itself,
+    /// which is what lets it see the part the page left.
+    pub(crate) fn hides_page_for_scroll(&self) -> bool {
+        self.enabled.get() && aimer_events::pointer::is_routing_scroll()
+    }
+
+    /// A scroll, which may be the fingers of a trackpad dragging the page sideways.
+    ///
+    /// The page gets every scroll first, as it would without a swipe, and keeps
+    /// what it uses: a list that moved, a horizontal scroller that still can. A
+    /// gesture the page used is the page's to the end. What the page left, or only
+    /// absorbed, is what a rightward two-finger drag is made of, and it pops the
+    /// page, following the fingers and finishing where they lift. Once it has
+    /// begun it is the host's alone: the page is not scrolled by the rest of it,
+    /// nor by the glide after the fingers lift.
+    fn handle_scroll(
+        &self,
+        context: &mut EventDispatchContext<'_, '_>,
+        page: &dyn Element,
+        event: &ElementEvent,
+        (delta, phase, kind, direct): (Vec2d, TouchPhase, ScrollDeltaKind, bool),
+        host_width: f32,
+    ) -> EventResult {
+        let pos = context.position();
+        let now = self.trackpad_now(phase);
+        if !self.enabled.get() {
+            // Nowhere to go back to: a swipe that was going is let go, and the page
+            // has the scroll as ever.
+            self.finish_trackpad(self.trackpad.borrow_mut().cancel(now));
+            return context.dispatch_child(page, pos, event);
+        }
+        if kind != ScrollDeltaKind::Pixel {
+            // A wheel with notches, or the first pulses of a trackpad gesture, which
+            // the smoother cannot yet tell from one and reports as lines, between
+            // the pixel steps that follow. They are no part of a swipe, and no
+            // reason to let go of one; but while one is going the page is not
+            // scrolled by the gesture it is part of.
+            if self.trackpad.borrow().is_swiping() {
+                // The one thing a line can say about a swipe is that the fingers
+                // lifted: after a quarter of a second without a pixel step the
+                // smoother forgets which device the gesture came from, and reports
+                // its end as the end of a wheel.
+                let ended = matches!(phase, TouchPhase::Ended | TouchPhase::Cancelled) || !direct;
+                if ended {
+                    let output = self.trackpad.borrow_mut().scroll(Vec2d::ZERO, phase, direct, now, host_width);
+                    return self.apply_trackpad(output, host_width, now, EventResult::consumed());
+                }
+                return EventResult::consumed();
+            }
+            return context.dispatch_child(page, pos, event);
+        }
+        // A finger on the glass is already popping this page.
+        if self.active.borrow().is_some() && !self.trackpad.borrow().is_swiping() {
+            return context.dispatch_child(page, pos, event);
+        }
+        // A swipe, or the glide that follows its release, is the host's.
+        let owned = {
+            let swipe = self.trackpad.borrow();
+            swipe.is_swiping() || (!direct && swipe.holds(now))
+        };
+        if owned {
+            let output = self.trackpad.borrow_mut().scroll(delta, phase, direct, now, host_width);
+            return self.apply_trackpad(output, host_width, now, EventResult::consumed());
+        }
+        // Anything else is the page's first. A scroller that moved says so; the
+        // result alone cannot tell, because the page is reached through a retained
+        // child that reports a scroll that moved something and one that was merely
+        // absorbed alike.
+        let _ = aimer_events::pointer::take_scroll_used();
+        let page_result = context.dispatch_child(page, pos, event);
+        let used = aimer_events::pointer::take_scroll_used()
+            || (page_result.is_consumed() && page_result.needs_redraw());
+        if used {
+            self.trackpad.borrow_mut().yield_to_page();
+            return page_result;
+        }
+        let output = self.trackpad.borrow_mut().scroll(delta, phase, direct, now, host_width);
+        self.apply_trackpad(output, host_width, now, page_result)
+    }
+
+    /// Carries out what the trackpad recognizer decided. `otherwise` is the answer
+    /// when it has nothing to do: the page's own, or the host's if it holds the
+    /// glide.
+    fn apply_trackpad(&self, output: TrackpadOutput, host_width: f32, now: f32, otherwise: EventResult) -> EventResult {
+        match output {
+            TrackpadOutput::None => {
+                if self.trackpad.borrow().holds(now) { EventResult::consumed() } else { otherwise }
+            }
+            TrackpadOutput::Begin => {
+                let swipe = (self.begin.borrow())();
+                let Some(swipe) = swipe else {
+                    // Nothing to play, so the rest of this gesture is the page's.
+                    self.trackpad.borrow_mut().decline();
+                    return otherwise;
+                };
+                swipe.drag(self.trackpad.borrow().progress(host_width));
+                *self.active.borrow_mut() = Some(swipe);
+                aimer_events::window::request_animation_frame();
+                EventResult::consumed().with_redraw()
+            }
+            TrackpadOutput::Update(progress) => {
+                if let Some(swipe) = self.active.borrow().as_ref() {
+                    swipe.drag(progress);
+                }
+                aimer_events::window::request_animation_frame();
+                EventResult::consumed().with_redraw()
+            }
+            release @ TrackpadOutput::Release { .. } => {
+                self.finish_trackpad(release);
+                EventResult::consumed().with_redraw()
+            }
+        }
+    }
+
+    /// Asks, between events, whether a trackpad swipe that has lifted has run out of
+    /// glide: the host calls this every frame it presents a swipe. A glide that is
+    /// quiet for a moment, or has gone on too long, is over even if the platform
+    /// never reported its end, and the swipe is let go where it got to.
+    pub(crate) fn poll_trackpad(&self, host_width: f32) {
+        let now = self.trackpad_now(TouchPhase::Moved);
+        let output = self.trackpad.borrow_mut().poll(now, host_width);
+        self.finish_trackpad(output);
+    }
+
+    /// Lets the swipe go if the recognizer says it ended.
+    fn finish_trackpad(&self, output: TrackpadOutput) {
+        if let TrackpadOutput::Release { commit } = output {
+            if let Some(swipe) = self.active.borrow_mut().take() {
+                swipe.release(commit);
+            }
+            aimer_events::window::request_animation_frame();
         }
     }
 

@@ -685,6 +685,31 @@ fn an_expanding_push_grows_the_window_while_the_item_dissolves_into_the_page() {
 }
 
 #[test]
+fn an_expanding_crossfade_has_the_page_rise_as_the_item_falls() {
+    let ctx = context();
+    let _item = repeatable_item("album-7", row(), &ctx);
+    let push = resolve_expand(&expanding().crossfade(true).dissolve_curve(curves::EASE_IN_OUT), 0, 7, NavigationAction::Push, &ctx).unwrap();
+    let pop = resolve_expand(&expanding().crossfade(true), 7, 0, NavigationAction::Pop, &ctx).unwrap();
+    let pushed = |p: f32| push.sample_anchored_at(p, VIEWPORT, (0.0, 0.0)).unwrap();
+
+    // The page is not there when the window starts to open, and is whole once the
+    // item has gone.
+    assert_eq!(pushed(0.1).frame.incoming.opacity, 0.0);
+    assert_eq!(pushed(0.9).frame.incoming.opacity, 1.0);
+    for step in 0..=20 {
+        let frame = pushed(step as f32 / 20.0);
+        assert!((frame.frame.incoming.opacity + frame.anchor.opacity - 1.0).abs() < 1e-4, "{step}");
+    }
+    // A pop plays it backwards: the page being left (outgoing) falls as the item
+    // comes back (at 0.55 of the way, the mirror of 0.45).
+    let back = pop.sample_anchored_at(0.55, VIEWPORT, (0.0, 0.0)).unwrap();
+    assert!((back.frame.outgoing.opacity - 0.5).abs() < 1e-4 && (back.anchor.opacity - 0.5).abs() < 1e-4);
+    // Without it the page stays opaque, as it did.
+    let plain = resolve_expand(&expanding(), 0, 7, NavigationAction::Push, &ctx).unwrap();
+    assert_eq!(plain.sample_anchored_at(0.1, VIEWPORT, (0.0, 0.0)).unwrap().frame.incoming.opacity, 1.0);
+}
+
+#[test]
 fn an_expanding_pop_plays_it_backwards_into_the_item() {
     let ctx = context();
     let _item = repeatable_item("album-7", row(), &ctx);

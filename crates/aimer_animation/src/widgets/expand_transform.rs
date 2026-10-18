@@ -28,8 +28,9 @@ use crate::primitives::curve::{AnyCurve, Curve};
 ///   of the item is stretched to the window, so that it is the item that grows
 ///   and its box is always the window's, and fades out over the page, which is
 ///   opaque beneath it from the first frame so that what is behind never shows
-///   through the window. The stretch distorts the copy's contents, so keep the
-///   dissolve short of the window's last stretch, or blur through it.
+///   through the window; or, with a [`crossfade`](Self::crossfade), the page
+///   rises as the copy falls. The stretch distorts the copy's contents, so keep
+///   the dissolve short of the window's last stretch, or blur through it.
 ///
 /// The spans are free, so the item can start dissolving while the window is
 /// still opening and be gone before it has finished: nothing waits for anything.
@@ -61,6 +62,7 @@ pub struct ExpandSpec {
     page_radius: f32,
     scrim: f32,
     anchored: bool,
+    crossfade: bool,
     grow: (f32, f32),
     dissolve: (f32, f32),
     blur_hold: f32,
@@ -93,6 +95,7 @@ impl ExpandSpec {
             page_radius: 0.0,
             scrim: 0.35,
             anchored: false,
+            crossfade: false,
             grow: DEFAULT_GROW,
             dissolve: DEFAULT_DISSOLVE,
             blur_hold: 0.0,
@@ -114,6 +117,7 @@ impl ExpandSpec {
         spec.page_radius = self.page_radius;
         spec.scrim = self.scrim;
         spec.anchored = self.anchored;
+        spec.crossfade = self.crossfade;
         spec.grow = self.grow;
         spec.dissolve = self.dissolve;
         spec.blur_hold = self.blur_hold;
@@ -156,6 +160,20 @@ impl ExpandSpec {
     /// [dissolve](Self::dissolve) instead. Off by default.
     pub fn anchored(mut self, anchored: bool) -> Self {
         self.anchored = anchored;
+        self
+    }
+
+    /// Has the page fade in as the item fades out, instead of lying opaque beneath
+    /// it. Off by default.
+    ///
+    /// The page rises on the [dissolve](Self::dissolve)'s curve exactly as far as
+    /// the item falls, so the two cross at the middle of it, as in an ordinary
+    /// crossfade. Both are part-transparent there, so a little of the page behind
+    /// shows through the window; the page behind is dimmed and a host can blur it,
+    /// which hides most of that. Without a copy of the item there is nothing to
+    /// cross, and the page fades in either way.
+    pub fn crossfade(mut self, crossfade: bool) -> Self {
+        self.crossfade = crossfade;
         self
     }
 
@@ -252,9 +270,14 @@ impl ExpandSpec {
 
         let dissolved = self.dissolve_curve.transform(Self::through(self.dissolve, p)).clamp(0.0, 1.0);
         // With a copy the page is opaque from the first frame, so what is behind
-        // never shows through the window and the copy fades out over it. Without
-        // one the page fades in over the dissolve.
-        let (page_opacity, anchor_opacity) = if self.anchored { (1.0, 1.0 - dissolved) } else { (dissolved, 0.0) };
+        // never shows through the window and the copy fades out over it, unless
+        // the two cross, with the page rising as the copy falls. Without a copy
+        // the page fades in over the dissolve.
+        let (page_opacity, anchor_opacity) = match (self.anchored, self.crossfade) {
+            (true, false) => (1.0, 1.0 - dissolved),
+            (true, true) => (dissolved, 1.0 - dissolved),
+            (false, _) => (dissolved, 0.0),
+        };
 
         let position = Mat3::translate(lerp(self.source.x, 0.0), lerp(self.source.y, 0.0));
         ContainerTransformFrame {
@@ -387,6 +410,74 @@ mod tests {
     }
 
     #[test]
+    fn a_crossfade_has_the_page_rise_exactly_as_the_item_falls() {
+        let spec = spec().crossfade(true);
+
+        // The page is not there until the dissolve starts, and is whole when it
+        // ends; the item is the other way about.
+        assert_eq!((spec.sample(0.0).page.opacity, spec.sample(0.2).page.opacity), (0.0, 0.0));
+        assert_eq!((spec.sample(0.7).page.opacity, spec.sample(1.0).page.opacity), (1.0, 1.0));
+        assert!((spec.sample(0.45).page.opacity - 0.5).abs() < 1e-5);
+        // At every moment one is what the other is not.
+        for step in 0..=40 {
+            let frame = spec.sample(step as f32 / 40.0);
+            assert!((frame.page.opacity + frame.anchor.opacity - 1.0).abs() < 1e-5, "{step}");
+        }
+    }
+
+    #[test]
+    fn a_crossfade_follows_the_dissolves_curve_in_both_directions() {
+        let linear = spec().crossfade(true);
+        let eased = spec().crossfade(true).dissolve_curve(curves::EASE_IN_OUT);
+
+        // An S-curve is slow at both ends and quick in the middle, for the page
+        // coming in and the item going out alike.
+        assert!(eased.sample(0.3).page.opacity < linear.sample(0.3).page.opacity);
+        assert!(eased.sample(0.6).page.opacity > linear.sample(0.6).page.opacity);
+        assert!(eased.sample(0.3).anchor.opacity > linear.sample(0.3).anchor.opacity);
+        assert!((eased.sample(0.45).page.opacity - 0.5).abs() < 1e-3);
+        for step in 0..=40 {
+            let frame = eased.sample(step as f32 / 40.0);
+            assert!((frame.page.opacity + frame.anchor.opacity - 1.0).abs() < 1e-5, "{step}");
+        }
+    }
+
+    #[test]
+    fn a_crossfade_changes_nothing_but_the_pages_opacity() {
+        let (plain, crossfade) = (spec(), spec().crossfade(true));
+
+        for step in 0..=20 {
+            let p = step as f32 / 20.0;
+            let (plain, crossfade) = (plain.sample(p), crossfade.sample(p));
+            assert_eq!(plain.anchor, crossfade.anchor, "{p}");
+            assert_eq!(plain.backdrop, crossfade.backdrop, "{p}");
+            assert_eq!(plain.page.transform, crossfade.page.transform, "{p}");
+            assert_eq!(plain.page.reveal, crossfade.page.reveal, "{p}");
+            assert_eq!(plain.page.corner_radius, crossfade.page.corner_radius, "{p}");
+        }
+        // Without one, the page is opaque from the first frame, as it always was.
+        assert_eq!(plain.sample(0.0).page.opacity, 1.0);
+    }
+
+    #[test]
+    fn a_crossfade_ends_exactly_and_is_ignored_without_a_copy() {
+        for anchored in [false, true] {
+            let spec = spec().anchored(anchored).crossfade(true).dissolve(0.3..0.6);
+            assert_eq!(spec.sample(1.0).page.opacity, 1.0, "{anchored}");
+            for step in 0..=60 {
+                let frame = spec.sample(step as f32 / 60.0);
+                assert!(frame.page.is_finite() && frame.anchor.is_finite(), "{anchored} {step}");
+            }
+        }
+        // With no copy there is nothing to fall, and the page fades in as ever.
+        let bare = ExpandSpec::new(ElementBounds::new(0.0, 260.0, 400.0, 160.0), VIEWPORT).unwrap();
+        for step in 0..=20 {
+            let p = step as f32 / 20.0;
+            assert_eq!(bare.clone().crossfade(true).sample(p), bare.sample(p), "{p}");
+        }
+    }
+
+    #[test]
     fn without_a_copy_of_the_item_the_page_fades_in_over_the_dissolve() {
         let spec = ExpandSpec::new(ElementBounds::new(0.0, 260.0, 400.0, 160.0), VIEWPORT).unwrap();
 
@@ -470,7 +561,7 @@ mod tests {
 
     #[test]
     fn the_same_motion_can_be_pointed_at_other_geometry() {
-        let tuned = spec().scrim(0.6).grow(0.1..0.9).dissolve(0.3..0.5).blur_held(0.4).source_radius(20.0);
+        let tuned = spec().scrim(0.6).grow(0.1..0.9).dissolve(0.3..0.5).blur_held(0.4).source_radius(20.0).crossfade(true);
         let moved = ElementBounds::new(10.0, 40.0, 300.0, 100.0);
         let other = ResolvedSize { width: 320.0, height: 500.0 };
 
@@ -478,7 +569,7 @@ mod tests {
 
         // Everything about the motion is kept; only where it happens changes.
         assert_eq!(retargeted, ExpandSpec::new(moved, other).unwrap().scrim(0.6).grow(0.1..0.9).dissolve(0.3..0.5)
-            .blur_held(0.4).source_radius(20.0).anchored(true));
+            .blur_held(0.4).source_radius(20.0).crossfade(true).anchored(true));
         assert_eq!(retargeted.sample(0.0).page.reveal, Some(ElementBounds::new(0.0, 0.0, 300.0, 100.0)));
         assert_eq!(retargeted.sample(1.0).page.reveal, None);
         // An item or a viewport with no area is still nothing to describe.

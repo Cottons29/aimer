@@ -167,6 +167,13 @@ macro_rules! impl_transition_element {
             fn get_size_from_child(&self) -> Option<Size> {
                 self.child.get_size_from_child()
             }
+            /// Where the child is. A transition changes how its child is painted,
+            /// not where it is laid out, and whoever measures the page it is the
+            /// root of (a navigator's swipe zone, say) must find the child's bounds
+            /// and not nothing.
+            fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+                self.child.pos_start_end()
+            }
             fn invalidate_layout(&self) {
                 self.child.invalidate_layout();
             }
@@ -353,6 +360,10 @@ impl LayoutElement for SlideTransitionElement {
     fn get_size_from_child(&self) -> Option<Size> {
         self.child.get_size_from_child()
     }
+    /// Where the child is laid out; the transition only changes how it is painted.
+    fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+        self.child.pos_start_end()
+    }
     fn invalidate_layout(&self) {
         self.child.invalidate_layout();
     }
@@ -510,6 +521,10 @@ impl LayoutElement for ScaleTransitionElement {
     }
     fn get_size_from_child(&self) -> Option<Size> {
         self.child.get_size_from_child()
+    }
+    /// Where the child is laid out; the transition only changes how it is painted.
+    fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+        self.child.pos_start_end()
     }
     fn invalidate_layout(&self) {
         self.child.invalidate_layout();
@@ -722,6 +737,10 @@ impl LayoutElement for RotationTransitionElement {
     fn get_size_from_child(&self) -> Option<Size> {
         self.child.get_size_from_child()
     }
+    /// Where the child is laid out; the transition only changes how it is painted.
+    fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+        self.child.pos_start_end()
+    }
     fn invalidate_layout(&self) {
         self.child.invalidate_layout();
     }
@@ -835,6 +854,58 @@ mod tests {
         let controller = AnimationController::with_millis(100, curves::LINEAR);
         controller.forward_from_first_tick();
         controller
+    }
+
+    /// A child that has been laid out: it knows where it is.
+    const BOUNDS: (Vec2d, Vec2d) = (Vec2d { x: 10.0, y: 20.0 }, Vec2d { x: 110.0, y: 220.0 });
+
+    struct PlacedWidget;
+
+    struct PlacedElement;
+
+    impl Drawable for PlacedElement {
+        fn update(&self, _ctx: &BuildContext) {}
+    }
+
+    impl EventElement for PlacedElement {}
+
+    impl LayoutElement for PlacedElement {
+        fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+            Some(BOUNDS)
+        }
+    }
+
+    impl Rebuildable for PlacedElement {}
+
+    impl VisitorElement for PlacedElement {
+        fn debug_name(&self) -> &'static str {
+            "PlacedElement"
+        }
+    }
+
+    impl Widget for PlacedWidget {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
+            PlacedElement.boxed()
+        }
+    }
+
+    impl aimer_widget::PortableWidget for PlacedWidget {}
+
+    #[test]
+    fn every_transition_reports_where_its_child_is() {
+        // A host that measures the page it presents, such as the navigator's swipe
+        // zone, asks the page's root for its bounds. A transition wrapping the
+        // root is transparent to layout, so it has to answer with its child's.
+        let ctx = dummy_build_context();
+        let bounds = Some(BOUNDS);
+
+        assert_eq!(FadeTransition::new(controller(), PlacedWidget).to_element(&ctx).pos_start_end(), bounds);
+        assert_eq!(
+            SlideTransition::new(controller(), (10.0, 10.0), PlacedWidget).to_element(&ctx).pos_start_end(),
+            bounds
+        );
+        assert_eq!(ScaleTransition::new(controller(), PlacedWidget).to_element(&ctx).pos_start_end(), bounds);
+        assert_eq!(RotationTransition::new(controller(), PlacedWidget).to_element(&ctx).pos_start_end(), bounds);
     }
 
     #[test]

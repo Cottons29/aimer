@@ -20,6 +20,47 @@ pub const FILE_DRAG_POINTER_ID: u64 = u64::MAX;
 
 thread_local! {
     static LAST_SOURCE: std::cell::Cell<PointerSource> = const { std::cell::Cell::new(PointerSource::Mouse) };
+    static ROUTING_SCROLL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static SCROLL_USED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Records whether the event now being routed is a scroll.
+///
+/// The dispatcher sets it as an event enters the tree and clears it when the
+/// event has been delivered. A scroll that nothing used is absorbed by whichever
+/// opaque element it reaches first, so an element that wants to *see* a scroll
+/// before anything inside it can absorb it, as a navigator watching for a
+/// trackpad swipe does, has to stand between the event and its children. Hit
+/// testing is by position alone, so this is how it learns that this is the event
+/// to stand in front of.
+#[inline]
+pub fn note_routing_scroll(routing: bool) {
+    ROUTING_SCROLL.with(|flag| flag.set(routing));
+}
+
+/// Says that something moved because of the scroll now being routed.
+///
+/// A scroll that nothing used is absorbed by the first opaque element it meets,
+/// and a scroll that a scroller used is consumed too, and a result that comes
+/// back through a retained child does not say which. So a widget that actually
+/// scrolled for an event says so here, and whoever stood in front of it, such as a
+/// navigator watching for a trackpad swipe, reads it with [`take_scroll_used`].
+#[inline]
+pub fn note_scroll_used() {
+    SCROLL_USED.with(|flag| flag.set(true));
+}
+
+/// Whether anything said it used the scroll since this was last asked, forgetting
+/// the answer. See [`note_scroll_used`].
+#[inline]
+pub fn take_scroll_used() -> bool {
+    SCROLL_USED.with(|flag| flag.replace(false))
+}
+
+/// Whether the event now being routed is a scroll; see [`note_routing_scroll`].
+#[inline]
+pub fn is_routing_scroll() -> bool {
+    ROUTING_SCROLL.with(std::cell::Cell::get)
 }
 
 /// Records which kind of pointer produced the event now being routed.
@@ -366,6 +407,27 @@ mod tests {
         }
 
         set_min_touch_target(DEFAULT_MIN_TOUCH_TARGET);
+    }
+
+    #[test]
+    fn a_scroll_that_was_used_is_reported_once() {
+        let _ = take_scroll_used();
+        assert!(!take_scroll_used(), "nothing used it");
+
+        note_scroll_used();
+        assert!(take_scroll_used());
+        assert!(!take_scroll_used(), "and it is reported once");
+    }
+
+    #[test]
+    fn a_scroll_being_routed_is_known_to_hit_testing_and_forgotten_after() {
+        assert!(!is_routing_scroll(), "nothing is being routed to begin with");
+
+        note_routing_scroll(true);
+        assert!(is_routing_scroll());
+
+        note_routing_scroll(false);
+        assert!(!is_routing_scroll());
     }
 
     #[test]
