@@ -1,6 +1,8 @@
 /// Differential audit of cached interaction bounds against the render tree.
 #[doc(hidden)]
 pub mod bounds_audit;
+#[cfg(test)]
+mod base_context_tests;
 /// Diagnostic census of render nodes by paint source.
 #[doc(hidden)]
 pub mod census;
@@ -729,6 +731,46 @@ fn child_base_context<'c>(
     child_base_ctx
 }
 
+/// The context an element hands to the children it gives none of their own,
+/// derived the first time a child asks for it.
+///
+/// Deriving it measures the element's only child, in the element's own
+/// constraint, to tell a transparent wrapper from one that adds size. Most
+/// elements that have one child give it a context (a container hands down the
+/// space inside its padding), so the base context is never read, and measuring
+/// for it would measure everything below the element a second time, in a space
+/// nothing is laid out in.
+struct ChildBaseContext<'e, 'a, 'c> {
+    element: &'e dyn Element,
+    ctx: &'a BuildContext<'c>,
+    size: ResolvedSize,
+    position: Vec2d,
+    derived: Option<BuildContext<'c>>,
+}
+
+impl<'e, 'a, 'c> ChildBaseContext<'e, 'a, 'c> {
+    fn new(
+        element: &'e dyn Element,
+        ctx: &'a BuildContext<'c>,
+        size: ResolvedSize,
+        position: Vec2d,
+    ) -> Self {
+        Self {
+            element,
+            ctx,
+            size,
+            position,
+            derived: None,
+        }
+    }
+
+    fn get(&mut self) -> &BuildContext<'c> {
+        self.derived.get_or_insert_with(|| {
+            child_base_context(self.element, self.ctx, self.size, self.position)
+        })
+    }
+}
+
 /// What a parent hands one retained child: its geometry override, the radius of
 /// the clip it supplies, and the context to lay the child out in.
 struct ChildInput<'c> {
@@ -740,19 +782,21 @@ struct ChildInput<'c> {
 fn child_input<'c>(
     element: &dyn Element,
     ctx: &BuildContext<'c>,
-    child_base_ctx: &BuildContext<'c>,
+    child_base_ctx: &mut ChildBaseContext<'_, '_, 'c>,
     child: &dyn Element,
     index: usize,
 ) -> ChildInput<'c> {
+    let provided = element.retained_v2_child_context_at(ctx, child, index);
+    // A child that was measured keeps the size of its last measurement, and the
+    // geometry below measures it again in the space it is laid out in. The tree
+    // reads the last one, so the measurement for the base context comes first.
+    let child_ctx = provided.unwrap_or_else(|| child_base_ctx.get().clone());
     let geometry = element.retained_v2_child_geometry_at(ctx, child, index);
     let clip_radius = if geometry.is_some() {
         element.retained_v2_child_clip_radius(ctx, child)
     } else {
         [0.0; 4]
     };
-    let child_ctx = element
-        .retained_v2_child_context_at(ctx, child, index)
-        .unwrap_or_else(|| child_base_ctx.clone());
     ChildInput {
         geometry,
         clip_radius,
@@ -858,7 +902,7 @@ fn collect_render_tree_nodes<'element, 'context>(
         [0.0; 4]
     });
 
-    let child_base_ctx = child_base_context(element, ctx, size, position);
+    let mut child_base_ctx = ChildBaseContext::new(element, ctx, size, position);
 
     let mut has_new_child = false;
     element.visit_retained_v2_children(&mut |index, child| {
@@ -867,7 +911,7 @@ fn collect_render_tree_nodes<'element, 'context>(
             geometry: child_geometry,
             clip_radius: child_clip_radius,
             ctx: child_ctx,
-        } = child_input(element, ctx, &child_base_ctx, child, index);
+        } = child_input(element, ctx, &mut child_base_ctx, child, index);
         collect_render_tree_nodes(
             child,
             Some(node_index),

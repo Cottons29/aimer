@@ -6,7 +6,7 @@ use crate::draw_cmd::{DrawList, TextureRegistry};
 use crate::font::{FontFamily, FontStyle, FontWeight, TextLanguage};
 use crate::frame::RetainedRenderPlan;
 use crate::lru_map::LruMap;
-use crate::text_pipeline::glyph_rasterizer::GlyphRasterizer;
+use crate::text_pipeline::glyph_rasterizer::{GlyphRasterizer, RunAdvances};
 use crate::text_pipeline::text_layout::line_break_opportunities;
 use crate::utilities::{Mat3, TextureId};
 
@@ -539,6 +539,8 @@ impl CupidCanvas {
         // last line would be clipped).
         let mut last_break_end: Option<f32> = None;
         let can_break_before = line_break_opportunities(text);
+        // One run, one style: each distinct ASCII character is resolved once.
+        let mut advances = RunAdvances::new();
 
         for (offset, c) in text.char_indices() {
             if c == '\n' {
@@ -551,7 +553,7 @@ impl CupidCanvas {
             }
 
             let glyph_width =
-                rasterizer.advance_width_for_family(c, font_size, font_family, weight, font_style);
+                advances.advance(&mut rasterizer, c, font_size, font_family, weight, font_style);
 
             // Track where this line may be broken, measured before the
             // character is added so a trailing space stays on its own line.

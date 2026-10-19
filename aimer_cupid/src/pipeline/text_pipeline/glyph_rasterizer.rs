@@ -1,4 +1,7 @@
 mod glyph_run;
+mod run_advances;
+
+pub use run_advances::RunAdvances;
 
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, OnceLock};
@@ -24,6 +27,19 @@ use crate::text_pipeline::system_fallback::{
 #[cfg(not(any(feature = "bundled-fonts", target_arch = "wasm32", test)))]
 use crate::text_pipeline::system_fallback::{system_monospace_font, system_primary_font};
 use crate::text_pipeline::unicode_script::Script;
+
+// Counts the glyph lookups made for characters, so tests can show that
+// measuring a run resolves each distinct character once. Compiled out of every
+// non-test build.
+#[cfg(test)]
+thread_local! {
+    static KEY_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn key_lookups() -> usize {
+    KEY_LOOKUPS.with(std::cell::Cell::get)
+}
 
 /// The bundled primary face is compiled for the opt-in deterministic profile,
 /// wasm targets, and this module's unit tests. Browsers do not expose a
@@ -1243,6 +1259,8 @@ impl GlyphRasterizer {
         weight: FontWeight,
         style: FontStyle,
     ) -> GlyphKey {
+        #[cfg(test)]
+        KEY_LOOKUPS.with(|count| count.set(count.get() + 1));
         self.refresh_registered_family_faces();
         if let Some(font_id) = self
             .family_record(family, weight, style)
@@ -1310,11 +1328,10 @@ impl GlyphRasterizer {
         // The language travels with it for the same reason: a run drawn in a
         // Chinese face may not be measured in a Japanese one.
         self.begin_script_run(text, language);
+        let mut advances = RunAdvances::new();
         let width = text
             .chars()
-            .map(|codepoint| {
-                self.advance_width_for_family(codepoint, font_size, family, weight, style)
-            })
+            .map(|codepoint| advances.advance(self, codepoint, font_size, family, weight, style))
             .sum();
         self.end_script_run();
         width

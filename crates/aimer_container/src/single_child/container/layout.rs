@@ -76,6 +76,24 @@ impl<T: Element, D: Decoration> LayoutElement for RawContainer<T, D> {
             } else {
                 (box_height - p_top - bt - p_bottom - bb).max(0.0)
             };
+            // The child is laid out in the space inside the padding, so a bounded
+            // axis is measured against that parent, as `local_v2_child_context`
+            // hands it down. A parent size left at the container's own would be
+            // cached by the layouts below, which are keyed by the constraint
+            // alone. An unbounded axis keeps the parent it was offered: a scroll
+            // view leaves the viewport there for children that fill their parent.
+            child_ctx.parent_size = ResolvedSize {
+                width: if width_unbounded {
+                    ctx.parent_size.width
+                } else {
+                    child_ctx.box_constraint.max_width
+                },
+                height: if height_unbounded {
+                    ctx.parent_size.height
+                } else {
+                    child_ctx.box_constraint.max_height
+                },
+            };
             let child_size = self.child.computed_size(&child_ctx);
 
             let final_w = if width_unbounded {
@@ -158,6 +176,20 @@ impl<T: Element, D: Decoration> LayoutElement for RawContainer<T, D> {
                 f32::MAX
             } else {
                 (b_h - p_top - b_top - p_bottom - b_bottom).max(0.0)
+            };
+            // See `computed_size`: a bounded axis is measured against the parent
+            // the child is laid out in, an unbounded one keeps the viewport.
+            child_ctx.parent_size = ResolvedSize {
+                width: if width_unbounded {
+                    ctx.parent_size.width
+                } else {
+                    child_ctx.box_constraint.max_width
+                },
+                height: if height_unbounded {
+                    ctx.parent_size.height
+                } else {
+                    child_ctx.box_constraint.max_height
+                },
             };
             let child_size = self.child.computed_size(&child_ctx);
 

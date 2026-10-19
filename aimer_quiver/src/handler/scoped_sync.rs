@@ -181,7 +181,7 @@ impl WindowRenderTree {
                 break;
             };
             let frame = node_frame(element, &current_ctx, scale, geometry, origin_shift);
-            let base = child_base_context(element, &current_ctx, frame.size, frame.position);
+            let mut base = ChildBaseContext::new(element, &current_ctx, frame.size, frame.position);
             let wanted = cache.element_ids[next];
             let mut child = None;
             element.visit_retained_v2_children(&mut |index, candidate| {
@@ -192,7 +192,7 @@ impl WindowRenderTree {
             let Some((index, child)) = child else {
                 return false;
             };
-            let input = child_input(element, &current_ctx, &base, child, index);
+            let input = child_input(element, &current_ctx, &mut base, child, index);
             element_path.push(element.id());
             geometry = input.geometry;
             clip_radius = input.clip_radius;

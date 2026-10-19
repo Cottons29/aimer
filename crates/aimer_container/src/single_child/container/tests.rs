@@ -85,6 +85,84 @@ impl VisitorElement for PaintStableProbe {
     }
 }
 
+/// Records the space it is measured in, and answers with the width it was given.
+struct ParentSizeProbe {
+    seen: Rc<std::cell::RefCell<Vec<(f32, f32)>>>,
+}
+
+impl Drawable for ParentSizeProbe {
+    fn update(&self, _ctx: &BuildContext) {}
+}
+
+impl EventElement for ParentSizeProbe {}
+impl Rebuildable for ParentSizeProbe {}
+
+impl LayoutElement for ParentSizeProbe {
+    fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
+        self.seen
+            .borrow_mut()
+            .push((ctx.box_constraint.max_width, ctx.parent_size.width));
+        ResolvedSize {
+            width: ctx.box_constraint.max_width,
+            height: 10.0,
+        }
+    }
+}
+
+impl VisitorElement for ParentSizeProbe {
+    fn debug_name(&self) -> &'static str {
+        "ParentSizeProbe"
+    }
+}
+
+/// A child that sizes itself from its parent's size (a `Row` with an automatic
+/// width does) must see the same parent whether it is measured or laid out. The
+/// layout caches below it are keyed by the constraint alone, so a measurement
+/// made with the constraint of the inside and the parent size of the outside is
+/// served back to the layout that has the inside's parent size.
+#[tokio::test]
+async fn a_container_measures_an_unbounded_child_in_the_space_it_lays_it_out_in() {
+    for measure in [
+        |container: &dyn LayoutElement, ctx: &BuildContext| {
+            container.computed_size(ctx);
+        },
+        |container: &dyn LayoutElement, ctx: &BuildContext| {
+            container.content_size(ctx);
+        },
+    ] {
+        let seen = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let mut container = RawContainer::new(ParentSizeProbe { seen: seen.clone() });
+        container.padding = LayoutSpacing::all(10);
+        let mut ctx = context();
+        // A scroll view offers an unbounded height, which makes the container
+        // measure its child; the width is the container's own 200 and the
+        // parent it sits in is 640 wide.
+        ctx.parent_size = ResolvedSize {
+            width: 640.0,
+            height: 800.0,
+        };
+        ctx.box_constraint = BoxConstraint {
+            min_width: 0.0,
+            min_height: 0.0,
+            max_width: 200.0,
+            max_height: f32::MAX,
+        };
+
+        measure(&container, &ctx);
+
+        let seen = seen.borrow();
+        assert!(!seen.is_empty(), "the child was never measured");
+        for (constraint_width, parent_width) in seen.iter() {
+            assert_eq!(*constraint_width, 180.0);
+            assert_eq!(
+                *parent_width, 180.0,
+                "the child was measured against a parent {parent_width} wide, but it is laid \
+                 out in one {constraint_width} wide"
+            );
+        }
+    }
+}
+
 #[tokio::test]
 async fn retained_container_paint_includes_its_decoration() {
     let (ctx, inner) = recording_context();
