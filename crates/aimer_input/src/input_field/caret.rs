@@ -264,8 +264,13 @@ impl State<DefaultCaretWidget> for DefaultCaretState {
     fn init_state(&mut self, updater: StateUpdater<Self>) {
         self.updater = updater;
         let updater = self.updater;
+        // The context outlives this state: the field that owns it keeps
+        // publishing geometry while the caret element is replaced or torn down
+        // (a page switch, or a frame's chrome rebuilt from scratch). A repaint
+        // asked of a state that is gone has nothing to repaint, so it is dropped
+        // rather than treated as a bug.
         self.context.set_repaint_callback(Rc::new(move || {
-            updater.set_state(|state| {
+            let _ = updater.try_set_state(|state| {
                 state.revision = state.revision.wrapping_add(1);
             });
         }));
@@ -627,6 +632,32 @@ mod tests {
             context,
             aimer_widget::base::Colors::default(),
         ));
+    }
+
+    /// The field keeps publishing geometry after its caret element is gone —
+    /// a page switch tears the caret down before the field that owns the
+    /// context. The repaint that publishing asks for must not panic.
+    #[test]
+    fn publishing_after_the_caret_is_torn_down_does_not_panic() {
+        use crate::input_field::raw_fields::test_support::dummy_build_context;
+
+        let ctx = dummy_build_context(100.0, 40.0);
+        let context = CaretContext::new(CaretBlink::new());
+        let caret = DefaultCaret::new(context.clone(), aimer_widget::base::Colors::default())
+            .to_element(&ctx);
+        drop(caret);
+
+        context.publish(
+            CaretGeometry {
+                width: 1.5,
+                height: 16.0,
+                ..CaretGeometry::default()
+            },
+            0,
+            true,
+            true,
+            false,
+        );
     }
 }
 

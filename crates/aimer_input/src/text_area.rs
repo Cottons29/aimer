@@ -1,8 +1,9 @@
 use std::panic::Location;
 use std::sync::Arc;
 
+use aimer_decoration::Decoration;
 use aimer_macro::PortableWidget;
-use aimer_style::{BoxDecoration, LayoutSpacing, TextAlign, TextStyle};
+use aimer_style::{LayoutSpacing, TextAlign, TextStyle};
 use aimer_widget::base::{BuildContext, Color, Colors};
 #[cfg(feature = "portable-guest")]
 use aimer_widget::portable::{PortableBuildContext, PortableBuildError, SourceFingerprint};
@@ -12,6 +13,7 @@ use aimer_widget::{
 
 use crate::TextEditingController;
 use crate::input_field::caret::CaretContext;
+use crate::input_field::chrome::TextFieldVisualState;
 use crate::input_field::raw_fields::{ExpandDirection, InputType, TextFieldCallback};
 use crate::input_field::{TextField, TextFieldState};
 
@@ -51,6 +53,13 @@ fn validate_portable_text_area(
     _ctx: &PortableBuildContext,
     source: SourceFingerprint,
 ) -> Result<(), PortableBuildError> {
+    if let Some(property) = area.field.native_only_property() {
+        return Err(PortableBuildError::UnsupportedProperty {
+            widget: "TextArea",
+            property,
+            source,
+        });
+    }
     let expected_min = u32::try_from(area.min_lines.max(1))
         .map_err(|_| PortableBuildError::InvalidPropertyValue { rust_type: "usize" })?;
     if area.min_lines_wire != expected_min {
@@ -258,15 +267,19 @@ impl TextArea {
     }
 
     /// Replaces the normal area decoration.
+    ///
+    /// Accepts any [`Decoration`], with the same rules as
+    /// [`TextField::decoration`]. A [`builder`](Self::builder) overrides every
+    /// decoration.
     #[inline]
-    pub fn decoration(mut self, decoration: BoxDecoration) -> Self {
+    pub fn decoration<D: Decoration + 'static>(mut self, decoration: D) -> Self {
         self.field = self.field.decoration(decoration);
         self
     }
 
     /// Sets the decoration used while an enabled, unfocused area is hovered.
     #[inline]
-    pub fn hover_decoration(mut self, hover_decoration: BoxDecoration) -> Self {
+    pub fn hover_decoration<D: Decoration + 'static>(mut self, hover_decoration: D) -> Self {
         self.field = self.field.hover_decoration(hover_decoration);
         self
     }
@@ -275,7 +288,7 @@ impl TextArea {
     ///
     /// Focus decoration takes precedence over hover decoration.
     #[inline]
-    pub fn focus_decoration(mut self, focus_decoration: BoxDecoration) -> Self {
+    pub fn focus_decoration<D: Decoration + 'static>(mut self, focus_decoration: D) -> Self {
         self.field = self.field.focus_decoration(focus_decoration);
         self
     }
@@ -284,8 +297,25 @@ impl TextArea {
     ///
     /// Disabled decoration takes precedence over focus and hover decorations.
     #[inline]
-    pub fn disabled_decoration(mut self, disabled_decoration: BoxDecoration) -> Self {
+    pub fn disabled_decoration<D: Decoration + 'static>(mut self, disabled_decoration: D) -> Self {
         self.field = self.field.disabled_decoration(disabled_decoration);
+        self
+    }
+
+    /// Builds the frame around the editing surface from the area's state.
+    ///
+    /// Works exactly like [`TextField::builder`]: the closure returns the whole
+    /// appearance and places the live editing surface with
+    /// [`TextFieldVisualState::input`]. **Every decoration set on this area is
+    /// ignored once a builder is set**, and the editing surface paints no
+    /// background, border or shadow of its own; `padding`, line limits and
+    /// every other setting still apply.
+    #[inline]
+    pub fn builder<W: Widget + 'static>(
+        mut self,
+        build: impl Fn(TextFieldVisualState) -> W + 'static,
+    ) -> Self {
+        self.field = self.field.builder(build);
         self
     }
 
@@ -434,9 +464,7 @@ impl State<TextArea> for TextFieldState {
 
     #[inline]
     fn build(&self, _: &BuildContext) -> impl Widget {
-        aimer_text::SelectionArea::without_focus()
-            .selection_color(self.selection_color())
-            .child(self.focusable_field())
+        self.build_field()
     }
 }
 

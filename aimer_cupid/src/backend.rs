@@ -47,6 +47,10 @@ pub mod vulkan;
     any(target_os = "linux", target_os = "android")
 ))]
 pub mod opengl;
+#[cfg(all(feature = "native", not(feature = "wgpu")))]
+pub(crate) mod vulkan_descriptor_kind;
+#[cfg(all(feature = "native", not(feature = "wgpu")))]
+pub(crate) mod vulkan_surface_format;
 #[cfg(all(feature = "web", target_arch = "wasm32", not(feature = "wgpu")))]
 pub mod webgl;
 #[cfg(all(feature = "web", target_arch = "wasm32", not(feature = "wgpu")))]

@@ -1,4 +1,5 @@
 pub mod caret;
+pub(crate) mod chrome;
 pub mod context_menu;
 #[cfg(test)]
 mod controller {
@@ -478,6 +479,7 @@ use std::panic::Location;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use aimer_decoration::Decoration;
 use aimer_macro::PortableWidget;
 use aimer_style::{BoxDecoration, LayoutSpacing, TextAlign, TextStyle};
 use aimer_venus::{ScopeId, TaskScope, Venus};
@@ -485,12 +487,13 @@ use aimer_widget::base::{BuildContext, Color, Colors};
 #[cfg(feature = "portable-guest")]
 use aimer_widget::portable::{PortableBuildContext, PortableBuildError, SourceFingerprint};
 use aimer_widget::{
-    AnyElement, FocusBehavior, FocusNode, Focusable, Key, State, StateUpdater, StatefulElement,
-    StatefulWidget, Widget,
+    AnyElement, AnyWidget, ChildBuilder, FocusBehavior, FocusNode, Focusable, Key, State,
+    StateUpdater, StatefulElement, StatefulWidget, Widget,
 };
 
 use crate::TextEditingController;
 use crate::input_field::caret::{CaretBlink, CaretBuilder, CaretContext};
+use crate::input_field::chrome::{Chrome, TextFieldVisualState, VisualBuilder, VisualFlags};
 use crate::input_field::raw_fields::{
     CaretSlot, ExpandDirection, InputType, RawFieldConfig, RawTextFieldWidget, TextFieldCallback,
 };
@@ -632,6 +635,14 @@ pub struct TextField {
     pub hover_decoration: Option<BoxDecoration>,
     pub focus_decoration: Option<BoxDecoration>,
     pub disabled_decoration: Option<BoxDecoration>,
+    /// Decorations that are not a [`BoxDecoration`], in normal, hover, focus,
+    /// disabled order. A slot filled here takes precedence over the matching
+    /// public field above.
+    #[portable_skip]
+    custom_decorations: [Option<Rc<dyn Decoration>>; 4],
+    /// The caller-built frame; see [`TextField::builder`].
+    #[portable_skip]
+    visual_builder: Option<VisualBuilder>,
     pub selection_color: Color,
     #[portable_skip]
     pub cursor_color: Colors,
@@ -692,6 +703,13 @@ fn validate_portable_text_field(
             source,
         });
     }
+    if let Some(property) = field.native_only_property() {
+        return Err(PortableBuildError::UnsupportedProperty {
+            widget: "TextField",
+            property,
+            source,
+        });
+    }
     Ok(())
 }
 
@@ -715,6 +733,8 @@ pub struct TextFieldState {
     focus_node: FocusNode,
     provided_focus_node: bool,
     updater: StateUpdater<Self>,
+    /// What the chrome around the field is built from, when it has chrome.
+    visual: Rc<VisualFlags>,
 }
 
 impl TextFieldState {
@@ -735,6 +755,7 @@ impl TextFieldState {
     #[inline]
     pub(crate) fn adopt(&mut self, new: Self) {
         self.config = new.config;
+        self.config.visual = self.config.chrome.is_some().then(|| self.visual.clone());
         if new.provided_focus_node {
             self.focus_node = new.focus_node;
         }
@@ -808,16 +829,63 @@ impl TextFieldState {
             .child(self.raw_widget())
     }
 
+    /// Builds everything this field mounts: the focusable editing surface,
+    /// inside whatever chrome the field was configured with.
+    pub(crate) fn build_field(&self) -> AnyWidget {
+        let Some(chrome) = &self.config.chrome else {
+            return aimer_text::SelectionArea::without_focus()
+                .selection_color(self.config.selection_color)
+                .child(self.focusable_field())
+                .boxed();
+        };
+        chrome.mount(
+            self.bare_input(),
+            self.visual.clone(),
+            self.config.enable,
+            self.config.read_only,
+        )
+    }
+
+    /// The editing surface of a field with chrome: the same focusable field as
+    /// [`TextFieldState::focusable_field`], but painting no decoration of its
+    /// own, and rebuilt in place whenever the chrome around it is.
+    fn bare_input(&self) -> ChildBuilder {
+        let mut config = self.config.clone();
+        config.decoration = BoxDecoration::default();
+        config.hover_decoration = None;
+        config.focus_decoration = None;
+        config.disabled_decoration = None;
+        let caret = self.caret.clone();
+        let caret_context = self.caret_context.clone();
+        let caret_slot = self.caret_slot.clone();
+        let focus_node = self.focus_node.clone();
+        let behavior = self.focus_behavior();
+        let scope = self.caret_scope_id();
+        ChildBuilder::new(move || {
+            let raw = RawTextFieldWidget::new(
+                config.clone(),
+                caret.clone(),
+                caret_context.clone(),
+                caret_slot.clone(),
+                focus_node.clone(),
+                scope,
+            );
+            aimer_text::SelectionArea::without_focus()
+                .selection_color(config.selection_color)
+                .child(
+                    Focusable::new()
+                        .node(focus_node.clone())
+                        .behavior(behavior)
+                        .child(raw),
+                )
+                .boxed()
+        })
+    }
+
     /// Returns the caret blink timeline this field paints from.
     #[inline]
     pub fn caret(&self) -> &CaretBlink {
         &self.caret
-    }
-
-    /// Returns the highlight color shared with the enclosing selection area.
-    #[inline]
-    pub(crate) fn selection_color(&self) -> Color {
-        self.config.selection_color
     }
 }
 
@@ -834,9 +902,7 @@ impl State<TextField> for TextFieldState {
     }
 
     fn build(&self, _: &BuildContext) -> impl Widget {
-        aimer_text::SelectionArea::without_focus()
-            .selection_color(self.config.selection_color)
-            .child(self.focusable_field())
+        self.build_field()
     }
 }
 
@@ -865,6 +931,8 @@ impl TextField {
             hover_decoration: None,
             focus_decoration: None,
             disabled_decoration: None,
+            custom_decorations: [None, None, None, None],
+            visual_builder: None,
             selection_color: Color::Rgba(66, 133, 244, 100),
             cursor_color: Colors::default(),
             caret_builder: None,
@@ -920,15 +988,60 @@ impl TextField {
             on_blur: self.on_blur.clone(),
             read_only: self.read_only,
             padding: self.padding,
+            chrome: self.chrome(),
+            visual: None,
         }
+    }
+
+    /// Names the first property set that has no portable wire form.
+    #[cfg(feature = "portable-guest")]
+    pub(crate) fn native_only_property(&self) -> Option<&'static str> {
+        if self.visual_builder.is_some() {
+            Some("builder")
+        } else if self.custom_decorations.iter().any(Option::is_some) {
+            Some("decoration")
+        } else {
+            None
+        }
+    }
+
+    /// Resolves the frame placed around the editing surface, if any.
+    ///
+    /// A builder owns the whole appearance and ignores every decoration. Without
+    /// one, a decoration that is not a [`BoxDecoration`] moves the decorations
+    /// out of the field and around it, because only the field can paint a
+    /// `BoxDecoration` together with its text.
+    fn chrome(&self) -> Option<Chrome> {
+        if let Some(builder) = &self.visual_builder {
+            return Some(Chrome::from_builder(builder.clone()));
+        }
+        if self.custom_decorations.iter().all(Option::is_none) {
+            return None;
+        }
+        let boxed = [
+            Some(&self.decoration),
+            self.hover_decoration.as_ref(),
+            self.focus_decoration.as_ref(),
+            self.disabled_decoration.as_ref(),
+        ];
+        Some(Chrome::from_decorations(std::array::from_fn(|slot| {
+            self.custom_decorations[slot].clone().or_else(|| {
+                boxed[slot].map(|decoration| Rc::new(decoration.clone()) as Rc<dyn Decoration>)
+            })
+        })))
     }
 
     /// Creates shared field state using `config` and this field's focus node.
     #[inline]
-    pub(crate) fn create_state_with_config(&self, config: RawFieldConfig) -> TextFieldState {
+    pub(crate) fn create_state_with_config(&self, mut config: RawFieldConfig) -> TextFieldState {
         let caret = CaretBlink::new();
+        let visual = Rc::new(VisualFlags::new(
+            config.chrome.is_some() && config.controller.value().text().is_empty(),
+        ));
+        config.visual = config.chrome.is_some().then(|| visual.clone());
         TextFieldState {
             config,
+            visual,
             caret_context: CaretContext::new(caret.clone()),
             caret_slot: Rc::new(CaretSlot::new()),
             caret,
@@ -1049,34 +1162,103 @@ impl TextField {
     }
 
     /// Replaces the normal field decoration.
+    ///
+    /// Accepts any [`Decoration`], without requiring `Clone`. A
+    /// [`BoxDecoration`] is painted by the field together with its text and
+    /// keeps its border, outline and shadow geometry. Any other decoration is
+    /// painted behind the field instead, and the field's own `padding` still
+    /// insets the text inside it. Custom decorations require native rendering;
+    /// portable lowering reports an unsupported property.
+    ///
+    /// A [`builder`](Self::builder) overrides every decoration.
     #[inline]
-    pub fn decoration(mut self, decoration: BoxDecoration) -> Self {
-        self.decoration = decoration;
+    pub fn decoration<D: Decoration + 'static>(mut self, decoration: D) -> Self {
+        let (decoration, custom) = chrome::split(decoration);
+        self.decoration = decoration.unwrap_or_default();
+        self.custom_decorations[0] = custom;
         self
     }
 
     /// Sets the decoration used while an enabled, unfocused field is hovered.
+    ///
+    /// Accepts any [`Decoration`]; see [`decoration`](Self::decoration).
     #[inline]
-    pub fn hover_decoration(mut self, hover_decoration: BoxDecoration) -> Self {
-        self.hover_decoration = Some(hover_decoration);
+    pub fn hover_decoration<D: Decoration + 'static>(mut self, hover_decoration: D) -> Self {
+        let (decoration, custom) = chrome::split(hover_decoration);
+        self.hover_decoration = decoration;
+        self.custom_decorations[1] = custom;
         self
     }
 
     /// Sets the decoration used while the enabled field is focused.
     ///
-    /// Focus decoration takes precedence over hover decoration.
+    /// Focus decoration takes precedence over hover decoration. Accepts any
+    /// [`Decoration`]; see [`decoration`](Self::decoration).
     #[inline]
-    pub fn focus_decoration(mut self, focus_decoration: BoxDecoration) -> Self {
-        self.focus_decoration = Some(focus_decoration);
+    pub fn focus_decoration<D: Decoration + 'static>(mut self, focus_decoration: D) -> Self {
+        let (decoration, custom) = chrome::split(focus_decoration);
+        self.focus_decoration = decoration;
+        self.custom_decorations[2] = custom;
         self
     }
 
     /// Sets the decoration used while the field is disabled.
     ///
     /// Disabled decoration takes precedence over focus and hover decorations.
+    /// Accepts any [`Decoration`]; see [`decoration`](Self::decoration).
     #[inline]
-    pub fn disabled_decoration(mut self, disabled_decoration: BoxDecoration) -> Self {
-        self.disabled_decoration = Some(disabled_decoration);
+    pub fn disabled_decoration<D: Decoration + 'static>(mut self, disabled_decoration: D) -> Self {
+        let (decoration, custom) = chrome::split(disabled_decoration);
+        self.disabled_decoration = decoration;
+        self.custom_decorations[3] = custom;
+        self
+    }
+
+    /// Builds the frame around the editing surface from the field's state.
+    ///
+    /// `build` receives a [`TextFieldVisualState`] and returns the whole
+    /// appearance of the field: a label, icons, a counter, an error line, a
+    /// custom border. It places the live editing surface with
+    /// [`TextFieldVisualState::input`], which is the text, caret, selection and
+    /// hint, and nothing else.
+    ///
+    /// **A builder owns the appearance, so every decoration set on this field
+    /// is ignored**: `decoration`, `hover_decoration`, `focus_decoration` and
+    /// `disabled_decoration` do nothing once a builder is set, and the editing
+    /// surface paints no background, border or shadow of its own. `padding`,
+    /// `text_style`, `controller`, callbacks, focus and every other setting
+    /// still apply.
+    ///
+    /// The closure runs when the field is built and again whenever hover,
+    /// focus or emptiness changes; only the returned subtree is rebuilt, and
+    /// the editing surface inside it keeps its selection, composition and
+    /// scroll. Keep [`input`](TextFieldVisualState::input) at the same position
+    /// in the tree from one state to the next — wrapping it differently for
+    /// focused and unfocused states would mount it again. Only the editing
+    /// surface takes focus on a press; give the chrome a
+    /// [`focus_node`](Self::focus_node) handle if a press elsewhere in it should
+    /// focus the field. A builder requires native rendering; portable lowering
+    /// reports an unsupported property.
+    ///
+    /// ```
+    /// use aimer_input::input::TextField;
+    /// use aimer_style::{BoxDecoration, LayoutSpacing};
+    /// use aimer_container::Container;
+    /// use aimer_widget::Widget;
+    ///
+    /// let field = TextField::new().builder(|state| {
+    ///     let border = if state.is_focused { 2.0 } else { 1.0 };
+    ///     Container::new()
+    ///         .padding(LayoutSpacing::all(border as u32))
+    ///         .box_child(state.input())
+    /// });
+    /// ```
+    #[inline]
+    pub fn builder<W: Widget + 'static>(
+        mut self,
+        build: impl Fn(TextFieldVisualState) -> W + 'static,
+    ) -> Self {
+        self.visual_builder = Some(Rc::new(move |state| build(state).boxed()));
         self
     }
 

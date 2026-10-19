@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use crate::backend::TextureUsage;
+use crate::backend::vulkan_surface_format::{SurfaceFormatClass, select_surface_format};
 use ash::vk;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
@@ -569,23 +570,17 @@ fn create_swapchain(
             .get_physical_device_surface_formats(shared.core.physical_device, surface.raw)
     }
     .map_err(|error| VulkanError::new("query Vulkan surface formats", format!("{error:?}")))?;
-    let selected_format = formats
-        .iter()
-        .copied()
-        .find(|format| {
-            format.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR
-                && matches!(
-                    format.format,
-                    vk::Format::B8G8R8A8_SRGB | vk::Format::R8G8B8A8_SRGB
-                )
-        })
-        .or_else(|| formats.first().copied())
-        .ok_or_else(|| {
-            VulkanError::new(
-                "select Vulkan surface format",
-                "surface exposes no color formats",
-            )
-        })?;
+    let selected_format = select_surface_format(
+        &formats,
+        !cfg!(target_os = "android"),
+        classify_surface_format,
+    )
+    .ok_or_else(|| {
+        VulkanError::new(
+            "select Vulkan surface format",
+            "surface exposes no color formats",
+        )
+    })?;
     let extent = if capabilities.current_extent.width != u32::MAX {
         capabilities.current_extent
     } else {
@@ -782,6 +777,17 @@ fn select_composite_alpha(flags: vk::CompositeAlphaFlagsKHR) -> vk::CompositeAlp
     .into_iter()
     .find(|candidate| flags.contains(*candidate))
     .unwrap_or(vk::CompositeAlphaFlagsKHR::OPAQUE)
+}
+
+fn classify_surface_format(format: vk::SurfaceFormatKHR) -> SurfaceFormatClass {
+    if format.color_space != vk::ColorSpaceKHR::SRGB_NONLINEAR {
+        return SurfaceFormatClass::Other;
+    }
+    match format.format {
+        vk::Format::B8G8R8A8_SRGB | vk::Format::R8G8B8A8_SRGB => SurfaceFormatClass::Srgb8,
+        vk::Format::B8G8R8A8_UNORM | vk::Format::R8G8B8A8_UNORM => SurfaceFormatClass::Unorm8,
+        _ => SurfaceFormatClass::Other,
+    }
 }
 
 pub(super) fn is_srgb_format(format: vk::Format) -> bool {

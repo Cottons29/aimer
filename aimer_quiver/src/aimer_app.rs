@@ -1813,6 +1813,8 @@ mod tests {
     mod stack_overlays;
     mod shadow_clip_origin;
     mod stack_bar_touch;
+    mod text_field_caret;
+    mod text_field_chrome;
     mod stack_occlusion;
     mod scalable_overflow;
     mod scalable_text;

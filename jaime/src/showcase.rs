@@ -13,6 +13,7 @@ use crate::color_sync::ColorSync;
 use crate::custom_animated_theme::custom_animated_theme_example;
 use crate::custom_font::custom_font_example;
 use crate::custom_shape_example::custom_shape_example;
+use crate::animated_text_field_example::AnimatedTextFieldExample;
 use crate::custom_text_field_caret_example::CustomTextFieldCaretExample;
 use crate::data_view_example::data_view_example;
 use crate::dnd_completion_example::dnd_completion_example;
@@ -446,6 +447,7 @@ fn build_example(example: ExampleId, app_theme: ThemeData) -> AnyWidget {
         ExampleId::TextArea => TextAreaExample::new().boxed(),
         ExampleId::TextField => TextFieldExample::new().boxed(),
         ExampleId::CustomTextFieldCaret => CustomTextFieldCaretExample::new().boxed(),
+        ExampleId::AnimatedTextField => AnimatedTextFieldExample::new().boxed(),
         ExampleId::Markdown => jaime_markdown_viewer().boxed(),
         ExampleId::CustomMarkdown => custom_markdown_viewer().boxed(),
         ExampleId::Counter => CounterWidget::new(1).boxed(),

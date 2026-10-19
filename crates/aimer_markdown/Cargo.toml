@@ -23,8 +23,46 @@ aimer_input.workspace = true
 aimer_native.workspace = true
 synoptic.workspace = true
 aimer_std.workspace = true
+# Only the 35 most common languages are compiled in: every grammar adds a C
+# parser to the build and to the binary, and `all-languages` pulls in ~110.
+# Aliases such as `py`, `sh`, `yml` and `jsx` resolve to these. Unlisted
+# languages render as plain text.
 arborium = { workspace = true, features = [
-    "all-languages",
+    "lang-rust",
+    "lang-python",
+    "lang-javascript",
+    "lang-typescript",
+    "lang-tsx",
+    "lang-c",
+    "lang-cpp",
+    "lang-c-sharp",
+    "lang-java",
+    "lang-kotlin",
+    "lang-swift",
+    "lang-go",
+    "lang-ruby",
+    "lang-php",
+    "lang-bash",
+    "lang-powershell",
+    "lang-lua",
+    "lang-sql",
+    "lang-html",
+    "lang-css",
+    "lang-scss",
+    "lang-json",
+    "lang-yaml",
+    "lang-toml",
+    "lang-xml",
+    "lang-markdown",
+    "lang-dockerfile",
+    "lang-diff",
+    "lang-haskell",
+    "lang-scala",
+    "lang-dart",
+    "lang-zig",
+    "lang-elixir",
+    "lang-make",
+    "lang-glsl",
 ], optional = true }
 
 [features]

@@ -526,7 +526,7 @@ impl Drawable for RawTextField {
         }
         self.cached_bounds
             .save(scale, abs_x, abs_y, box_width, box_height);
-        self.hovered.set(
+        self.set_hovered(
             self.enable
                 && self
                     .cached_bounds
@@ -863,7 +863,7 @@ impl Drawable for RawTextField {
         // carried across a rebuilt field. The event dispatcher clears the
         // previous hit chain when the pointer moves, while this paint-time
         // check also covers a rebuild that happens without another move.
-        self.hovered.set(
+        self.set_hovered(
             self.enable
                 && self
                     .cached_bounds

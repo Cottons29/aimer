@@ -104,11 +104,19 @@ impl RawTextFieldHost {
         } else {
             CaretPlacement::default()
         };
-        self.caret_placement.set(placement);
+        let previous = self.caret_placement.replace(placement);
+        if previous != placement {
+            // The caret node's transform is read from `pos()` when the render
+            // tree synchronizes, and a synchronization is skipped while nothing
+            // it depends on has moved. The field publishes the caret while it
+            // paints, after this frame's synchronization, so without this the
+            // caret would stay where the previous edit left it.
+            aimer_widget::notify_layout_changed();
+        }
     }
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, PartialEq)]
 struct CaretPlacement {
     offset: Vec2d,
     size: ResolvedSize,

@@ -43,6 +43,7 @@ pub(super) enum ExampleId {
     TextArea,
     TextField,
     CustomTextFieldCaret,
+    AnimatedTextField,
     Markdown,
     CustomMarkdown,
     Counter,
@@ -111,6 +112,7 @@ pub(super) const EXAMPLES: &[ExampleId] = &[
     ExampleId::TextArea,
     ExampleId::TextField,
     ExampleId::CustomTextFieldCaret,
+    ExampleId::AnimatedTextField,
     ExampleId::Markdown,
     ExampleId::CustomMarkdown,
     ExampleId::Counter,
@@ -159,6 +161,7 @@ pub(super) const EXAMPLE_CATEGORIES: &[ExampleCategory] = &[
             ExampleId::TextArea,
             ExampleId::TextField,
             ExampleId::CustomTextFieldCaret,
+            ExampleId::AnimatedTextField,
             ExampleId::SelectableText,
         ],
     },
@@ -290,6 +293,7 @@ impl ExampleId {
             Self::TextArea => "TextArea",
             Self::TextField => "TextField",
             Self::CustomTextFieldCaret => "Custom TextField caret",
+            Self::AnimatedTextField => "Animated TextField",
             Self::Markdown => "Markdown",
             Self::CustomMarkdown => "Custom Markdown",
             Self::Counter => "Stateful counter",
@@ -352,7 +356,8 @@ impl ExampleId {
             | Self::Text
             | Self::TextArea
             | Self::TextField
-            | Self::CustomTextFieldCaret => "T",
+            | Self::CustomTextFieldCaret
+            | Self::AnimatedTextField => "T",
             Self::Window => "▣",
             Self::Resizable => "↗",
             Self::FileDrop => "⇩",
@@ -421,6 +426,7 @@ impl ExampleId {
             Self::TextArea => "text-area",
             Self::TextField => "text-field",
             Self::CustomTextFieldCaret => "custom-text-field-caret",
+            Self::AnimatedTextField => "animated-text-field",
             Self::Markdown => "markdown",
             Self::CustomMarkdown => "custom-markdown",
             Self::Counter => "counter",
@@ -548,6 +554,9 @@ impl ExampleId {
             Self::TextField => "Edit a single line and submit it with Return.",
             Self::CustomTextFieldCaret => {
                 "Replace the builtin insertion cursor with a themed retained widget."
+            }
+            Self::AnimatedTextField => {
+                "Ease a field's label, border and underline from its focus, hover and text."
             }
             Self::Markdown => "Render Jaime's bundled Markdown document.",
             Self::CustomMarkdown => "Render custom blocks, inline widgets, and typed syntax.",

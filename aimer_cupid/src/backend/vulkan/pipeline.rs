@@ -4,6 +4,7 @@ use std::sync::Arc;
 use ash::vk;
 
 use super::*;
+use crate::backend::vulkan_descriptor_kind::{DescriptorKind, descriptor_kind};
 
 pub(super) struct VulkanRenderPassObject {
     pub(super) core: Arc<VulkanCore>,
@@ -549,15 +550,14 @@ pub(super) fn create_compatible_render_pass(
 }
 
 fn binding_descriptor_type(ty: &BindingType) -> vk::DescriptorType {
-    match ty {
-        BindingType::Buffer {
-            ty: BufferBindingType::Uniform,
-            ..
-        } => vk::DescriptorType::UNIFORM_BUFFER,
-        BindingType::Buffer { .. } => vk::DescriptorType::STORAGE_BUFFER,
-        BindingType::Texture { .. } => vk::DescriptorType::SAMPLED_IMAGE,
-        BindingType::Sampler(_) => vk::DescriptorType::SAMPLER,
-        BindingType::StorageTexture { .. } => vk::DescriptorType::STORAGE_IMAGE,
+    match descriptor_kind(ty) {
+        DescriptorKind::UniformBuffer => vk::DescriptorType::UNIFORM_BUFFER,
+        DescriptorKind::UniformBufferDynamic => vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
+        DescriptorKind::StorageBuffer => vk::DescriptorType::STORAGE_BUFFER,
+        DescriptorKind::StorageBufferDynamic => vk::DescriptorType::STORAGE_BUFFER_DYNAMIC,
+        DescriptorKind::SampledImage => vk::DescriptorType::SAMPLED_IMAGE,
+        DescriptorKind::Sampler => vk::DescriptorType::SAMPLER,
+        DescriptorKind::StorageImage => vk::DescriptorType::STORAGE_IMAGE,
     }
 }
 

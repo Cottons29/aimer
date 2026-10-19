@@ -232,6 +232,14 @@ pub(crate) struct RawFieldConfig {
     pub on_blur: TextFieldCallback,
     pub read_only: bool,
     pub padding: LayoutSpacing,
+    /// The frame placed around the field, when it has one.
+    ///
+    /// Read by the field's state, never by the element. A field with chrome is
+    /// mounted without a decoration of its own.
+    pub chrome: Option<Chrome>,
+    /// Shared with the state, which owns it, so that the element can report
+    /// hover, focus and emptiness to the chrome built around it.
+    pub visual: Option<Rc<VisualFlags>>,
 }
 
 /// The widget that mounts a [`RawTextField`] element.
@@ -380,6 +388,9 @@ pub(crate) struct RawTextField {
     pub on_focus: TextFieldCallback,
     pub on_blur: TextFieldCallback,
     pub read_only: bool,
+    /// Told when hover, focus or emptiness changes, so the chrome built around
+    /// this field is rebuilt from them.
+    visual: Option<Rc<VisualFlags>>,
     pub mouse_held: Cell<Option<PointerKey>>,
     pub last_click_time: Cell<AnimInstant>,
     pub last_click_pos: Cell<Option<Vec2d>>,
@@ -591,6 +602,7 @@ impl RawTextField {
             on_focus: config.on_focus,
             on_blur: config.on_blur,
             read_only: config.read_only,
+            visual: config.visual,
             mouse_held: Cell::new(None),
             last_click_time: Cell::new(AnimInstant::now()),
             last_click_pos: Cell::new(None),
@@ -711,6 +723,7 @@ impl RawTextField {
     /// [`auto_focus`]: crate::input_field::text_field::TextField::auto_focus
     fn set_focused(&self, focused: bool) {
         let was_focused = self.focused.replace(focused);
+        self.sync_visual();
         if focused {
             self.reveal_caret.set(true);
             self.enable_platform_ime();
@@ -843,6 +856,7 @@ impl RawTextField {
         self.reveal_caret.set(true);
         self.observed_revision.set(self.controller.revision());
         self.sync_selection_to_area();
+        self.sync_visual();
     }
 
     fn sync_cursor_from_controller(&self) {
@@ -1016,6 +1030,21 @@ impl RawTextField {
 
     fn set_hovered(&self, hovered: bool) {
         self.hovered.set(hovered);
+        self.sync_visual();
+    }
+
+    /// Reports hover, focus and emptiness to the chrome around this field.
+    ///
+    /// Cheap when nothing changed, and a no-op for a field without chrome.
+    #[inline]
+    fn sync_visual(&self) {
+        if let Some(visual) = &self.visual {
+            visual.sync(
+                self.is_hovered(),
+                self.is_focused(),
+                self.controller.value().text().is_empty(),
+            );
+        }
     }
 
     fn active_decoration(&self) -> &BoxDecoration {

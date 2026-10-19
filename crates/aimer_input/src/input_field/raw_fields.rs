@@ -33,6 +33,7 @@ use crate::editable_text::{
 use crate::input_field::caret::{
     CaretBlink, CaretBuilder, CaretContext, CaretGeometry, DefaultCaret,
 };
+use crate::input_field::chrome::{Chrome, VisualFlags};
 use crate::input_field::context_menu::{FieldAction, HoldOutcome, TouchHold};
 use crate::{TextEditingController, TextEditingValue};
 

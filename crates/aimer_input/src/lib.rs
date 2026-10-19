@@ -17,6 +17,7 @@ pub use aimer_text::TextButton;
 pub mod input {
     pub use crate::input_field::caret::*;
     pub use crate::input_field::raw_fields::*;
+    pub use crate::input_field::chrome::TextFieldVisualState;
     pub use crate::input_field::{TextField, TextFieldState};
     pub use crate::{TextArea, TextEditingController, TextEditingValue, TextRange, TextSelection};
 }

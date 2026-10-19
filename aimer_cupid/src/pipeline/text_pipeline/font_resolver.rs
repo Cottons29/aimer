@@ -1088,6 +1088,31 @@ fn path_looks_monospace(path: &Path) -> bool {
         .any(|hint| name.contains(hint))
 }
 
+/// Ranks an Android system font file for the generic sans-serif or monospace
+/// slot; lower ranks are probed first.
+///
+/// `/system/fonts` is a flat directory in which display faces sort ahead of the
+/// UI family (`CarroisGothicSC-Regular.ttf`, a small-caps face, precedes
+/// `Roboto-Regular.ttf`), so taking the first alphabetical face that covers the
+/// probes renders every default-styled string in the wrong typeface. Names follow
+/// the families the platform's `fonts.xml` maps to `sans-serif` and `monospace`.
+#[cfg(any(target_os = "android", test))]
+fn android_font_priority(filename: &str, monospace: bool) -> u8 {
+    const SANS: &[&str] = &[
+        "Roboto-Regular.ttf",
+        "RobotoStatic-Regular.ttf",
+        "GoogleSansText-Regular.ttf",
+        "GoogleSans-Regular.ttf",
+        "DroidSans.ttf",
+    ];
+    const MONOSPACE: &[&str] = &["DroidSansMono.ttf"];
+    let preferred = if monospace { MONOSPACE } else { SANS };
+    preferred
+        .iter()
+        .position(|name| name.eq_ignore_ascii_case(filename))
+        .map_or(preferred.len() as u8, |rank| rank as u8)
+}
+
 #[cfg(all(
     not(any(target_os = "ios", target_os = "macos")),
     not(target_arch = "wasm32")
@@ -1101,6 +1126,15 @@ fn system_font_record_from_paths(
     if prefer_monospace {
         paths.sort_by_key(|path| (!path_looks_monospace(path), path.clone()));
     }
+    #[cfg(target_os = "android")]
+    paths.sort_by_key(|path| {
+        let filename = path.file_name().and_then(|name| name.to_str()).unwrap_or("");
+        (
+            android_font_priority(filename, prefer_monospace),
+            prefer_monospace && !path_looks_monospace(path),
+            path.clone(),
+        )
+    });
     #[cfg(target_os = "windows")]
     if !prefer_monospace {
         // Prefer the Windows UI family over the first alphabetic face (which
@@ -1383,8 +1417,8 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use super::{
-        FallbackScript, any_probe_is_mapped, claim_warm_up, fallback_script_for_codepoint,
-        first_open_match,
+        FallbackScript, any_probe_is_mapped, android_font_priority, claim_warm_up,
+        fallback_script_for_codepoint, first_open_match,
     };
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -1411,6 +1445,39 @@ mod tests {
             Some(FallbackScript::Arabic)
         );
         assert_eq!(fallback_script_for_codepoint('A'), None);
+    }
+
+    #[test]
+    fn android_sans_prefers_roboto_over_alphabetically_earlier_display_faces() {
+        // Pixel images ship CarroisGothicSC (small caps) and AndroidClock ahead of
+        // Roboto in directory order; neither may win the generic sans slot.
+        let mut names = [
+            "AndroidClock.ttf",
+            "CarroisGothicSC-Regular.ttf",
+            "ComingSoon.ttf",
+            "DancingScript-Regular.ttf",
+            "DroidSans.ttf",
+            "Roboto-Regular.ttf",
+            "RobotoFlex-Regular.ttf",
+        ];
+        names.sort_by_key(|name| (android_font_priority(name, false), *name));
+        assert_eq!(names[0], "Roboto-Regular.ttf");
+        assert!(
+            android_font_priority("DroidSans.ttf", false)
+                < android_font_priority("CarroisGothicSC-Regular.ttf", false)
+        );
+    }
+
+    #[test]
+    fn android_monospace_prefers_droid_sans_mono() {
+        assert!(
+            android_font_priority("DroidSansMono.ttf", true)
+                < android_font_priority("CutiveMono.ttf", true)
+        );
+        assert_eq!(
+            android_font_priority("Roboto-Regular.ttf", true),
+            android_font_priority("CutiveMono.ttf", true)
+        );
     }
 
     #[cfg(not(any(target_os = "ios", target_os = "macos")))]

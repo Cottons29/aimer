@@ -501,7 +501,8 @@ impl EventElement for RawTextField {
                     }
                 }
                 ElementEvent::PointerExited(_, _) => {
-                    if self.hovered.replace(false) {
+                    if self.hovered.get() {
+                        self.set_hovered(false);
                         aimer_utils::cursor::reset_cursor();
                         true
                     } else {
