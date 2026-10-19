@@ -16,6 +16,9 @@ mod context_bounds_tests;
 mod render_order_tests;
 #[cfg(test)]
 mod sync_damage_tests;
+mod subtree_extent;
+#[cfg(test)]
+mod subtree_extent_tests;
 mod world;
 #[cfg(test)]
 mod world_tests;
@@ -721,6 +724,9 @@ pub struct DrawCommandList {
     /// the revision. See [`DrawCommandList::frame_at`].
     world_frames: RefCell<Vec<Option<(u64, world::WorldFrame)>>>,
     render_workspace: RefCell<render_order::RenderWorkspace>,
+    /// What each subtree covers, kept for as long as nothing inside it is
+    /// edited. See [`subtree_extent`].
+    extents: RefCell<subtree_extent::ExtentCache>,
 }
 
 impl DrawCommandList {
@@ -794,6 +800,20 @@ impl DrawCommandList {
     fn node_mut(&mut self, id: RenderNodeId) -> Option<&mut RenderNode> {
         let index = *self.indices.get(&id)?;
         self.geometry_revision = self.geometry_revision.wrapping_add(1);
+        self.mark_extent_stale(index, true);
+        self.nodes.get_mut(index)
+    }
+
+    /// Hands out a node for an edit to its own `transform` or presentation only.
+    ///
+    /// Like [`Self::node_mut`], but the node's measured extent stays valid: an
+    /// extent is taken before the node's own placement, so only what is above
+    /// the node, which places it, is measured again. An edit to anything else
+    /// about the node must use `node_mut`.
+    fn node_mut_placement(&mut self, id: RenderNodeId) -> Option<&mut RenderNode> {
+        let index = *self.indices.get(&id)?;
+        self.geometry_revision = self.geometry_revision.wrapping_add(1);
+        self.mark_extent_stale(index, false);
         self.nodes.get_mut(index)
     }
 
@@ -1340,17 +1360,17 @@ impl RenderTree {
         if old_transform == transform {
             return Ok(());
         }
-        let old_bounds = tree.visible_subtree_bounds(element);
-        tree.node_mut(element)
+        let old_bounds = tree.damage_footprint(element);
+        tree.node_mut_placement(element)
             .ok_or(RenderTreeError::UnknownNode(element))?
             .transform = transform;
-        if tree.subtree_bounds(element).is_none() {
-            tree.node_mut(element)
+        if !tree.subtree_is_finite(element) {
+            tree.node_mut_placement(element)
                 .ok_or(RenderTreeError::UnknownNode(element))?
                 .transform = old_transform;
             return Err(RenderTreeError::InvalidTransform);
         }
-        let new_bounds = tree.visible_subtree_bounds(element);
+        let new_bounds = tree.damage_footprint(element);
         if let Some(damage) = old_bounds.into_iter().chain(new_bounds).reduce(Rect::union) {
             tree.push_damage(damage);
         }
@@ -1383,21 +1403,21 @@ impl RenderTree {
         }
         let old_transform = node.presentation_transform;
         let old_opacity = node.presentation_opacity;
-        let old_bounds = tree.visible_subtree_bounds(element);
+        let old_bounds = tree.damage_footprint(element);
         let node = tree
-            .node_mut(element)
+            .node_mut_placement(element)
             .ok_or(RenderTreeError::UnknownNode(element))?;
         node.presentation_transform = transform;
         node.presentation_opacity = opacity;
-        if tree.subtree_bounds(element).is_none() {
+        if !tree.subtree_is_finite(element) {
             let node = tree
-                .node_mut(element)
+                .node_mut_placement(element)
                 .ok_or(RenderTreeError::UnknownNode(element))?;
             node.presentation_transform = old_transform;
             node.presentation_opacity = old_opacity;
             return Err(RenderTreeError::InvalidTransform);
         }
-        let new_bounds = tree.visible_subtree_bounds(element);
+        let new_bounds = tree.damage_footprint(element);
         if let Some(damage) = old_bounds.into_iter().chain(new_bounds).reduce(Rect::union) {
             tree.push_damage(damage);
         }

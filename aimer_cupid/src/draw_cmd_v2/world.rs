@@ -21,11 +21,11 @@ use super::*;
 #[derive(Clone, Copy)]
 pub(super) struct WorldFrame {
     /// World-space origin of the node's local coordinate space.
-    origin: (f32, f32),
+    pub(super) origin: (f32, f32),
     /// Cumulative transform from untransformed world space to display space.
-    transform: Mat3,
+    pub(super) transform: Mat3,
     /// The clip inherited from ancestors, including the node's own clips.
-    clip: ClipState,
+    pub(super) clip: ClipState,
 }
 
 impl WorldFrame {
@@ -72,7 +72,7 @@ impl RenderNode {
     /// ancestor are never read, and finding them takes four point transforms
     /// and the checks that go with them.
     #[inline]
-    fn frame(&self, parent: &WorldFrame) -> WorldFrame {
+    pub(super) fn frame(&self, parent: &WorldFrame) -> WorldFrame {
         #[cfg(test)]
         FRAME_DERIVATIONS.with(|count| count.set(count.get() + 1));
         let (x, y) = (
