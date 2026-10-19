@@ -31,15 +31,19 @@ func trigger_rust_text_editing_delta(
     _ composingEnd: Int
 )
 
+// Every `@_cdecl` below is `public` on purpose. Rust reaches the keyboard
+// shims with `dlsym`, which only sees exported symbols, and a Release build
+// (whole-module optimization) gives an `internal` function hidden visibility.
+// Without `public` the soft keyboard silently never appears in Release.
 @_cdecl("aimer_ios_show_keyboard")
-func aimer_ios_show_keyboard() {
+public func aimer_ios_show_keyboard() {
     DispatchQueue.main.async {
         KeyboardForwarder.shared.showKeyboard()
     }
 }
 
 @_cdecl("aimer_ios_dismiss_keyboard")
-func aimer_ios_dismiss_keyboard() {
+public func aimer_ios_dismiss_keyboard() {
     DispatchQueue.main.async {
         KeyboardForwarder.shared.dismissKeyboard()
     }
@@ -54,7 +58,7 @@ func aimer_ios_dismiss_keyboard() {
 // bytes; it returns the number of bytes written, or 0 when no keyboard is up
 // or the tag does not fit.
 @_cdecl("aimer_ios_input_language")
-func aimer_ios_input_language(_ buffer: UnsafeMutablePointer<UInt8>?, _ capacity: Int) -> Int {
+public func aimer_ios_input_language(_ buffer: UnsafeMutablePointer<UInt8>?, _ capacity: Int) -> Int {
     guard let buffer, capacity > 0 else { return 0 }
     let utf8 = Array(KeyboardForwarder.shared.inputLanguageTag.utf8)
     guard !utf8.isEmpty, utf8.count <= capacity else { return 0 }
@@ -65,7 +69,7 @@ func aimer_ios_input_language(_ buffer: UnsafeMutablePointer<UInt8>?, _ capacity
 }
 
 @_cdecl("aimer_ios_sync_text_state")
-func aimer_ios_sync_text_state(
+public func aimer_ios_sync_text_state(
     _ sessionId: UInt64,
     _ revision: UInt64,
     _ utf8Ptr: UnsafePointer<UInt8>?,
@@ -136,14 +140,14 @@ final class FrameDriver {
 }
 
 @_cdecl("aimer_ios_request_frame")
-func aimer_ios_request_frame() {
+public func aimer_ios_request_frame() {
     DispatchQueue.main.async {
         FrameDriver.shared.requestFrame()
     }
 }
 
 @_cdecl("aimer_ios_pause_frames")
-func aimer_ios_pause_frames() {
+public func aimer_ios_pause_frames() {
     DispatchQueue.main.async {
         FrameDriver.shared.pause()
     }

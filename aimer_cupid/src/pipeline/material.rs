@@ -12,9 +12,38 @@ pub const MATERIAL_PACKET_VERSION: u8 = 3;
 /// The exact size of one encoded material request.
 pub const MATERIAL_PACKET_LEN: usize = 256;
 /// Maximum intermediate texture dimension used by one surface.
-pub const MAX_INTERMEDIATE_DIMENSION: u32 = 2_048;
+///
+/// iOS devices get a larger budget; see [`intermediate_pixel_budget`].
+pub const MAX_INTERMEDIATE_DIMENSION: u32 = intermediate_dimension_budget(cfg!(target_os = "ios"));
 /// Maximum intermediate RGBA pixels used by one surface.
-pub const MAX_INTERMEDIATE_PIXELS: u64 = 4 * 1024 * 1024;
+///
+/// iOS devices get a larger budget; see [`intermediate_pixel_budget`].
+pub const MAX_INTERMEDIATE_PIXELS: u64 = intermediate_pixel_budget(cfg!(target_os = "ios"));
+
+/// The intermediate pixel budget for a device class.
+///
+/// A backdrop capture is clamped to the viewport, so the largest one a
+/// material can request is a full screen. The conservative 4 Mpx budget (16 MB
+/// of RGBA, doubled while a blur runs) fits every phone, but not an iPad:
+/// the 13-inch Pro is 2064 x 2752 = 5.7 Mpx, and a surface over budget is not
+/// rendered as a material at all. 8 Mpx covers every shipping iPad with room
+/// for the blur padding. Textures are sized to the regions actually captured,
+/// so the larger budget costs memory only when such a surface is on screen.
+pub const fn intermediate_pixel_budget(roomy_device: bool) -> u64 {
+    if roomy_device {
+        8 * 1024 * 1024
+    } else {
+        4 * 1024 * 1024
+    }
+}
+
+/// The intermediate texture dimension limit for a device class.
+///
+/// Replacement effects use the hardware limit; this bounds the downsampled
+/// Glass and Liquid surfaces, whose long edge on an iPad exceeds 2,048.
+pub const fn intermediate_dimension_budget(roomy_device: bool) -> u32 {
+    if roomy_device { 4_096 } else { 2_048 }
+}
 
 /// Selects the surface family.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

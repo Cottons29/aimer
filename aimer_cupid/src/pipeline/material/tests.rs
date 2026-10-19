@@ -466,3 +466,38 @@ fn glass_shader_skips_unneeded_backdrop_reads() {
         .expect("liquid refraction sample");
     assert!(liquid_branch < refracted_sample);
 }
+
+// The largest iPad (13-inch Pro) in physical pixels. A capture is clamped to
+// the viewport, so this is the biggest intermediate a material can ask for.
+const LARGEST_IPAD: (u32, u32) = (2_064, 2_752);
+
+#[test]
+fn the_default_budget_was_too_small_for_a_full_screen_capture_on_the_largest_ipad() {
+    let pixels = u64::from(LARGEST_IPAD.0) * u64::from(LARGEST_IPAD.1);
+    assert!(intermediate_pixel_budget(false) < pixels);
+    assert!(intermediate_dimension_budget(false) < LARGEST_IPAD.1);
+}
+
+#[test]
+fn the_ios_budget_holds_a_full_screen_capture_on_the_largest_ipad() {
+    let pixels = u64::from(LARGEST_IPAD.0) * u64::from(LARGEST_IPAD.1);
+    assert!(intermediate_pixel_budget(true) >= pixels);
+    assert!(intermediate_dimension_budget(true) >= LARGEST_IPAD.1);
+}
+
+#[test]
+fn other_platforms_keep_the_conservative_budget() {
+    assert_eq!(intermediate_pixel_budget(false), 4 * 1024 * 1024);
+    assert_eq!(intermediate_dimension_budget(false), 2_048);
+}
+
+#[test]
+fn default_capabilities_follow_the_platform_budget() {
+    let capabilities = MaterialCapabilities::default();
+    assert_eq!(capabilities.max_intermediate_pixels, MAX_INTERMEDIATE_PIXELS);
+    assert_eq!(capabilities.max_surface_dimension, MAX_INTERMEDIATE_DIMENSION);
+    assert_eq!(
+        MAX_INTERMEDIATE_PIXELS,
+        intermediate_pixel_budget(cfg!(target_os = "ios"))
+    );
+}
