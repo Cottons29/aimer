@@ -354,6 +354,9 @@ struct FocusTarget {
 impl Widget for FocusTarget {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
         let child = self.child.to_element(ctx);
+        if self.behavior.is_autofocus() {
+            self.node.announce_autofocus();
+        }
         RawFocusable {
             node: self.node,
             on_focus: self.on_focus,
@@ -422,6 +425,9 @@ impl RawFocusable {
     #[inline]
     pub fn behavior(mut self, behavior: FocusBehavior) -> Self {
         self.behavior = behavior;
+        if behavior.is_autofocus() {
+            self.node.announce_autofocus();
+        }
         self
     }
 
@@ -1405,6 +1411,109 @@ mod tests {
 
         node.request_focus();
         hover(&mut dispatcher, &root, OUTSIDE);
+
+        assert!(node.has_focus());
+    }
+
+    /// A text field takes a press through the focus system and consumes nothing,
+    /// so whether a press landed on a focus target is how a host tells a press an
+    /// element took from one that fell through to the window behind.
+    #[tokio::test]
+    async fn a_press_reports_whether_it_landed_on_a_focus_target() {
+        let node = FocusNode::new();
+        let ctx = context();
+        let root = Focusable::new()
+            .node(node.clone())
+            .child(child())
+            .to_element(&ctx);
+        let mut dispatcher = EventDispatcher::new();
+        assert!(!dispatcher.last_press_hit_focus_target());
+
+        press(&mut dispatcher, &root, OUTSIDE);
+        assert!(!dispatcher.last_press_hit_focus_target());
+
+        press(&mut dispatcher, &root, INSIDE);
+        assert!(dispatcher.last_press_hit_focus_target());
+
+        press(&mut dispatcher, &root, OUTSIDE);
+        assert!(
+            !dispatcher.last_press_hit_focus_target(),
+            "the answer is about the latest press"
+        );
+    }
+
+    /// A region that asks for focus when it appears is granted it by the frame
+    /// that built it. Nothing has to be pressed, moved or typed first: before
+    /// this, the grant waited for the next input event, so a field focusing
+    /// itself on arrival heard about it — and, say, started its focus
+    /// animation — only once the user touched something.
+    #[tokio::test]
+    async fn an_automatic_region_is_settled_without_an_event() {
+        let gained = Rc::new(Cell::new(0));
+        let node = FocusNode::new();
+        let ctx = context();
+        let root = Focusable::new()
+            .node(node.clone())
+            .behavior(FocusBehavior::Auto)
+            .on_focus({
+                let gained = Rc::clone(&gained);
+                move || gained.set(gained.get() + 1)
+            })
+            .child(child())
+            .to_element(&ctx);
+        let mut dispatcher = EventDispatcher::new();
+        assert!(
+            dispatcher.has_pending_focus_work(),
+            "an automatic region owes the frame a focus grant"
+        );
+
+        let result = dispatcher.settle_focus(root.as_ref());
+
+        assert!(node.has_focus());
+        assert_eq!(gained.get(), 1, "the region is told it gained focus");
+        assert!(result.needs_redraw(), "the focused look needs a frame");
+        assert!(!dispatcher.has_pending_focus_work());
+
+        let _ = dispatcher.settle_focus(root.as_ref());
+        assert_eq!(gained.get(), 1, "an edge is reported once");
+    }
+
+    /// Settling costs counters alone while nobody has asked for anything, so the
+    /// frame loop can ask on every frame.
+    #[tokio::test]
+    async fn a_region_that_never_asked_leaves_nothing_to_settle() {
+        let ctx = context();
+        let node = FocusNode::new();
+        let root = Focusable::new()
+            .node(node.clone())
+            .child(child())
+            .to_element(&ctx);
+        let mut dispatcher = EventDispatcher::new();
+
+        assert!(!dispatcher.has_pending_focus_work());
+        let result = dispatcher.settle_focus(root.as_ref());
+
+        assert!(!node.has_focus());
+        assert!(!result.needs_redraw());
+    }
+
+    /// A node asked to focus from outside any event — a timer, a finished task
+    /// — is granted at the next settle rather than at the next tap.
+    #[tokio::test]
+    async fn a_focus_request_made_outside_an_event_is_settled() {
+        let node = FocusNode::new();
+        let ctx = context();
+        let root = Focusable::new()
+            .node(node.clone())
+            .child(child())
+            .to_element(&ctx);
+        let mut dispatcher = EventDispatcher::new();
+        let _ = dispatcher.settle_focus(root.as_ref());
+        assert!(!node.has_focus());
+
+        node.request_focus();
+        assert!(dispatcher.has_pending_focus_work());
+        let _ = dispatcher.settle_focus(root.as_ref());
 
         assert!(node.has_focus());
     }

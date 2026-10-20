@@ -1,7 +1,7 @@
 use aimer_attribute::position::Vec2d;
 use aimer_events::element::{ElementEvent, KeyAction, Modifiers, NamedKey};
 use aimer_events::pointer::{FILE_DRAG_POINTER_ID, PointerButton, PointerInfo, PointerSource};
-use aimer_widget::{EventResult, PointerKey, Widget};
+use aimer_widget::{CaptureRequest, EventResult, PointerKey, Widget};
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{
     ElementState, Ime, KeyEvent, MouseButton, MouseScrollDelta, Touch, TouchPhase, WindowEvent,
@@ -13,6 +13,25 @@ use crate::handler::system_back::{self, BackKey};
 use crate::handler::{AimerApplicationHandler, platform_gesture};
 
 pub struct WindowEventHandler;
+
+/// Whether a press begins a drag of the window.
+///
+/// Only the primary button drags, only from inside the strip at the top of the
+/// window — `band` points tall, `None` when the framework does not own window
+/// dragging — and only when nothing `claimed` the press. A pointer that is
+/// outside the window, which is reported far above and left of it, is in no
+/// strip.
+#[inline]
+fn press_starts_window_drag(
+    band: Option<f32>,
+    pos: Vec2d,
+    button: PointerButton,
+    claimed: bool,
+) -> bool {
+    button == PointerButton::Primary
+        && !claimed
+        && band.is_some_and(|band| pos.x >= 0.0 && pos.y >= 0.0 && pos.y < band)
+}
 
 pub(crate) const CURSOR_OUTSIDE_POSITION: Vec2d = Vec2d {
     x: f32::MIN,
@@ -414,6 +433,9 @@ impl WindowEventHandler {
         }
         app.cursor_pos = new_pos;
         app.touch_pointer = false;
+        if Self::move_window_with_pointer(app, new_pos) {
+            return;
+        }
         // Aiming at another target ends the scroll intent. A browser never
         // reports the lift, so a real pointer move is the only evidence that
         // the next wheel event belongs to a new gesture.
@@ -508,6 +530,9 @@ impl WindowEventHandler {
         // Remembered so a move or release during a drag reports the button that
         // started it, which a hover-time move has no way of knowing.
         app.pressed_button = pressed.then_some(button);
+        if !pressed && button == PointerButton::Primary {
+            app.macos_windowing.end_window_drag();
+        }
 
         let event = if pressed {
             ElementEvent::PointerDown(pointer)
@@ -523,10 +548,70 @@ impl WindowEventHandler {
                     result = result.merge(app.broadcast_element_event(&event));
                 }
             }
+            if pressed {
+                Self::start_window_drag_if_unclaimed(app, c, button, result);
+            }
             if Self::should_redraw(result, true) {
                 app.request_animation_frame();
             }
         }
+    }
+
+    /// Starts moving the window with the pointer when no element claimed the
+    /// press and it landed in the strip the framework drags the window from.
+    ///
+    /// The platform used to decide this alone: for a window whose content runs
+    /// under the titlebar, AppKit moved the window for any press in the strip
+    /// before the application heard of it, so a button or a field there dragged
+    /// the window as well as being pressed. Elements now have the press first.
+    /// A press one of them consumed, captured the pointer for, or took as a
+    /// focus target (a text field consumes nothing) is theirs; only one that was
+    /// left over starts the drag, which the framework carries out
+    /// itself as the pointer moves; see [`Self::move_window_with_pointer`].
+    fn start_window_drag_if_unclaimed<W: Widget + 'static>(
+        app: &mut AimerApplicationHandler<W>,
+        pos: Vec2d,
+        button: PointerButton,
+        result: EventResult,
+    ) -> bool {
+        let claimed = result.is_consumed()
+            || !matches!(result.capture_request(), CaptureRequest::None)
+            || app.event_dispatcher.last_press_hit_focus_target()
+            || app
+                .event_dispatcher
+                .is_captured(PointerKey::new(PointerSource::Mouse, 0));
+        if !press_starts_window_drag(app.macos_windowing.window_drag_height(), pos, button, claimed)
+        {
+            return false;
+        }
+        app.macos_windowing.begin_window_drag((pos.x, pos.y));
+        true
+    }
+
+    /// Moves the window with the pointer while a drag the framework started is
+    /// under way, and reports whether it did, in which case the move is not
+    /// delivered to the elements: the window is what moves, and the pointer's
+    /// position inside it changes with every step.
+    ///
+    /// A drag only lives while the primary button is held. One whose release
+    /// the application never saw — focus was lost mid-drag — would otherwise
+    /// carry the window along with an idle pointer.
+    fn move_window_with_pointer<W: Widget + 'static>(
+        app: &mut AimerApplicationHandler<W>,
+        pos: Vec2d,
+    ) -> bool {
+        if !app.macos_windowing.window_drag_active() {
+            return false;
+        }
+        if app.pressed_button != Some(PointerButton::Primary) {
+            app.macos_windowing.end_window_drag();
+            return false;
+        }
+        if let Some(window) = app.window.as_ref().and_then(|window| window.native_window()) {
+            app.macos_windowing
+                .move_window_with_pointer(window, (pos.x, pos.y));
+        }
+        true
     }
 
     fn handle_keyboard_input<W: Widget + 'static>(

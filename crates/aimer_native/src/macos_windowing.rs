@@ -62,6 +62,34 @@ fn traffic_light_layout(
     }
 }
 
+/// Where the window's outer origin has to be, in physical pixels, for the point
+/// of it that the pointer took hold of — `grab`, in logical points from the
+/// window's top-left corner — to be under the pointer now at `cursor`, reported
+/// in the same space relative to the window where it is now.
+///
+/// The pointer's position is relative to the window and the window is what is
+/// being moved, so the correction is the difference between where the pointer
+/// is and where it took hold, applied to wherever the window is.
+fn dragged_origin(outer: (i32, i32), grab: (f32, f32), cursor: (f32, f32), scale: f64) -> (i32, i32) {
+    let shift = |outer: i32, grab: f32, cursor: f32| {
+        (f64::from(outer) + f64::from(cursor - grab) * scale).round() as i32
+    };
+    (shift(outer.0, grab.0, cursor.0), shift(outer.1, grab.1, cursor.1))
+}
+
+/// Picks the height of the strip a press drags the window from: what the
+/// application asked for, else the strip the traffic lights were laid out in,
+/// else the standard titlebar. A height of zero leaves no strip at all.
+#[cfg(any(target_os = "macos", test))]
+fn resolve_drag_band(
+    requested: Option<f64>,
+    traffic_lights: Option<f64>,
+    standard: f64,
+) -> Option<f64> {
+    let height = requested.or(traffic_lights).unwrap_or(standard);
+    (height > 0.0).then_some(height)
+}
+
 /// Declarative macOS window customization installed during Aimer startup.
 ///
 /// Build the desired configuration and call [`Self::install`] from
@@ -98,6 +126,15 @@ pub struct MacosWindowing {
     has_shadow: Option<bool>,
     accepts_first_mouse: Option<bool>,
     traffic_light_position: Option<TrafficLightPosition>,
+    native_titlebar_drag: Option<bool>,
+    titlebar_drag_height: Option<f64>,
+    /// The band measured from the created window, in logical points; see
+    /// [`Self::window_drag_height`].
+    drag_band: Option<f64>,
+    /// The point of the window, in logical points from its top-left corner,
+    /// that the pointer took hold of; present while the framework is moving
+    /// the window.
+    window_drag: Option<(f32, f32)>,
     #[cfg(any(target_os = "macos", test))]
     traffic_light_layout_state: TrafficLightLayoutState,
     on_created: Option<WindowCreated>,
@@ -117,6 +154,10 @@ impl MacosWindowing {
             has_shadow: None,
             accepts_first_mouse: None,
             traffic_light_position: None,
+            native_titlebar_drag: None,
+            titlebar_drag_height: None,
+            drag_band: None,
+            window_drag: None,
             #[cfg(any(target_os = "macos", test))]
             traffic_light_layout_state: TrafficLightLayoutState::default(),
             on_created: None,
@@ -207,6 +248,43 @@ impl MacosWindowing {
         self
     }
 
+    /// Keeps AppKit in charge of dragging the window by its titlebar.
+    ///
+    /// When [`Self::fullsize_content_view`] puts the content under the titlebar,
+    /// Aimer takes window dragging over: AppKit would otherwise move the window
+    /// for any press in the titlebar strip before the application could say that
+    /// a button or a field there had been pressed instead. Aimer turns AppKit's
+    /// dragging off and starts the drag itself, from a press that no element
+    /// claimed. Pass `true` to leave AppKit's behavior as it is, at the price of
+    /// elements in the strip not being able to take a press from it.
+    #[inline]
+    pub fn native_titlebar_drag(mut self, native: bool) -> Self {
+        self.native_titlebar_drag = Some(native);
+        self
+    }
+
+    /// Sets the height, in logical points, of the strip at the top of the window
+    /// that a press drags the window from when no element claims it.
+    ///
+    /// The default is the height of the titlebar: the strip the traffic lights
+    /// are centred in when [`Self::traffic_light_position`] is set, and
+    /// AppKit's standard titlebar height otherwise. It only matters when
+    /// [`Self::fullsize_content_view`] is on, which is when Aimer owns window
+    /// dragging; see [`Self::native_titlebar_drag`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if `height` is negative, NaN or infinite.
+    #[inline]
+    pub fn titlebar_drag_height(mut self, height: f64) -> Self {
+        assert!(
+            height.is_finite() && height >= 0.0,
+            "titlebar drag height must be finite and not negative"
+        );
+        self.titlebar_drag_height = Some(height);
+        self
+    }
+
     /// Registers advanced one-time customization for the created `NSWindow`.
     ///
     /// The callback runs on Aimer's event-loop thread immediately after window
@@ -237,6 +315,86 @@ impl MacosWindowing {
     #[cfg(not(target_os = "macos"))]
     #[inline]
     pub fn install(self) {}
+
+    /// Whether Aimer, not AppKit, decides when a press in the titlebar strip
+    /// drags the window.
+    #[inline]
+    fn framework_owns_titlebar_drag(&self) -> bool {
+        self.fullsize_content_view == Some(true)
+            && self.native_titlebar_drag != Some(true)
+            && self.movable_by_window_background != Some(true)
+    }
+
+    /// The height of the strip, in logical points from the top of the window,
+    /// that the framework drags the window from, or `None` when it does not
+    /// own dragging.
+    ///
+    /// A press in the strip that no element consumed or captured starts a
+    /// window drag; one an element claimed stays that element's.
+    #[doc(hidden)]
+    #[inline]
+    pub fn window_drag_height(&self) -> Option<f32> {
+        if !self.framework_owns_titlebar_drag() {
+            return None;
+        }
+        self.titlebar_drag_height
+            .or(self.drag_band)
+            .filter(|height| *height > 0.0)
+            .map(|height| height as f32)
+    }
+
+    /// Starts moving the window with the pointer, which took hold of the point
+    /// `grab` of it: logical points from the window's top-left corner.
+    ///
+    /// The framework moves the window itself rather than handing the press to
+    /// AppKit. AppKit decides whether a press drags the window before the press
+    /// reaches the content, and it cannot be told afterwards that an element
+    /// took it; see [`Self::native_titlebar_drag`].
+    #[doc(hidden)]
+    #[inline]
+    pub fn begin_window_drag(&mut self, grab: (f32, f32)) {
+        self.window_drag = Some(grab);
+    }
+
+    /// Returns whether the framework is moving the window.
+    #[doc(hidden)]
+    #[inline]
+    pub fn window_drag_active(&self) -> bool {
+        self.window_drag.is_some()
+    }
+
+    /// Returns the point of the window the pointer took hold of, if it is
+    /// being moved.
+    #[doc(hidden)]
+    #[inline]
+    pub fn window_drag_grab(&self) -> Option<(f32, f32)> {
+        self.window_drag
+    }
+
+    /// Stops moving the window.
+    #[doc(hidden)]
+    #[inline]
+    pub fn end_window_drag(&mut self) {
+        self.window_drag = None;
+    }
+
+    /// Moves `window` so the point the pointer took hold of is under `cursor`,
+    /// which is the pointer's position in logical points from the window's
+    /// top-left corner. Does nothing when no drag is active, or when the
+    /// platform cannot report or set the window's position.
+    #[doc(hidden)]
+    pub fn move_window_with_pointer(&self, window: &Window, cursor: (f32, f32)) {
+        let Some(grab) = self.window_drag else {
+            return;
+        };
+        let Ok(outer) = window.outer_position() else {
+            return;
+        };
+        let (x, y) = dragged_origin((outer.x, outer.y), grab, cursor, window.scale_factor());
+        if (x, y) != (outer.x, outer.y) {
+            window.set_outer_position(winit::dpi::PhysicalPosition::new(x, y));
+        }
+    }
 
     #[doc(hidden)]
     #[cfg(target_os = "macos")]
@@ -279,15 +437,30 @@ impl MacosWindowing {
     #[doc(hidden)]
     #[cfg(target_os = "macos")]
     pub fn window_created(&mut self, window: &Window) {
-        if self.traffic_light_position.is_none() && self.on_created.is_none() {
+        if self.traffic_light_position.is_none()
+            && self.on_created.is_none()
+            && !self.framework_owns_titlebar_drag()
+        {
             return;
         }
         let Some(native_window) = native_window(window) else {
             return;
         };
 
-        if let Some(position) = self.traffic_light_position {
-            apply_traffic_light_position(&native_window, position);
+        let traffic_light_height = self
+            .traffic_light_position
+            .and_then(|position| apply_traffic_light_position(&native_window, position));
+        if self.framework_owns_titlebar_drag() {
+            // AppKit would move the window for any press in the titlebar strip,
+            // whatever the application did with it. With dragging off, the press
+            // reaches the elements first, and the framework starts the drag from
+            // the ones nobody claimed.
+            native_window.setMovable(false);
+            self.drag_band = resolve_drag_band(
+                self.titlebar_drag_height,
+                traffic_light_height,
+                standard_titlebar_height(&native_window),
+            );
         }
         let Some(callback) = self.on_created.take() else {
             return;
@@ -366,30 +539,23 @@ fn native_window(window: &Window) -> Option<objc2::rc::Retained<objc2_app_kit::N
 }
 
 #[cfg(target_os = "macos")]
-fn apply_traffic_light_position(window: &objc2_app_kit::NSWindow, position: TrafficLightPosition) {
+fn apply_traffic_light_position(
+    window: &objc2_app_kit::NSWindow,
+    position: TrafficLightPosition,
+) -> Option<f64> {
     use objc2_app_kit::NSWindowButton;
     use objc2_foundation::NSPoint;
 
-    let Some(close) = window.standardWindowButton(NSWindowButton::CloseButton) else {
-        return;
-    };
-    let Some(minimize) = window.standardWindowButton(NSWindowButton::MiniaturizeButton) else {
-        return;
-    };
-    let Some(zoom) = window.standardWindowButton(NSWindowButton::ZoomButton) else {
-        return;
-    };
+    let close = window.standardWindowButton(NSWindowButton::CloseButton)?;
+    let minimize = window.standardWindowButton(NSWindowButton::MiniaturizeButton)?;
+    let zoom = window.standardWindowButton(NSWindowButton::ZoomButton)?;
 
     // SAFETY: AppKit owns the titlebar hierarchy. The retained views returned
     // here remain valid for this main-thread layout operation.
-    let Some(buttons_view) = (unsafe { close.superview() }) else {
-        return;
-    };
+    let buttons_view = unsafe { close.superview() }?;
     // SAFETY: Same ownership invariant as above; this is the titlebar container
     // that AppKit may recreate or resize during a native window relayout.
-    let Some(titlebar_view) = (unsafe { buttons_view.superview() }) else {
-        return;
-    };
+    let titlebar_view = unsafe { buttons_view.superview() }?;
 
     let close_frame = close.frame();
     let minimize_frame = minimize.frame();
@@ -422,6 +588,15 @@ fn apply_traffic_light_position(window: &objc2_app_kit::NSWindow, position: Traf
         x: layout.button_origins[2].0,
         y: layout.button_origins[2].1,
     });
+    Some(layout.titlebar_height)
+}
+
+/// The height AppKit gives the titlebar of `window`, which a full-size content
+/// view lays out under: what is left of the frame once the content layout
+/// rectangle is taken.
+#[cfg(target_os = "macos")]
+fn standard_titlebar_height(window: &objc2_app_kit::NSWindow) -> f64 {
+    (window.frame().size.height - window.contentLayoutRect().size.height).max(0.0)
 }
 
 impl Default for MacosWindowing {
@@ -527,6 +702,116 @@ mod tests {
             Some(super::TrafficLightPosition { x: 16.0, y: 14.0 })
         );
         assert!(windowing.on_created.is_some());
+    }
+
+    #[test]
+    fn the_framework_does_not_own_window_dragging_by_default() {
+        assert_eq!(MacosWindowing::new().window_drag_height(), None);
+        assert_eq!(
+            MacosWindowing::new()
+                .titlebar_drag_height(40.0)
+                .window_drag_height(),
+            None,
+            "a titlebar that is not under the content keeps AppKit's own dragging"
+        );
+    }
+
+    #[test]
+    fn content_under_the_titlebar_hands_dragging_to_the_framework() {
+        let windowing = MacosWindowing::new()
+            .fullsize_content_view(true)
+            .titlebar_drag_height(42.0);
+
+        assert_eq!(windowing.window_drag_height(), Some(42.0));
+    }
+
+    #[test]
+    fn the_band_is_unknown_until_the_window_has_measured_its_titlebar() {
+        assert_eq!(
+            MacosWindowing::new()
+                .fullsize_content_view(true)
+                .window_drag_height(),
+            None
+        );
+    }
+
+    #[test]
+    fn an_application_can_keep_appkit_in_charge_of_dragging() {
+        let native = MacosWindowing::new()
+            .fullsize_content_view(true)
+            .titlebar_drag_height(42.0)
+            .native_titlebar_drag(true);
+        let background = MacosWindowing::new()
+            .fullsize_content_view(true)
+            .titlebar_drag_height(42.0)
+            .movable_by_window_background(true);
+
+        assert_eq!(native.window_drag_height(), None);
+        assert_eq!(background.window_drag_height(), None);
+    }
+
+    #[test]
+    fn the_band_prefers_what_was_asked_then_the_traffic_lights_then_the_standard_titlebar() {
+        assert_eq!(super::resolve_drag_band(Some(50.0), Some(42.0), 28.0), Some(50.0));
+        assert_eq!(super::resolve_drag_band(None, Some(42.0), 28.0), Some(42.0));
+        assert_eq!(super::resolve_drag_band(None, None, 28.0), Some(28.0));
+        assert_eq!(
+            super::resolve_drag_band(None, None, 0.0),
+            None,
+            "a window with no titlebar has no band to drag from"
+        );
+        assert_eq!(super::resolve_drag_band(Some(0.0), Some(42.0), 28.0), None);
+    }
+
+    #[test]
+    #[should_panic(expected = "titlebar drag height must be finite and not negative")]
+    fn the_drag_height_rejects_a_negative_value() {
+        let _ = MacosWindowing::new().titlebar_drag_height(-1.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "titlebar drag height must be finite and not negative")]
+    fn the_drag_height_rejects_a_non_finite_value() {
+        let _ = MacosWindowing::new().titlebar_drag_height(f64::NAN);
+    }
+
+    #[test]
+    fn a_dragged_window_keeps_the_grabbed_point_under_the_pointer() {
+        // At rest the window stays where it is.
+        assert_eq!(
+            super::dragged_origin((100, 200), (30.0, 20.0), (30.0, 20.0), 2.0),
+            (100, 200)
+        );
+        // The pointer moved (10, 4) logical points inside the window, which is
+        // (20, 8) physical pixels on a 2x display, so the window follows.
+        assert_eq!(
+            super::dragged_origin((100, 200), (30.0, 20.0), (40.0, 24.0), 2.0),
+            (120, 208)
+        );
+        assert_eq!(
+            super::dragged_origin((100, 200), (30.0, 20.0), (25.0, 10.0), 1.0),
+            (95, 190)
+        );
+        assert_eq!(
+            super::dragged_origin((0, 0), (0.0, 0.0), (0.4, 0.6), 1.0),
+            (0, 1)
+        );
+    }
+
+    #[test]
+    fn a_drag_lasts_from_the_press_to_the_release() {
+        let mut windowing = MacosWindowing::new();
+        assert!(!windowing.window_drag_active());
+        assert_eq!(windowing.window_drag_grab(), None);
+
+        windowing.begin_window_drag((30.0, 20.0));
+        assert!(windowing.window_drag_active());
+        assert_eq!(windowing.window_drag_grab(), Some((30.0, 20.0)));
+
+        windowing.end_window_drag();
+        assert!(!windowing.window_drag_active());
+        windowing.end_window_drag();
+        assert!(!windowing.window_drag_active(), "ending twice is harmless");
     }
 
     #[test]

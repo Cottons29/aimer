@@ -33,6 +33,8 @@ pub use document::{Alignment, Block, Document, Inline, ListItem, MarkdownError, 
 pub use markdown_theme::MarkdownTheme;
 pub use renderer::{ImageResolver, LinkHandler, MarkdownImage, default_image_resolver};
 pub use syntax::{CaptureSpan, highlight};
+#[cfg(feature = "syntect")]
+pub use syntax::{add_syntax_from_dir, add_syntax_from_file, add_syntax_from_str};
 
 const DOCUMENT_CACHE_CAPACITY: usize = 16;
 

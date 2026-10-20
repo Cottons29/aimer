@@ -148,6 +148,9 @@ wasm-hot-reload = ["aimer_quiver/wasm-hot-reload", "aimer_macro/hot-reload"]
 # Highlight fenced code blocks with the tree-sitter backed `arborium` instead
 # of the lightweight `synoptic` default. Better highlighting, heavier build.
 markdown-arborium = ["aimer_markdown/arborium"]
+# Highlight fenced code blocks with `syntect`, which understands Sublime Text
+# `.sublime-syntax` files and so lets applications add their own languages.
+markdown-syntect = ["aimer_markdown/syntect"]
 
 [[test]]
 name = "glass_backdrop"
@@ -217,10 +220,7 @@ members = [
 ]
 
 [workspace.dependencies]
-allocator-api2 = "0.2.21"
-dlmalloc = "0.2.14"
-libc = "0.2.189"
-windows-sys = { version = "0.61.2", features = ["Win32_System_Memory", "Win32_System_SystemInformation"] }
+
 aimer_cupid = { path = "aimer_cupid", default-features = false, features = ["apple-core-text", "native"] }
 aimer_simd = { path = "crates/aimer_simd" }
 aimer_rubick = { path = "aimer_rubick" }
@@ -278,6 +278,10 @@ aimer_wasm_guest = { path = "crates/aimer_wasm_guest" }
 
 # Generic Dependencies
 
+allocator-api2 = "0.2.21"
+dlmalloc = "0.2.14"
+libc = "0.2.189"
+windows-sys = { version = "0.61.2", features = ["Win32_System_Memory", "Win32_System_SystemInformation"] }
 console_error_panic_hook = "0.1.7"
 winit = { version = "0.30.12", features = ["android-native-activity"] }
 raw-window-handle = "0.6.2"
@@ -308,6 +312,11 @@ naga = { version = "30.0.0", features = ["wgsl-in"] }
 markdown = "1.0.0"
 arborium = "2.18.0"
 synoptic = "2.2.9"
+# Pure Rust regex engine only: `default` pulls in the C `onig` library and themes
+# this crate never uses. The bundled syntaxes come from `two-face`, which adds the
+# languages syntect's own set lacks (TypeScript, Kotlin, Swift, TOML, ...).
+syntect = { version = "5.3.0", default-features = false, features = ["parsing", "yaml-load", "regex-fancy"] }
+two-face = { version = "0.5.2", default-features = false, features = ["syntect-fancy"] }
 
 
 # Macros Dependencies
@@ -406,15 +415,29 @@ opt-level = 3
 [profile.dev.package.aimer_venus]
 opt-level = 3
 
-[profile.release]
+# syntect parses every highlighted line with a regex engine, and decoding its
+# bundled syntaxes runs bincode and inflate over megabytes. Unoptimized they
+# cost seconds in a debug build (see the markdown `syntect` feature).
+[profile.dev.package.syntect]
 opt-level = 3
-debug-assertions = false
-codegen-units = 1
-lto = true
-split-debuginfo = "packed"
-panic = "abort"
-strip = "symbols"
-overflow-checks = false
+
+[profile.dev.package.fancy-regex]
+opt-level = 3
+
+[profile.dev.package.regex-automata]
+opt-level = 3
+
+[profile.dev.package.regex-syntax]
+opt-level = 3
+
+[profile.dev.package.bincode]
+opt-level = 3
+
+[profile.dev.package.flate2]
+opt-level = 3
+
+[profile.dev.package.miniz_oxide]
+opt-level = 3
 
 
 [lints.rust]

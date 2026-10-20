@@ -31,6 +31,9 @@ impl FocusRequest {
 struct FocusNodeState {
     focused: Cell<bool>,
     request: Cell<Option<FocusRequest>>,
+    /// Whether this node has already told the framework that its element wants
+    /// focus on arrival; see [`FocusNode::announce_autofocus`].
+    announced: Cell<bool>,
 }
 
 /// A handle for requesting and observing keyboard focus.
@@ -67,6 +70,7 @@ impl FocusNode {
             state: Rc::new(FocusNodeState {
                 focused: Cell::new(false),
                 request: Cell::new(None),
+                announced: Cell::new(false),
             }),
         }
     }
@@ -81,6 +85,22 @@ impl FocusNode {
         self.state
             .request
             .set(Some(FocusRequest::Focus(next_focus_request())));
+    }
+
+    /// Tells the framework that the element holding this node asks for focus
+    /// as soon as it appears, so the frame that built it can settle that
+    /// without waiting for an input event.
+    ///
+    /// Only the first call per node has an effect. A field rebuilds its element
+    /// whenever its state changes but keeps its node, so announcing once per
+    /// node announces once per arrival, and a rebuild is not mistaken for new
+    /// focus work. This is framework plumbing, called where an autofocusing
+    /// region is built.
+    #[inline]
+    pub fn announce_autofocus(&self) {
+        if !self.state.announced.replace(true) {
+            request_focus_resolution();
+        }
     }
 
     /// Requests that this node relinquish keyboard focus.
@@ -153,6 +173,19 @@ fn next_focus_request() -> u64 {
     })
 }
 
+/// Asks for focus to be resolved at the next synchronization without naming a
+/// node.
+///
+/// A region that wants the keyboard the moment it appears — an autofocusing
+/// field — has made no request a node could record: its wish is a property of
+/// the tree. Announcing it here moves the same counter a request moves, so the
+/// frame that built the region sees that focus is owed and settles it, instead
+/// of waiting for an input event that happens to open the manager's gate.
+#[inline]
+pub fn request_focus_resolution() {
+    let _ = next_focus_request();
+}
+
 /// Returns the number of focus requests made on this thread so far.
 ///
 /// The counter only ever grows, so comparing it against a previously observed
@@ -162,4 +195,26 @@ fn next_focus_request() -> u64 {
 #[inline]
 pub fn focus_request_generation() -> u64 {
     NEXT_FOCUS_REQUEST.with(Cell::get)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn announcing_autofocus_moves_the_request_generation_once_per_node() {
+        let node = FocusNode::new();
+        let before = focus_request_generation();
+
+        node.announce_autofocus();
+        let after_first = focus_request_generation();
+        node.announce_autofocus();
+        node.clone().announce_autofocus();
+
+        assert!(after_first > before);
+        assert_eq!(focus_request_generation(), after_first);
+
+        FocusNode::new().announce_autofocus();
+        assert!(focus_request_generation() > after_first);
+    }
 }

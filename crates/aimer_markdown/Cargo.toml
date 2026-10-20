@@ -22,6 +22,8 @@ aimer_svg.workspace = true
 aimer_input.workspace = true
 aimer_native.workspace = true
 synoptic.workspace = true
+syntect = { workspace = true, optional = true }
+two-face = { workspace = true, optional = true }
 aimer_std.workspace = true
 # Only the 35 most common languages are compiled in: every grammar adds a C
 # parser to the build and to the binary, and `all-languages` pulls in ~110.
@@ -72,6 +74,11 @@ portable-guest = ["aimer_widget/portable-guest", "aimer_style/portable-guest"]
 # far better than the default regex based `synoptic` backend, at the cost of
 # pulling in a tree-sitter grammar per language and a much heavier build.
 arborium = ["dep:arborium"]
+# Opt into the `syntect` highlighter. It runs Sublime Text `.sublime-syntax`
+# definitions, so applications can register languages the bundled set lacks.
+# When both this and `arborium` are enabled, this one wins: it is the only
+# backend with a registration API, which must never be silently ignored.
+syntect = ["dep:syntect", "dep:two-face"]
 
 [dev-dependencies]
 aimer_attribute.workspace = true

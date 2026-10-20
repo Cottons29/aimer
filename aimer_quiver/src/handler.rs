@@ -1324,6 +1324,27 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         aimer_widget::set_animation_only_frame(eligible);
     }
 
+    /// Grants the focus the frame just built is owed.
+    ///
+    /// Focus is decided while an event is dispatched, which left a field that
+    /// focuses itself on arrival — or a node asked to focus by a timer or a
+    /// finished task — waiting for the user's next touch before it, and the
+    /// focus animation its callback starts, heard of it. The dispatcher knows
+    /// from counters alone whether anything is owed, so a frame with nothing to
+    /// decide pays two comparisons. A grant is a change like any other and
+    /// asks for the frame that shows it.
+    fn settle_pending_focus(&mut self) {
+        if !self.event_dispatcher.has_pending_focus_work() || self.active_root().is_none() {
+            return;
+        }
+        let result = self.with_event_root(|dispatcher, root| dispatcher.settle_focus(root));
+        // A request made while the grant was delivered stays pending, and so
+        // does the frame that settles it.
+        if result.needs_redraw() || self.event_dispatcher.has_pending_focus_work() {
+            self.request_animation_frame();
+        }
+    }
+
     /// The bookkeeping every frame does once the tree has been drawn.
     ///
     /// Whatever the frame has left over is spent on background work — image
@@ -1335,6 +1356,7 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
     pub(crate) fn end_frame(&mut self) {
         aimer_widget::set_scroll_only_frame(false);
         aimer_widget::set_animation_only_frame(false);
+        self.settle_pending_focus();
         let budget = self.venus.idle_budget();
         self.venus.run_idle(&budget);
         self.venus.end_frame();

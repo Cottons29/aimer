@@ -256,6 +256,19 @@ impl<Id: Copy + Eq + Hash> FocusManager<Id> {
             .then_some(sync)
     }
 
+    /// Returns whether a focus request or a trap change has arrived since the
+    /// last synchronization.
+    ///
+    /// Unlike [`begin_synchronization`](Self::begin_synchronization) this does
+    /// not look at the tree, so a frame loop can ask after every frame for the
+    /// price of two integer comparisons and only settle focus when the answer
+    /// is yes.
+    #[inline]
+    pub fn has_unsettled_requests(&self) -> bool {
+        self.request_generation != focus_request_generation()
+            || self.trap_generation != focus_trap_generation()
+    }
+
     /// Records that focus is resolved for `tree_generation` and `tree_root`.
     ///
     /// `sync` must be the token returned by
@@ -465,6 +478,7 @@ impl<Id: Copy + Eq + Hash> FocusManager<Id> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::node::request_focus_resolution;
     use crate::scope::FocusTrap;
 
     fn candidate(id: u32, node: &FocusNode) -> FocusCandidate<u32> {
@@ -934,5 +948,21 @@ mod tests {
         assert_eq!(manager.scope(), Some(20));
         assert_eq!(manager.focused(), Some(2));
         assert!(outer.has_focus());
+    }
+    /// A frame that built an autofocusing field must learn that focus is owed
+    /// without walking the tree, so the answer reads counters only.
+    #[test]
+    fn a_manager_reports_requests_nobody_has_settled() {
+        let mut manager = FocusManager::<u32>::new();
+        assert!(!manager.has_unsettled_requests());
+
+        request_focus_resolution();
+        assert!(manager.has_unsettled_requests());
+
+        let sync = manager
+            .begin_synchronization(0, None)
+            .expect("a new request opens the gate");
+        manager.mark_synchronized(0, None, sync);
+        assert!(!manager.has_unsettled_requests());
     }
 }

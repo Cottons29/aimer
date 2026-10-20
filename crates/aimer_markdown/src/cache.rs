@@ -14,6 +14,10 @@ impl<K: PartialEq, V: Clone> LruCache<K, V> {
         }
     }
 
+    pub(crate) fn clear(&mut self) {
+        self.entries.clear();
+    }
+
     pub(crate) fn get_or_insert_with(&mut self, key: K, create: impl FnOnce(&K) -> V) -> V {
         if let Some(index) = self
             .entries

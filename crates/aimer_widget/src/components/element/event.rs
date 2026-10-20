@@ -371,6 +371,10 @@ pub struct EventDispatcher {
     /// the candidate waits here until the forwarding element returns and its
     /// caller merges it into the enclosing hit outcome.
     nested_focus_owner: Option<FocusCandidate<ElementId>>,
+    /// Whether the latest press landed on something that can take focus. Such a
+    /// target takes the press through the focus system and need not consume
+    /// it, so this is what tells a host the press was taken.
+    last_press_hit_focus_target: bool,
     path_indices: HashMap<ElementId, usize>,
     path_links: Vec<ElementPath>,
     /// Preorder-aligned with `path_links`; stores direct pointers and child flags.
@@ -446,6 +450,7 @@ impl EventDispatcher {
             hover_membership_marks: Vec::new(),
             hover_membership_epoch: 0,
             focus_scope: None,
+            last_press_hit_focus_target: false,
             focus: FocusManager::new(),
             focus_candidates: FocusCandidates::new(),
             event_tree: EventTree::new(),
@@ -780,6 +785,46 @@ impl EventDispatcher {
         self.focus_scope
     }
 
+    /// Returns whether the latest press landed on something that can take focus,
+    /// such as a text field.
+    ///
+    /// A focus target takes a press through the focus system and does not have
+    /// to consume it, so [`EventResult::is_consumed`] alone cannot tell a host
+    /// that the press was taken. A press on a captured pointer's owner does not
+    /// reach this answer; it is taken by definition.
+    #[inline]
+    pub fn last_press_hit_focus_target(&self) -> bool {
+        self.last_press_hit_focus_target
+    }
+
+    /// Returns whether focus is owed a decision that no event has made yet: a
+    /// node asked for it, a region that wants it on arrival was built, or a
+    /// trap changed.
+    ///
+    /// Reads counters only and never touches the tree, so a frame loop can ask
+    /// after every frame; [`Self::settle_focus`] is what answers a `true`.
+    #[inline]
+    pub fn has_pending_focus_work(&self) -> bool {
+        self.focus.has_unsettled_requests()
+    }
+
+    /// Resolves focus without an input event, notifying both sides of a change.
+    ///
+    /// Focus is otherwise decided while an event is dispatched, which leaves a
+    /// field that focuses itself on arrival — or a node asked to focus from a
+    /// timer — waiting for the user's next touch before it hears of it. A frame
+    /// loop calls this once the frame has built the tree, when
+    /// [`Self::has_pending_focus_work`] says there is something to decide.
+    ///
+    /// Unlike a dispatch this brings only the id-to-element index up to date,
+    /// not the event tree, which stays lazy until an event needs it. The result
+    /// is what the notified elements returned, so a caller can tell whether the
+    /// change needs another frame.
+    pub fn settle_focus(&mut self, root: &dyn Element) -> EventResult {
+        self.synchronize_path_index_for_current_tree(root);
+        self.synchronize_focus(root)
+    }
+
     /// Dispatches one event using persistent capture state.
     ///
     /// Uncaptured events use normal hit testing. A captured move, exit, or up
@@ -1096,6 +1141,9 @@ impl EventDispatcher {
             dispatch_routed_event(self, root, pos, event)
         };
         self.apply_capture_request(outcome.result.capture_request(), outcome.capture_owner);
+        if matches!(event, ElementEvent::PointerDown(_)) {
+            self.last_press_hit_focus_target = outcome.focus_owner.is_some();
+        }
         let pointer_focus_result = if matches!(event, ElementEvent::PointerDown(_))
             && self.press_may_move_focus(root, outcome.focus_owner.as_ref())
         {
