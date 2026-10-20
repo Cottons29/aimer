@@ -14,7 +14,8 @@ use aimer_widget::base::ResolvedSize;
 use crate::Route;
 use crate::transition::{
     AnchorContent, AnchoredFrame, NavigationAction, NavigationContext, NavigationTransition,
-    NavigationTransitionFrame, ResolvedNavigationTransition, ZoomTransition, blur_veil,
+    NavigationTransitionFrame, ResolvedNavigationTransition, TransitionPage, ZoomTransition,
+    blur_veil,
 };
 
 /// Opens the destination page out of the item that opened it: the item's window
@@ -31,7 +32,8 @@ use crate::transition::{
 /// A copy of the item is stretched to the window as it grows, so that it is the
 /// item itself that expands, and dissolves into the page inside it. The copy's
 /// contents stretch with it, so it is best dissolved while it is still close to
-/// the item's shape, or behind a [`blur`](Self::blur).
+/// the item's shape, or behind a [`blur`](Self::blur), which blurs the window
+/// and nothing outside it.
 ///
 /// The window and the dissolve each run on a span of the timeline of their own
 /// ([`grow`](Self::grow) and [`dissolve`](Self::dissolve)), so they overlap as
@@ -40,7 +42,9 @@ use crate::transition::{
 /// item's copy from the first frame, so the page behind never shows through the
 /// window, and it darkens in step with the window covering it
 /// ([`scrim`](Self::scrim)). The page is revealed rather than scaled, so an item
-/// as wide as the host, such as a row of a feed, has something to grow into.
+/// as wide as the host, such as a row of a feed, has something to grow into; with
+/// [`stretch`](Self::stretch) it is scaled to fill the window instead, as the item's
+/// copy is.
 /// Unlike [`ContainerTransition`](crate::ContainerTransition), nothing here
 /// waits for anything.
 ///
@@ -136,6 +140,16 @@ impl<R> ExpandTransition<R> {
     /// of it. See [`ExpandSpec::crossfade`].
     #[inline]
     pub fn crossfade(mut self, crossfade: bool) -> Self { self.motion = self.motion.crossfade(crossfade); self }
+    /// Has the page scaled to fill the window, as the copy of the item is, instead
+    /// of revealed through it. Off by default.
+    ///
+    /// The whole page is shown at the window's size and moved to its corner, so
+    /// the page is squeezed into the item's shape and stretches back to its own as
+    /// the window grows. It is only presented that way: the page is laid out for
+    /// the host throughout, so nothing about its layout changes. See
+    /// [`ExpandSpec::stretch`].
+    #[inline]
+    pub fn stretch(mut self, stretch: bool) -> Self { self.motion = self.motion.stretch(stretch); self }
     /// Sets the easing of the window's growth over its span. The default is
     /// linear. See [`ExpandSpec::grow_curve`].
     #[inline]
@@ -144,12 +158,13 @@ impl<R> ExpandTransition<R> {
     /// linear. See [`ExpandSpec::dissolve_curve`].
     #[inline]
     pub fn dissolve_curve(mut self, curve: impl Curve) -> Self { self.motion = self.motion.dissolve_curve(curve); self }
-    /// Blurs everything while the item dissolves into the page, up to `radius`
+    /// Blurs the window while the item dissolves into the page, up to `radius`
     /// logical pixels. The default is `0.0`, no blur.
     ///
     /// The blur swells through the [dissolve](Self::dissolve), sharp before it
-    /// and after, over the item's copy and the page both. It is clamped to the
-    /// renderer's maximum, 96 pixels.
+    /// and after, over the item's copy and the page inside the window. It is
+    /// clipped to the window and its corners as it grows, so the rest of the
+    /// screen stays sharp. It is clamped to the renderer's maximum, 96 pixels.
     #[inline]
     pub fn blur(mut self, radius: f32) -> Self {
         self.blur = if radius.is_finite() { radius.max(0.0) } else { 0.0 };
@@ -182,17 +197,21 @@ impl<R> ExpandTransition<R> {
         Some(motion.retargeted(item, size)?.anchored(anchored))
     }
 
-    /// `effect` with the blur over both pages, if one was asked for.
+    /// `effect` with the blur over the window, if one was asked for.
     fn veiled(&self, effect: ResolvedNavigationTransition, reverse: bool) -> ResolvedNavigationTransition {
         let blur = self.blur;
         if blur <= 0.0 { return effect; }
         let motion = self.motion.clone();
         // Over everything, so the copy of the item and the page, which cross over
-        // in the dissolve, are both in it.
-        effect.with_veil_above(move |progress| {
-            let expansion = if reverse { 1.0 - progress } else { progress };
-            blur_veil(blur * motion.blur(expansion))
-        })
+        // in the dissolve, are both in it; and shown as the page is, so that it
+        // covers the window they are in and nothing else. The page grows on a
+        // push and is the departing one on a pop.
+        effect
+            .with_veil_above(move |progress| {
+                let expansion = if reverse { 1.0 - progress } else { progress };
+                blur_veil(blur * motion.blur(expansion))
+            })
+            .veil_follows(if reverse { TransitionPage::Outgoing } else { TransitionPage::Incoming })
     }
 
     /// A zoom with the blur, for a route with nothing to grow from.

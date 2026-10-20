@@ -11,6 +11,7 @@ mod gradient_resize;
 mod light_edge;
 mod light_edge_color;
 mod magnification;
+mod morph_transition;
 mod multi_decoration_box;
 mod navigation_transitions;
 mod scrolling;

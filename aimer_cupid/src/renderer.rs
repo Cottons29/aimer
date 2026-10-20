@@ -22,6 +22,14 @@ mod gradient_scale_tests;
 ))]
 mod mask_group_tests;
 
+#[cfg(all(
+    test,
+    feature = "native",
+    not(feature = "wgpu"),
+    any(target_os = "macos", target_os = "ios")
+))]
+mod morph_group_tests;
+
 use crate::pipeline::material::{MaterialClip, MaterialRequest};
 use crate::rect_pipeline::RectInstance;
 use crate::svg::{SvgNodeStyleOverride, SvgScene};

@@ -16,6 +16,9 @@ pub use aimer_cupid::text_pipeline::TextOverflowMode;
 pub use aimer_cupid::text_pipeline::text_layout::TextHorizontalAlign;
 pub use aimer_cupid::text_pipeline::text_layout::TextInteractionLayout;
 pub use aimer_cupid::utilities::Mat3;
+/// The look of a shader transition between an element's two children; see
+/// [`Canvas::morph_children`].
+pub use aimer_cupid::draw_cmd_v2::{MorphParams, MorphStyle};
 /// A rectangle in the canvas's own coordinates, as [`Canvas`] draws and clips with.
 pub use aimer_cupid::utilities::Rect;
 /// The renderer's colour, which [`Canvas`] paints with.
@@ -784,6 +787,25 @@ impl Canvas {
         self.draw_custom(
             aimer_cupid::draw_cmd_v2::COVERAGE_MASK_PIPELINE_NAME,
             std::sync::Arc::<[u8]>::from(Vec::new()),
+        );
+    }
+
+    /// Declares that this element's first two children are the outgoing and
+    /// incoming pictures of a shader transition described by `params`.
+    ///
+    /// Call it before any other command so it heads the list. This records the
+    /// marker [`MORPH_PIPELINE_NAME`], which makes the renderer draw each child
+    /// subtree into an offscreen target and blend the two with a shader instead
+    /// of painting them on top of each other. The marker draws nothing itself,
+    /// and an element that does not have exactly two children paints as an
+    /// ordinary one, so record it only while the transition runs.
+    ///
+    /// [`MORPH_PIPELINE_NAME`]: aimer_cupid::draw_cmd_v2::MORPH_PIPELINE_NAME
+    #[inline]
+    pub fn morph_children(&self, params: &aimer_cupid::draw_cmd_v2::MorphParams) {
+        self.draw_custom(
+            aimer_cupid::draw_cmd_v2::MORPH_PIPELINE_NAME,
+            std::sync::Arc::<[u8]>::from(params.encode().as_slice()),
         );
     }
 

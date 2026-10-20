@@ -124,6 +124,7 @@ impl GpuBackend for VulkanBackend {
                 include_bytes!("../../pipeline/shaders/vulkan/frame_composite.spv")
             }
             BuiltinShader::Material => include_bytes!("../../pipeline/shaders/vulkan/material.spv"),
+            BuiltinShader::Morph => include_bytes!("../../pipeline/shaders/vulkan/morph.spv"),
         }
     }
 

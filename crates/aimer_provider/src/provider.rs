@@ -23,7 +23,8 @@ use aimer_widget::portable::PortableValue;
 /// candidate diagnostic instead of panicking. The message is intentionally
 /// owned so a codec can report a validation detail without borrowing the value
 /// or its temporary input buffer.
-#[derive(Clone, Debug, Eq, PartialEq)]
+/// 
+#[derive(Debug)]
 pub struct PortableProviderCodecError(String);
 
 impl PortableProviderCodecError {
@@ -48,6 +49,7 @@ impl Error for PortableProviderCodecError {}
 /// That keeps the contract deterministic and makes it explicit that provider
 /// values cross the guest boundary as bytes only. Native handles, `Rc`,
 /// `RefCell`, closures, and platform resources must remain host-owned.
+/// 
 #[derive(Clone, Copy)]
 pub struct PortableProviderCodec<T> {
     schema: ValueSchemaMetadata<'static>,
@@ -96,6 +98,7 @@ impl<T: PortableValue> PortableProviderCodec<T> {
     /// The value's schema identity, version, limits, and four-byte wire header
     /// are reused verbatim, so provider snapshots and reflected property blobs
     /// cannot silently drift onto separate formats.
+    /// 
     #[inline]
     pub fn from_portable_value() -> Self {
         PortableProviderCodec::new(

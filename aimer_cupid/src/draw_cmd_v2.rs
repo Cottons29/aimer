@@ -4,6 +4,9 @@
 //! can snapshot each local command list into a transferable frame representation
 //! before handing work to a raster thread.
 
+mod morph;
+#[cfg(test)]
+mod morph_tests;
 mod render_order;
 mod clip_policy;
 mod command_equality;
@@ -37,6 +40,8 @@ mod world_tests;
 /// descendants shows nothing. The marker command itself draws nothing: the
 /// renderer skips custom commands for pipelines it has not registered.
 pub const COVERAGE_MASK_PIPELINE_NAME: &str = "aimer.coverage_mask";
+
+pub use morph::{MORPH_PIPELINE_NAME, MorphGroup, MorphParams, MorphStyle};
 
 use std::cell::RefCell;
 // `hashbrown`'s default hasher: the keys are process-local node identifiers, and
@@ -416,6 +421,10 @@ pub struct DrawList {
     /// its node's descendants have coverage. Found once, at commit, because the
     /// render plan reads it for every node of every frame.
     masks_descendants: bool,
+    /// The list opens with a decodable [`MORPH_PIPELINE_NAME`] marker: the
+    /// node's two children are the sources of a shader transition. Found once,
+    /// at commit, for the same reason as `masks_descendants`.
+    morph: Option<MorphParams>,
 }
 
 impl DrawList {
@@ -1901,8 +1910,9 @@ impl DrawListWriter {
             }
             tree.visible_node_bounds(self.owner)
         };
-        let (revision, changed) = {
+        let (revision, changed, blends_children) = {
             let mut draw_list = self.draw_list.borrow_mut();
+            let had_morph = draw_list.morph.is_some();
             // A rebuilt element records again whether or not its picture changed.
             // The first recording always counts: revision 0 means nothing has
             // been drawn from this list yet.
@@ -1914,7 +1924,7 @@ impl DrawListWriter {
                 draw_list.stale = false;
                 draw_list.refreshed = false;
                 draw_list.recording = false;
-                (draw_list.revision, false)
+                (draw_list.revision, false, false)
             } else {
             draw_list.image_textures = commands
                 .iter()
@@ -1931,6 +1941,14 @@ impl DrawListWriter {
                 Some(DrawCommand::DrawCustom { pipeline_name, .. })
                     if pipeline_name.as_ref() == COVERAGE_MASK_PIPELINE_NAME
             );
+            draw_list.morph = match commands.first() {
+                Some(DrawCommand::DrawCustom { pipeline_name, data })
+                    if pipeline_name.as_ref() == MORPH_PIPELINE_NAME =>
+                {
+                    MorphParams::decode(data)
+                }
+                _ => None,
+            };
             draw_list.commands = Arc::from(commands);
             draw_list.revision = draw_list
                 .revision
@@ -1940,11 +1958,23 @@ impl DrawListWriter {
             draw_list.stale = false;
             draw_list.refreshed = false;
             draw_list.recording = false;
-            (draw_list.revision, true)
+            (draw_list.revision, true, had_morph || draw_list.morph.is_some())
             }
         };
-        if changed && let Some(bounds) = bounds {
-            self.draw_cmd.borrow_mut().push_damage(bounds);
+        if changed {
+            let mut tree = self.draw_cmd.borrow_mut();
+            // A morph blends its children's pixels, which reach beyond the
+            // node's own bounds (the outgoing picture is often larger than the
+            // incoming one the node is sized to), so each frame of it, and the
+            // frame that drops the marker, must repaint the whole subtree.
+            let bounds = if blends_children {
+                tree.visible_subtree_bounds(self.owner).or(bounds)
+            } else {
+                bounds
+            };
+            if let Some(bounds) = bounds {
+                tree.push_damage(bounds);
+            }
         }
         self.finished = true;
         Ok(revision)
@@ -2050,6 +2080,10 @@ pub enum RenderOp {
         opacity: f32,
         clip: Option<Rect>,
         masked: bool,
+        /// Set when the group belongs to a morph; see [`MORPH_PIPELINE_NAME`].
+        /// A host group holds exactly its two source groups and no item of its
+        /// own, and `masked` is false for it and for its sources.
+        morph: Option<MorphGroup>,
     },
     /// Draws one element's local command list.
     ///

@@ -832,6 +832,8 @@ pub enum BuiltinShader {
     Svg,
     FrameComposite,
     Material,
+    /// Blends two offscreen pictures with a transition effect.
+    Morph,
 }
 
 impl BuiltinShader {
@@ -870,6 +872,7 @@ impl BuiltinShader {
                 include_str!("pipeline/shaders/wgsl/frame_composite.wgsl").as_bytes()
             }
             Self::Material => include_str!("pipeline/shaders/wgsl/material.wgsl").as_bytes(),
+            Self::Morph => include_str!("pipeline/shaders/wgsl/morph.wgsl").as_bytes(),
         }
     }
 }

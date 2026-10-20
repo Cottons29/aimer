@@ -12,6 +12,7 @@ use super::{
 /// Both thumbs share one scalar `T` domain and cannot cross. Pointer and
 /// keyboard input updates the widget's retained state immediately; the
 /// optional [`Self::on_change`] callback observes the resulting ordered pair.
+/// 
 #[derive(Clone)]
 pub struct RangeSlider<T: RangeValue = f64> {
     range: Range<T>,

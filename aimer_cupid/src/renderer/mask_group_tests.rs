@@ -327,3 +327,61 @@ fn a_backdrop_filter_shows_the_filtered_backdrop_only_through_the_coverage() {
         near(pixel(&pixels, 100, 64), [0, 0, 255, 255], 2, "outside the disc the backdrop is untouched");
     }
 }
+
+/// A backdrop filter on a node with a rounded clip blurs only inside that clip:
+/// this is what lets a veil follow a growing window instead of filling the host.
+#[test]
+fn a_backdrop_filter_is_confined_to_its_nodes_rounded_clip() {
+    for antialiasing in [AntiAlias::Analytic, AntiAlias::Msaa4x] {
+        let tree = RenderTree::new();
+        let root = tree.add_root(Rect::new(0.0, 0.0, SIZE as f32, SIZE as f32)).unwrap();
+        // A full-host filter, as a veil is, shown through a 64 x 48 rounded window
+        // at (32, 40).
+        let veil = tree.add_child(root, Rect::new(0.0, 0.0, SIZE as f32, SIZE as f32)).unwrap();
+        tree.set_clip_with_radius(veil, Some(Rect::new(32.0, 40.0, 64.0, 48.0)), [16.0; 4]).unwrap();
+        let split = |color: Color, rect: Rect| DrawCommand::FillRect {
+            rect,
+            color,
+            border_radius: [0.0; 4],
+            border_width: [0.0; 4],
+            border_color: Color::transparent(),
+            outline_width: [0.0; 4],
+            outline_color: Color::transparent(),
+        };
+        record(
+            &tree,
+            root,
+            vec![
+                split(Color::rgba8(255, 0, 0, 255), Rect::new(0.0, 0.0, 64.0, SIZE as f32)),
+                split(Color::rgba8(0, 0, 255, 255), Rect::new(64.0, 0.0, 64.0, SIZE as f32)),
+            ],
+        );
+        let mut filter = MaterialRequest::new(
+            MaterialKind::BackdropFilter,
+            [0.0, 0.0, SIZE as f32, SIZE as f32],
+        );
+        filter.blur_radius = 0.0;
+        filter.saturation = 0.0;
+        filter.opacity = 1.0;
+        filter.corner_radii = [0.0; 4];
+        record(
+            &tree,
+            veil,
+            vec![DrawCommand::DrawCustom {
+                pipeline_name: Arc::from(MATERIAL_PIPELINE_NAME),
+                data: Arc::from(filter.encode_for_test()),
+            }],
+        );
+
+        let pixels = render(antialiasing, &tree);
+        let grey = |[r, g, b, a]: [u8; 4]| r.abs_diff(g) <= 3 && g.abs_diff(b) <= 3 && a > 250;
+        assert!(grey(pixel(&pixels, 48, 64)), "{antialiasing:?}: inside the window, over red");
+        assert!(grey(pixel(&pixels, 80, 64)), "{antialiasing:?}: inside the window, over blue");
+        near(pixel(&pixels, 10, 64), [255, 0, 0, 255], 2, "left of the window is untouched");
+        near(pixel(&pixels, 120, 64), [0, 0, 255, 255], 2, "right of the window is untouched");
+        near(pixel(&pixels, 48, 20), [255, 0, 0, 255], 2, "above the window is untouched");
+        near(pixel(&pixels, 80, 110), [0, 0, 255, 255], 2, "below the window is untouched");
+        // The window's corner is rounded by 16: the very corner pixel is outside it.
+        near(pixel(&pixels, 33, 41), [255, 0, 0, 255], 4, "the rounded corner is untouched");
+    }
+}

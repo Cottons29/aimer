@@ -685,6 +685,36 @@ fn an_expanding_push_grows_the_window_while_the_item_dissolves_into_the_page() {
 }
 
 #[test]
+fn a_stretched_expansion_scales_the_page_into_the_window_in_both_directions() {
+    let ctx = context();
+    let _item = repeatable_item("album-7", row(), &ctx);
+    let push = resolve_expand(&expanding().stretch(true), 0, 7, NavigationAction::Push, &ctx).unwrap();
+    let pop = resolve_expand(&expanding().stretch(true), 7, 0, NavigationAction::Pop, &ctx).unwrap();
+    let far = (VIEWPORT.width, VIEWPORT.height);
+
+    // Opening: the whole page is on the item, at the item's size, not clipped to it.
+    let start = push.sample_anchored_at(0.0, VIEWPORT, (0.0, 0.0)).unwrap().frame.incoming;
+    assert_eq!(start.reveal, None);
+    near(start.transform.transform_point(0.0, 0.0), (0.0, 260.0));
+    near(start.transform.transform_point(far.0, far.1), (400.0, 420.0));
+    assert_eq!(start.corner_radius, 12.0);
+    // It fills the host at the end, unscaled.
+    let end = push.sample_anchored_at(1.0, VIEWPORT, (0.0, 0.0)).unwrap().frame.incoming;
+    assert_eq!((end.reveal, end.transform), (None, aimer_canvas::Mat3::identity()));
+
+    // Closing plays it backwards on the departing page: it shrinks onto the item.
+    let begin = pop.sample_anchored_at(0.0, VIEWPORT, (0.0, 0.0)).unwrap().frame.outgoing;
+    assert_eq!((begin.reveal, begin.transform), (None, aimer_canvas::Mat3::identity()));
+    let last = pop.sample_anchored_at(1.0, VIEWPORT, (0.0, 0.0)).unwrap().frame.outgoing;
+    near(last.transform.transform_point(0.0, 0.0), (0.0, 260.0));
+    near(last.transform.transform_point(far.0, far.1), (400.0, 420.0));
+
+    // Without it the page is revealed, as before.
+    let revealed = resolve_expand(&expanding(), 0, 7, NavigationAction::Push, &ctx).unwrap();
+    assert!(revealed.sample_anchored_at(0.0, VIEWPORT, (0.0, 0.0)).unwrap().frame.incoming.reveal.is_some());
+}
+
+#[test]
 fn an_expanding_crossfade_has_the_page_rise_as_the_item_falls() {
     let ctx = context();
     let _item = repeatable_item("album-7", row(), &ctx);
@@ -812,6 +842,26 @@ fn an_expanding_blur_is_a_layer_over_everything_only_when_asked() {
     assert!(!has_veil(expanding().blur(-4.0), 0, 7, NavigationAction::Push));
     // A zoom with nothing to grow from blurs too.
     assert!(has_veil(expanding().blur(12.0), 0, 8, NavigationAction::Push));
+}
+
+#[test]
+fn an_expanding_blur_covers_the_growing_window_not_the_whole_host() {
+    use aimer_router::TransitionPage;
+    let ctx = context();
+    let _item = repeatable_item("album-7", row(), &ctx);
+    let follows = |from, to, action| {
+        resolve_expand(&expanding().blur(12.0), from, to, action, &ctx).unwrap().veil_page()
+    };
+
+    // The window is the arriving page when it opens and the departing one when it
+    // closes back into the item.
+    assert_eq!(follows(0, 7, NavigationAction::Push), Some(TransitionPage::Incoming));
+    assert_eq!(follows(7, 0, NavigationAction::Pop), Some(TransitionPage::Outgoing));
+    // With nothing to grow from there is no window: the zoom's blur fills the host.
+    assert_eq!(follows(0, 8, NavigationAction::Push), None);
+    // And with no blur there is no layer to place.
+    let plain = resolve_expand(&expanding(), 0, 7, NavigationAction::Push, &ctx).unwrap();
+    assert_eq!(plain.veil_page(), None);
 }
 
 fn resolve_expand(

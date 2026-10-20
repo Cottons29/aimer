@@ -5,7 +5,9 @@ use std::sync::Arc;
 
 use crate::damage_region::{DamageRect, DamageSet};
 use crate::draw_cmd::DrawList;
-use crate::draw_cmd_v2::{DrawCommand as V2DrawCommand, Mat3, Rect as V2Rect, RenderNodeId};
+use crate::draw_cmd_v2::{
+    DrawCommand as V2DrawCommand, Mat3, MorphGroup, Rect as V2Rect, RenderNodeId,
+};
 
 /// Ordered local lists for damage-limited replay.
 #[doc(hidden)]
@@ -23,10 +25,12 @@ pub struct RetainedRenderOperation {
 
 pub(crate) enum RetainedRenderOperationKind {
     /// `masked` groups show their first item only where the rest have coverage.
+    /// `morph` groups blend their two source groups with a shader.
     OpacityGroupBegin {
         element: u64,
         opacity: f32,
         masked: bool,
+        morph: Option<MorphGroup>,
     },
     LocalV2(RetainedV2Item),
     OpacityGroupEnd { element: u64 },
@@ -66,6 +70,7 @@ impl RetainedRenderPlan {
         element: u64,
         opacity: f32,
         masked: bool,
+        morph: Option<MorphGroup>,
         bounds: DamageRect,
     ) -> RetainedRenderOperation {
         RetainedRenderOperation {
@@ -73,6 +78,7 @@ impl RetainedRenderPlan {
                 element,
                 opacity,
                 masked,
+                morph,
             },
             bounds,
         }

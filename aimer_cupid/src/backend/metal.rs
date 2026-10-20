@@ -630,6 +630,9 @@ impl GpuBackend for MetalBackend {
             BuiltinShader::Material => {
                 include_str!("../pipeline/shaders/metal/material.metal").as_bytes()
             }
+            BuiltinShader::Morph => {
+                include_str!("../pipeline/shaders/metal/morph.metal").as_bytes()
+            }
         }
     }
 

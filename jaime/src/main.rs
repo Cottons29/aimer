@@ -36,6 +36,7 @@ mod liquid_tab_bar_example;
 mod loading_animation;
 mod lucide_icons_example;
 mod magnification_example;
+mod morph_transition_example;
 mod markdown_example;
 mod modal;
 mod multi_decoration_box_example;

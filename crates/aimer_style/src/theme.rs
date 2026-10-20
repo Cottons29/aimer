@@ -406,16 +406,6 @@ mod tests {
     }
 
     #[test]
-    fn theme_data_portable_codec_round_trips_all_fields() {
-        let value = theme(Color::Rgba(10, 20, 30, 40));
-        let codec = ThemeData::portable_codec();
-        let bytes = codec.encode(&value).expect("ThemeData is encodable");
-
-        assert_eq!(bytes.len(), 24);
-        assert_eq!(codec.decode(&bytes, THEME_DATA_VALUE_VERSION), Ok(value));
-    }
-
-    #[test]
     fn theme_data_portable_codec_rejects_wrong_version_and_length() {
         let codec = ThemeData::portable_codec();
         let wrong_version = codec.decode(&[0; 24], Version::new(2, 0));

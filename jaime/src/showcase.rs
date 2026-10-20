@@ -36,6 +36,7 @@ use crate::lucide_icons_example::lucide_icons_example;
 use crate::magnification_example::magnification_example;
 use crate::markdown_example::{custom_markdown_viewer, jaime_markdown_viewer};
 use crate::modal::modal_example;
+use crate::morph_transition_example::morph_transition_example;
 use crate::multi_decoration_box_example::multi_decoration_box_example;
 use crate::navigation_example::navigation_example;
 use crate::navigation_transitions_example::navigation_transitions_example;
@@ -442,6 +443,7 @@ fn build_example(example: ExampleId, app_theme: ThemeData) -> AnyWidget {
         ExampleId::CustomShape => custom_shape_example().boxed(),
         ExampleId::AnimatedLayout => animated_layout_example().boxed(),
         ExampleId::TweenKeyframes => tween_keyframe_example().boxed(),
+        ExampleId::MorphTransition => morph_transition_example().boxed(),
         ExampleId::TextProperties => text_properties_example().boxed(),
         ExampleId::Window => WindowShowcase::new().boxed(),
         ExampleId::Resizable => ResizableShowcase::new().boxed(),

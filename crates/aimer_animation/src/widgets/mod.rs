@@ -16,7 +16,7 @@ pub use animated_switcher::AnimatedSwitcher;
 pub use container_transform::{ContainerTransformFrame, ContainerTransformSpec, ElementBounds, StageSpans};
 pub use expand_transform::ExpandSpec;
 pub use implicit_animation::ImplicitAnimatedBuilder;
-pub use morph_transition::{MorphTransition, Rgba};
+pub use morph_transition::{MorphStyle, MorphTransition};
 pub use shared_element::{
     SharedContent, SharedElement, SharedElementSnapshot, last_shared_element, last_shared_element_bounds,
     shared_element_bounds,

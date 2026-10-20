@@ -14,7 +14,8 @@ use aimer_container::SizedBox;
 use crate::outlet::RouteChildContext;
 use crate::swipe_back::SwipeLink;
 use crate::{AnchoredFrame, NavigationAction, NavigationContext, NavigationTransition,
-    NavigationTransitionFrame, ResolvedNavigationTransition, Route, TransitionChoice};
+    NavigationTransitionFrame, PaintPresentation, ResolvedNavigationTransition, Route,
+    TransitionChoice, TransitionPage};
 
 /// Ambient operation shared with nested shell outlets, independently of their route type.
 #[derive(Clone, Copy, Default)]
@@ -372,7 +373,7 @@ impl Widget for NavigationFrame {
             veil: UnsafeCell::new(veil),
             playback: self.playback, swipe: self.swipe,
             incoming_clip: PresentationClip::default(), outgoing_clip: PresentationClip::default(),
-            anchor_clip: PresentationClip::default(),
+            anchor_clip: PresentationClip::default(), veil_clip: PresentationClip::default(),
         }.boxed()
     }
 }
@@ -394,6 +395,8 @@ struct Ordinals {
     incoming: usize,
     outgoing: usize,
     anchor: usize,
+    /// The veil, wherever it is painted; meaningful only while there is one.
+    veil: usize,
 }
 
 struct NavigationFrameElement {
@@ -410,6 +413,7 @@ struct NavigationFrameElement {
     incoming_clip: PresentationClip,
     outgoing_clip: PresentationClip,
     anchor_clip: PresentationClip,
+    veil_clip: PresentationClip,
 }
 
 // Safety: element traversal and structural mutation run exclusively on the
@@ -453,6 +457,13 @@ impl NavigationFrameElement {
             incoming,
             outgoing,
             anchor: usize::from(has_old) + usize::from(veil) + 1,
+            // Between the pages it is the second node painted; above everything it
+            // follows the pages and the item's copy.
+            veil: if self.veil_above() {
+                1 + usize::from(has_old) + usize::from(self.anchor().is_some())
+            } else {
+                1
+            },
         }
     }
 
@@ -567,6 +578,18 @@ impl Drawable for NavigationFrameElement {
         };
         if has_old && !outgoing_slot.apply_to_child(ctx, outgoing_ordinal, size, &self.outgoing_clip) { return false; }
         if !incoming_slot.apply_to_child(ctx, incoming_ordinal, size, &self.incoming_clip) { return false; }
+        // A veil that follows a page is shown as that page is, at full strength: as
+        // large as the host like the pages, it is then clipped to where the page is.
+        if let Some(page) = self.playback.as_ref().and_then(|playback| playback.effect.veil_page()) {
+            if has_old && self.veil().is_some() {
+                let followed = match page {
+                    TransitionPage::Incoming => frame.frame.incoming,
+                    TransitionPage::Outgoing => frame.frame.outgoing,
+                };
+                let veil = PaintPresentation { opacity: 1.0, ..followed };
+                if !veil.apply_to_child(ctx, ordinals.veil, size, &self.veil_clip) { return false; }
+            }
+        }
         // The item copy is last, and is as large as the item was.
         let Some(anchor) = self.playback.as_ref().and_then(|playback| playback.effect.anchor()) else { return true; };
         if self.anchor().is_none() { return true; }

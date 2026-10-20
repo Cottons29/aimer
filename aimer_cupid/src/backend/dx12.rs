@@ -541,6 +541,7 @@ impl GpuBackend for Dx12Backend {
             BuiltinShader::Material => {
                 include_str!("../pipeline/shaders/dx12/material.hlsl").as_bytes()
             }
+            BuiltinShader::Morph => include_str!("../pipeline/shaders/dx12/morph.hlsl").as_bytes(),
         }
     }
 

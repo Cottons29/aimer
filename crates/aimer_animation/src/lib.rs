@@ -26,7 +26,7 @@ pub use widgets::animated_builder::ensure_portable_native_registrations;
 pub use widgets::{
     Animated, AnimatedPaint, AnimatedSwitcher, AnimationEffect, ContainerTransformFrame,
     ContainerTransformSpec, ElementBounds, ExpandSpec, FadeTransition, StageSpans,
-    ImplicitAnimatedBuilder, MorphTransition, PaintPresentation, PresentationClip, Rgba,
+    ImplicitAnimatedBuilder, MorphStyle, MorphTransition, PaintPresentation, PresentationClip,
     RotationTransition, ScaleTransition, SharedElement, SlideTransition, last_shared_element, last_shared_element_bounds,
     shared_element_bounds, SharedContent, SharedElementSnapshot,
 };

@@ -1,7 +1,6 @@
 //! Turning a link the platform hands the app into a path a [`Route`] can parse.
 //!
 //! [`Route`]: crate::Route
-
 /// The route path a link addresses: the part of the URL a route's
 /// [`parse`](crate::Route::parse) is written against, including its query.
 ///

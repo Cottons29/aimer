@@ -185,6 +185,15 @@ impl NavigationTransitionFrame {
     };
 }
 
+/// One of the two pages of a [`NavigationTransitionFrame`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TransitionPage {
+    /// The departing page.
+    Outgoing,
+    /// The arriving page.
+    Incoming,
+}
+
 /// A copy of an item that a transition draws above both pages.
 ///
 /// The host lays it out at `size` with its top-left at the host's origin, and
@@ -233,6 +242,8 @@ pub struct ResolvedNavigationTransition {
     veil: Option<Rc<dyn Fn(f32) -> AnyWidget>>,
     /// Whether the veil is painted above everything instead of between the pages.
     veil_above: bool,
+    /// The page whose presentation the veil is shown with, if it is not to fill the host.
+    veil_follows: Option<TransitionPage>,
     /// Receives eased progress, the host's logical size, and the host's
     /// top-left corner in the window in logical pixels.
     sampler: Box<dyn Fn(f32, ResolvedSize, (f32, f32)) -> AnchoredFrame>,
@@ -290,7 +301,10 @@ impl ResolvedNavigationTransition {
         sampler: impl Fn(f32, ResolvedSize, (f32, f32)) -> AnchoredFrame + 'static,
     ) -> Option<Self> {
         if !curve.is_valid() { return None; }
-        Some(Self { duration, curve, outgoing_on_top: false, anchor, veil: None, veil_above: false, sampler: Box::new(sampler) })
+        Some(Self {
+            duration, curve, outgoing_on_top: false, anchor, veil: None, veil_above: false,
+            veil_follows: None, sampler: Box::new(sampler),
+        })
     }
 
     /// Puts a layer between the two pages while the effect runs, such as a blur
@@ -317,6 +331,22 @@ impl ResolvedNavigationTransition {
         self.veil_above = true;
         self
     }
+
+    /// Shows the veil with the presentation of `page` instead of filling the host.
+    ///
+    /// The veil is moved, clipped and rounded exactly as `page` is, at full
+    /// opacity whatever the page's own is. A blur then covers only where that page
+    /// is shown, such as the growing window of an
+    /// [`ExpandTransition`](crate::ExpandTransition), and leaves the rest of the
+    /// host sharp. A veil the effect does not point at a page fills the host.
+    pub fn veil_follows(mut self, page: TransitionPage) -> Self {
+        self.veil_follows = Some(page);
+        self
+    }
+
+    /// The page the veil follows, if it follows one; see
+    /// [`veil_follows`](Self::veil_follows).
+    pub fn veil_page(&self) -> Option<TransitionPage> { self.veil_follows }
 
     /// Whether the veil is painted above everything rather than between the pages.
     pub(crate) fn veil_above(&self) -> bool { self.veil_above }

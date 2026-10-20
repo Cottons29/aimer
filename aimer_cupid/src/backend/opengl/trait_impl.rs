@@ -63,6 +63,9 @@ impl GpuBackend for OpenGlBackend {
             BuiltinShader::Material => {
                 include_bytes!("../../pipeline/shaders/opengl/material.glslpack")
             }
+            BuiltinShader::Morph => {
+                include_bytes!("../../pipeline/shaders/opengl/morph.glslpack")
+            }
         }
     }
 

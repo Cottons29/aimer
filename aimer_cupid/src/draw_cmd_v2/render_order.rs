@@ -154,6 +154,9 @@ fn world_clip_radius(radius: [f32; 4], local: Rect, world: Rect) -> [f32; 4] {
 
 enum RenderTraversal {
     Node(usize),
+    /// A child of a morph node: wrapped in a source group of its own, then
+    /// planned as the ordinary node it is.
+    MorphSource(usize, MorphGroup),
     EndOpacityGroup(RenderNodeId),
 }
 
@@ -307,6 +310,42 @@ impl RenderWorkspace {
                     continue;
                 }
                 RenderTraversal::Node(index) => index,
+                RenderTraversal::MorphSource(index, role) => {
+                    let Some(node) = tree.nodes.get(index) else {
+                        continue;
+                    };
+                    let state = &self.states[index];
+                    let (Some(_), Some(visible_subtree)) =
+                        (state.bounds, state.visible_subtree_bounds)
+                    else {
+                        continue;
+                    };
+                    // A source the damage misses paints nothing inside it, so
+                    // the renderer treats the absent source as transparent.
+                    if visible_subtree.width == 0.0
+                        || visible_subtree.height == 0.0
+                        || damage.is_some_and(|damage| {
+                            !damage
+                                .iter()
+                                .any(|region| visible_subtree.intersection(*region).is_some())
+                        })
+                    {
+                        continue;
+                    }
+                    output.push(RenderOp::BeginOpacityGroup {
+                        element: node.id,
+                        bounds: visible_subtree,
+                        opacity: 1.0,
+                        // The source's descendants keep their own container clips.
+                        clip: None,
+                        masked: false,
+                        morph: Some(role),
+                    });
+                    self.render_stack
+                        .push(RenderTraversal::EndOpacityGroup(node.id));
+                    self.render_stack.push(RenderTraversal::Node(index));
+                    continue;
+                }
             };
             let Some(node) = tree.nodes.get(index) else {
                 continue;
@@ -332,9 +371,48 @@ impl RenderWorkspace {
             let id = node.id;
             let opacity = node.presentation_opacity * node.opacity;
             let has_children = !node.children.is_empty();
-            let masked = node.draw_list.borrow().masks_descendants;
+            let (masked, morph) = {
+                let draw_list = node.draw_list.borrow();
+                // A morph needs both pictures; with any other child count the
+                // marker is inert and the node paints as an ordinary one.
+                (
+                    draw_list.masks_descendants,
+                    draw_list.morph.filter(|_| topology.children_of(index).len() == 2),
+                )
+            };
             if masked && !has_children {
                 // Masking by nothing shows nothing.
+                continue;
+            }
+            // Child draw items keep their individual container clips.
+            // Applying an ancestor's clip to the whole opacity
+            // group would clip an overflowing descendant again.
+            let group_clip = if tree.clip_escape_count != 0
+                && state.clip.intersect_bounds(visible_subtree) != Some(visible_subtree)
+            {
+                None
+            } else {
+                state.clip.as_option()
+            };
+            if let Some(params) = morph {
+                // The host owns no pixels: the marker draws nothing, so only its
+                // two source groups are planned inside it.
+                output.push(RenderOp::BeginOpacityGroup {
+                    element: id,
+                    bounds: visible_subtree,
+                    opacity,
+                    masked: false,
+                    clip: group_clip,
+                    morph: Some(MorphGroup::Host(params)),
+                });
+                self.render_stack.push(RenderTraversal::EndOpacityGroup(id));
+                let &[from, to] = topology.children_of(index) else {
+                    unreachable!("a morph host has exactly two children");
+                };
+                self.render_stack
+                    .push(RenderTraversal::MorphSource(to, MorphGroup::To));
+                self.render_stack
+                    .push(RenderTraversal::MorphSource(from, MorphGroup::From));
                 continue;
             }
             let groups_opacity = (opacity < 1.0 || masked) && has_children;
@@ -344,16 +422,8 @@ impl RenderWorkspace {
                     bounds: visible_subtree,
                     opacity,
                     masked,
-                    // Child draw items keep their individual container clips.
-                    // Applying an ancestor's clip to the whole opacity
-                    // group would clip an overflowing descendant again.
-                    clip: if tree.clip_escape_count != 0
-                        && state.clip.intersect_bounds(visible_subtree) != Some(visible_subtree)
-                    {
-                        None
-                    } else {
-                        state.clip.as_option()
-                    },
+                    clip: group_clip,
+                    morph: None,
                 });
             }
 

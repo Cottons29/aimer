@@ -30,6 +30,7 @@ use crate::persistent_target::{
 use crate::pipeline::frame_composite::FrameCompositePipeline;
 use crate::pipeline::image_pipeline::{ImageInstance, ImagePipeline};
 use crate::pipeline::material::{MATERIAL_PIPELINE_NAME, MaterialPipeline};
+use crate::pipeline::morph_pipeline::MorphPipeline;
 use crate::pipeline::rect_pipeline::{RectInstance, RectPipeline};
 use crate::pipeline::svg_pipeline::SvgPipeline;
 use crate::pipeline::text_pipeline::{
@@ -46,7 +47,9 @@ use super::{
 
 mod damage_clear;
 mod frame_recovery;
+mod morph_group;
 use damage_clear::DamageClearTextureGeneric;
+use morph_group::{MorphFrame, MorphSource, ends_host, next_group_depth};
 
 const RETAINED_LAYER_CACHE_BUDGET_BYTES: u64 = 64 * 1024 * 1024;
 const RETAINED_LAYER_IDLE_FRAMES: u64 = 120;
@@ -114,6 +117,8 @@ pub struct Renderer<B: GpuBackend = crate::backend::DefaultGpuBackend> {
     text_pipeline: Option<TextPipelineV2<B>>,
     svg_pipeline: Option<SvgPipeline<B>>,
     frame_composite_pipeline: Option<FrameCompositePipeline<B>>,
+    /// Made on the first morph group, which most frames never have.
+    morph_pipeline: Option<MorphPipeline<B>>,
     material_target: PersistentTargetGeneric<B>,
     material_composite_bind_group: Option<B::BindGroup>,
     multisample_target: Option<MultisampleTargetGeneric<B>>,
@@ -230,6 +235,11 @@ enum MaskRole {
 struct ActiveOpacityGroup<B: GpuBackend> {
     element: u64,
     mask: MaskRole,
+    /// Set for the source groups of a morph, which are kept for the host
+    /// instead of being composited into their parent.
+    morph_source: Option<MorphSource>,
+    /// The single-sample view of the group's target, readable by a shader.
+    sample_view: B::TextureView,
     opacity: f32,
     bounds: DamageRect,
     depth: usize,
@@ -299,6 +309,7 @@ impl<B: GpuBackend> Renderer<B> {
             text_pipeline,
             svg_pipeline,
             frame_composite_pipeline,
+            morph_pipeline: None,
             material_target: PersistentTargetGeneric::default(),
             material_composite_bind_group: None,
             multisample_target: None,
@@ -1199,6 +1210,7 @@ impl<B: GpuBackend> Renderer<B> {
         }
 
         let mut groups = Vec::<ActiveOpacityGroup<B>>::new();
+        let mut morph_frames = Vec::<MorphFrame<B>>::new();
         let mut chunk = Vec::new();
         for operation in operations.iter().copied() {
             match operation.kind {
@@ -1206,6 +1218,7 @@ impl<B: GpuBackend> Renderer<B> {
                     element,
                     opacity,
                     masked,
+                    morph,
                 } => {
                     self.flush_opacity_group_chunk(
                         backend,
@@ -1223,14 +1236,28 @@ impl<B: GpuBackend> Renderer<B> {
                         region,
                     );
 
+                    if let Some(crate::draw_cmd_v2::MorphGroup::Host(params)) = morph {
+                        // The host owns no pixels: it only waits for its sources.
+                        morph_frames.push(MorphFrame {
+                            element,
+                            params,
+                            opacity,
+                            bounds: operation.bounds,
+                            groups_open: groups.len(),
+                            from: None,
+                            to: None,
+                        });
+                        continue;
+                    }
                     let mut group = self.ensure_opacity_group_target(
                         backend,
-                        groups.len(),
+                        next_group_depth(groups.len(), &morph_frames),
                         element,
                         opacity,
                         operation.bounds,
                         opacity_target_key,
                     );
+                    group.morph_source = MorphSource::of(morph);
                     if masked {
                         group.mask = MaskRole::AwaitingContent;
                     }
@@ -1258,6 +1285,50 @@ impl<B: GpuBackend> Renderer<B> {
                         startup_timing,
                         region,
                     );
+                    if ends_host(groups.len(), &morph_frames) {
+                        let frame = morph_frames
+                            .pop()
+                            .expect("a morph host is open when it ends");
+                        assert_eq!(
+                            frame.element, element,
+                            "morph group end matches its begin"
+                        );
+                        if let Some(composite_region) =
+                            opacity_group_region(region, &groups, frame.bounds)
+                        {
+                            let (parent_view, parent_resolve, parent_origin, parent_size) =
+                                groups.last().map_or_else(
+                                    || (view.clone(), resolve_target.cloned(), (0, 0), (width, height)),
+                                    |parent| {
+                                        (
+                                            parent.render_view.clone(),
+                                            parent.resolve_target.clone(),
+                                            (parent.bounds.x, parent.bounds.y),
+                                            (parent.bounds.width, parent.bounds.height),
+                                        )
+                                    },
+                                );
+                            let local_region = DamageRect::new(
+                                composite_region.x - parent_origin.0,
+                                composite_region.y - parent_origin.1,
+                                composite_region.width,
+                                composite_region.height,
+                            );
+                            self.composite_morph_group(
+                                backend,
+                                &frame,
+                                &parent_view,
+                                parent_resolve.as_ref(),
+                                parent_origin,
+                                parent_size,
+                                is_srgb,
+                                device_scale,
+                                local_region,
+                            );
+                        }
+                        self.release_morph_sources(&frame);
+                        continue;
+                    }
                     if groups
                         .last()
                         .is_some_and(|top| top.mask == MaskRole::Coverage)
@@ -1306,6 +1377,12 @@ impl<B: GpuBackend> Renderer<B> {
                     if group.mask == MaskRole::AwaitingContent {
                         // Nothing was drawn inside it, so there is no coverage to
                         // show the content through.
+                        continue;
+                    }
+                    if let Some(role) = group.morph_source {
+                        // Its host blends it with the other source once both
+                        // are drawn.
+                        Self::keep_morph_source(&mut morph_frames, role, &group);
                         continue;
                     }
                     let Some(composite_region) =
@@ -1383,7 +1460,7 @@ impl<B: GpuBackend> Renderer<B> {
                         .mask = MaskRole::HasCoverage;
                     let mut coverage = self.ensure_opacity_group_target(
                         backend,
-                        groups.len(),
+                        next_group_depth(groups.len(), &morph_frames),
                         group_element,
                         1.0,
                         group_bounds,
@@ -1419,6 +1496,7 @@ impl<B: GpuBackend> Renderer<B> {
             region,
         );
         debug_assert!(groups.is_empty());
+        debug_assert!(morph_frames.is_empty());
     }
 
     fn flush_opacity_group_chunk(
@@ -1583,6 +1661,8 @@ impl<B: GpuBackend> Renderer<B> {
         ActiveOpacityGroup {
             element,
             mask: MaskRole::None,
+            morph_source: None,
+            sample_view: target_view,
             opacity,
             bounds,
             depth,

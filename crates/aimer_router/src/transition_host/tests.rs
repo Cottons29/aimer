@@ -1313,6 +1313,179 @@ mod presentation {
         }
     }
 
+    /// A growing window on the arriving page: moved by (10, 20), showing 40 x 30
+    /// of it with rounded corners, and not yet opaque.
+    fn window() -> PaintPresentation {
+        PaintPresentation {
+            transform: Mat3::translate(10.0, 20.0),
+            opacity: 0.75,
+            corner_radius: 8.0,
+            reveal: Some(aimer_animation::ElementBounds::new(0.0, 0.0, 40.0, 30.0)),
+        }
+    }
+
+    fn veiled_window_effect(
+        above: bool,
+        follows: Option<crate::TransitionPage>,
+        outgoing_on_top: bool,
+    ) -> ResolvedNavigationTransition {
+        let effect = ResolvedNavigationTransition::new(Duration::from_millis(100), curves::LINEAR, |_, _| {
+            NavigationTransitionFrame { outgoing: opacity(0.25), incoming: window() }
+        })
+        .unwrap()
+        .outgoing_on_top(outgoing_on_top);
+        let effect = if above {
+            effect.with_veil_above(|_| SizedBox::new().boxed())
+        } else {
+            effect.with_veil(|_| SizedBox::new().boxed())
+        };
+        match follows {
+            Some(page) => effect.veil_follows(page),
+            None => effect,
+        }
+    }
+
+    /// The nodes of a host with an outgoing page, an incoming page and a veil,
+    /// in retained paint order, and the render tree that owns them.
+    fn veiled_tree() -> (RenderTree, RenderNodeId, Vec<RenderNodeId>) {
+        let tree = RenderTree::new();
+        let root = tree.add_root(Rect::new(0.0, 0.0, 100.0, 100.0)).unwrap();
+        let nodes = (0..3)
+            .map(|_| tree.add_child(root, Rect::new(0.0, 0.0, 100.0, 100.0)).unwrap())
+            .collect();
+        (tree, root, nodes)
+    }
+
+    fn clip_of(tree: &RenderTree, node: RenderNodeId) -> (Option<Rect>, [f32; 4]) {
+        tree.render_all()
+            .into_iter()
+            .find_map(|operation| match operation {
+                aimer_cupid::draw_cmd_v2::RenderOp::Draw(item) if item.element == node => {
+                    Some((item.clip, item.clip_radius))
+                }
+                _ => None,
+            })
+            .expect("the node is drawn")
+    }
+
+    #[test]
+    fn a_veil_above_follows_the_arriving_page_window_at_full_strength() {
+        let context = context();
+        let element = host(veiled_window_effect(true, Some(crate::TransitionPage::Incoming), false), &context);
+        let (tree, root, nodes) = veiled_tree();
+
+        assert!(sync(&element, &tree, root, &context));
+
+        // Paint order: the departing page, the arriving page, then the veil above.
+        let veil = nodes[2];
+        let (transform, opacity) = tree.presentation(veil).unwrap();
+        assert_eq!(transform, Mat3::translate(10.0, 20.0), "moved with the window");
+        assert_eq!(opacity, 1.0, "the page's own opacity does not weaken the blur");
+        assert_eq!(
+            clip_of(&tree, veil),
+            (Some(Rect::new(10.0, 20.0, 40.0, 30.0)), [8.0; 4]),
+            "clipped to the window, with its corners"
+        );
+        assert_eq!(tree.presentation(nodes[1]).unwrap().1, 0.75, "the page keeps its own opacity");
+    }
+
+    #[test]
+    fn a_veil_can_follow_the_departing_page_instead() {
+        let context = context();
+        let element = host(veiled_window_effect(true, Some(crate::TransitionPage::Outgoing), false), &context);
+        let (tree, root, nodes) = veiled_tree();
+
+        assert!(sync(&element, &tree, root, &context));
+
+        let veil = nodes[2];
+        assert_eq!(tree.presentation(veil).unwrap(), (Mat3::identity(), 1.0));
+        assert_eq!(clip_of(&tree, veil), (None, [0.0; 4]), "the departing page here has no window to follow");
+    }
+
+    #[test]
+    fn a_stretched_page_is_clipped_to_the_rectangle_it_is_shown_in_with_its_corners_as_shown() {
+        let context = context();
+        let stretched = PaintPresentation {
+            transform: Mat3::translate(10.0, 20.0).mul(&Mat3::scale(0.4, 0.3)),
+            opacity: 1.0,
+            corner_radius: 8.0,
+            reveal: None,
+        };
+        let effect = ResolvedNavigationTransition::new(Duration::from_millis(100), curves::LINEAR, move |_, _| {
+            NavigationTransitionFrame { outgoing: opacity(0.25), incoming: stretched }
+        })
+        .unwrap();
+        let element = host(effect, &context);
+        let (tree, root, nodes) = veiled_tree();
+
+        assert!(sync(&element, &tree, root, &context));
+
+        // The 100 x 100 page, scaled to 40 x 30 and moved to (10, 20): that is where it
+        // is shown, and where it is clipped, whatever it is laid out as.
+        let (clip, radius) = clip_of(&tree, nodes[1]);
+        let clip = clip.expect("the stretched page is clipped to where it is shown");
+        assert!((clip.x - 10.0).abs() < 1e-3 && (clip.y - 20.0).abs() < 1e-3, "{clip:?}");
+        assert!((clip.width - 40.0).abs() < 1e-3 && (clip.height - 30.0).abs() < 1e-3, "{clip:?}");
+        assert!(radius.iter().all(|corner| (corner - 8.0).abs() < 0.5), "corners as shown: {radius:?}");
+    }
+
+    #[test]
+    fn a_veil_between_the_pages_follows_a_page_too() {
+        let context = context();
+        let element = host(veiled_window_effect(false, Some(crate::TransitionPage::Incoming), false), &context);
+        let (tree, root, nodes) = veiled_tree();
+
+        assert!(sync(&element, &tree, root, &context));
+
+        // Paint order: the departing page, the veil, the arriving page.
+        assert_eq!(tree.presentation(nodes[0]).unwrap().1, 0.25);
+        assert_eq!(tree.presentation(nodes[1]).unwrap().0, Mat3::translate(10.0, 20.0));
+        assert_eq!(clip_of(&tree, nodes[1]).0, Some(Rect::new(10.0, 20.0, 40.0, 30.0)));
+        assert_eq!(tree.presentation(nodes[2]).unwrap().1, 0.75);
+    }
+
+    #[test]
+    fn a_veil_the_effect_leaves_alone_still_fills_the_host() {
+        let context = context();
+        let element = host(veiled_window_effect(true, None, false), &context);
+        let (tree, root, nodes) = veiled_tree();
+
+        assert!(sync(&element, &tree, root, &context));
+
+        assert_eq!(tree.presentation(nodes[2]).unwrap(), (Mat3::identity(), 1.0));
+        assert_eq!(clip_of(&tree, nodes[2]).0, None);
+    }
+
+    #[test]
+    fn the_veil_ordinal_follows_the_anchor_copy_when_there_is_one() {
+        let context = context();
+        let content = aimer_animation::SharedContent::new(|| ErrorWidget::new("copy").boxed());
+        let effect = ResolvedNavigationTransition::anchored(
+            Duration::from_millis(100),
+            curves::LINEAR,
+            AnchorContent::new(content, ResolvedSize { width: 40.0, height: 30.0 }),
+            |_, _, _| AnchoredFrame {
+                frame: NavigationTransitionFrame { outgoing: opacity(0.25), incoming: window() },
+                anchor: opacity(0.5),
+            },
+        )
+        .unwrap()
+        .with_veil_above(|_| SizedBox::new().boxed())
+        .veil_follows(crate::TransitionPage::Incoming);
+        let element = host(effect, &context);
+        let tree = RenderTree::new();
+        let root = tree.add_root(Rect::new(0.0, 0.0, 100.0, 100.0)).unwrap();
+        let nodes: Vec<_> = (0..4)
+            .map(|_| tree.add_child(root, Rect::new(0.0, 0.0, 100.0, 100.0)).unwrap())
+            .collect();
+
+        assert!(sync(&element, &tree, root, &context));
+
+        // Painted: departing page, arriving page, the item's copy, the veil.
+        assert_eq!(tree.presentation(nodes[2]).unwrap().1, 0.5, "the copy keeps its own presentation");
+        assert_eq!(tree.presentation(nodes[3]).unwrap(), (Mat3::translate(10.0, 20.0), 1.0));
+    }
+
     #[test]
     fn the_anchor_takes_no_input_and_is_dropped_when_the_transition_ends() {
         let context = context();

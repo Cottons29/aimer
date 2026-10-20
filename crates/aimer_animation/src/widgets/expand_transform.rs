@@ -23,7 +23,9 @@ use crate::primitives::curve::{AnyCurve, Curve};
 /// * **The window grows** ([`grow`](Self::grow)). It starts as the item's bounds,
 ///   with the item's corners, and ends as the whole host, with the page's. The
 ///   page is revealed through it rather than scaled, so an item as wide as the
-///   host, such as a row of a feed, has something to grow into.
+///   host, such as a row of a feed, has something to grow into. With
+///   [`stretch`](Self::stretch) the page is instead scaled to fill the window, as
+///   the copy of the item is, which squeezes the whole page into the item's shape.
 /// * **The item dissolves into the page** ([`dissolve`](Self::dissolve)). A copy
 ///   of the item is stretched to the window, so that it is the item that grows
 ///   and its box is always the window's, and fades out over the page, which is
@@ -63,6 +65,7 @@ pub struct ExpandSpec {
     scrim: f32,
     anchored: bool,
     crossfade: bool,
+    stretch: bool,
     grow: (f32, f32),
     dissolve: (f32, f32),
     blur_hold: f32,
@@ -96,6 +99,7 @@ impl ExpandSpec {
             scrim: 0.35,
             anchored: false,
             crossfade: false,
+            stretch: false,
             grow: DEFAULT_GROW,
             dissolve: DEFAULT_DISSOLVE,
             blur_hold: 0.0,
@@ -118,6 +122,7 @@ impl ExpandSpec {
         spec.scrim = self.scrim;
         spec.anchored = self.anchored;
         spec.crossfade = self.crossfade;
+        spec.stretch = self.stretch;
         spec.grow = self.grow;
         spec.dissolve = self.dissolve;
         spec.blur_hold = self.blur_hold;
@@ -174,6 +179,21 @@ impl ExpandSpec {
     /// cross, and the page fades in either way.
     pub fn crossfade(mut self, crossfade: bool) -> Self {
         self.crossfade = crossfade;
+        self
+    }
+
+    /// Has the page scaled to fill the window instead of revealed through it. Off
+    /// by default.
+    ///
+    /// The whole page is scaled, on each axis, by the window's fraction of the
+    /// host and moved to the window's corner, exactly as the copy of the item is.
+    /// Nothing about the page's own layout changes: it is a presentation of the
+    /// page as laid out for the host. The page is squeezed into the item's shape,
+    /// so a row much wider than it is tall flattens it; it is undistorted again
+    /// once the window fills the host. The page's corner radius is that of the
+    /// window as shown.
+    pub fn stretch(mut self, stretch: bool) -> Self {
+        self.stretch = stretch;
         self
     }
 
@@ -259,7 +279,7 @@ impl ExpandSpec {
             lerp(self.source.height, self.viewport.height).max(0.0),
         );
         // A window that has grown to the whole host clips nothing.
-        let reveal = (q < 1.0).then_some(window);
+        let reveal = (q < 1.0 && !self.stretch).then_some(window);
         // A curve that overshoots must not carry the radius below zero: a
         // negative radius is declined by the host and the page would blink out.
         let corner_radius = lerp(self.source_radius, self.page_radius).max(0.0);
@@ -280,9 +300,19 @@ impl ExpandSpec {
         };
 
         let position = Mat3::translate(lerp(self.source.x, 0.0), lerp(self.source.y, 0.0));
+        // The page is as large as the host: scaled by how much of it the window is,
+        // and then moved to the window's corner, it fills the window, like the copy.
+        let page_transform = if self.stretch {
+            position.mul(&Mat3::scale(
+                window.width / self.viewport.width,
+                window.height / self.viewport.height,
+            ))
+        } else {
+            position
+        };
         ContainerTransformFrame {
             page: PaintPresentation {
-                transform: position,
+                transform: page_transform,
                 opacity: page_opacity,
                 corner_radius,
                 reveal,
@@ -606,5 +636,80 @@ mod tests {
         }
         // A scrim is a fraction.
         assert_eq!(spec().scrim(7.0).sample(1.0).backdrop.opacity, 0.0);
+    }
+
+    fn close(actual: Mat3, expected: Mat3) {
+        for (a, e) in actual.cols.iter().flatten().zip(expected.cols.iter().flatten()) {
+            assert!((a - e).abs() < 1e-4, "{actual:?} vs {expected:?}");
+        }
+    }
+
+    #[test]
+    fn a_stretched_page_is_scaled_into_the_window_instead_of_revealed() {
+        let spec = spec().stretch(true);
+
+        // On the item: the whole page squeezed into the row's 400 x 160 and moved
+        // onto it, with nothing clipped away but its corners.
+        let start = spec.sample(0.0).page;
+        assert_eq!(start.reveal, None);
+        close(start.transform, Mat3::translate(0.0, 260.0).mul(&Mat3::scale(1.0, 160.0 / 640.0)));
+        assert_eq!(start.corner_radius, 12.0);
+
+        // Halfway the window is halfway between the row and the viewport.
+        let middle = spec.sample(0.5).page;
+        assert_eq!(middle.reveal, None);
+        close(middle.transform, Mat3::translate(0.0, 130.0).mul(&Mat3::scale(1.0, 0.625)));
+
+        // Filling the host it is the page as it is: no scale, no offset.
+        let end = spec.sample(1.0).page;
+        assert_eq!(end.reveal, None);
+        close(end.transform, Mat3::identity());
+        assert_eq!(end.corner_radius, 0.0);
+    }
+
+    #[test]
+    fn a_page_is_revealed_unless_it_is_asked_to_stretch() {
+        assert_eq!(ExpandSpec::new(ElementBounds::new(0.0, 0.0, 1.0, 1.0), VIEWPORT), ExpandSpec::new(ElementBounds::new(0.0, 0.0, 1.0, 1.0), VIEWPORT).map(|spec| spec.stretch(false)));
+        let revealed = spec().sample(0.0).page;
+        assert_eq!(revealed.reveal, Some(ElementBounds::new(0.0, 0.0, 400.0, 160.0)));
+        close(revealed.transform, Mat3::translate(0.0, 260.0));
+    }
+
+    #[test]
+    fn stretching_the_page_changes_nothing_else_about_the_motion() {
+        let (revealed, stretched) = (spec(), spec().stretch(true));
+        for p in [0.0, 0.1, 0.3, 0.5, 0.8, 1.0] {
+            let (a, b) = (revealed.sample(p), stretched.sample(p));
+            assert_eq!(a.anchor, b.anchor, "the item's copy at {p}");
+            assert_eq!(a.backdrop, b.backdrop, "the page behind at {p}");
+            assert_eq!(a.page.opacity, b.page.opacity, "the page's opacity at {p}");
+            assert_eq!(a.page.corner_radius, b.page.corner_radius, "the corners at {p}");
+        }
+    }
+
+    #[test]
+    fn a_stretched_page_scales_every_axis_by_the_windows_fraction_of_the_host() {
+        // An item that is neither as wide nor as tall as the host: both axes scale.
+        let spec = ExpandSpec::new(ElementBounds::new(50.0, 100.0, 100.0, 80.0), VIEWPORT)
+            .unwrap()
+            .stretch(true);
+        let start = spec.sample(0.0).page;
+        close(start.transform, Mat3::translate(50.0, 100.0).mul(&Mat3::scale(0.25, 80.0 / 640.0)));
+        // A curve that overshoots must not turn the page inside out.
+        let overshoot = spec.grow_curve(curves::cubic_bezier(0.34, 1.56, 0.64, 1.0));
+        for p in [0.0, 0.2, 0.5, 0.9, 1.0] {
+            let transform = overshoot.sample(p).page.transform;
+            assert!(transform.cols.iter().flatten().all(|value| value.is_finite()), "finite at {p}");
+        }
+    }
+
+    #[test]
+    fn retargeting_keeps_the_stretch() {
+        let moved = spec()
+            .stretch(true)
+            .retargeted(ElementBounds::new(0.0, 100.0, 400.0, 160.0), VIEWPORT)
+            .unwrap();
+        assert_eq!(moved.sample(0.0).page.reveal, None);
+        close(moved.sample(0.0).page.transform, Mat3::translate(0.0, 100.0).mul(&Mat3::scale(1.0, 0.25)));
     }
 }

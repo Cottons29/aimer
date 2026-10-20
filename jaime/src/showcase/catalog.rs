@@ -36,6 +36,7 @@ pub(super) enum ExampleId {
     CustomShape,
     AnimatedLayout,
     TweenKeyframes,
+    MorphTransition,
     TextProperties,
     Window,
     Resizable,
@@ -107,6 +108,7 @@ pub(super) const EXAMPLES: &[ExampleId] = &[
     ExampleId::CustomShape,
     ExampleId::AnimatedLayout,
     ExampleId::TweenKeyframes,
+    ExampleId::MorphTransition,
     ExampleId::TextProperties,
     ExampleId::Window,
     ExampleId::Resizable,
@@ -187,6 +189,7 @@ pub(super) const EXAMPLE_CATEGORIES: &[ExampleCategory] = &[
         examples: &[
             ExampleId::Animatable,
             ExampleId::TweenKeyframes,
+            ExampleId::MorphTransition,
             ExampleId::DataView,
             ExampleId::Storage,
             ExampleId::Counter,
@@ -292,6 +295,7 @@ impl ExampleId {
             Self::CustomShape => "Custom shapes",
             Self::AnimatedLayout => "Animated layout",
             Self::TweenKeyframes => "Tween and keyframes",
+            Self::MorphTransition => "Morph transition",
             Self::TextProperties => "Text properties",
             Self::Window => "Window showcase",
             Self::Resizable => "Resizable",
@@ -362,6 +366,7 @@ impl ExampleId {
             Self::Storage => "▣",
             Self::AnimatedLayout => "↗",
             Self::TweenKeyframes => "∿",
+            Self::MorphTransition => "⇌",
             Self::TextProperties
             | Self::Text
             | Self::TextArea
@@ -429,6 +434,7 @@ impl ExampleId {
             Self::CustomShape => "custom-shape",
             Self::AnimatedLayout => "animated-layout",
             Self::TweenKeyframes => "tween-keyframes",
+            Self::MorphTransition => "morph-transition",
             Self::TextProperties => "text-properties",
             Self::Window => "window",
             Self::Resizable => "resizable",
@@ -559,6 +565,9 @@ impl ExampleId {
             }
             Self::TweenKeyframes => {
                 "Play typed tweens, timed keyframes, and multi-track timelines that own their own timing."
+            }
+            Self::MorphTransition => {
+                "Blend two cards with a shader that reads both textures: dissolve, wipe, liquid, or a moving box."
             }
             Self::TextProperties => {
                 "Explore typography, wrapping, spacing, indentation, and rich text."
