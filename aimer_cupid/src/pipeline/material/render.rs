@@ -12,6 +12,9 @@ mod blur;
 #[cfg(test)]
 mod light_edge_tests;
 
+#[cfg(test)]
+mod gradient_tests;
+
 const INITIAL_REQUEST_CAPACITY: usize = 16;
 const MAX_REQUESTS_PER_FRAME: usize = 512;
 
@@ -60,7 +63,7 @@ impl MaterialUniform {
             .clip
             .map(|clip| (clip.rect, clip.corner_radii))
             .unwrap_or(([0.0, 0.0, -1.0, 0.0], [0.0; 4]));
-        Self {
+        let mut uniform = Self {
             bounds: request.bounds,
             tint: request.tint,
             border_color: request.border_color,
@@ -173,7 +176,44 @@ impl MaterialUniform {
                     ]
                 }
             },
+        };
+        if request.kind == MaterialKind::Gradient {
+            uniform.apply_gradient(&request.gradient);
         }
+        uniform
+    }
+
+    /// Stores a gradient ramp in the slots a gradient never otherwise reads,
+    /// so analytic ramps fit the uniform every material shares.
+    ///
+    /// | field          | gradient use                                       |
+    /// |----------------|----------------------------------------------------|
+    /// | `tint`         | geometry in pixels from the bounds origin          |
+    /// | `light`        | offsets of stops 0..4                              |
+    /// | `detail`       | offsets of stops 4..8                              |
+    /// | `border_color` | packed RGBA8 colors of stops 0..4, as `f32` bits   |
+    /// | `shadow`       | packed RGBA8 colors of stops 4..8, as `f32` bits   |
+    /// | `liquid`       | x: shape, y: stop count                            |
+    ///
+    /// The packed colors are raw bit patterns that the shader reads back with
+    /// a bit cast; nothing does float arithmetic on them.
+    fn apply_gradient(&mut self, gradient: &super::MaterialGradient) {
+        let bits = |colors: &[u32]| -> [f32; 4] {
+            [0, 1, 2, 3].map(|index| f32::from_bits(colors[index]))
+        };
+        self.effect[2] = 0.0;
+        self.effect[3] = 0.0;
+        self.tint = gradient.geometry;
+        self.light = [0, 1, 2, 3].map(|index| gradient.offsets[index]);
+        self.detail = [4, 5, 6, 7].map(|index| gradient.offsets[index]);
+        self.border_color = bits(&gradient.colors[..4]);
+        self.shadow = bits(&gradient.colors[4..]);
+        self.liquid = [
+            gradient.shape as u8 as f32,
+            f32::from(gradient.stop_count),
+            0.0,
+            0.0,
+        ];
     }
 }
 
@@ -502,7 +542,7 @@ impl<B: crate::backend::GpuBackend> MaterialPipeline<B> {
             && self
                 .requests
                 .iter()
-                .any(|request| request.kind != MaterialKind::LightEdge)
+                .any(|request| request.kind.samples_backdrop())
         {
             ctx.backend
                 .write_texture(&crate::backend::WriteTextureDescriptor {
@@ -843,7 +883,7 @@ fn backdrop_region(
     viewport_height: u32,
     max_dimension: u32,
 ) -> Option<BackdropRegion> {
-    if request.kind == MaterialKind::LightEdge || viewport_width == 0 || viewport_height == 0 {
+    if !request.kind.samples_backdrop() || viewport_width == 0 || viewport_height == 0 {
         return None;
     }
     let request = request.normalized();

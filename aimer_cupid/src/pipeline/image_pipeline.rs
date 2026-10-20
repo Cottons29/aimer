@@ -267,6 +267,13 @@ fn select_texture_evictions(
 
 pub struct ImagePipeline<B: crate::backend::GpuBackend = crate::backend::DefaultGpuBackend> {
     pipeline: B::RenderPipeline,
+    /// Draws a texture's alpha as a mask over the destination; made on first
+    /// use because only masked groups need it.
+    mask_pipeline: Option<B::RenderPipeline>,
+    shader: B::ShaderModule,
+    pipeline_layout: B::PipelineLayout,
+    format: B::TextureFormat,
+    antialiasing: crate::AntiAlias,
     viewport_buffer: B::Buffer,
     viewport_bind_group: B::BindGroup,
     texture_bind_group_layout: B::BindGroupLayout,
@@ -409,33 +416,15 @@ impl<B: crate::backend::GpuBackend> ImagePipeline<B> {
         let pipeline_layout =
             backend.create_pipeline_layout(&[&viewport_layout, &texture_bind_group_layout]);
 
-        let vertex_buffers = [Some(VertexBufferLayout {
-            array_stride: size_of::<ImageInstance>() as u64,
-            step_mode: VertexStepMode::Instance,
-            attributes: &ImageInstance::GENERIC_ATTRIBUTES,
-        })];
-
-        let pipeline = backend.create_render_pipeline(&RenderPipelineDescriptor {
-            label: Some("image pipeline".to_string()),
-            layout: Some(&pipeline_layout),
-            vertex: VertexState {
-                module: &shader,
-                entry_point: "vs_main",
-                buffers: &vertex_buffers,
-            },
-            fragment: Some(FragmentState {
-                module: &shader,
-                entry_point: "fs_main",
-                targets: &[Some(ColorTargetState {
-                    format,
-                    blend: Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-                    write_mask: ColorWriteMask::ALL,
-                })],
-            }),
-            primitive: PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: crate::pipeline::multisample_state(antialiasing),
-        });
+        let pipeline = Self::create_blended_pipeline(
+            backend,
+            &shader,
+            &pipeline_layout,
+            format,
+            antialiasing,
+            BlendState::PREMULTIPLIED_ALPHA_BLENDING,
+            "image pipeline",
+        );
 
         let sampler = backend.create_sampler(&SamplerDescriptor {
             label: Some("image sampler".to_string()),
@@ -459,6 +448,11 @@ impl<B: crate::backend::GpuBackend> ImagePipeline<B> {
 
         Self {
             pipeline,
+            mask_pipeline: None,
+            shader,
+            pipeline_layout,
+            format,
+            antialiasing,
             viewport_buffer,
             viewport_bind_group,
             texture_bind_group_layout,
@@ -474,6 +468,44 @@ impl<B: crate::backend::GpuBackend> ImagePipeline<B> {
             last_viewport: None,
             frame_index: 0,
         }
+    }
+
+    fn create_blended_pipeline(
+        backend: &B,
+        shader: &B::ShaderModule,
+        pipeline_layout: &B::PipelineLayout,
+        format: B::TextureFormat,
+        antialiasing: crate::AntiAlias,
+        blend: crate::backend::BlendState,
+        label: &str,
+    ) -> B::RenderPipeline {
+        use crate::backend::*;
+        let vertex_buffers = [Some(VertexBufferLayout {
+            array_stride: size_of::<ImageInstance>() as u64,
+            step_mode: VertexStepMode::Instance,
+            attributes: &ImageInstance::GENERIC_ATTRIBUTES,
+        })];
+        backend.create_render_pipeline(&RenderPipelineDescriptor {
+            label: Some(label.to_string()),
+            layout: Some(pipeline_layout),
+            vertex: VertexState {
+                module: shader,
+                entry_point: "vs_main",
+                buffers: &vertex_buffers,
+            },
+            fragment: Some(FragmentState {
+                module: shader,
+                entry_point: "fs_main",
+                targets: &[Some(ColorTargetState {
+                    format,
+                    blend: Some(blend),
+                    write_mask: ColorWriteMask::ALL,
+                })],
+            }),
+            primitive: PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: crate::pipeline::multisample_state(antialiasing),
+        })
     }
 
     /// Starts a frame through the selected backend.
@@ -764,7 +796,7 @@ impl<B: crate::backend::GpuBackend> ImagePipeline<B> {
         }) else {
             return;
         };
-        self.draw_batch_with_bind_group_generic(backend, pass, &bind_group, instances);
+        self.draw_batch_with_bind_group_generic(backend, pass, &bind_group, instances, false);
     }
 
     pub(crate) fn draw_external_batch<'a>(
@@ -776,7 +808,21 @@ impl<B: crate::backend::GpuBackend> ImagePipeline<B> {
     ) where
         B::RenderPass<'a>: crate::backend::GpuRenderPass<B>,
     {
-        self.draw_batch_with_bind_group_generic(backend, pass, bind_group, instances);
+        self.draw_batch_with_bind_group_generic(backend, pass, bind_group, instances, false);
+    }
+
+    /// Draws a renderer-owned texture as a mask: the destination keeps its
+    /// pixels only where the texture has alpha, scaled by it.
+    pub(crate) fn draw_external_mask_batch<'a>(
+        &mut self,
+        backend: &B,
+        pass: &mut B::RenderPass<'a>,
+        bind_group: &B::BindGroup,
+        instances: &[ImageInstance],
+    ) where
+        B::RenderPass<'a>: crate::backend::GpuRenderPass<B>,
+    {
+        self.draw_batch_with_bind_group_generic(backend, pass, bind_group, instances, true);
     }
 
     fn draw_batch_with_bind_group_generic<'a>(
@@ -785,6 +831,7 @@ impl<B: crate::backend::GpuBackend> ImagePipeline<B> {
         pass: &mut B::RenderPass<'a>,
         bind_group: &B::BindGroup,
         instances: &[ImageInstance],
+        mask: bool,
     ) where
         B::RenderPass<'a>: crate::backend::GpuRenderPass<B>,
     {
@@ -818,7 +865,21 @@ impl<B: crate::backend::GpuBackend> ImagePipeline<B> {
             byte_offset,
             bytemuck::cast_slice(instances),
         );
-        pass.set_pipeline(&self.pipeline);
+        if mask && self.mask_pipeline.is_none() {
+            self.mask_pipeline = Some(Self::create_blended_pipeline(
+                backend,
+                &self.shader,
+                &self.pipeline_layout,
+                self.format,
+                self.antialiasing,
+                crate::backend::BlendState::DESTINATION_IN,
+                "image mask pipeline",
+            ));
+        }
+        pass.set_pipeline(match (&self.mask_pipeline, mask) {
+            (Some(mask_pipeline), true) => mask_pipeline,
+            _ => &self.pipeline,
+        });
         pass.set_bind_group(0, &self.viewport_bind_group, &[]);
         pass.set_bind_group(1, bind_group, &[]);
         pass.set_vertex_buffer(0, &self.instance_buffer, byte_offset);

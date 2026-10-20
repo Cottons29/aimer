@@ -27,6 +27,8 @@ use crate::glass_liquid_example::glass_liquid_example;
 use crate::http_request_button::http_request_button_example;
 use crate::i18n_example::i18n_example;
 use crate::justify_content_example::justify_content_example;
+use crate::foreground_decoration_example::foreground_decoration_example;
+use crate::gradient_example::gradient_example;
 use crate::light_edge_example::light_edge_example;
 use crate::liquid_tab_bar_example::liquid_tab_bar_example;
 use crate::loading_animation::loading_animation_example;
@@ -433,6 +435,8 @@ fn build_example(example: ExampleId, app_theme: ThemeData) -> AnyWidget {
         ExampleId::BackdropFilter => backdrop_filter_example().boxed(),
         ExampleId::Magnification => magnification_example().boxed(),
         ExampleId::LightEdge => light_edge_example().boxed(),
+        ExampleId::Gradient => gradient_example().boxed(),
+        ExampleId::ForegroundDecoration => foreground_decoration_example().boxed(),
         ExampleId::MultiDecorationBox => multi_decoration_box_example().boxed(),
         ExampleId::Storage => storage_example().boxed(),
         ExampleId::CustomShape => custom_shape_example().boxed(),

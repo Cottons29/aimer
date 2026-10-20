@@ -3,7 +3,8 @@ struct MaterialUniform {
     tint: vec4<f32>,
     border_color: vec4<f32>,
     shadow: vec4<f32>,
-    // x: material kind (0 = Glass, 1 = Liquid, 2 = filter, 3 = lens, -1 = horizontal blur)
+    // x: material kind (0 = Glass, 1 = Liquid, 2 = filter, 3 = lens, 4 = light edge,
+    // 5 = gradient, -1 = horizontal blur)
     // y: opacity, z: animation phase, w: distortion strength
     effect: vec4<f32>,
     // x: saturation, y: brightness, z: contrast, w: edge lighting
@@ -559,8 +560,85 @@ fn light_edge(pixel: vec2<f32>) -> vec4<f32> {
     return vec4<f32>(converted * alpha, alpha);
 }
 
+// Analytic color ramp. The ramp lives in slots the other kinds use for other
+// things (see `MaterialUniform::apply_gradient`): `tint` is the geometry,
+// `light`/`detail` the stop offsets, `border_color`/`shadow` the packed RGBA8
+// stop colors stored as raw f32 bits, and `liquid.xy` the shape and count.
+fn gradient_stop_offset(index: u32) -> f32 {
+    if index < 4u {
+        return material.light[index];
+    }
+    return material.detail[index - 4u];
+}
+
+fn gradient_stop_color(index: u32) -> vec4<f32> {
+    var bits: f32;
+    if index < 4u {
+        bits = material.border_color[index];
+    } else {
+        bits = material.shadow[index - 4u];
+    }
+    let packed = bitcast<u32>(bits);
+    let straight = vec4<f32>(
+        f32(packed & 255u),
+        f32((packed >> 8u) & 255u),
+        f32((packed >> 16u) & 255u),
+        f32(packed >> 24u),
+    ) / 255.0;
+    // Blend premultiplied so a transparent stop does not tint its neighbors.
+    return vec4<f32>(straight.rgb * straight.a, straight.a);
+}
+
+fn gradient_ramp(t: f32) -> vec4<f32> {
+    let count = u32(material.liquid.y);
+    var previous = gradient_stop_color(0u);
+    var previous_offset = gradient_stop_offset(0u);
+    if t <= previous_offset {
+        return previous;
+    }
+    for (var index = 1u; index < count; index += 1u) {
+        let offset = gradient_stop_offset(index);
+        let current = gradient_stop_color(index);
+        if t <= offset {
+            let f = clamp((t - previous_offset) / max(offset - previous_offset, 0.000001), 0.0, 1.0);
+            return mix(previous, current, f);
+        }
+        previous = current;
+        previous_offset = offset;
+    }
+    return previous;
+}
+
+fn gradient_fill(pixel: vec2<f32>) -> vec4<f32> {
+    let half_size = material.bounds.zw * 0.5;
+    let point = pixel - material.bounds.xy - half_size;
+    let distance = sdf_rounded_rect(point, half_size, material.radii);
+    let coverage = sdf_alpha(distance) * clip_alpha(pixel);
+    let local = pixel - material.bounds.xy;
+    let geometry = material.tint;
+    let shape = material.liquid.x;
+    var t: f32;
+    if shape < 0.5 {
+        let axis = geometry.zw - geometry.xy;
+        t = dot(local - geometry.xy, axis) / max(dot(axis, axis), 0.000001);
+    } else if shape < 1.5 {
+        t = length((local - geometry.xy) / max(geometry.zw, vec2<f32>(0.0001)));
+    } else {
+        let offset = local - geometry.xy;
+        t = fract((atan2(offset.y, offset.x) - geometry.z) / 6.28318530718);
+    }
+    let ramp = gradient_ramp(clamp(t, 0.0, 1.0));
+    // Interleaved gradient noise, one 8-bit step wide, hides banding in slow ramps.
+    let noise = fract(52.9829189 * fract(dot(pixel, vec2<f32>(0.06711056, 0.00583715))));
+    let rgb = clamp(ramp.rgb / max(ramp.a, 0.00001) + vec3<f32>((noise - 0.5) / 255.0), vec3<f32>(0.0), vec3<f32>(1.0));
+    let alpha = clamp(ramp.a * material.effect.y * coverage, 0.0, 1.0);
+    let converted = select(rgb, srgb_rgb_to_linear(rgb), material.viewport.z > 0.5);
+    return vec4<f32>(converted * alpha, alpha);
+}
+
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+    if material.effect.x > 4.5 { return gradient_fill(input.pixel_pos); }
     if material.effect.x > 3.5 { return light_edge(input.pixel_pos); }
     if material.effect.x > 1.5 && material.viewport.w < 0.5 {
         discard;

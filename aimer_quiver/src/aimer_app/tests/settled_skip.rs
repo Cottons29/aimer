@@ -200,7 +200,8 @@ impl Scene {
                     bounds,
                     opacity,
                     clip,
-                } => format!("begin {element:?} {bounds:?} {opacity} {clip:?}"),
+                    masked,
+                } => format!("begin {element:?} {bounds:?} {opacity} {clip:?} {masked}"),
                 aimer_cupid::draw_cmd_v2::RenderOp::EndOpacityGroup { element } => {
                     format!("end {element:?}")
                 }

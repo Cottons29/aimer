@@ -214,8 +214,22 @@ impl<B: GpuBackend> Default for OpacityGroupTargetGeneric<B> {
     }
 }
 
+/// What an active group is for in a mask composite.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MaskRole {
+    /// An ordinary opacity group.
+    None,
+    /// A masked group still waiting for the node's own item, its content.
+    AwaitingContent,
+    /// A masked group whose content is drawn and whose coverage group is above it.
+    HasCoverage,
+    /// The coverage target of a masked group: a mask, never shown itself.
+    Coverage,
+}
+
 struct ActiveOpacityGroup<B: GpuBackend> {
     element: u64,
+    mask: MaskRole,
     opacity: f32,
     bounds: DamageRect,
     depth: usize,
@@ -1188,7 +1202,11 @@ impl<B: GpuBackend> Renderer<B> {
         let mut chunk = Vec::new();
         for operation in operations.iter().copied() {
             match operation.kind {
-                RetainedRenderOperationKind::OpacityGroupBegin { element, opacity } => {
+                RetainedRenderOperationKind::OpacityGroupBegin {
+                    element,
+                    opacity,
+                    masked,
+                } => {
                     self.flush_opacity_group_chunk(
                         backend,
                         view,
@@ -1205,7 +1223,7 @@ impl<B: GpuBackend> Renderer<B> {
                         region,
                     );
 
-                    let group = self.ensure_opacity_group_target(
+                    let mut group = self.ensure_opacity_group_target(
                         backend,
                         groups.len(),
                         element,
@@ -1213,6 +1231,9 @@ impl<B: GpuBackend> Renderer<B> {
                         operation.bounds,
                         opacity_target_key,
                     );
+                    if masked {
+                        group.mask = MaskRole::AwaitingContent;
+                    }
                     self.clear_render_target(
                         backend,
                         &group.render_view,
@@ -1237,6 +1258,44 @@ impl<B: GpuBackend> Renderer<B> {
                         startup_timing,
                         region,
                     );
+                    if groups
+                        .last()
+                        .is_some_and(|top| top.mask == MaskRole::Coverage)
+                    {
+                        // The coverage is complete: cut the content out with it.
+                        let coverage = groups.pop().expect("a coverage group was just seen");
+                        if let Some(coverage_region) =
+                            opacity_group_region(region, &groups, coverage.bounds)
+                        {
+                            let content = groups
+                                .last()
+                                .expect("a coverage group sits above its content");
+                            let origin = (content.bounds.x, content.bounds.y);
+                            let local_region = DamageRect::new(
+                                coverage_region.x - origin.0,
+                                coverage_region.y - origin.1,
+                                coverage_region.width,
+                                coverage_region.height,
+                            );
+                            let (content_view, content_resolve) =
+                                (content.render_view.clone(), content.resolve_target.clone());
+                            let (content_width, content_height) =
+                                (content.bounds.width, content.bounds.height);
+                            self.composite_opacity_group(
+                                backend,
+                                &coverage,
+                                &content_view,
+                                content_resolve.as_ref(),
+                                origin,
+                                content_width,
+                                content_height,
+                                is_srgb,
+                                local_region,
+                                true,
+                            );
+                        }
+                        self.opacity_group_targets[coverage.depth].target.mark_valid();
+                    }
                     let group = groups
                         .pop()
                         .expect("validated opacity groups have matching begin operations");
@@ -1244,6 +1303,11 @@ impl<B: GpuBackend> Renderer<B> {
                         group.element, element,
                         "opacity group end matches its begin"
                     );
+                    if group.mask == MaskRole::AwaitingContent {
+                        // Nothing was drawn inside it, so there is no coverage to
+                        // show the content through.
+                        continue;
+                    }
                     let Some(composite_region) =
                         opacity_group_region(region, &groups, group.bounds)
                     else {
@@ -1278,10 +1342,65 @@ impl<B: GpuBackend> Renderer<B> {
                         parent_height,
                         is_srgb,
                         local_composite_region,
+                        false,
                     );
                     self.opacity_group_targets[group.depth].target.mark_valid();
                 }
-                RetainedRenderOperationKind::LocalV2(_) => chunk.push(operation),
+                RetainedRenderOperationKind::LocalV2(ref item) => {
+                    let awaiting = groups
+                        .last()
+                        .filter(|top| top.mask == MaskRole::AwaitingContent)
+                        .map(|top| (top.element, top.bounds));
+                    let Some((group_element, group_bounds)) = awaiting else {
+                        chunk.push(operation);
+                        continue;
+                    };
+                    // The group's first item is the node's own: its content. Draw
+                    // it into the content target, then everything after it is
+                    // coverage and goes into a target of its own.
+                    let is_content = item.element.get() == group_element;
+                    if is_content {
+                        chunk.push(operation);
+                    }
+                    self.flush_opacity_group_chunk(
+                        backend,
+                        view,
+                        source_texture,
+                        resolve_target,
+                        width,
+                        height,
+                        is_srgb,
+                        draw_list,
+                        &mut chunk,
+                        &groups,
+                        device_scale,
+                        startup_timing,
+                        region,
+                    );
+                    groups
+                        .last_mut()
+                        .expect("a group was awaiting its content")
+                        .mask = MaskRole::HasCoverage;
+                    let mut coverage = self.ensure_opacity_group_target(
+                        backend,
+                        groups.len(),
+                        group_element,
+                        1.0,
+                        group_bounds,
+                        opacity_target_key,
+                    );
+                    coverage.mask = MaskRole::Coverage;
+                    self.clear_render_target(
+                        backend,
+                        &coverage.render_view,
+                        coverage.resolve_target.as_ref(),
+                        [0.0; 4],
+                    );
+                    groups.push(coverage);
+                    if !is_content {
+                        chunk.push(operation);
+                    }
+                }
             }
         }
         self.flush_opacity_group_chunk(
@@ -1463,6 +1582,7 @@ impl<B: GpuBackend> Renderer<B> {
             .expect("opacity group target bind group initialized");
         ActiveOpacityGroup {
             element,
+            mask: MaskRole::None,
             opacity,
             bounds,
             depth,
@@ -1483,6 +1603,7 @@ impl<B: GpuBackend> Renderer<B> {
         height: u32,
         is_srgb: bool,
         scissor: DamageRect,
+        mask: bool,
     ) {
         let image = ImageInstance {
             position: [
@@ -1525,12 +1646,21 @@ impl<B: GpuBackend> Renderer<B> {
                 },
             );
             pass.set_scissor_rect(scissor.x, scissor.y, scissor.width, scissor.height);
-            image_pipeline.draw_external_batch(
-                backend,
-                &mut pass,
-                &group.bind_group,
-                std::slice::from_ref(&image),
-            );
+            if mask {
+                image_pipeline.draw_external_mask_batch(
+                    backend,
+                    &mut pass,
+                    &group.bind_group,
+                    std::slice::from_ref(&image),
+                );
+            } else {
+                image_pipeline.draw_external_batch(
+                    backend,
+                    &mut pass,
+                    &group.bind_group,
+                    std::slice::from_ref(&image),
+                );
+            }
         }
         image_pipeline.end_frame(backend);
         backend.submit(encoder);

@@ -3,18 +3,24 @@
 use crate::draw_cmd::{DrawCommand, DrawList};
 use crate::frame::RetainedRenderPlan;
 use crate::pipeline::material::{
-    MATERIAL_PACKET_LEN, MATERIAL_PACKET_VERSION, MATERIAL_PIPELINE_NAME, MaterialKind,
-    MaterialRequest,
+    MATERIAL_GRADIENT_PACKET_LEN, MATERIAL_GRADIENT_PACKET_VERSION, MATERIAL_PACKET_LEN,
+    MATERIAL_PACKET_VERSION, MATERIAL_PIPELINE_NAME, MaterialKind, MaterialRequest,
 };
 
 fn packet_needs_backdrop(bytes: &[u8]) -> bool {
     // Inspect only the fixed header on this per-frame path. Full decoding and
     // validation happen when preparing the command. Unknown packets retain the
     // conservative capture route used before analytic materials were added.
-    bytes.len() != MATERIAL_PACKET_LEN
-        || !bytes.starts_with(b"AIMR")
-        || bytes[4] != MATERIAL_PACKET_VERSION
-        || bytes[5] != MaterialKind::LightEdge as u8
+    if !bytes.starts_with(b"AIMR") || bytes.len() < 6 {
+        return true;
+    }
+    match (bytes[4], bytes.len()) {
+        (MATERIAL_PACKET_VERSION, MATERIAL_PACKET_LEN) => bytes[5] != MaterialKind::LightEdge as u8,
+        (MATERIAL_GRADIENT_PACKET_VERSION, MATERIAL_GRADIENT_PACKET_LEN) => {
+            bytes[5] != MaterialKind::Gradient as u8
+        }
+        _ => true,
+    }
 }
 
 pub(super) fn draw_list_uses_material(draw_list: &DrawList) -> bool {
@@ -30,7 +36,7 @@ pub(super) fn draw_list_uses_material(draw_list: &DrawList) -> bool {
             return false;
         }
         if let Some(request) = data.downcast_ref::<MaterialRequest>() {
-            return request.kind != MaterialKind::LightEdge;
+            return request.kind.samples_backdrop();
         }
         data.downcast_ref::<Vec<u8>>()
             .is_none_or(|bytes| packet_needs_backdrop(bytes))

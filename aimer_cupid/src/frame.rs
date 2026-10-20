@@ -22,7 +22,12 @@ pub struct RetainedRenderOperation {
 }
 
 pub(crate) enum RetainedRenderOperationKind {
-    OpacityGroupBegin { element: u64, opacity: f32 },
+    /// `masked` groups show their first item only where the rest have coverage.
+    OpacityGroupBegin {
+        element: u64,
+        opacity: f32,
+        masked: bool,
+    },
     LocalV2(RetainedV2Item),
     OpacityGroupEnd { element: u64 },
 }
@@ -60,10 +65,15 @@ impl RetainedRenderPlan {
     pub(crate) fn opacity_group_begin_operation(
         element: u64,
         opacity: f32,
+        masked: bool,
         bounds: DamageRect,
     ) -> RetainedRenderOperation {
         RetainedRenderOperation {
-            kind: RetainedRenderOperationKind::OpacityGroupBegin { element, opacity },
+            kind: RetainedRenderOperationKind::OpacityGroupBegin {
+                element,
+                opacity,
+                masked,
+            },
             bounds,
         }
     }

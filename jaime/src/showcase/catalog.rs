@@ -29,6 +29,8 @@ pub(super) enum ExampleId {
     BackdropFilter,
     Magnification,
     LightEdge,
+    Gradient,
+    ForegroundDecoration,
     MultiDecorationBox,
     Storage,
     CustomShape,
@@ -98,6 +100,8 @@ pub(super) const EXAMPLES: &[ExampleId] = &[
     ExampleId::BackdropFilter,
     ExampleId::Magnification,
     ExampleId::LightEdge,
+    ExampleId::Gradient,
+    ExampleId::ForegroundDecoration,
     ExampleId::MultiDecorationBox,
     ExampleId::Storage,
     ExampleId::CustomShape,
@@ -226,6 +230,8 @@ pub(super) const EXAMPLE_CATEGORIES: &[ExampleCategory] = &[
             ExampleId::BackdropFilter,
             ExampleId::Magnification,
             ExampleId::LightEdge,
+            ExampleId::Gradient,
+            ExampleId::ForegroundDecoration,
             ExampleId::MultiDecorationBox,
             ExampleId::CustomShape,
             ExampleId::SystemTheme,
@@ -279,6 +285,8 @@ impl ExampleId {
             Self::BackdropFilter => "Backdrop filter",
             Self::Magnification => "Magnification",
             Self::LightEdge => "Light edge",
+            Self::Gradient => "Gradients",
+            Self::ForegroundDecoration => "Foreground decoration",
             Self::MultiDecorationBox => "Multi decoration box",
             Self::Storage => "Durable storage",
             Self::CustomShape => "Custom shapes",
@@ -348,6 +356,8 @@ impl ExampleId {
             Self::BackdropFilter => "▧",
             Self::Magnification => "⊕",
             Self::LightEdge => "◒",
+            Self::Gradient => "◐",
+            Self::ForegroundDecoration => "◑",
             Self::MultiDecorationBox => "▱",
             Self::Storage => "▣",
             Self::AnimatedLayout => "↗",
@@ -412,6 +422,8 @@ impl ExampleId {
             Self::BackdropFilter => "backdrop-filter",
             Self::Magnification => "magnification",
             Self::LightEdge => "light-edge",
+            Self::Gradient => "gradient",
+            Self::ForegroundDecoration => "foreground-decoration",
             Self::MultiDecorationBox => "multi-decoration-box",
             Self::Storage => "storage",
             Self::CustomShape => "custom-shape",
@@ -526,6 +538,12 @@ impl ExampleId {
             }
             Self::LightEdge => {
                 "Turn a glass highlight around rounded corners and adjust its width, strength, and shape."
+            }
+            Self::Gradient => {
+                "Paint linear, radial and conic gradients, and compare decorations behind, over and through a child."
+            }
+            Self::ForegroundDecoration => {
+                "Paint a fade and rim light over a card's text, and toggle them with a button."
             }
             Self::MultiDecorationBox => {
                 "Layer a background and light edge using typed builders or runtime collections."

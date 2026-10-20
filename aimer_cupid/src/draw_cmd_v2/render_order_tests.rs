@@ -358,7 +358,8 @@ fn describe(operation: &RenderOp) -> String {
             bounds,
             opacity,
             clip,
-        } => format!("begin {element:?} {bounds:?} {opacity} {clip:?}"),
+            masked,
+        } => format!("begin {element:?} {bounds:?} {opacity} {clip:?} {masked}"),
         RenderOp::EndOpacityGroup { element } => format!("end {element:?}"),
     }
 }

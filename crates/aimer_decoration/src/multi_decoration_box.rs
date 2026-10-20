@@ -15,6 +15,10 @@ use crate::{BoxDecoration, Decoration};
 /// corner radii do not clip it, and the wrapper passes events through to it.
 /// Paint outsets are the maximum on each side across all layers.
 ///
+/// The stack paints behind the child unless [`Self::foreground`] moves it over
+/// the child or [`Self::masked`] shows it only through the child's coverage.
+/// The layers keep their order and geometry in all three placements.
+///
 /// Chained decorations retain their concrete types. Runtime collections are
 /// consumed once and retained; mixed collections can use `Box<dyn Decoration>`
 /// or `Rc<dyn Decoration>`. Neither form requires decorations to implement
@@ -38,10 +42,30 @@ use crate::{BoxDecoration, Decoration};
 /// ];
 /// let dynamic = MultiDecorationBox::new().decorations(layers)
 ///     .child(SizedBox::new().width(240).height(80));
+///
+/// // The same layers over the child, so an opaque child cannot cover the rim.
+/// let over = MultiDecorationBox::new()
+///     .decoration(BoxDecoration::new().border_radius(24.0))
+///     .decoration(LightEdge::new())
+///     .foreground()
+///     .child(SizedBox::new().width(240).height(80));
 /// ```
 pub struct MultiDecorationBox<D = BoxDecoration, W = RequiredChild> {
     decoration: D,
     child: W,
+    placement: Placement,
+}
+
+/// Where a stack paints relative to its child.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Placement {
+    /// Before the child, so the child paints over it.
+    #[default]
+    Behind,
+    /// After the child, over it.
+    Over,
+    /// Through the child's coverage, so it shows only where the child has pixels.
+    Through,
 }
 
 impl Default for MultiDecorationBox {
@@ -58,17 +82,41 @@ impl MultiDecorationBox {
         Self {
             decoration: BoxDecoration::new(),
             child: RequiredChild,
+            placement: Placement::Behind,
         }
     }
 }
 
 impl<D: Decoration> MultiDecorationBox<D> {
+    /// Paints the whole stack over the child instead of behind it.
+    ///
+    /// Every layer keeps its order and its shared box geometry; they just
+    /// paint after the child, as [`ForegroundDecorationBox`](crate::ForegroundDecorationBox)
+    /// does for one decoration. Replaces an earlier [`Self::masked`].
+    #[inline]
+    pub fn foreground(mut self) -> Self {
+        self.placement = Placement::Over;
+        self
+    }
+
+    /// Shows the whole stack only where the child has coverage.
+    ///
+    /// The layers keep their order, and the child's own colors are not drawn,
+    /// as [`MaskedDecorationBox`](crate::MaskedDecorationBox) does for one
+    /// decoration. Replaces an earlier [`Self::foreground`].
+    #[inline]
+    pub fn masked(mut self) -> Self {
+        self.placement = Placement::Through;
+        self
+    }
+
     /// Appends a layer after the existing layers without boxing it.
     #[inline]
     pub fn decoration<E: Decoration>(self, decoration: E) -> MultiDecorationBox<impl Decoration> {
         MultiDecorationBox {
             decoration: Layers::new(self.decoration, decoration),
             child: self.child,
+            placement: self.placement,
         }
     }
 
@@ -102,6 +150,7 @@ impl<D: Decoration> MultiDecorationBox<D> {
         MultiDecorationBox {
             decoration: self.decoration,
             child,
+            placement: self.placement,
         }
     }
 
@@ -119,12 +168,24 @@ impl<D: Decoration + 'static, W: Widget> PortableWidget for MultiDecorationBox<D
 
 impl<D: Decoration + 'static, W: Widget> Widget for MultiDecorationBox<D, W> {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
-        crate::decoration_box::decoration_element(
-            self.decoration,
-            self.child,
-            ctx,
-            "MultiDecorationBox",
-        )
+        const NAME: &str = "MultiDecorationBox";
+        match self.placement {
+            Placement::Behind => {
+                crate::decoration_box::decoration_element(self.decoration, self.child, ctx, NAME)
+            }
+            Placement::Over => crate::foreground_decoration_box::foreground_element(
+                self.decoration,
+                self.child.to_element(ctx),
+                NAME,
+            ),
+            Placement::Through => crate::decoration_box::decoration_element_with(
+                self.decoration,
+                self.child,
+                ctx,
+                NAME,
+                true,
+            ),
+        }
     }
 
     fn debug_name(&self) -> &'static str {

@@ -29,6 +29,8 @@ mod glass_liquid_example;
 mod http_request_button;
 mod i18n_example;
 mod justify_content_example;
+mod foreground_decoration_example;
+mod gradient_example;
 mod light_edge_example;
 mod liquid_tab_bar_example;
 mod loading_animation;

@@ -13,7 +13,7 @@ pub use canvas::{
     RetainedLayerPadding, TextHorizontalAlign, TextOverflowMode, next_retained_layer_id,
 };
 pub use material::{
-    MagnificationStyle, MaterialClip, MaterialDrawRequest, MaterialKind, MaterialMotionPolicy,
-    record_material,
+    GradientShape, MAX_GRADIENT_STOPS, MagnificationStyle, MaterialClip, MaterialDrawRequest,
+    MaterialGradient, MaterialKind, MaterialMotionPolicy, record_material,
 };
 pub use shape::{DrawShape, ShapeDrawError, ShapeDrawResult, ShapeFallback};

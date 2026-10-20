@@ -137,7 +137,7 @@ fn backdrop_filter_bounds_inputs_and_skips_empty_or_identity_paint() {
     );
 }
 
-fn context(scale: f32) -> BuildContext<'static> {
+pub(super) fn context(scale: f32) -> BuildContext<'static> {
     let inner = Box::leak(Box::new(InnerCanvas::new()));
     let mut ctx = BuildContext::new(
         FrameCanvas::new(inner),
@@ -242,7 +242,7 @@ async fn decoration_box_revision_repaints_only_its_background() {
     element.visit_children(&mut |child| assert_eq!(Some(child.id()), child_id));
 }
 
-fn record(element: &impl Drawable, ctx: &BuildContext) -> Vec<DrawCommand> {
+pub(super) fn record(element: &impl Drawable, ctx: &BuildContext) -> Vec<DrawCommand> {
     let tree = RenderTree::new();
     let root = tree.add_root(Rect::new(0.0, 0.0, 200.0, 160.0)).unwrap();
     ctx.with_local_v2_paint_context(tree.context(root).unwrap(), |ctx| {

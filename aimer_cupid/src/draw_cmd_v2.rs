@@ -23,6 +23,21 @@ mod world;
 #[cfg(test)]
 mod world_tests;
 
+/// The custom-pipeline name of the coverage-mask marker.
+///
+/// A node whose local list begins with a `DrawCustom` of this name declares that
+/// the rest of its list is visible only where its descendants have coverage, and
+/// that the descendants themselves are not drawn. The marker carries no payload.
+///
+/// The render plan wraps such a node and its descendants in a masked
+/// [`RenderOp::BeginOpacityGroup`]. The renderer draws the node's own list into
+/// one offscreen target and the descendants into another, then keeps the first
+/// only where the second has alpha. Content that samples the backdrop, such as
+/// a backdrop filter, still sees what is behind the group. A marked node with no
+/// descendants shows nothing. The marker command itself draws nothing: the
+/// renderer skips custom commands for pipelines it has not registered.
+pub const COVERAGE_MASK_PIPELINE_NAME: &str = "aimer.coverage_mask";
+
 use std::cell::RefCell;
 // `hashbrown`'s default hasher: the keys are process-local node identifiers, and
 // SipHash dominated tree synchronization in profiles.
@@ -397,6 +412,10 @@ pub struct DrawList {
     /// trusted, whatever gets recorded next.
     refreshed: bool,
     recording: bool,
+    /// The list opens with [`COVERAGE_MASK_PIPELINE_NAME`]: it shows only where
+    /// its node's descendants have coverage. Found once, at commit, because the
+    /// render plan reads it for every node of every frame.
+    masks_descendants: bool,
 }
 
 impl DrawList {
@@ -1907,6 +1926,11 @@ impl DrawListWriter {
                     _ => None,
                 })
                 .collect();
+            draw_list.masks_descendants = matches!(
+                commands.first(),
+                Some(DrawCommand::DrawCustom { pipeline_name, .. })
+                    if pipeline_name.as_ref() == COVERAGE_MASK_PIPELINE_NAME
+            );
             draw_list.commands = Arc::from(commands);
             draw_list.revision = draw_list
                 .revision
@@ -2013,12 +2037,19 @@ pub struct RenderItem {
 
 /// An ordered drawing or group-compositing operation.
 pub enum RenderOp {
-    /// Begins an offscreen opacity group for a node with children.
+    /// Begins an offscreen group for a node with children.
+    ///
+    /// A plain group composites its items together once, at `opacity`. A
+    /// `masked` group holds a node that opened its list with the
+    /// [coverage-mask marker](COVERAGE_MASK_PIPELINE_NAME): that node's own
+    /// item is the content, every other item in the group is coverage, and the
+    /// group shows the content only where the coverage is, at `opacity`.
     BeginOpacityGroup {
         element: RenderNodeId,
         bounds: Rect,
         opacity: f32,
         clip: Option<Rect>,
+        masked: bool,
     },
     /// Draws one element's local command list.
     ///

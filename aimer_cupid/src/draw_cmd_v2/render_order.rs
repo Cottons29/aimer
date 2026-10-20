@@ -331,12 +331,19 @@ impl RenderWorkspace {
 
             let id = node.id;
             let opacity = node.presentation_opacity * node.opacity;
-            let groups_opacity = opacity < 1.0 && !node.children.is_empty();
+            let has_children = !node.children.is_empty();
+            let masked = node.draw_list.borrow().masks_descendants;
+            if masked && !has_children {
+                // Masking by nothing shows nothing.
+                continue;
+            }
+            let groups_opacity = (opacity < 1.0 || masked) && has_children;
             if groups_opacity {
                 output.push(RenderOp::BeginOpacityGroup {
                     element: id,
                     bounds: visible_subtree,
                     opacity,
+                    masked,
                     // Child draw items keep their individual container clips.
                     // Applying an ancestor's clip to the whole opacity
                     // group would clip an overflowing descendant again.

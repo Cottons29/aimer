@@ -477,6 +477,23 @@ impl BlendState {
             operation: BlendOperation::Add,
         },
     };
+
+    /// Destination-in blending: `dst * src_alpha`.
+    ///
+    /// The destination survives only where the source has coverage, scaled by
+    /// it. The source color is ignored, so premultiplication does not matter.
+    pub const DESTINATION_IN: Self = Self {
+        color: BlendComponent {
+            src_factor: BlendFactor::Zero,
+            dst_factor: BlendFactor::SrcAlpha,
+            operation: BlendOperation::Add,
+        },
+        alpha: BlendComponent {
+            src_factor: BlendFactor::Zero,
+            dst_factor: BlendFactor::SrcAlpha,
+            operation: BlendOperation::Add,
+        },
+    };
 }
 
 /// One side of a blend equation.

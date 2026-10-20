@@ -1,6 +1,8 @@
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
-pub use aimer_cupid::material::MagnificationStyle;
+pub use aimer_cupid::material::{
+    GradientShape, MAX_GRADIENT_STOPS, MagnificationStyle, MaterialGradient,
+};
 
 use crate::canvas::FrameCanvas;
 
@@ -26,6 +28,8 @@ pub enum MaterialKind {
     Magnification = 3,
     /// A directional analytic highlight with no backdrop sampling.
     LightEdge = 4,
+    /// An analytic linear, radial or conic color ramp with no backdrop sampling.
+    Gradient = 5,
 }
 
 /// Reduced-motion policy carried by a material packet.
@@ -134,6 +138,8 @@ pub struct MaterialDrawRequest {
     pub bulge_strength: f32,
     /// LightEdge light direction in degrees clockwise from screen-right.
     pub light_angle: f32,
+    /// Color ramp of a [`MaterialKind::Gradient`]; ignored by every other kind.
+    pub gradient: MaterialGradient,
     /// Sampling quality in `1..=4`.
     pub quality: u8,
     /// Motion policy for dynamic fields.
@@ -143,8 +149,13 @@ pub struct MaterialDrawRequest {
 impl MaterialDrawRequest {
     /// Packet schema version.
     pub const VERSION: u8 = 3;
-    /// Exact byte length of [`Self::encode`].
+    /// Exact byte length of [`Self::encode`] for every kind but a gradient.
     pub const PACKET_LEN: usize = 256;
+    /// Packet schema version of a [`MaterialKind::Gradient`], whose color ramp
+    /// does not fit the shared body and is appended to it.
+    pub const GRADIENT_VERSION: u8 = 4;
+    /// Exact byte length of [`Self::encode`] for a [`MaterialKind::Gradient`].
+    pub const GRADIENT_PACKET_LEN: usize = Self::PACKET_LEN + aimer_cupid::material::GRADIENT_PACKET_EXTENSION_LEN;
     /// Maximum blur accepted by the bridge.
     pub const MAX_BLUR_RADIUS: f32 = 96.0;
     /// Maximum shadow blur accepted by the bridge.
@@ -208,6 +219,7 @@ impl MaterialDrawRequest {
                 0.0
             },
             light_angle: 225.0,
+            gradient: MaterialGradient::default(),
             quality: 2,
             motion_policy: MaterialMotionPolicy::Full,
         }
@@ -280,6 +292,11 @@ impl MaterialDrawRequest {
         } else {
             225.0
         };
+        self.gradient = if self.kind == MaterialKind::Gradient {
+            self.gradient.normalized()
+        } else {
+            MaterialGradient::default()
+        };
         self.quality = self.quality.clamp(1, 4);
         if self.motion_policy == MaterialMotionPolicy::Reduced {
             self.distortion_strength = 0.0;
@@ -292,9 +309,13 @@ impl MaterialDrawRequest {
     #[inline]
     pub fn encode(self) -> Vec<u8> {
         let request = self.normalized();
-        let mut bytes = Vec::with_capacity(Self::PACKET_LEN);
+        let mut bytes = Vec::with_capacity(Self::GRADIENT_PACKET_LEN);
         bytes.extend_from_slice(b"AIMR");
-        bytes.push(Self::VERSION);
+        bytes.push(if request.kind == MaterialKind::Gradient {
+            Self::GRADIENT_VERSION
+        } else {
+            Self::VERSION
+        });
         bytes.push(request.kind as u8);
         bytes.push(request.motion_policy as u8);
         bytes.push(request.quality);
@@ -338,6 +359,10 @@ impl MaterialDrawRequest {
         push_f32(&mut bytes, request.bulge_strength);
         push_f32(&mut bytes, request.light_angle);
         debug_assert_eq!(bytes.len(), Self::PACKET_LEN);
+        if request.kind == MaterialKind::Gradient {
+            request.gradient.encode_extension(&mut bytes);
+            debug_assert_eq!(bytes.len(), Self::GRADIENT_PACKET_LEN);
+        }
         bytes
     }
 
@@ -446,6 +471,46 @@ mod tests {
         assert_eq!(decoded.edge_lighting, 0.65);
         request.light_angle = f32::NAN;
         assert_eq!(request.normalized().light_angle, 225.0);
+    }
+
+    #[test]
+    fn gradient_packets_append_their_ramp_and_decode_in_cupid() {
+        let mut request = MaterialDrawRequest::new(MaterialKind::Gradient, [1.0, 2.0, 80.0, 40.0]);
+        request.opacity = 1.0;
+        request.gradient = MaterialGradient {
+            shape: GradientShape::Conic,
+            geometry: [40.0, 20.0, 1.0, 0.0],
+            stop_count: 2,
+            ..MaterialGradient::default()
+        };
+        request.gradient.offsets[1] = 1.0;
+        request.gradient.colors = [
+            MaterialGradient::pack_color([255, 0, 0, 255]),
+            MaterialGradient::pack_color([0, 0, 255, 128]),
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ];
+        let encoded = request.encode();
+        assert_eq!(encoded.len(), MaterialDrawRequest::GRADIENT_PACKET_LEN);
+        assert_eq!(encoded[4], MaterialDrawRequest::GRADIENT_VERSION);
+        let decoded = aimer_cupid::material::MaterialRequest::decode(&encoded).unwrap();
+        assert_eq!(decoded.kind, aimer_cupid::material::MaterialKind::Gradient);
+        assert_eq!(decoded.gradient, request.normalized().gradient);
+        assert_eq!(decoded.gradient.stop_count, 2);
+    }
+
+    #[test]
+    fn a_ramp_on_a_kind_that_ignores_it_changes_no_bytes() {
+        let plain = MaterialDrawRequest::new(MaterialKind::Glass, [0.0, 0.0, 20.0, 10.0]);
+        let mut with_ramp = plain;
+        with_ramp.gradient.stop_count = 3;
+        with_ramp.gradient.colors[0] = 0xffff_ffff;
+        assert_eq!(plain.encode(), with_ramp.encode());
+        assert_eq!(with_ramp.encode().len(), MaterialDrawRequest::PACKET_LEN);
     }
 
     #[test]

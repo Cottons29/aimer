@@ -443,11 +443,74 @@ static float4 light_edge(constant MaterialUniform& material, float2 pixel) {
     return float4(converted * alpha, alpha);
 }
 
+// Analytic color ramp. The ramp lives in slots the other kinds use for other
+// things (see `MaterialUniform::apply_gradient`): `tint` is the geometry,
+// `light`/`detail` the stop offsets, `border_color`/`shadow` the packed RGBA8
+// stop colors stored as raw float bits, and `liquid.xy` the shape and count.
+static float gradient_stop_offset(constant MaterialUniform& material, uint index) {
+    return index < 4u ? material.light[index] : material.detail[index - 4u];
+}
+
+static float4 gradient_stop_color(constant MaterialUniform& material, uint index) {
+    float bits = index < 4u ? material.border_color[index] : material.shadow[index - 4u];
+    uint packed = as_type<uint>(bits);
+    float4 straight = float4(float(packed & 255u), float((packed >> 8u) & 255u),
+                             float((packed >> 16u) & 255u), float(packed >> 24u)) / 255.0;
+    // Blend premultiplied so a transparent stop does not tint its neighbors.
+    return float4(straight.rgb * straight.a, straight.a);
+}
+
+static float4 gradient_ramp(constant MaterialUniform& material, float t) {
+    uint count = uint(material.liquid.y);
+    float4 previous = gradient_stop_color(material, 0u);
+    float previous_offset = gradient_stop_offset(material, 0u);
+    if (t <= previous_offset) return previous;
+    for (uint index = 1u; index < count; index++) {
+        float offset = gradient_stop_offset(material, index);
+        float4 current = gradient_stop_color(material, index);
+        if (t <= offset) {
+            float f = clamp((t - previous_offset) / max(offset - previous_offset, 0.000001), 0.0, 1.0);
+            return mix(previous, current, f);
+        }
+        previous = current;
+        previous_offset = offset;
+    }
+    return previous;
+}
+
+static float4 gradient_fill(constant MaterialUniform& material, float2 pixel) {
+    float2 half_size = material.bounds.zw * 0.5;
+    float2 point = pixel - material.bounds.xy - half_size;
+    float distance = sdf_rounded_rect(point, half_size, material.radii);
+    float coverage = sdf_alpha(distance) * clip_alpha(material, pixel);
+    float2 local = pixel - material.bounds.xy;
+    float4 geometry = material.tint;
+    float shape = material.liquid.x;
+    float t;
+    if (shape < 0.5) {
+        float2 axis = geometry.zw - geometry.xy;
+        t = dot(local - geometry.xy, axis) / max(dot(axis, axis), 0.000001);
+    } else if (shape < 1.5) {
+        t = length((local - geometry.xy) / max(geometry.zw, float2(0.0001)));
+    } else {
+        float2 offset = local - geometry.xy;
+        t = fract((atan2(offset.y, offset.x) - geometry.z) / 6.28318530718);
+    }
+    float4 ramp = gradient_ramp(material, clamp(t, 0.0, 1.0));
+    // Interleaved gradient noise, one 8-bit step wide, hides banding in slow ramps.
+    float noise = fract(52.9829189 * fract(dot(pixel, float2(0.06711056, 0.00583715))));
+    float3 rgb = clamp(ramp.rgb / max(ramp.a, 0.00001) + (noise - 0.5) / 255.0, 0.0, 1.0);
+    float alpha = clamp(ramp.a * material.effect.y * coverage, 0.0, 1.0);
+    float3 converted = material.viewport.z > 0.5 ? srgb_rgb_to_linear(rgb) : rgb;
+    return float4(converted * alpha, alpha);
+}
+
 fragment float4 fs_main(MaterialVaryings varyings [[stage_in]],
                         constant MaterialUniform& material [[buffer(0)]],
                         texture2d<float> backdrop [[texture(1)]],
                         sampler backdrop_sampler [[sampler(2)]],
                         texture2d<float> horizontal_blur [[texture(3)]]) {
+    if (material.effect.x > 4.5) return gradient_fill(material, varyings.pixel_pos);
     if (material.effect.x > 3.5) return light_edge(material, varyings.pixel_pos);
     if (material.effect.x > 1.5 && material.viewport.w < 0.5) {
         discard_fragment();

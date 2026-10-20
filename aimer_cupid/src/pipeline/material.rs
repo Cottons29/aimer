@@ -1,6 +1,10 @@
+mod gradient;
 mod magnification_style;
 mod render;
 
+pub use gradient::{
+    GRADIENT_PACKET_EXTENSION_LEN, GradientShape, MAX_GRADIENT_STOPS, MaterialGradient,
+};
 pub use magnification_style::MagnificationStyle;
 pub use render::MaterialPipeline;
 
@@ -11,6 +15,14 @@ pub const MATERIAL_PIPELINE_NAME: &str = "aimer.material";
 pub const MATERIAL_PACKET_VERSION: u8 = 3;
 /// The exact size of one encoded material request.
 pub const MATERIAL_PACKET_LEN: usize = 256;
+/// The packet version of [`MaterialKind::Gradient`] requests.
+///
+/// A gradient carries a color ramp that the shared body has no room for, so
+/// its packets append [`GRADIENT_PACKET_EXTENSION_LEN`] bytes to the version-3
+/// body. Every other kind keeps version 3 and its exact length.
+pub const MATERIAL_GRADIENT_PACKET_VERSION: u8 = 4;
+/// The exact size of one encoded [`MaterialKind::Gradient`] request.
+pub const MATERIAL_GRADIENT_PACKET_LEN: usize = MATERIAL_PACKET_LEN + GRADIENT_PACKET_EXTENSION_LEN;
 /// Maximum intermediate texture dimension used by one surface.
 ///
 /// iOS devices get a larger budget; see [`intermediate_pixel_budget`].
@@ -60,6 +72,8 @@ pub enum MaterialKind {
     Magnification = 3,
     /// A directional analytic highlight with no backdrop sampling.
     LightEdge = 4,
+    /// An analytic linear, radial or conic color ramp with no backdrop sampling.
+    Gradient = 5,
 }
 
 impl MaterialKind {
@@ -71,8 +85,18 @@ impl MaterialKind {
             2 => Some(Self::BackdropFilter),
             3 => Some(Self::Magnification),
             4 => Some(Self::LightEdge),
+            5 => Some(Self::Gradient),
             _ => None,
         }
+    }
+
+    /// Whether this kind reads the captured backdrop.
+    ///
+    /// Analytic kinds draw from their own parameters alone, so they need no
+    /// intermediate texture and never force a frame capture.
+    #[inline]
+    pub const fn samples_backdrop(self) -> bool {
+        !matches!(self, Self::LightEdge | Self::Gradient)
     }
 }
 
@@ -180,6 +204,8 @@ pub struct MaterialRequest {
     pub bulge_strength: f32,
     /// LightEdge light direction in degrees clockwise from screen-right.
     pub light_angle: f32,
+    /// Color ramp of a [`MaterialKind::Gradient`]; empty for every other kind.
+    pub gradient: MaterialGradient,
     /// Sampling quality in `1..=4`.
     pub quality: u8,
     /// Reduced-motion policy.
@@ -239,6 +265,13 @@ impl MaterialRequest {
                 0.0
             },
             light_angle: 225.0,
+            gradient: MaterialGradient {
+                shape: GradientShape::Linear,
+                geometry: [0.0; 4],
+                stop_count: 0,
+                offsets: [0.0; MAX_GRADIENT_STOPS],
+                colors: [0; MAX_GRADIENT_STOPS],
+            },
             quality: 2,
             motion_policy: MaterialMotionPolicy::Full,
         }
@@ -247,9 +280,13 @@ impl MaterialRequest {
     #[cfg(test)]
     pub(crate) fn encode_for_test(self) -> Vec<u8> {
         let request = self.normalized();
-        let mut bytes = Vec::with_capacity(MATERIAL_PACKET_LEN);
+        let mut bytes = Vec::with_capacity(MATERIAL_GRADIENT_PACKET_LEN);
         bytes.extend_from_slice(b"AIMR");
-        bytes.push(MATERIAL_PACKET_VERSION);
+        bytes.push(if request.kind == MaterialKind::Gradient {
+            MATERIAL_GRADIENT_PACKET_VERSION
+        } else {
+            MATERIAL_PACKET_VERSION
+        });
         bytes.push(request.kind as u8);
         bytes.push(request.motion_policy as u8);
         bytes.push(request.quality);
@@ -298,6 +335,10 @@ impl MaterialRequest {
         bytes.extend_from_slice(&request.bulge_strength.to_le_bytes());
         bytes.extend_from_slice(&request.light_angle.to_le_bytes());
         debug_assert_eq!(bytes.len(), MATERIAL_PACKET_LEN);
+        if request.kind == MaterialKind::Gradient {
+            request.gradient.encode_extension(&mut bytes);
+            debug_assert_eq!(bytes.len(), MATERIAL_GRADIENT_PACKET_LEN);
+        }
         bytes
     }
 
@@ -358,6 +399,11 @@ impl MaterialRequest {
         } else {
             225.0
         };
+        self.gradient = if self.kind == MaterialKind::Gradient {
+            self.gradient.normalized()
+        } else {
+            MaterialGradient::default()
+        };
         self.quality = self.quality.clamp(1, 4);
         if self.motion_policy == MaterialMotionPolicy::Reduced {
             self.distortion_strength = 0.0;
@@ -383,6 +429,7 @@ impl MaterialRequest {
             1 => 244,
             2 => 252,
             MATERIAL_PACKET_VERSION => MATERIAL_PACKET_LEN,
+            MATERIAL_GRADIENT_PACKET_VERSION => MATERIAL_GRADIENT_PACKET_LEN,
             _ => return Err(MaterialDecodeError::UnsupportedVersion),
         };
         if bytes.len() != expected {
@@ -393,6 +440,10 @@ impl MaterialRequest {
         }
         let kind =
             MaterialKind::from_wire(reader.u8()?).ok_or(MaterialDecodeError::UnsupportedKind)?;
+        // The ramp rides only in version 4, and version 4 carries only a ramp.
+        if (kind == MaterialKind::Gradient) != (version == MATERIAL_GRADIENT_PACKET_VERSION) {
+            return Err(MaterialDecodeError::UnsupportedKind);
+        }
         let motion_policy = MaterialMotionPolicy::from_wire(reader.u8()?)
             .ok_or(MaterialDecodeError::UnsupportedMotionPolicy)?;
         let quality = reader.u8()?;
@@ -446,7 +497,13 @@ impl MaterialRequest {
             (style, reader.f32()?)
         };
         let light_angle = if version >= 3 { reader.f32()? } else { 225.0 };
-        debug_assert_eq!(reader.position(), expected);
+        let gradient = if kind == MaterialKind::Gradient {
+            debug_assert_eq!(reader.position(), MATERIAL_PACKET_LEN);
+            MaterialGradient::decode_extension(&bytes[MATERIAL_PACKET_LEN..])?
+        } else {
+            debug_assert_eq!(reader.position(), expected);
+            MaterialGradient::default()
+        };
 
         Ok(Self {
             kind,
@@ -484,6 +541,7 @@ impl MaterialRequest {
             magnification_style,
             bulge_strength,
             light_angle,
+            gradient,
             quality,
             motion_policy,
         }
@@ -537,6 +595,8 @@ pub enum MaterialDecodeError {
     InvalidClipFlag,
     /// Magnification flags contained an unknown bit.
     InvalidMagnificationStyle,
+    /// A gradient declared more stops than a request can carry.
+    InvalidGradient,
 }
 
 /// The stable draw values used by the translucent fallback.
@@ -672,7 +732,14 @@ pub fn plan_material(
             || request.specular_highlight == 0.0
             || request.border_color[3] == 0.0
             || request.opacity == 0.0);
-    if request.bounds[2] <= 0.0 || request.bounds[3] <= 0.0 || inert_lens || inert_edge {
+    let inert_gradient = request.kind == MaterialKind::Gradient
+        && (request.gradient.stop_count == 0 || request.opacity == 0.0);
+    if request.bounds[2] <= 0.0
+        || request.bounds[3] <= 0.0
+        || inert_lens
+        || inert_edge
+        || inert_gradient
+    {
         return MaterialStagePlan {
             path: MaterialRenderPath::Skip,
             fallback_reason: None,
@@ -682,7 +749,7 @@ pub fn plan_material(
         };
     }
 
-    if request.kind == MaterialKind::LightEdge {
+    if !request.kind.samples_backdrop() {
         return MaterialStagePlan {
             path: MaterialRenderPath::Gpu,
             fallback_reason: None,
@@ -738,7 +805,7 @@ pub fn bounded_intermediate_extent(
     capabilities: MaterialCapabilities,
 ) -> Option<IntermediateExtent> {
     let request = request.normalized();
-    if request.kind == MaterialKind::LightEdge {
+    if !request.kind.samples_backdrop() {
         return None;
     }
     let full_resolution = matches!(
@@ -920,3 +987,6 @@ fn multiply_alpha(mut color: [f32; 4], opacity: f32) -> [f32; 4] {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod gradient_tests;

@@ -769,6 +769,24 @@ impl Canvas {
         });
     }
 
+    /// Declares that this element's commands show only where its descendants
+    /// have coverage, and that the descendants are not drawn themselves.
+    ///
+    /// Call it before any other command so it heads the list. This records the
+    /// marker [`COVERAGE_MASK_PIPELINE_NAME`], which makes the renderer draw the
+    /// element's commands into one offscreen target and its descendants into
+    /// another, then keep the first only where the second has alpha. An element
+    /// with no descendants shows nothing.
+    ///
+    /// [`COVERAGE_MASK_PIPELINE_NAME`]: aimer_cupid::draw_cmd_v2::COVERAGE_MASK_PIPELINE_NAME
+    #[inline]
+    pub fn mask_by_descendants(&self) {
+        self.draw_custom(
+            aimer_cupid::draw_cmd_v2::COVERAGE_MASK_PIPELINE_NAME,
+            std::sync::Arc::<[u8]>::from(Vec::new()),
+        );
+    }
+
     /// Adds a retained Glass/Liquid material request.
     #[inline]
     pub fn draw_material(&self, request: MaterialDrawRequest) {

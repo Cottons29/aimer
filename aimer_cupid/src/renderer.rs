@@ -11,6 +11,17 @@ pub use generic_renderer::{Renderer, RendererImpl, RendererMemoryStats};
 ))]
 mod unpresented_tests;
 
+#[cfg(test)]
+mod gradient_scale_tests;
+
+#[cfg(all(
+    test,
+    feature = "native",
+    not(feature = "wgpu"),
+    any(target_os = "macos", target_os = "ios")
+))]
+mod mask_group_tests;
+
 use crate::pipeline::material::{MaterialClip, MaterialRequest};
 use crate::rect_pipeline::RectInstance;
 use crate::svg::{SvgNodeStyleOverride, SvgScene};
@@ -99,6 +110,19 @@ fn resolve_material_request(
             *radius *= scale;
         }
         request.border_width *= scale;
+    }
+    if request.kind == crate::pipeline::material::MaterialKind::Gradient {
+        // Ramp geometry is authored in logical pixels from the bounds origin.
+        // A conic ramp keeps its start angle; every other slot is a length.
+        let lengths = if request.gradient.shape == crate::pipeline::material::GradientShape::Conic
+        {
+            2
+        } else {
+            4
+        };
+        for value in &mut request.gradient.geometry[..lengths] {
+            *value *= scale;
+        }
     }
     request.shadow_blur *= scale;
     request.elevation *= scale;

@@ -1,9 +1,11 @@
 use std::cell::Cell;
 
 mod backdrop_filter;
+mod gradient;
 mod light_edge;
 mod magnification;
 pub use backdrop_filter::BackdropFilter;
+pub use gradient::Gradient;
 pub use light_edge::LightEdge;
 pub use magnification::{Magnification, MagnificationStyle};
 
@@ -113,17 +115,47 @@ pub(crate) fn declared_corner_radii(canvas: &Canvas, max: f32) -> [f32; 4] {
         .map(|radius| if radius.is_finite() { radius.clamp(0.0, max) } else { 0.0 })
 }
 
+/// Returns `decoration`'s declared outsets with nonfinite and negative values
+/// treated as zero.
+pub(crate) fn sanitized_outsets<D: Decoration + ?Sized>(
+    decoration: &D,
+    geometry: PaintGeometry,
+) -> [f32; 4] {
+    decoration
+        .paint_outsets(geometry.logical_size(), geometry.scale)
+        .map(|outset| {
+            if outset.is_finite() {
+                outset.max(0.0)
+            } else {
+                0.0
+            }
+        })
+}
+
 pub(super) fn decoration_element<D: Decoration + 'static, W: Widget>(
     decoration: D,
     child: W,
     ctx: &BuildContext,
     name: &'static str,
 ) -> AnyElement {
+    decoration_element_with(decoration, child, ctx, name, false)
+}
+
+/// Builds a decoration box whose decoration shows through its child's coverage
+/// when `masks_children` is set.
+pub(crate) fn decoration_element_with<D: Decoration + 'static, W: Widget>(
+    decoration: D,
+    child: W,
+    ctx: &BuildContext,
+    name: &'static str,
+    masks_children: bool,
+) -> AnyElement {
     RawDecorationBox {
         decoration,
         child: child.to_element(ctx),
         recorded: Cell::new(None),
         name,
+        masks_children,
     }
     .boxed()
 }
@@ -133,24 +165,47 @@ struct RawDecorationBox<D> {
     child: AnyElement,
     recorded: Cell<Option<PaintKey>>,
     name: &'static str,
+    /// Whether the decoration is visible only through the child's coverage.
+    masks_children: bool,
 }
 
+/// What a retained decoration recorded last, compared to skip identical repaints.
 #[derive(Clone, Copy, PartialEq)]
-struct PaintKey {
-    revision: u64,
-    background: aimer_color::prelude::Color,
-    geometry: Option<PaintGeometry>,
+pub(crate) struct PaintKey {
+    pub(crate) revision: u64,
+    pub(crate) background: aimer_color::prelude::Color,
+    pub(crate) geometry: Option<PaintGeometry>,
 }
 
+/// A decorated box in device pixels, validated for painting.
 #[derive(Clone, Copy, PartialEq)]
-struct PaintGeometry {
-    size: ResolvedSize,
-    scale: f32,
+pub(crate) struct PaintGeometry {
+    pub(crate) size: ResolvedSize,
+    pub(crate) scale: f32,
 }
 
 impl PaintGeometry {
+    /// Returns the geometry for a device-pixel `size`, or `None` when the size
+    /// or scale cannot be painted (nonfinite, negative, or a nonpositive scale).
+    pub(crate) fn new(size: ResolvedSize, scale: f32) -> Option<Self> {
+        if !scale.is_finite() || scale <= 0.0 {
+            return None;
+        }
+        let geometry = Self { size, scale };
+        let logical = geometry.logical_size();
+        (size.width.is_finite()
+            && size.height.is_finite()
+            && size.width >= 0.0
+            && size.height >= 0.0
+            && logical.width.is_finite()
+            && logical.height.is_finite()
+            && logical.width >= 0.0
+            && logical.height >= 0.0)
+            .then_some(geometry)
+    }
+
     #[inline]
-    fn logical_size(self) -> ResolvedSize {
+    pub(crate) fn logical_size(self) -> ResolvedSize {
         ResolvedSize {
             width: self.size.width / self.scale,
             height: self.size.height / self.scale,
@@ -178,35 +233,11 @@ impl<D: Decoration> RawDecorationBox<D> {
     }
 
     fn paint_geometry(&self, ctx: &BuildContext) -> Option<PaintGeometry> {
-        if !ctx.scale.is_finite() || ctx.scale <= 0.0 {
-            return None;
-        }
-        let geometry = PaintGeometry {
-            size: self.child.computed_size(ctx),
-            scale: ctx.scale,
-        };
-        let logical = geometry.logical_size();
-        (geometry.size.width.is_finite()
-            && geometry.size.height.is_finite()
-            && geometry.size.width >= 0.0
-            && geometry.size.height >= 0.0
-            && logical.width.is_finite()
-            && logical.height.is_finite()
-            && logical.width >= 0.0
-            && logical.height >= 0.0)
-            .then_some(geometry)
+        PaintGeometry::new(self.child.computed_size(ctx), ctx.scale)
     }
 
     fn paint_outsets(&self, geometry: PaintGeometry) -> [f32; 4] {
-        self.decoration
-            .paint_outsets(geometry.logical_size(), geometry.scale)
-            .map(|outset| {
-                if outset.is_finite() {
-                    outset.max(0.0)
-                } else {
-                    0.0
-                }
-            })
+        sanitized_outsets(&self.decoration, geometry)
     }
 
     #[inline]
@@ -238,6 +269,10 @@ impl<D: Decoration> Drawable for RawDecorationBox<D> {
     fn paint_local_v2(&self, ctx: &BuildContext) {
         let key = self.paint_key(ctx);
         let canvas = Canvas::of(ctx);
+        if self.masks_children {
+            // The marker must head the list; see `COVERAGE_MASK_PIPELINE_NAME`.
+            canvas.mask_by_descendants();
+        }
         if let Some(geometry) = key.geometry {
             let size = geometry.logical_size();
             let [left, top, _, _] = self.paint_outsets(geometry);
@@ -367,3 +402,12 @@ mod light_edge_tests;
 
 #[cfg(test)]
 mod backdrop_filter_tests;
+
+#[cfg(test)]
+mod gradient_tests;
+
+#[cfg(test)]
+mod masked_tests;
+
+#[cfg(test)]
+mod multi_placement_tests;

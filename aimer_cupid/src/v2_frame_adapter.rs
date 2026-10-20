@@ -145,6 +145,7 @@ impl FramePacket {
                         operations.push(RetainedRenderPlan::opacity_group_begin_operation(
                             item.element.get(),
                             item.opacity,
+                            false,
                             bounds,
                         ));
                     }
@@ -173,6 +174,7 @@ impl FramePacket {
                     element,
                     bounds,
                     opacity,
+                    masked,
                     ..
                 } => {
                     let device_bounds =
@@ -182,6 +184,7 @@ impl FramePacket {
                     operations.push(RetainedRenderPlan::opacity_group_begin_operation(
                         element.get(),
                         *opacity,
+                        *masked,
                         device_bounds,
                     ));
                 }
@@ -287,6 +290,7 @@ fn validate_frame_input(
                 bounds,
                 opacity,
                 clip,
+                ..
             } => {
                 if !valid_rect(*bounds) || clip.is_some_and(|clip| !valid_rect(clip)) {
                     return Err(V2FrameAdapterError::InvalidRenderItemGeometry {
