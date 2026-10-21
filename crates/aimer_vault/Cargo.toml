@@ -1,0 +1,30 @@
+[package]
+name = "aimer_vault"
+version = "0.1.0"
+edition = "2024"
+resolver = "3"
+description = "Aimer's secure storage: credentials and tokens kept in the platform's secret store (Keychain), never in plain files"
+
+[dependencies]
+subtle.workspace = true
+zeroize.workspace = true
+
+# Blocking secret-store calls leave the UI thread through Venus's offload pool;
+# the crate carries no threads or channels of its own.
+[target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "windows", target_os = "linux", target_os = "android"))'.dependencies]
+aimer_venus.workspace = true
+
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+core-foundation.workspace = true
+security-framework.workspace = true
+security-framework-sys.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { workspace = true, features = ["Win32_Security_Credentials"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni.workspace = true
+ndk-context.workspace = true

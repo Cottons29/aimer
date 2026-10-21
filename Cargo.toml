@@ -40,6 +40,7 @@ aimer_macro.workspace = true
 aimer_provider.workspace = true
 aimer_svg.workspace = true
 aimer_lucide = { workspace = true, optional = true }
+aimer_vault = { workspace = true, optional = true }
 aimer_markdown.workspace = true
 aimer_modal.workspace = true
 aimer_dnd.workspace = true
@@ -98,6 +99,9 @@ venus-debug = ["aimer_venus/venus-debug"]
 provider = []
 svg = []
 icons = ["dep:aimer_lucide", "svg"]
+# Secure storage for credentials and tokens: the platform secret store (Keychain
+# on Apple platforms) behind `aimer::vault`.
+vault = ["dep:aimer_vault"]
 apple-core-text = [
     "aimer_cupid/apple-core-text",
     "aimer_canvas/apple-core-text",
@@ -212,6 +216,7 @@ members = [
     "crates/aimer_media",
     "crates/aimer_storage",
     "crates/aimer_persist",
+    "crates/aimer_vault",
     "crates/aimer_shape",
     "crates/aimer_collapsible", 
     "crates/aimer_simd",
@@ -266,6 +271,7 @@ aimer_i18n = { path = "crates/aimer_i18n" }
 aimer_media = { path = "crates/aimer_media" }
 aimer_storage = { path = "crates/aimer_storage" }
 aimer_persist = { path = "crates/aimer_persist" }
+aimer_vault = { path = "crates/aimer_vault" }
 aimer_shape = { path = "crates/aimer_shape" }
 aimer_collapsible = { path = "crates/aimer_collapsible" }
 aimer_native = { path = "crates/aimer_native" }
@@ -392,6 +398,14 @@ hex = "0.4.3"
 ring = "0.17.14"
 subtle = "2.6.1"
 zeroize = "1.8.2"
+# Keychain access for `aimer_vault`. Already in the lockfile through
+# rustls-platform-verifier; default features (TLS helpers) are not needed.
+security-framework = { version = "3.7.0", default-features = false }
+security-framework-sys = { version = "2.17.0", default-features = false }
+core-foundation = "0.10.1"
+# Secret Service (GNOME Keyring / KWallet) client for `aimer_vault` on Linux. 5.19.0
+# is the newest release older than two weeks; 6.0.0 is too fresh to adopt yet.
+zbus = "5.19.0"
 rustls-platform-verifier = { version = "0.7.0", features = ["jni"] }
 axum = { version = "0.8.6", default-features = false }
 tower = "0.5.2"

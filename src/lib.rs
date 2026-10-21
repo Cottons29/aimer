@@ -91,6 +91,8 @@ pub use aimer_quiver::{
     WindowAttr, set_first_frame_rendered_callback,
 };
 
+#[cfg(feature = "vault")]
+pub use aimer_vault as vault;
 #[cfg(feature = "icons")]
 pub use aimer_lucide as icons;
 #[cfg(feature = "icons")]
