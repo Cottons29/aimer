@@ -50,5 +50,6 @@ impl<B: GpuBackend> Renderer<B> {
         for group in &mut self.opacity_group_targets {
             group.target.invalidate();
         }
+        self.group_seed_target.invalidate();
     }
 }

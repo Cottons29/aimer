@@ -552,9 +552,13 @@ impl Widget for SvgAsset {
         let loader = SvgLoader::new(SvgSource::Asset(self.key.clone()));
         let (source, updates) = loader.background_parts();
         let window = ctx.window.clone();
+        // An asset that has loaded before is ready already, and loading it again
+        // would only read the file once more for every time the widget is made.
+        let needs_load = matches!(loader.state(), SvgLoadState::Loading);
 
         #[cfg(not(target_arch = "wasm32"))]
         match aimer_venus::Venus::current() {
+            _ if !needs_load => {}
             Some(venus) => {
                 let source = source.clone();
                 venus.spawn(async move {
@@ -574,11 +578,13 @@ impl Widget for SvgAsset {
         }
 
         #[cfg(target_arch = "wasm32")]
-        wasm_bindgen_futures::spawn_local(async move {
-            let _ = updates.send(SvgLoadState::Loading);
-            let _ = updates.send(load_source(&source).await);
-            window.request_redraw();
-        });
+        if needs_load {
+            wasm_bindgen_futures::spawn_local(async move {
+                let _ = updates.send(SvgLoadState::Loading);
+                let _ = updates.send(load_source(&source).await);
+                window.request_redraw();
+            });
+        }
 
         RawSvgAsset {
             loader: RefCell::new(loader),

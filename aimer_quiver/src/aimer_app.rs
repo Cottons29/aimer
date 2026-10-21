@@ -1819,6 +1819,7 @@ mod tests {
     mod autofocus_settles;
     mod window_drag;
     mod text_field_caret;
+    mod text_field_in_scrollable;
     mod text_field_chrome;
     mod stack_occlusion;
     mod scalable_overflow;

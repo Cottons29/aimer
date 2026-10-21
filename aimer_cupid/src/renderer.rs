@@ -36,6 +36,14 @@ mod fade_group_tests;
     not(feature = "wgpu"),
     any(target_os = "macos", target_os = "ios")
 ))]
+mod opacity_group_backdrop_tests;
+
+#[cfg(all(
+    test,
+    feature = "native",
+    not(feature = "wgpu"),
+    any(target_os = "macos", target_os = "ios")
+))]
 mod morph_group_tests;
 
 use crate::pipeline::material::{MaterialClip, MaterialRequest};

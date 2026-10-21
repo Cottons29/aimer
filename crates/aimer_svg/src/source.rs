@@ -1,8 +1,9 @@
 use std::cell::RefCell;
+use std::collections::HashMap;
 #[cfg(not(target_arch = "wasm32"))]
 use std::io::Read;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 #[cfg(not(target_arch = "wasm32"))]
 use aimer_venus::Venus;
@@ -32,6 +33,50 @@ fn load_failure_message(source: &SvgSource, error: &str) -> String {
 pub(crate) fn report_load_result(source: &SvgSource, state: SvgLoadState) -> SvgLoadState {
     if let SvgLoadState::Error(error) = &state {
         aimer_utils::warn!("{}", load_failure_message(source, error));
+    }
+    state
+}
+
+/// The documents of the bundled assets that have loaded, by asset key.
+///
+/// A widget is made again whenever its parent places its content anew, which a
+/// morph or a cross-fade does on every frame. Without this each of those would
+/// start the asset's load over, find itself in [`SvgLoadState::Loading`] and paint
+/// nothing, and the next frame would do the same, so an icon in such content never
+/// showed. A document is immutable and shared, so keeping one costs the parsed
+/// scene, once per asset.
+///
+/// Only [`SvgSource::Asset`] is kept: a bundled asset is fixed for the life of the
+/// app, while a file or an address can change under the same name and in-memory
+/// bytes have no name.
+fn remembered_assets() -> &'static Mutex<HashMap<Arc<str>, SvgDocument>> {
+    static ASSETS: OnceLock<Mutex<HashMap<Arc<str>, SvgDocument>>> = OnceLock::new();
+    ASSETS.get_or_init(Mutex::default)
+}
+
+/// The state a loader of `source` starts in: ready, for a bundled asset that has
+/// loaded before, and loading for everything else.
+fn initial_state(source: &SvgSource) -> SvgLoadState {
+    let SvgSource::Asset(key) = source else {
+        return SvgLoadState::Loading;
+    };
+    let assets = remembered_assets()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    assets
+        .get(key)
+        .map_or(SvgLoadState::Loading, |document| SvgLoadState::Ready(document.clone()))
+}
+
+/// Reports the outcome of loading `source`, and keeps the document of a bundled
+/// asset that loaded; see [`remembered_assets`].
+pub(crate) fn finish_load(source: &SvgSource, state: SvgLoadState) -> SvgLoadState {
+    let state = report_load_result(source, state);
+    if let (SvgSource::Asset(key), SvgLoadState::Ready(document)) = (source, &state) {
+        remembered_assets()
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(key.clone(), document.clone());
     }
     state
 }
@@ -76,8 +121,8 @@ impl SvgLoader {
     pub fn new(source: SvgSource) -> Self {
         let (updates_tx, updates) = unbounded();
         Self {
+            state: RefCell::new(initial_state(&source)),
             source,
-            state: RefCell::new(SvgLoadState::Loading),
             updates,
             updates_tx,
         }
@@ -126,12 +171,12 @@ pub(crate) async fn load_source(source: &SvgSource) -> SvgLoadState {
     let state = venus
         .spawn_blocking(move || load_source_blocking(&source_to_load))
         .await;
-    report_load_result(source, state)
+    finish_load(source, state)
 }
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) async fn load_source(source: &SvgSource) -> SvgLoadState {
-    report_load_result(source, load_document(load_bytes(source).await))
+    finish_load(source, load_document(load_bytes(source).await))
 }
 
 fn load_document(bytes: Result<Vec<u8>, String>) -> SvgLoadState {
@@ -294,6 +339,51 @@ mod tests {
             load_failure_message(&source, "invalid SVG"),
             "SVG load failed for in-memory SVG: invalid SVG"
         );
+    }
+
+    #[test]
+    fn a_loader_for_an_asset_loaded_before_starts_ready() {
+        use super::*;
+
+        let source = SvgSource::Asset(Arc::from("assets/tests/remembered.svg"));
+        assert!(matches!(SvgLoader::new(source.clone()).state(), SvgLoadState::Loading));
+        let document = SvgDocument::from_svg(
+            br#"<svg width="9" height="4" xmlns="http://www.w3.org/2000/svg"><path d="M0 0h1v1z"/></svg>"#,
+        )
+        .unwrap();
+
+        finish_load(&source, SvgLoadState::Ready(document));
+
+        // A widget made again for the same asset (a morph places its content anew
+        // on every frame) is ready at once and has nothing to load.
+        let SvgLoadState::Ready(remembered) = SvgLoader::new(source).state() else {
+            panic!("a remembered asset should start ready")
+        };
+        assert_eq!(remembered.scene().viewport.width, 9.0);
+    }
+
+    #[test]
+    fn only_a_bundled_asset_that_loaded_is_remembered() {
+        use super::*;
+
+        let svg = br#"<svg width="3" height="3" xmlns="http://www.w3.org/2000/svg"><path d="M0 0h1v1z"/></svg>"#;
+        let ready = || SvgLoadState::Ready(SvgDocument::from_svg(svg).unwrap());
+
+        let failed = SvgSource::Asset(Arc::from("assets/tests/failed.svg"));
+        finish_load(&failed, SvgLoadState::Error(Arc::from("not found")));
+        assert!(matches!(SvgLoader::new(failed).state(), SvgLoadState::Loading));
+
+        // Nothing but the registered assets is kept: a file or an address can
+        // change under the same name, and in-memory bytes are not named at all.
+        let memory = SvgSource::Memory(Arc::from(svg.as_slice()));
+        finish_load(&memory, ready());
+        assert!(matches!(SvgLoader::new(memory).state(), SvgLoadState::Loading));
+        let file = SvgSource::File(PathBuf::from("assets/tests/file.svg"));
+        finish_load(&file, ready());
+        assert!(matches!(SvgLoader::new(file).state(), SvgLoadState::Loading));
+        let network = SvgSource::Network(Arc::from("https://example.test/icon.svg"));
+        finish_load(&network, ready());
+        assert!(matches!(SvgLoader::new(network).state(), SvgLoadState::Loading));
     }
 
     #[cfg(not(target_arch = "wasm32"))]

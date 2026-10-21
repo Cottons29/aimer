@@ -1,7 +1,7 @@
 //! Detect backdrop consumers before allocating an offscreen frame target.
 
 use crate::draw_cmd::{DrawCommand, DrawList};
-use crate::frame::RetainedRenderPlan;
+use crate::frame::{RetainedRenderOperation, RetainedRenderOperationKind, RetainedRenderPlan};
 use crate::pipeline::material::{
     MATERIAL_GRADIENT_PACKET_LEN, MATERIAL_GRADIENT_PACKET_VERSION, MATERIAL_PACKET_LEN,
     MATERIAL_PACKET_VERSION, MATERIAL_PIPELINE_NAME, MaterialKind, MaterialRequest,
@@ -58,4 +58,35 @@ pub(super) fn render_plan_uses_material(
             crate::frame::RetainedRenderOperationKind::OpacityGroupBegin { .. }
             | crate::frame::RetainedRenderOperationKind::OpacityGroupEnd { .. } => false,
         })
+}
+
+/// The opacity groups, by element, that hold a surface sampling the backdrop,
+/// anywhere inside them: every group such a surface is inside, at any depth.
+///
+/// These are the groups whose backdrop has to include what the group itself has
+/// drawn: see `ActiveOpacityGroup::seeded`.
+pub(super) fn groups_sampling_backdrop(
+    operations: &[&RetainedRenderOperation],
+) -> std::collections::HashSet<u64> {
+    let mut found = std::collections::HashSet::new();
+    let mut open = Vec::<u64>::new();
+    for operation in operations {
+        match &operation.kind {
+            RetainedRenderOperationKind::OpacityGroupBegin { element, .. } => open.push(*element),
+            RetainedRenderOperationKind::OpacityGroupEnd { .. } => {
+                open.pop();
+            }
+            RetainedRenderOperationKind::LocalV2(item) => {
+                let samples = item.commands.iter().any(|command| {
+                    matches!(command,
+                        crate::draw_cmd_v2::DrawCommand::DrawCustom { pipeline_name, data }
+                            if pipeline_name.as_ref() == MATERIAL_PIPELINE_NAME && packet_needs_backdrop(data))
+                });
+                if samples {
+                    found.extend(open.iter().copied());
+                }
+            }
+        }
+    }
+    found
 }

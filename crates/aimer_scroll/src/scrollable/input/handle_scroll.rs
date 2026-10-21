@@ -5,8 +5,8 @@ use aimer_events::pointer::PointerSource;
 use aimer_utils::AnimInstant;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
-    Element, EventElement, EventResult, EventTreeRole, LayoutElement, PointerKey, VisitorElement,
-    is_pointer_claimed,
+    Element, EventDispatchContext, EventElement, EventResult, EventTreeRole, LayoutElement,
+    PointerKey, VisitorElement, is_pointer_claimed,
 };
 
 use crate::ScrollAxis;
@@ -152,10 +152,14 @@ fn dispatch_child_event<E: Element>(
     let pointer = event_pointer_key(event);
     let was_captured =
         pointer.is_some_and(|pointer| scrollable.event_dispatcher.borrow().is_captured(pointer));
-    let result = scrollable
-        .event_dispatcher
-        .borrow_mut()
-        .dispatch(&scrollable.child, pos, event);
+    // The child is part of the enclosing tree's focus, not a focus of its own: a
+    // field inside a scroll is typed into through whoever the enclosing
+    // dispatcher says owns the keyboard. See `on_event_with_context`.
+    let result = {
+        let mut dispatcher = scrollable.event_dispatcher.borrow_mut();
+        dispatcher.defer_focus_to_parent();
+        dispatcher.dispatch(&scrollable.child, pos, event)
+    };
     let is_captured =
         pointer.is_some_and(|pointer| scrollable.event_dispatcher.borrow().is_captured(pointer));
     match (pointer, was_captured, is_captured) {
@@ -168,6 +172,20 @@ fn dispatch_child_event<E: Element>(
 impl<E: Element> EventElement for RawScrollableContainer<E> {
     fn event_tree_role(&self) -> EventTreeRole {
         EventTreeRole::IndexedTarget
+    }
+
+    /// Hands the focus target a press found inside the content to the enclosing
+    /// dispatcher, which is the one text and key events are delivered through.
+    fn on_event_with_context(
+        &self,
+        event: &ElementEvent,
+        context: &mut EventDispatchContext<'_, '_>,
+    ) -> EventResult {
+        let result = self.on_event(event);
+        if matches!(event, ElementEvent::PointerDown(_)) {
+            context.adopt_deferred_focus(&mut self.event_dispatcher.borrow_mut());
+        }
+        result
     }
 
     fn on_event(&self, event: &ElementEvent) -> EventResult {

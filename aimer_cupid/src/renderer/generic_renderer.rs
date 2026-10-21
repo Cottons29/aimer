@@ -1,6 +1,8 @@
 #[path = "generic_renderer/material_detection.rs"]
 mod material_detection;
-use material_detection::{draw_list_uses_material, render_plan_uses_material};
+use material_detection::{
+    draw_list_uses_material, groups_sampling_backdrop, render_plan_uses_material,
+};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -126,6 +128,13 @@ pub struct Renderer<B: GpuBackend = crate::backend::DefaultGpuBackend> {
     scene_composite_bind_group: Option<B::BindGroup>,
     damage_clear_texture: Option<DamageClearTextureGeneric<B>>,
     opacity_group_targets: Vec<OpacityGroupTargetGeneric<B>>,
+    /// Set while a chunk is drawn into a seeded opacity group; see
+    /// [`ActiveOpacityGroup::seeded`].
+    group_backdrop: Option<GroupBackdrop<B>>,
+    /// A copy of the frame behind a seeded group, for the multisampled case, where
+    /// the group's own target cannot be filled by a copy.
+    group_seed_target: PersistentTargetGeneric<B>,
+    group_seed_bind_group: Option<B::BindGroup>,
     custom_pipelines: Vec<CustomPipelineSlotGeneric<B>>,
     antialiasing: crate::AntiAlias,
     material_pipeline_enabled: bool,
@@ -253,6 +262,23 @@ struct ActiveOpacityGroup<B: GpuBackend> {
     bind_group: B::BindGroup,
     render_view: B::TextureView,
     resolve_target: Option<B::TextureView>,
+    /// Whether the group's target was started from a copy of the frame behind it
+    /// and not from nothing, so that a surface inside it that samples the backdrop
+    /// sees what the group drew before it, as it does outside a group.
+    ///
+    /// Without it the backdrop is the frame behind the group alone, and a filter
+    /// drawn after a tint covers the tint with the filtered frame: a glass surface
+    /// loses its tint for as long as it is faded, and has it only once the fade has
+    /// ended and the group with it. The group is composited by lerping from the
+    /// frame to its target, which a target started from the frame leaves the same
+    /// for everything that does not sample the backdrop.
+    seeded: bool,
+}
+
+/// Where backdrop surfaces read the backdrop from while they are drawn into a
+/// seeded group: the group's own target, whose origin is its own corner.
+struct GroupBackdrop<B: GpuBackend> {
+    texture: B::Texture,
 }
 
 struct CachedV2CommandList {
@@ -324,6 +350,9 @@ impl<B: GpuBackend> Renderer<B> {
             scene_composite_bind_group: None,
             damage_clear_texture: None,
             opacity_group_targets: Vec::new(),
+            group_backdrop: None,
+            group_seed_target: PersistentTargetGeneric::default(),
+            group_seed_bind_group: None,
             custom_pipelines: Vec::new(),
             antialiasing,
             material_pipeline_enabled: initialize_all,
@@ -1219,6 +1248,7 @@ impl<B: GpuBackend> Renderer<B> {
         let mut groups = Vec::<ActiveOpacityGroup<B>>::new();
         let mut morph_frames = Vec::<MorphFrame<B>>::new();
         let mut chunk = Vec::new();
+        let seeded_groups = groups_sampling_backdrop(operations);
         for operation in operations.iter().copied() {
             match operation.kind {
                 RetainedRenderOperationKind::OpacityGroupBegin {
@@ -1277,6 +1307,26 @@ impl<B: GpuBackend> Renderer<B> {
                         group.resolve_target.as_ref(),
                         [0.0; 4],
                     );
+                    // An ordinary group that holds a surface sampling the backdrop
+                    // starts from what is behind it: the frame, or, inside another
+                    // group, that group as it is so far, which a group of its own
+                    // that is seeded holds the frame in. Every other group starts
+                    // from nothing.
+                    if !masked
+                        && !fade
+                        && seeded_groups.contains(&element)
+                        && groups.last().is_none_or(|parent| parent.seeded)
+                    {
+                        group.seeded = self.seed_group_from_behind(
+                            backend,
+                            source_texture,
+                            groups.last(),
+                            &group,
+                            width,
+                            height,
+                            is_srgb,
+                        );
+                    }
                     groups.push(group);
                 }
                 RetainedRenderOperationKind::OpacityGroupEnd { element } => {
@@ -1645,6 +1695,14 @@ impl<B: GpuBackend> Renderer<B> {
             scissor.height,
         );
         let operations = std::mem::take(chunk);
+        // A seeded group is its own backdrop: what it drew so far is on top of the
+        // frame it started from.
+        self.group_backdrop = groups
+            .last()
+            .filter(|group| group.seeded)
+            .and_then(|group| self.opacity_group_targets[group.depth].target.texture())
+            .cloned()
+            .map(|texture| GroupBackdrop { texture });
         self.render_retained_plan_chunk(
             backend,
             &view,
@@ -1667,6 +1725,7 @@ impl<B: GpuBackend> Renderer<B> {
                 local_scissor.height,
             )),
         );
+        self.group_backdrop = None;
     }
 
     fn ensure_opacity_group_target(
@@ -1773,7 +1832,162 @@ impl<B: GpuBackend> Renderer<B> {
             bind_group,
             render_view,
             resolve_target,
+            seeded: false,
         }
+    }
+
+    /// Starts `group`'s target from what is behind it, so that what it draws is
+    /// drawn over that; see [`ActiveOpacityGroup::seeded`].
+    ///
+    /// What is behind it is the frame, or, for a group inside `parent`, `parent`'s
+    /// target as it is so far. Returns whether it did, which it does not without
+    /// something to copy from, or for a group that starts before its parent does.
+    /// A group that reaches past what it is copied from is started from the part
+    /// of it that is inside.
+    ///
+    /// A single-sample target is filled by a copy. A multisampled one cannot be,
+    /// so the copy is made to a single-sample texture of its own, which is drawn
+    /// over the target as an image.
+    fn seed_group_from_behind(
+        &mut self,
+        backend: &B,
+        frame_texture: Option<&B::Texture>,
+        parent: Option<&ActiveOpacityGroup<B>>,
+        group: &ActiveOpacityGroup<B>,
+        frame_width: u32,
+        frame_height: u32,
+        is_srgb: bool,
+    ) -> bool {
+        use crate::backend::{Extent3d, Origin3d, TexelCopyTextureInfo, TextureAspect};
+
+        // What is copied from, where the group is in it, and how much of it there is.
+        let (source, x, y, available_width, available_height) = match parent {
+            None => {
+                let Some(frame) = frame_texture else {
+                    return false;
+                };
+                (
+                    frame.clone(),
+                    group.bounds.x,
+                    group.bounds.y,
+                    frame_width,
+                    frame_height,
+                )
+            }
+            Some(parent) => {
+                let Some(target) = self.opacity_group_targets[parent.depth].target.texture() else {
+                    return false;
+                };
+                if group.bounds.x < parent.bounds.x || group.bounds.y < parent.bounds.y {
+                    return false;
+                }
+                (
+                    target.clone(),
+                    group.bounds.x - parent.bounds.x,
+                    group.bounds.y - parent.bounds.y,
+                    parent.bounds.width,
+                    parent.bounds.height,
+                )
+            }
+        };
+        if x >= available_width || y >= available_height {
+            return false;
+        }
+        let extent = Extent3d {
+            width: group.bounds.width.min(available_width - x),
+            height: group.bounds.height.min(available_height - y),
+            depth_or_array_layers: 1,
+        };
+        let copy = |backend: &B, destination: &B::Texture| {
+            let mut encoder = backend.create_command_encoder("cupid seed opacity group");
+            backend.copy_texture_to_texture(
+                &mut encoder,
+                &TexelCopyTextureInfo {
+                    texture: &source,
+                    mip_level: 0,
+                    origin: Origin3d { x, y, z: 0 },
+                    aspect: TextureAspect::All,
+                },
+                &TexelCopyTextureInfo {
+                    texture: destination,
+                    mip_level: 0,
+                    origin: Origin3d::ZERO,
+                    aspect: TextureAspect::All,
+                },
+                extent,
+            );
+            backend.submit(encoder);
+        };
+
+        if !self.antialiasing.uses_multisampling() {
+            let Some(target) = self.opacity_group_targets[group.depth].target.texture() else {
+                return false;
+            };
+            copy(backend, target);
+            return true;
+        }
+
+        let key = PersistentTargetKey::new(
+            group.bounds.width,
+            group.bounds.height,
+            1.0,
+            0,
+            0,
+            0,
+            TargetValidity::Valid,
+        );
+        let result = self.group_seed_target.ensure(backend, self.format, key);
+        if matches!(
+            result,
+            TargetEnsureResult::Created | TargetEnsureResult::Recreated
+        ) {
+            let view = self
+                .group_seed_target
+                .view()
+                .expect("ensured seed target has a view");
+            self.group_seed_bind_group = Some(
+                self.image_pipeline
+                    .as_ref()
+                    .expect("opacity groups require the image pipeline")
+                    .create_external_bind_group(backend, view),
+            );
+        }
+        let (Some(seed_view), Some(seed_texture), Some(seed_bind_group)) = (
+            self.group_seed_target.view().cloned(),
+            self.group_seed_target.texture().cloned(),
+            self.group_seed_bind_group.clone(),
+        ) else {
+            return false;
+        };
+        // What the copy does not reach stays clear, not what an earlier group left.
+        self.clear_render_target(backend, &seed_view, None, [0.0; 4]);
+        copy(backend, &seed_texture);
+        let seed = ActiveOpacityGroup {
+            element: group.element,
+            mask: MaskRole::None,
+            morph_source: None,
+            sample_view: seed_view,
+            opacity: 1.0,
+            bounds: group.bounds,
+            depth: group.depth,
+            bind_group: seed_bind_group,
+            render_view: group.render_view.clone(),
+            resolve_target: group.resolve_target.clone(),
+            seeded: false,
+        };
+        self.composite_opacity_group(
+            backend,
+            &seed,
+            &group.render_view,
+            group.resolve_target.as_ref(),
+            (group.bounds.x, group.bounds.y),
+            group.bounds.width,
+            group.bounds.height,
+            is_srgb,
+            DamageRect::new(0, 0, group.bounds.width, group.bounds.height),
+            false,
+        );
+        true
     }
 
     fn composite_opacity_group(
@@ -2119,15 +2333,21 @@ impl<B: GpuBackend> Renderer<B> {
                 scissor,
             );
             first_pass = false;
-            if let (Some(source_texture), Some(slot)) =
-                (source_texture, self.custom_pipelines.get(pipeline_index))
+            // Inside a seeded group the backdrop is the group's own target, read
+            // from its own corner; everywhere else it is the frame.
+            let backdrop = match &self.group_backdrop {
+                Some(group) => Some((&group.texture, (0, 0))),
+                None => source_texture.map(|texture| (texture, target_offset)),
+            };
+            if let (Some((backdrop_texture, backdrop_offset)), Some(slot)) =
+                (backdrop, self.custom_pipelines.get(pipeline_index))
             {
                 slot.pipeline.capture_backdrop_command(
                     command_index,
                     backend,
                     &mut encoder,
-                    source_texture,
-                    target_offset,
+                    backdrop_texture,
+                    backdrop_offset,
                     width,
                     height,
                 );

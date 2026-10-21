@@ -75,6 +75,18 @@ impl<'dispatcher, 'tree> EventDispatchContext<'dispatcher, 'tree> {
         self.dispatcher.cancel_nested_pointer(self.path_root, pointer, self.boundary)
     }
 
+    /// Hands the focus target found by a press in `child`, a private dispatcher
+    /// that [defers its focus](EventDispatcher::defer_focus_to_parent), to the
+    /// dispatcher this event is being routed by, which then moves focus as it
+    /// does for any other press.
+    #[inline]
+    pub fn adopt_deferred_focus(&mut self, child: &mut EventDispatcher) {
+        let found = child.deferred_focus_owner.take();
+        if self.dispatcher.nested_focus_owner.is_none() {
+            self.dispatcher.nested_focus_owner = found;
+        }
+    }
+
     /// Dispatches an event into the forwarding element's child view using the
     /// same path index and capture state as the owning dispatcher.
     #[inline]
@@ -371,6 +383,12 @@ pub struct EventDispatcher {
     /// the candidate waits here until the forwarding element returns and its
     /// caller merges it into the enclosing hit outcome.
     nested_focus_owner: Option<FocusCandidate<ElementId>>,
+    /// Whether this dispatcher serves a private child view whose focus belongs to
+    /// the dispatcher enclosing it; see [`Self::defer_focus_to_parent`].
+    defers_focus: bool,
+    /// The focus target the latest press found while focus is deferred, for
+    /// the forwarding element to hand to the enclosing dispatcher.
+    deferred_focus_owner: Option<FocusCandidate<ElementId>>,
     /// Whether the latest press landed on something that can take focus. Such a
     /// target takes the press through the focus system and need not consume
     /// it, so this is what tells a host the press was taken.
@@ -430,6 +448,8 @@ impl EventDispatcher {
             captures: HashMap::new(),
             nested_captures: HashMap::new(),
             nested_focus_owner: None,
+            defers_focus: false,
+            deferred_focus_owner: None,
             path_indices: HashMap::new(),
             path_links: Vec::new(),
             indexed_elements: Vec::new(),
@@ -770,6 +790,23 @@ impl EventDispatcher {
         self.focus.trap()
     }
 
+    /// Makes this dispatcher leave focus to the one enclosing it.
+    ///
+    /// A forwarding element that routes its child through a dispatcher of its own
+    /// (a scrollable does) is still part of the enclosing tree, and keyboard text
+    /// is delivered to whoever the *enclosing* dispatcher says owns focus. A
+    /// private dispatcher that moved focus itself would set the node's flag and
+    /// show the soft keyboard, yet the enclosing dispatcher would never learn of
+    /// the owner and typed text would reach no one.
+    ///
+    /// Once set, this dispatcher neither resolves focus requests nor traverses
+    /// nor moves focus on a press. It only remembers the target a press found,
+    /// for [`EventDispatchContext::adopt_deferred_focus`] to pass on.
+    #[inline]
+    pub fn defer_focus_to_parent(&mut self) {
+        self.defers_focus = true;
+    }
+
     /// Returns the element that currently owns keyboard focus, if any.
     #[inline]
     pub fn focused(&self) -> Option<ElementId> {
@@ -1060,6 +1097,7 @@ impl EventDispatcher {
     /// [`Self::dispatch`].
     fn route(&mut self, root: &dyn Element, pos: Vec2d, event: &ElementEvent) -> EventResult {
         self.nested_focus_owner = None;
+        self.deferred_focus_owner = None;
         let pointer = event_pointer_key(event);
         let routes_to_capture = matches!(
             event,
@@ -1144,7 +1182,11 @@ impl EventDispatcher {
         if matches!(event, ElementEvent::PointerDown(_)) {
             self.last_press_hit_focus_target = outcome.focus_owner.is_some();
         }
+        if self.defers_focus && matches!(event, ElementEvent::PointerDown(_)) {
+            self.deferred_focus_owner = outcome.focus_owner.clone();
+        }
         let pointer_focus_result = if matches!(event, ElementEvent::PointerDown(_))
+            && !self.defers_focus
             && self.press_may_move_focus(root, outcome.focus_owner.as_ref())
         {
             self.transition_focus(root, outcome.focus_owner.clone())
@@ -1690,6 +1732,9 @@ impl EventDispatcher {
     /// events. A frame in which neither the tree nor any node asked for a change
     /// stops at the manager's gate, so no traversal happens at all.
     fn synchronize_focus(&mut self, root: &dyn Element) -> EventResult {
+        if self.defers_focus {
+            return EventResult::ignored();
+        }
         let Some(request_generation) = self
             .focus
             .begin_synchronization(self.indexed_subtree_generation, self.indexed_root)
@@ -1789,6 +1834,9 @@ impl EventDispatcher {
     }
 
     fn traverse_focus(&mut self, root: &dyn Element, reverse: bool) -> Option<EventResult> {
+        if self.defers_focus {
+            return None;
+        }
         self.collect_candidates(root);
         let target = self.focus.traverse(&self.focus_candidates, reverse)?;
         Some(self.transition_focus(root, Some(target)))
