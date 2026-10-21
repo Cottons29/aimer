@@ -386,6 +386,7 @@ mod tests {
             ascender: 800,
             descender: -200,
             line_gap: 0,
+            cap_height: 0,
             x_min: 0,
             y_min: -200,
             x_max: 1000,

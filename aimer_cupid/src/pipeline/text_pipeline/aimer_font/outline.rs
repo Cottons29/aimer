@@ -188,6 +188,7 @@ fn outline_metrics(face: &SfntFace<'_>) -> Result<FontMetrics, SfntError> {
         ascender: 0,
         descender: 0,
         line_gap: 0,
+        cap_height: 0,
         x_min: 0,
         y_min: 0,
         x_max: 0,

@@ -2076,6 +2076,16 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent>
         } else {
             window_attributes
         };
+        // The DXGI swap chain is the window's only content. With a GDI
+        // redirection surface underneath it, DWM shows that never-painted
+        // surface as a white strip whenever it composites the window at a size
+        // the presented buffer does not cover, which a drag that shrinks the
+        // window does on most frames.
+        #[cfg(all(target_os = "windows", feature = "native", not(feature = "wgpu")))]
+        let window_attributes = {
+            use winit::platform::windows::WindowAttributesExtWindows;
+            window_attributes.with_no_redirection_bitmap(true)
+        };
 
         if self.window.is_none() {
             let window = event_loop.create_window(window_attributes).unwrap();
@@ -2184,6 +2194,14 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent>
         }
         #[cfg(not(target_arch = "wasm32"))]
         if matches!(event, AimerNativePlatformEvent::RenderWorkerReady) {
+            // A hidden window never receives WM_PAINT, so `request_redraw`
+            // cannot produce the first frame that reveals it. Render directly;
+            // `render` delivers the pending completions itself.
+            #[cfg(all(target_os = "windows", feature = "native", not(feature = "wgpu")))]
+            if self.show_window_after_first_frame {
+                self.render(_event_loop);
+                return;
+            }
             self.deliver_render_completions(_event_loop);
             return;
         }

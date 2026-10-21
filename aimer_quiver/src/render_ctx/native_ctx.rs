@@ -23,6 +23,31 @@ pub(crate) enum BackendOutput {
 /// Longest a resize waits for its frame; a worker slower than this finishes it asynchronously.
 const RESIZE_PRESENT_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(100);
 
+/// Whether the platform needs a resized frame on screen before the resize
+/// callback returns (see [`NativeRenderContext::settle_resized_frame`]).
+///
+/// AppKit commits the window's new geometry at the end of the resize turn, so
+/// the frame for it has to be presented in that turn. UIKit already gates its
+/// geometry on a matching drawable, so iOS does not wait. A Linux compositor
+/// scales the previous buffer to the new window bounds until the next one is
+/// committed, so a frame the worker presents in a later turn shows as the old
+/// frame stretched under the pointer. Windows resizes the window immediately,
+/// and its `DXGI_SCALING_NONE` swap chain leaves the gained area black until a
+/// buffer of the new size is presented.
+const SYNC_RESIZE: bool = cfg!(any(target_os = "macos", target_os = "linux", target_os = "windows"));
+
+/// How long after a resize its follow-up frames are still presented in the turn
+/// that submitted them. A drag delivers a resize every few tens of milliseconds,
+/// so this only has to bridge that gap; it lapses on its own once the pointer
+/// stops.
+const LIVE_RESIZE_WINDOW: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// Whether that follow-up redraw is also presented in its own turn. Metal hands
+/// its drawable back to the UI thread, which drops it when the size has since
+/// changed, so a stale frame can never be committed after a resize. Linux and
+/// Windows workers present on their own thread and have no such check.
+const SYNC_REDRAW_DURING_RESIZE: bool = cfg!(any(target_os = "linux", target_os = "windows"));
+
 /// Outcomes delivered by the native renderer on its UI owner thread.
 #[derive(Default)]
 pub struct CompletionStatus {
@@ -61,6 +86,9 @@ pub struct NativeRenderContext {
     sync_resize: bool,
     /// Size of the last frame handed to the worker.
     submitted_size: PhysicalSize<u32>,
+    /// While a window is being resized, frames keep being presented in their own
+    /// turn until this instant. See [`LIVE_RESIZE_WINDOW`].
+    live_resize_until: Option<std::time::Instant>,
     /// Outcomes already consumed while settling a resized frame, reported by the next poll.
     carried: CompletionStatus,
     #[cfg(all(not(feature = "wgpu"), any(target_os = "macos", target_os = "ios")))]
@@ -92,6 +120,7 @@ impl NativeRenderContext {
             paused: false,
             sync_resize: false,
             submitted_size: PhysicalSize::new(0, 0),
+            live_resize_until: None,
             carried: CompletionStatus::default(),
             #[cfg(all(not(feature = "wgpu"), any(target_os = "macos", target_os = "ios")))]
             host: None,
@@ -174,14 +203,11 @@ impl NativeRenderContext {
             return;
         }
         self.canvas = Some(CupidCanvas::new());
+        self.sync_resize = SYNC_RESIZE;
         #[cfg(all(not(feature = "wgpu"), any(target_os = "macos", target_os = "ios")))]
         {
             let (host, seed, max_dimension) = MetalHost::new(window, size, self.antialiasing);
             self.host = Some(host);
-            // AppKit commits the window's new geometry at the end of the resize
-            // turn, so the frame for it has to be presented in that turn. UIKit
-            // already gates its geometry on a matching drawable.
-            self.sync_resize = cfg!(target_os = "macos");
             self.max_dimension = max_dimension;
             self.worker = Some(start_metal(seed));
         }
@@ -370,11 +396,27 @@ impl NativeRenderContext {
         submitted
     }
 
-    /// Whether the frame about to be submitted changes the surface size, remembering it.
+    /// Whether the frame about to be submitted must be presented before the call
+    /// returns, remembering its size.
+    ///
+    /// That is a frame that changes the surface size, and, while a live resize is
+    /// in progress, the redraw the platform asks for after it. Left with the
+    /// worker, that redraw is presented while the next resize is being handled:
+    /// a buffer of the old size is committed against the new window geometry, and
+    /// the compositor shows it stretched until the resized frame lands.
     fn take_resize(&mut self) -> bool {
-        let resized = self.sync_resize && self.submitted_size != self.size;
+        let changed = self.submitted_size != self.size;
+        let now = std::time::Instant::now();
+        // The first frame's size change is the window appearing, not a drag.
+        if SYNC_REDRAW_DURING_RESIZE && self.sync_resize && changed && self.submitted_size.width != 0 {
+            self.live_resize_until = Some(now + LIVE_RESIZE_WINDOW);
+        }
+        let live = self.live_resize_until.is_some_and(|until| now < until);
+        // A Windows window stays hidden until its first frame is presented, so
+        // that frame exposes nothing and must not hold startup on the worker.
+        let appearing = cfg!(target_os = "windows") && self.submitted_size.width == 0;
         self.submitted_size = self.size;
-        resized
+        self.sync_resize && !appearing && (changed || live)
     }
 
     /// Presents a frame that changed the surface size before returning.
@@ -514,6 +556,7 @@ impl NativeRenderContext {
         self.suspended = true;
         self.ready = false;
         self.submitted_size = PhysicalSize::new(0, 0);
+        self.live_resize_until = None;
         self.carried = CompletionStatus::default();
         if let Some(mut worker) = self.worker.take() {
             worker.stop();

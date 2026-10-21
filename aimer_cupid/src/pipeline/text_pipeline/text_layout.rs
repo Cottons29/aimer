@@ -1949,8 +1949,11 @@ fn line_height(line: &TextLine) -> f32 {
     (line.ascent - line.descent + line.line_gap).max(0.0)
 }
 
+/// Top of a line's box. The first baseline sits `ascent + line_gap / 2` below it,
+/// the same place the text painter puts it, so half the gap lies above the
+/// ascent line.
 fn line_top(line: &TextLine) -> f32 {
-    line.baseline - line.ascent
+    line.baseline - line.ascent - line.line_gap * 0.5
 }
 
 fn build_text_clusters(
@@ -3066,7 +3069,6 @@ fn build_shaped_text_interaction(
     let descent = shaped_text.descent.min(0.0);
     let line_gap = shaped_text.line_gap.max(0.0);
     let line_height = shaped_text.line_height.max(0.0);
-    let line_band_height = (ascent - descent).max(0.0);
     let max_width = max_width.max(0.0);
     let mut clusters = Vec::with_capacity(shaped_text.clusters.len());
     let mut line_ranges = Vec::new();
@@ -3088,8 +3090,8 @@ fn build_shaped_text_interaction(
                 end_x: pen_x,
                 start_y: pen_y,
                 end_y: pen_y,
-                y: pen_y - ascent,
-                height: line_band_height,
+                y: pen_y - ascent - line_gap * 0.5,
+                height: line_height,
             });
             line_ranges.push(line_start_source..source_cluster.text_range.end);
             line_widths.push((pen_x - origin_x).max(0.0));
@@ -3152,8 +3154,8 @@ fn build_shaped_text_interaction(
             end_x,
             start_y: pen_y,
             end_y: pen_y,
-            y: pen_y - ascent,
-            height: line_band_height,
+            y: pen_y - ascent - line_gap * 0.5,
+            height: line_height,
         });
         pen_x = end_x;
     }
@@ -3461,7 +3463,8 @@ mod tests {
         assert_eq!(caret.offset, 2);
         assert_eq!(caret.line_index, 0);
         assert_eq!(caret.x, 10.0);
-        assert_eq!(caret.y, -8.0);
+        // The line box starts half the line gap above the ascent line.
+        assert_eq!(caret.y, -9.0);
         assert_eq!(caret.height, 12.0);
         assert!(layout.caret_geometry(3).is_none());
 
@@ -3473,7 +3476,7 @@ mod tests {
         assert_eq!(selection[0].line_index, 0);
         assert_eq!(selection[0].x, 0.0);
         assert_eq!(selection[0].width, 15.0);
-        assert_eq!(selection[0].y, -8.0);
+        assert_eq!(selection[0].y, -9.0);
         assert_eq!(selection[0].height, 12.0);
     }
 
@@ -3703,6 +3706,40 @@ mod tests {
         assert_eq!(selection.len(), 1);
         assert_eq!(selection[0].x, ligature.start_x);
         assert_eq!(selection[0].width, ligature.end_x - ligature.start_x);
+    }
+
+    /// A font whose line gap is not zero (Nimbus Sans on Linux) puts half the
+    /// gap above the first baseline. The clusters, and so the caret and the
+    /// selection band, must span that whole line box rather than start at the
+    /// ascent line, or they sit `line_gap / 2` below the painted text.
+    #[test]
+    fn interaction_clusters_span_the_line_box_when_the_font_has_a_line_gap() {
+        let mut rasterizer = GlyphRasterizer::new();
+        let mut shaped = shape_text(&mut rasterizer, "ab\ncd", 16.0);
+        shaped.line_gap = 4.0;
+        shaped.line_height = shaped.ascent - shaped.descent + shaped.line_gap;
+        // Paragraph origin as the canvas places it: the line box starts at 0.
+        let origin_y = shaped.ascent + shaped.line_gap * 0.5;
+
+        let layout = layout_shaped_text_with_interaction(&shaped, 0.0, origin_y, 0.0);
+
+        assert_eq!(layout.lines.len(), 2);
+        for cluster in &layout.clusters {
+            let top = cluster.line_index as f32 * shaped.line_height;
+            assert!(
+                (cluster.y - top).abs() < 1e-3,
+                "cluster {:?} starts at {}, expected {top}",
+                cluster.text_range,
+                cluster.y
+            );
+            assert!((cluster.height - shaped.line_height).abs() < 1e-3);
+        }
+        for (offset, line) in [(1, 0), (4, 1)] {
+            let caret = layout.caret_geometry(offset).expect("caret inside a line");
+            assert!((caret.y - line as f32 * shaped.line_height).abs() < 1e-3);
+            assert!((caret.height - shaped.line_height).abs() < 1e-3);
+            assert!((line_top(&layout.lines[line]) - caret.y).abs() < 1e-3);
+        }
     }
 
     #[test]

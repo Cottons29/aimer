@@ -2507,7 +2507,11 @@ mod tests {
         };
         text.session().select_all();
         let layout = text.paragraph.prepare(&context);
-        let expected_top = layout.fragments[0].baseline - layout.fragments[0].ascent;
+        // The highlight covers the whole line box, which starts half the
+        // leading above the ascent line.
+        let fragment = &layout.fragments[0];
+        let leading = (layout.line_heights[0] - fragment.height).max(0.0);
+        let expected_top = fragment.baseline - fragment.ascent - leading * 0.5;
 
         text.update(&context);
 
@@ -2520,7 +2524,10 @@ mod tests {
             })
             .unwrap();
         let expected_color: aimer_cupid::utilities::Color = selection_color.into();
-        assert_eq!(selection_top, expected_top);
+        assert!(
+            (selection_top - expected_top).abs() < 1e-3,
+            "selection starts at {selection_top}, expected {expected_top}"
+        );
         assert_eq!(rendered_color.to_array(), expected_color.to_array());
     }
 
