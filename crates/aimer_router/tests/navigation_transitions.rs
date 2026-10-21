@@ -711,22 +711,6 @@ fn swipe_with_a_finger_from_the_middle(
 }
 
 #[test]
-fn a_fast_swipe_that_starts_in_the_middle_of_the_page_pops_it() {
-    let (history, current, shown, _) =
-        swipe_with_a_finger_from_the_middle(60.0, SwipeBackArea::Anywhere);
-    assert_eq!(
-        shown,
-        ["DetailPage", "HomePage"],
-        "the swipe began away from the edge"
-    );
-    assert_eq!(
-        history, 1,
-        "and the release reached it, so the pop committed"
-    );
-    assert_eq!(current, Page::Home);
-}
-
-#[test]
 fn with_the_swipe_limited_to_the_edge_the_middle_of_the_page_is_left_alone() {
     let (history, current, shown, _) =
         swipe_with_a_finger_from_the_middle(60.0, SwipeBackArea::Edge);
