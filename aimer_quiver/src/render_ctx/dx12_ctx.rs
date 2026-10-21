@@ -8,11 +8,12 @@ pub mod render_ctx {
     use aimer_cupid::frame::{Frame, FramePacket, FrameRenderMetadata};
     use aimer_cupid::renderer::RendererImpl;
     use aimer_utils::info;
-    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use raw_window_handle::RawWindowHandle;
     use std::ffi::c_void;
     use std::time::Instant;
     use windows::Win32::Foundation::HWND;
     use winit::dpi::PhysicalSize;
+    use winit::platform::windows::WindowExtWindows;
     use winit::window::Window;
 
     use crate::frame_stats::{FramePhase, PhaseTimer};
@@ -114,7 +115,9 @@ pub mod render_ctx {
         }
 
         /// Creates a hardware D3D12 device, attaches a DXGI swap chain, and
-        /// initializes Cupid's generic renderer on the window thread.
+        /// initializes Cupid's generic renderer.
+        ///
+        /// Runs on either the window thread (inline mode) or the raster worker.
         pub fn initialize(&mut self, window: &'static Window, size: PhysicalSize<u32>) {
             if self.is_ready() {
                 self.window = Some(window);
@@ -129,8 +132,11 @@ pub mod render_ctx {
                 "DX12 startup stage: device, command queue, and descriptor heaps {:.2} ms",
                 backend_started.elapsed().as_secs_f64() * 1000.0
             );
-            let raw_handle = window
-                .window_handle()
+            // winit refuses `window_handle()` off the event-loop thread, but the
+            // raster worker initializes this presenter on its own thread.
+            // SAFETY: the HWND only reaches `CreateSwapChainForHwnd`, which DXGI
+            // allows from any thread, and the `'static` window outlives it.
+            let raw_handle = unsafe { window.window_handle_any_thread() }
                 .expect("get the Windows window handle")
                 .as_raw();
             let RawWindowHandle::Win32(win32_handle) = raw_handle else {

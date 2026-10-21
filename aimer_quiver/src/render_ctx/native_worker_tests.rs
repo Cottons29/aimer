@@ -195,14 +195,32 @@ fn outstanding(context: &NativeRenderContext) -> usize {
     context.worker.as_ref().unwrap().outstanding()
 }
 
+/// Waits for every submitted frame to complete, whether or not the submitting
+/// call waited for it.
+fn settle(context: &mut NativeRenderContext) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while outstanding(context) > 0 {
+        assert!(std::time::Instant::now() < deadline, "the worker never completed");
+        context.poll_completions();
+        std::thread::yield_now();
+    }
+}
+
 #[test]
 fn a_frame_that_changes_the_size_is_presented_before_the_call_returns() {
     let (mut context, release, rendering) = ready_context(true);
+    // The window's first frame, which Windows does not treat as a resize.
+    release.send(()).unwrap();
+    context.render_frame(|_, _, _| {});
+    rendering.recv_timeout(Duration::from_secs(5)).unwrap();
+    settle(&mut context);
+
+    context.resize(PhysicalSize::new(16, 12));
     release.send(()).unwrap();
     assert_eq!(context.render_frame(|_, _, _| {}), PresentOutcome::Deferred);
     assert_eq!(
         rendering.recv_timeout(Duration::from_secs(5)).unwrap(),
-        (8, 8)
+        (16, 12)
     );
     assert_eq!(
         outstanding(&context),
@@ -222,6 +240,7 @@ fn a_frame_of_unchanged_size_is_left_to_the_worker() {
     release.send(()).unwrap();
     context.render_frame(|_, _, _| {});
     rendering.recv_timeout(Duration::from_secs(5)).unwrap();
+    settle(&mut context);
     // Same size again, with the presenter held: the call must not wait for it.
     let before = std::time::Instant::now();
     assert_eq!(context.render_frame(|_, _, _| {}), PresentOutcome::Deferred);
@@ -305,13 +324,45 @@ fn linux_presents_a_resized_frame_before_the_resize_returns() {
     assert!(SYNC_RESIZE);
 }
 
+/// A flip-model DXGI swap chain with `DXGI_SCALING_NONE` leaves the area the
+/// window gained black until a buffer of the new size is presented, so a
+/// resized frame left to the worker shows as a black strip trailing the pointer.
+#[cfg(target_os = "windows")]
+#[test]
+fn windows_presents_a_resized_frame_before_the_resize_returns() {
+    assert!(SYNC_RESIZE);
+}
+
+/// The window stays hidden until its first frame is presented, so that frame
+/// exposes nothing and must not hold startup for [`RESIZE_PRESENT_TIMEOUT`]
+/// while the worker compiles its pipelines.
+#[cfg(target_os = "windows")]
+#[test]
+fn windows_does_not_wait_for_the_first_frame() {
+    let (mut context, release, rendering) = ready_context(true);
+    let before = std::time::Instant::now();
+    assert_eq!(context.render_frame(|_, _, _| {}), PresentOutcome::Deferred);
+    assert!(
+        before.elapsed() < Duration::from_millis(50),
+        "the first frame of a hidden window must not wait for the worker"
+    );
+    assert_eq!(
+        rendering.recv_timeout(Duration::from_secs(5)).unwrap(),
+        (8, 8)
+    );
+    assert_eq!(outstanding(&context), 1);
+    release.send(()).unwrap();
+    context.close();
+    context.suspend();
+}
+
 /// A resize is followed by a redraw at the new size, because the platform asks
 /// for one on every configure. If that frame stayed with the worker it would be
 /// presented while the next resize is being handled, committing a buffer of the
 /// old size against the new window geometry, which shows as the previous frame
 /// stretched. Inline rendering never had the overlap: every frame was presented
 /// before the next event was read.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 #[test]
 fn the_redraw_that_follows_a_live_resize_is_also_presented_before_the_call_returns() {
     let (mut context, release, rendering) = ready_context(true);

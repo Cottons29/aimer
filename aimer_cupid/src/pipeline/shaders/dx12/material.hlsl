@@ -380,22 +380,22 @@ float material_alpha(float2 uv) {
 }
 
 // Rounded-rectangle normal in device pixels, independent of aspect ratio.
-float3 lens_bevel_normal(float2 point, float2 half_size, float4 radii, float distance, float bevel_width) {
-    float radius = min(selected_radius(point, radii), min(half_size.x, half_size.y));
-    float2 q = abs(point) - half_size + radius;
+float3 lens_bevel_normal(float2 position, float2 half_size, float4 radii, float distance, float bevel_width) {
+    float radius = min(selected_radius(position, radii), min(half_size.x, half_size.y));
+    float2 q = abs(position) - half_size + radius;
     float2 outer = max(q, float2(0.0, 0.0));
     float2 outward = q.x > q.y ? float2(1.0, 0.0) : float2(0.0, 1.0);
     if (dot(outer, outer) > 0.0) outward = normalize(outer);
-    outward *= sign(point);
+    outward *= sign(position);
     float slope = liquid_bevel_slope(max(-distance, 0.0), bevel_width);
     return normalize(float3(outward * slope, 1.0));
 }
 
 float4 light_edge(float2 pixel) {
     float2 half_size = material.bounds.zw * 0.5;
-    float2 point = pixel - material.bounds.xy - half_size;
-    float radius = min(selected_radius(point, material.radii), min(half_size.x, half_size.y));
-    float2 q = abs(point) - half_size + float2(radius, radius);
+    float2 position = pixel - material.bounds.xy - half_size;
+    float radius = min(selected_radius(position, material.radii), min(half_size.x, half_size.y));
+    float2 q = abs(position) - half_size + float2(radius, radius);
     float2 outer = max(q, float2(0.0, 0.0));
     // Smooth only the lighting normal across straight/curved joins. Keep
     // the exact SDF for coverage; limiting the blend to flat spans preserves circles.
@@ -404,7 +404,7 @@ float4 light_edge(float2 pixel) {
     float2 lighting_outer = outer + join * join / max(4.0 * blend, float2(0.0001, 0.0001));
     float2 outward = q.x > q.y ? float2(1.0, 0.0) : float2(0.0, 1.0);
     if (dot(lighting_outer, lighting_outer) > 0.0) outward = normalize(lighting_outer);
-    outward *= sign(point);
+    outward *= sign(position);
     float distance = length(outer) + min(max(q.x, q.y), 0.0) - radius;
     // A cubic inward falloff has no solid band or abrupt inner boundary.
     // Grazing light narrows the bevel; the opposite side catches a weaker reflection.
@@ -458,8 +458,8 @@ float4 gradient_ramp(float t) {
 
 float4 gradient_fill(float2 pixel) {
     float2 half_size = material.bounds.zw * 0.5;
-    float2 point = pixel - material.bounds.xy - half_size;
-    float distance = rounded_rect_sdf(point, half_size, material.radii);
+    float2 position = pixel - material.bounds.xy - half_size;
+    float distance = rounded_rect_sdf(position, half_size, material.radii);
     float coverage = sdf_alpha(distance) * clip_alpha(pixel);
     float2 local = pixel - material.bounds.xy;
     float4 geometry = material.tint;

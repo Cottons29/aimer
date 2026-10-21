@@ -692,3 +692,46 @@ pub(super) fn bind_group(
     }
     Dx12BindGroup { entries: resolved }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every HLSL source the DX12 backend compiles at startup.
+    const SHADERS: &[(&str, &str)] = &[
+        ("rect", include_str!("../../pipeline/shaders/dx12/rect.hlsl")),
+        ("image", include_str!("../../pipeline/shaders/dx12/image.hlsl")),
+        ("text", include_str!("../../pipeline/shaders/dx12/text.hlsl")),
+        ("text_color", include_str!("../../pipeline/shaders/dx12/text_color.hlsl")),
+        (
+            "text_decoration",
+            include_str!("../../pipeline/shaders/dx12/text_decoration.hlsl"),
+        ),
+        ("svg", include_str!("../../pipeline/shaders/dx12/svg.hlsl")),
+        (
+            "frame_composite",
+            include_str!("../../pipeline/shaders/dx12/frame_composite.hlsl"),
+        ),
+        ("material", include_str!("../../pipeline/shaders/dx12/material.hlsl")),
+        ("morph", include_str!("../../pipeline/shaders/dx12/morph.hlsl")),
+    ];
+
+    // FXC runs on the CPU, so this catches HLSL errors without a D3D12 device.
+    #[test]
+    fn every_builtin_shader_compiles_with_fxc() {
+        let mut failures = Vec::new();
+        for &(label, source) in SHADERS {
+            let module = Dx12ShaderModule {
+                source: Arc::from(source),
+                label: label.to_string(),
+                compiled: Arc::new(Mutex::new(HashMap::new())),
+            };
+            for (entry_point, target) in [("vs_main", b"vs_5_1\0"), ("fs_main", b"ps_5_1\0")] {
+                if let Err(error) = compile_hlsl(&module, entry_point, target) {
+                    failures.push(format!("{label}::{entry_point}: {error}"));
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+}

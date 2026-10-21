@@ -31,8 +31,10 @@ const RESIZE_PRESENT_TIMEOUT: std::time::Duration = std::time::Duration::from_mi
 /// geometry on a matching drawable, so iOS does not wait. A Linux compositor
 /// scales the previous buffer to the new window bounds until the next one is
 /// committed, so a frame the worker presents in a later turn shows as the old
-/// frame stretched under the pointer.
-const SYNC_RESIZE: bool = cfg!(any(target_os = "macos", target_os = "linux"));
+/// frame stretched under the pointer. Windows resizes the window immediately,
+/// and its `DXGI_SCALING_NONE` swap chain leaves the gained area black until a
+/// buffer of the new size is presented.
+const SYNC_RESIZE: bool = cfg!(any(target_os = "macos", target_os = "linux", target_os = "windows"));
 
 /// How long after a resize its follow-up frames are still presented in the turn
 /// that submitted them. A drag delivers a resize every few tens of milliseconds,
@@ -42,9 +44,9 @@ const LIVE_RESIZE_WINDOW: std::time::Duration = std::time::Duration::from_millis
 
 /// Whether that follow-up redraw is also presented in its own turn. Metal hands
 /// its drawable back to the UI thread, which drops it when the size has since
-/// changed, so a stale frame can never be committed after a resize. A Linux
-/// worker presents on its own thread and has no such check.
-const SYNC_REDRAW_DURING_RESIZE: bool = cfg!(target_os = "linux");
+/// changed, so a stale frame can never be committed after a resize. Linux and
+/// Windows workers present on their own thread and have no such check.
+const SYNC_REDRAW_DURING_RESIZE: bool = cfg!(any(target_os = "linux", target_os = "windows"));
 
 /// Outcomes delivered by the native renderer on its UI owner thread.
 #[derive(Default)]
@@ -410,8 +412,11 @@ impl NativeRenderContext {
             self.live_resize_until = Some(now + LIVE_RESIZE_WINDOW);
         }
         let live = self.live_resize_until.is_some_and(|until| now < until);
+        // A Windows window stays hidden until its first frame is presented, so
+        // that frame exposes nothing and must not hold startup on the worker.
+        let appearing = cfg!(target_os = "windows") && self.submitted_size.width == 0;
         self.submitted_size = self.size;
-        self.sync_resize && (changed || live)
+        self.sync_resize && !appearing && (changed || live)
     }
 
     /// Presents a frame that changed the surface size before returning.
