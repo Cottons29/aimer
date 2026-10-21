@@ -9,7 +9,9 @@ use aimer_canvas::{FrameCanvas, InnerCanvas};
 use aimer_color::prelude::Color;
 use aimer_container::SizedBox;
 use aimer_cupid::draw_cmd_v2::{Rect, RenderTree};
-use aimer_decoration::{DecorationBox, ForegroundDecorationBox, Gradient, MaskedDecorationBox};
+use aimer_decoration::{
+    DecorationBox, ForegroundDecorationBox, Gradient, MaskedDecorationBox, OpacityGradient,
+};
 use aimer_widget::base::{BuildContext, WindowHandle};
 use aimer_widget::{Drawable, Element, Widget};
 
@@ -105,6 +107,17 @@ async fn a_masked_box_reuses_its_recording_without_allocating() {
         .child(rainbow_child())
         .to_element(&ctx);
     assert_unchanged_checks_allocate_nothing(element.as_ref(), &ctx, "masked box");
+}
+
+#[tokio::test]
+async fn an_opacity_mask_box_reuses_its_recording_without_allocating() {
+    let inner = InnerCanvas::new();
+    let ctx = context(&inner);
+    let element = OpacityGradient::linear()
+        .opacities([1.0, 0.0])
+        .child(rainbow_child())
+        .to_element(&ctx);
+    assert_unchanged_checks_allocate_nothing(element.as_ref(), &ctx, "opacity mask box");
 }
 
 #[tokio::test]

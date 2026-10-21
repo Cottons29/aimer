@@ -569,7 +569,15 @@ impl<E: Element> EventElement for RawGestureDetector<E> {
         // is what lets an ancestor that arbitrates touches (a scroll view, a
         // navigator that pops on a sideways swipe) leave the gesture alone,
         // without having to infer it from what this consumed.
-        if output.iter().any(|gesture| matches!(gesture, crate::gesture::GestureEvent::DragStart { .. })) {
+        //
+        // Only a handler installed for the drag owns it. The raw `on_gesture`
+        // stream (a button's pressed highlight) merely observes it, and a swipe
+        // moves nothing until the finger lifts: claiming for either would make a
+        // scroll view stand down whenever the first sample past the press already
+        // travelled beyond the tap slop, which is every fast flick.
+        if self.handlers.owns_drag()
+            && output.iter().any(|gesture| matches!(gesture, crate::gesture::GestureEvent::DragStart { .. }))
+        {
             aimer_widget::claim_pointer(aimer_widget::PointerKey::new(pointer.source, pointer.id));
         }
 
@@ -811,6 +819,38 @@ mod tests {
         let _ = detector.on_event(&ElementEvent::PointerMove(touch(90.0, 10.0, 4)));
 
         assert!(!aimer_widget::is_pointer_claimed(key), "a button dragged off is not a drag");
+    }
+
+    /// `Button` installs the raw stream only to show a pressed highlight. Observing
+    /// a drag is not owning it, and claiming it would stop a scroll view from
+    /// taking the finger whenever the first sample after the press already
+    /// travelled past the tap slop — a fast flick.
+    #[test]
+    fn a_detector_that_only_observes_gestures_never_claims_a_pointer() {
+        let detector = detector_with(|handlers| handlers.set_on_gesture(|_: GestureEvent| {}));
+        let key = aimer_widget::PointerKey::new(PointerSource::Touch, 5);
+
+        let _ = detector.on_event(&ElementEvent::PointerDown(touch(10.0, 10.0, 5)));
+        let _ = detector.on_event(&ElementEvent::PointerMove(touch(10.0, 80.0, 5)));
+
+        assert!(
+            !aimer_widget::is_pointer_claimed(key),
+            "an observer does not own the drag it watches"
+        );
+    }
+
+    /// A swipe is only known once the finger lifts, so while the finger moves the
+    /// detector has taken nothing from anyone. Claiming would make it veto a
+    /// vertical scroll over a horizontal swipe.
+    #[test]
+    fn a_swipe_detector_never_claims_a_pointer() {
+        let detector = detector_with(|handlers| handlers.set_on_swipe(|_: SwipeDirection| {}));
+        let key = aimer_widget::PointerKey::new(PointerSource::Touch, 6);
+
+        let _ = detector.on_event(&ElementEvent::PointerDown(touch(10.0, 10.0, 6)));
+        let _ = detector.on_event(&ElementEvent::PointerMove(touch(10.0, 80.0, 6)));
+
+        assert!(!aimer_widget::is_pointer_claimed(key), "a swipe moves nothing while it is made");
     }
 
     #[test]

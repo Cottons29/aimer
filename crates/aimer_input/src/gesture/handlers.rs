@@ -63,6 +63,18 @@ impl GestureHandlers {
         self.claims
     }
 
+    /// Whether a handler was installed for the drag itself.
+    ///
+    /// [`Self::claimed`] cannot answer this: `on_swipe` has to switch the drag
+    /// recognizer on to measure a flick, so it claims [`GestureMask::DRAG`] too.
+    /// A swipe moves nothing while the finger travels, so only `on_drag_start`,
+    /// `on_drag_update` or `on_drag_end` own the pointer for the length of the
+    /// drag.
+    #[inline]
+    pub fn owns_drag(&self) -> bool {
+        self.on_drag_start.is_set() || self.on_drag_update.is_set() || self.on_drag_end.is_set()
+    }
+
     /// Whether a scroll event should be consumed rather than left to fall
     /// through.
     ///
