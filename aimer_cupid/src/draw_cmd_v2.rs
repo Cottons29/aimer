@@ -41,6 +41,22 @@ mod world_tests;
 /// renderer skips custom commands for pipelines it has not registered.
 pub const COVERAGE_MASK_PIPELINE_NAME: &str = "aimer.coverage_mask";
 
+/// The custom-pipeline name of the fade-mask marker.
+///
+/// The mirror of [`COVERAGE_MASK_PIPELINE_NAME`]: a node whose local list begins
+/// with a `DrawCustom` of this name declares that its own commands are not
+/// shown but only provide alpha, and that its descendants are drawn through it.
+/// The marker carries no payload.
+///
+/// The render plan wraps such a node and its descendants in a `fade`
+/// [`RenderOp::BeginOpacityGroup`]. The renderer draws the node's own list into
+/// one offscreen target and the descendants into another, then scales the
+/// descendants' pixels by the first target's alpha, so a ramp from opaque to
+/// transparent fades them out. A marked node with no descendants shows nothing.
+/// The marker command itself draws nothing: the renderer skips custom commands
+/// for pipelines it has not registered.
+pub const FADE_MASK_PIPELINE_NAME: &str = "aimer.fade_mask";
+
 pub use morph::{MORPH_PIPELINE_NAME, MorphGroup, MorphParams, MorphStyle};
 
 use std::cell::RefCell;
@@ -421,6 +437,10 @@ pub struct DrawList {
     /// its node's descendants have coverage. Found once, at commit, because the
     /// render plan reads it for every node of every frame.
     masks_descendants: bool,
+    /// The list opens with [`FADE_MASK_PIPELINE_NAME`]: its node's descendants
+    /// are shown through the alpha of the list. Found once, at commit, for the
+    /// same reason as `masks_descendants`.
+    fades_descendants: bool,
     /// The list opens with a decodable [`MORPH_PIPELINE_NAME`] marker: the
     /// node's two children are the sources of a shader transition. Found once,
     /// at commit, for the same reason as `masks_descendants`.
@@ -1941,6 +1961,11 @@ impl DrawListWriter {
                 Some(DrawCommand::DrawCustom { pipeline_name, .. })
                     if pipeline_name.as_ref() == COVERAGE_MASK_PIPELINE_NAME
             );
+            draw_list.fades_descendants = matches!(
+                commands.first(),
+                Some(DrawCommand::DrawCustom { pipeline_name, .. })
+                    if pipeline_name.as_ref() == FADE_MASK_PIPELINE_NAME
+            );
             draw_list.morph = match commands.first() {
                 Some(DrawCommand::DrawCustom { pipeline_name, data })
                     if pipeline_name.as_ref() == MORPH_PIPELINE_NAME =>
@@ -2074,12 +2099,18 @@ pub enum RenderOp {
     /// [coverage-mask marker](COVERAGE_MASK_PIPELINE_NAME): that node's own
     /// item is the content, every other item in the group is coverage, and the
     /// group shows the content only where the coverage is, at `opacity`.
+    /// A `fade` group holds a node that opened its list with the
+    /// [fade-mask marker](FADE_MASK_PIPELINE_NAME): that node's own item is only
+    /// alpha, every other item in the group is content, and the group shows the
+    /// content scaled by that alpha, at `opacity`. `masked` and `fade` are never
+    /// both set.
     BeginOpacityGroup {
         element: RenderNodeId,
         bounds: Rect,
         opacity: f32,
         clip: Option<Rect>,
         masked: bool,
+        fade: bool,
         /// Set when the group belongs to a morph; see [`MORPH_PIPELINE_NAME`].
         /// A host group holds exactly its two source groups and no item of its
         /// own, and `masked` is false for it and for its sources.

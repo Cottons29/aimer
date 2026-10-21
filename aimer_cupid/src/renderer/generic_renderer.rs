@@ -230,6 +230,13 @@ enum MaskRole {
     HasCoverage,
     /// The coverage target of a masked group: a mask, never shown itself.
     Coverage,
+    /// A fade group still waiting for the node's own item, its alpha.
+    AwaitingAlpha,
+    /// A fade group whose alpha is drawn and whose content group is above it.
+    HasContent,
+    /// The content target of a fade group: it is scaled by the alpha below it,
+    /// then composited like any opacity group.
+    Content,
 }
 
 struct ActiveOpacityGroup<B: GpuBackend> {
@@ -1218,6 +1225,7 @@ impl<B: GpuBackend> Renderer<B> {
                     element,
                     opacity,
                     masked,
+                    fade,
                     morph,
                 } => {
                     self.flush_opacity_group_chunk(
@@ -1260,6 +1268,8 @@ impl<B: GpuBackend> Renderer<B> {
                     group.morph_source = MorphSource::of(morph);
                     if masked {
                         group.mask = MaskRole::AwaitingContent;
+                    } else if fade {
+                        group.mask = MaskRole::AwaitingAlpha;
                     }
                     self.clear_render_target(
                         backend,
@@ -1367,6 +1377,41 @@ impl<B: GpuBackend> Renderer<B> {
                         }
                         self.opacity_group_targets[coverage.depth].target.mark_valid();
                     }
+                    if groups.last().is_some_and(|top| top.mask == MaskRole::Content) {
+                        // The content is complete: scale it by the alpha below.
+                        let mut content = groups.pop().expect("a content group was just seen");
+                        if let Some(content_region) =
+                            opacity_group_region(region, &groups, content.bounds)
+                        {
+                            let alpha = groups
+                                .last()
+                                .expect("a content group sits above its alpha");
+                            let origin = (content.bounds.x, content.bounds.y);
+                            let local_region = DamageRect::new(
+                                content_region.x - origin.0,
+                                content_region.y - origin.1,
+                                content_region.width,
+                                content_region.height,
+                            );
+                            self.composite_opacity_group(
+                                backend,
+                                alpha,
+                                &content.render_view,
+                                content.resolve_target.as_ref(),
+                                origin,
+                                content.bounds.width,
+                                content.bounds.height,
+                                is_srgb,
+                                local_region,
+                                true,
+                            );
+                        }
+                        let alpha = groups.pop().expect("a content group sits above its alpha");
+                        self.opacity_group_targets[alpha.depth].target.mark_valid();
+                        // Scaled, it is an ordinary group from here on.
+                        content.mask = MaskRole::None;
+                        groups.push(content);
+                    }
                     let group = groups
                         .pop()
                         .expect("validated opacity groups have matching begin operations");
@@ -1374,7 +1419,10 @@ impl<B: GpuBackend> Renderer<B> {
                         group.element, element,
                         "opacity group end matches its begin"
                     );
-                    if group.mask == MaskRole::AwaitingContent {
+                    if matches!(
+                        group.mask,
+                        MaskRole::AwaitingContent | MaskRole::AwaitingAlpha
+                    ) {
                         // Nothing was drawn inside it, so there is no coverage to
                         // show the content through.
                         continue;
@@ -1424,6 +1472,62 @@ impl<B: GpuBackend> Renderer<B> {
                     self.opacity_group_targets[group.depth].target.mark_valid();
                 }
                 RetainedRenderOperationKind::LocalV2(ref item) => {
+                    if groups
+                        .last()
+                        .is_some_and(|top| top.mask == MaskRole::AwaitingAlpha)
+                    {
+                        // The group's first item is the node's own: its alpha.
+                        // Draw it into the alpha target, then everything after
+                        // it is content and goes into a target of its own.
+                        let (group_element, group_bounds, group_opacity) = {
+                            let group = groups.last_mut().expect("a group awaits its alpha");
+                            // The content carries the group's opacity once.
+                            (group.element, group.bounds, std::mem::replace(&mut group.opacity, 1.0))
+                        };
+                        let is_alpha = item.element.get() == group_element;
+                        if is_alpha {
+                            chunk.push(operation);
+                        }
+                        self.flush_opacity_group_chunk(
+                            backend,
+                            view,
+                            source_texture,
+                            resolve_target,
+                            width,
+                            height,
+                            is_srgb,
+                            draw_list,
+                            &mut chunk,
+                            &groups,
+                            device_scale,
+                            startup_timing,
+                            region,
+                        );
+                        groups
+                            .last_mut()
+                            .expect("a group awaited its alpha")
+                            .mask = MaskRole::HasContent;
+                        let mut content = self.ensure_opacity_group_target(
+                            backend,
+                            next_group_depth(groups.len(), &morph_frames),
+                            group_element,
+                            group_opacity,
+                            group_bounds,
+                            opacity_target_key,
+                        );
+                        content.mask = MaskRole::Content;
+                        self.clear_render_target(
+                            backend,
+                            &content.render_view,
+                            content.resolve_target.as_ref(),
+                            [0.0; 4],
+                        );
+                        groups.push(content);
+                        if !is_alpha {
+                            chunk.push(operation);
+                        }
+                        continue;
+                    }
                     let awaiting = groups
                         .last()
                         .filter(|top| top.mask == MaskRole::AwaitingContent)

@@ -8,6 +8,7 @@ mod focus;
 mod foreground_decoration;
 mod gradient;
 mod gradient_resize;
+mod gradient_scroll;
 mod light_edge;
 mod light_edge_color;
 mod magnification;

@@ -6,7 +6,7 @@
 //! blur softens the text beneath it, while the fade and rim sit on top. The
 //! button and the two sliders rebuild the box with a different decoration stack;
 //! the card itself is retained and never rebuilt.
-
+//! 
 use aimer::decoration::{
     AnyDecor, BackdropFilter, BorderRadius, Decoration, DecorationBox, ForegroundDecorationBox,
     Gradient, LightEdge, Magnification,

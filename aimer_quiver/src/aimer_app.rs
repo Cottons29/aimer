@@ -1793,6 +1793,7 @@ mod tests {
     mod floating_menu_settles;
     mod foreground_decoration_box;
     mod masked_decoration_box;
+    mod opacity_mask_box;
     mod focus_click;
     mod focus_repaint;
     mod glass_bar_cost;

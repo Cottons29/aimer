@@ -24,16 +24,20 @@ pub struct RetainedRenderOperation {
 }
 
 pub(crate) enum RetainedRenderOperationKind {
-    /// `masked` groups show their first item only where the rest have coverage.
+    /// `masked` groups show their first item only where the rest have coverage;
+    /// `fade` groups show the rest scaled by the alpha of their first item.
     /// `morph` groups blend their two source groups with a shader.
     OpacityGroupBegin {
         element: u64,
         opacity: f32,
         masked: bool,
+        fade: bool,
         morph: Option<MorphGroup>,
     },
     LocalV2(RetainedV2Item),
-    OpacityGroupEnd { element: u64 },
+    OpacityGroupEnd {
+        element: u64,
+    },
 }
 
 pub(crate) struct RetainedV2Item {
@@ -70,6 +74,7 @@ impl RetainedRenderPlan {
         element: u64,
         opacity: f32,
         masked: bool,
+        fade: bool,
         morph: Option<MorphGroup>,
         bounds: DamageRect,
     ) -> RetainedRenderOperation {
@@ -78,6 +83,7 @@ impl RetainedRenderPlan {
                 element,
                 opacity,
                 masked,
+                fade,
                 morph,
             },
             bounds,

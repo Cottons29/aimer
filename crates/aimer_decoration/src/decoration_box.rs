@@ -4,10 +4,12 @@ mod backdrop_filter;
 mod gradient;
 mod light_edge;
 mod magnification;
+mod opacity_gradient;
 pub use backdrop_filter::BackdropFilter;
 pub use gradient::Gradient;
 pub use light_edge::LightEdge;
 pub use magnification::{Magnification, MagnificationStyle};
+pub use opacity_gradient::OpacityGradient;
 
 use crate::{BoxDecoration, Decoration};
 use aimer_attribute::{ResolvedSize, Size, Vec2d};
@@ -138,24 +140,35 @@ pub(super) fn decoration_element<D: Decoration + 'static, W: Widget>(
     ctx: &BuildContext,
     name: &'static str,
 ) -> AnyElement {
-    decoration_element_with(decoration, child, ctx, name, false)
+    decoration_element_with(decoration, child, ctx, name, ChildMask::None)
 }
 
-/// Builds a decoration box whose decoration shows through its child's coverage
-/// when `masks_children` is set.
+/// How a decoration box combines its decoration with its child's pixels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ChildMask {
+    /// The decoration paints behind the child.
+    None,
+    /// The decoration shows only where the child has coverage.
+    DecorationByChild,
+    /// The child shows only where, and as much as, the decoration has alpha.
+    ChildByDecoration,
+}
+
+/// Builds a decoration box whose decoration is combined with its child as `mask`
+/// says.
 pub(crate) fn decoration_element_with<D: Decoration + 'static, W: Widget>(
     decoration: D,
     child: W,
     ctx: &BuildContext,
     name: &'static str,
-    masks_children: bool,
+    mask: ChildMask,
 ) -> AnyElement {
     RawDecorationBox {
         decoration,
         child: child.to_element(ctx),
         recorded: Cell::new(None),
         name,
-        masks_children,
+        mask,
     }
     .boxed()
 }
@@ -165,8 +178,7 @@ struct RawDecorationBox<D> {
     child: AnyElement,
     recorded: Cell<Option<PaintKey>>,
     name: &'static str,
-    /// Whether the decoration is visible only through the child's coverage.
-    masks_children: bool,
+    mask: ChildMask,
 }
 
 /// What a retained decoration recorded last, compared to skip identical repaints.
@@ -269,9 +281,14 @@ impl<D: Decoration> Drawable for RawDecorationBox<D> {
     fn paint_local_v2(&self, ctx: &BuildContext) {
         let key = self.paint_key(ctx);
         let canvas = Canvas::of(ctx);
-        if self.masks_children {
-            // The marker must head the list; see `COVERAGE_MASK_PIPELINE_NAME`.
-            canvas.mask_by_descendants();
+        // The marker must head the list; see `COVERAGE_MASK_PIPELINE_NAME`.
+        match self.mask {
+            ChildMask::None => {}
+            ChildMask::DecorationByChild => canvas.mask_by_descendants(),
+            // A decoration that paints nothing has no alpha to fade by, which
+            // leaves the child as it is rather than hiding it.
+            ChildMask::ChildByDecoration if self.decoration.is_empty() => {}
+            ChildMask::ChildByDecoration => canvas.fade_descendants(),
         }
         if let Some(geometry) = key.geometry {
             let size = geometry.logical_size();
@@ -408,6 +425,9 @@ mod gradient_tests;
 
 #[cfg(test)]
 mod masked_tests;
+
+#[cfg(test)]
+mod opacity_gradient_tests;
 
 #[cfg(test)]
 mod multi_placement_tests;

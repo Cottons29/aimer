@@ -16,8 +16,9 @@ use crate::{BoxDecoration, Decoration};
 /// Paint outsets are the maximum on each side across all layers.
 ///
 /// The stack paints behind the child unless [`Self::foreground`] moves it over
-/// the child or [`Self::masked`] shows it only through the child's coverage.
-/// The layers keep their order and geometry in all three placements.
+/// the child, [`Self::masked`] shows it only through the child's coverage, or
+/// [`Self::faded`] draws the child through the stack's alpha. The layers keep
+/// their order and geometry in all four placements.
 ///
 /// Chained decorations retain their concrete types. Runtime collections are
 /// consumed once and retained; mixed collections can use `Box<dyn Decoration>`
@@ -66,6 +67,8 @@ enum Placement {
     Over,
     /// Through the child's coverage, so it shows only where the child has pixels.
     Through,
+    /// Over nothing: the stack is only alpha, and the child is drawn through it.
+    Fade,
 }
 
 impl Default for MultiDecorationBox {
@@ -92,7 +95,8 @@ impl<D: Decoration> MultiDecorationBox<D> {
     ///
     /// Every layer keeps its order and its shared box geometry; they just
     /// paint after the child, as [`ForegroundDecorationBox`](crate::ForegroundDecorationBox)
-    /// does for one decoration. Replaces an earlier [`Self::masked`].
+    /// does for one decoration. Replaces an earlier [`Self::masked`] or
+    /// [`Self::faded`].
     #[inline]
     pub fn foreground(mut self) -> Self {
         self.placement = Placement::Over;
@@ -103,10 +107,39 @@ impl<D: Decoration> MultiDecorationBox<D> {
     ///
     /// The layers keep their order, and the child's own colors are not drawn,
     /// as [`MaskedDecorationBox`](crate::MaskedDecorationBox) does for one
-    /// decoration. Replaces an earlier [`Self::foreground`].
+    /// decoration. Replaces an earlier [`Self::foreground`] or [`Self::faded`].
     #[inline]
     pub fn masked(mut self) -> Self {
         self.placement = Placement::Through;
+        self
+    }
+
+    /// Draws the child through the whole stack's alpha instead of showing the stack.
+    ///
+    /// The layers keep their order and paint together into one mask, and only
+    /// that mask's alpha is used: the child's pixels are scaled by it, and the
+    /// layers' own colors are never drawn. This is
+    /// [`OpacityMaskBox`](crate::OpacityMaskBox) for a stack, so any layer can
+    /// contribute: an [`OpacityGradient`](crate::OpacityGradient) fades, a
+    /// [`BorderRadius`](crate::BorderRadius) rounds, and a translucent
+    /// [`Gradient`](crate::Gradient) does both. A stack that paints nothing leaves
+    /// the child as it is. Replaces an earlier [`Self::foreground`] or
+    /// [`Self::masked`].
+    ///
+    /// ```
+    /// use aimer_container::SizedBox;
+    /// use aimer_decoration::{BorderRadius, MultiDecorationBox, OpacityGradient};
+    ///
+    /// // A child with rounded corners that also fades out toward the bottom.
+    /// let widget = MultiDecorationBox::new()
+    ///     .decoration(BorderRadius::from(16))
+    ///     .decoration(OpacityGradient::linear().opacities([1.0, 0.0]))
+    ///     .faded()
+    ///     .child(SizedBox::new().width(240).height(160));
+    /// ```
+    #[inline]
+    pub fn faded(mut self) -> Self {
+        self.placement = Placement::Fade;
         self
     }
 
@@ -183,7 +216,14 @@ impl<D: Decoration + 'static, W: Widget> Widget for MultiDecorationBox<D, W> {
                 self.child,
                 ctx,
                 NAME,
-                true,
+                crate::decoration_box::ChildMask::DecorationByChild,
+            ),
+            Placement::Fade => crate::decoration_box::decoration_element_with(
+                self.decoration,
+                self.child,
+                ctx,
+                NAME,
+                crate::decoration_box::ChildMask::ChildByDecoration,
             ),
         }
     }

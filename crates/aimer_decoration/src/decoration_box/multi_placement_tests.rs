@@ -1,7 +1,9 @@
 use super::tests::context;
-use crate::{Gradient, LightEdge, MultiDecorationBox};
+use crate::{Gradient, LightEdge, MultiDecorationBox, OpacityGradient};
 use aimer_container::SizedBox;
-use aimer_cupid::draw_cmd_v2::{COVERAGE_MASK_PIPELINE_NAME, DrawCommand, Rect, RenderTree};
+use aimer_cupid::draw_cmd_v2::{
+    COVERAGE_MASK_PIPELINE_NAME, DrawCommand, FADE_MASK_PIPELINE_NAME, Rect, RenderTree,
+};
 use aimer_cupid::material::{MaterialKind, MaterialRequest};
 use aimer_widget::base::BuildContext;
 use aimer_widget::{Element, Widget};
@@ -116,4 +118,79 @@ async fn the_last_placement_wins() {
         .child(SizedBox::new().width(60.0).height(20.0))
         .to_element(&ctx);
     assert!(record_dyn(masked_last.as_ref(), &ctx).first().is_some_and(is_marker));
+}
+
+fn is_fade_marker(command: &DrawCommand) -> bool {
+    matches!(command, DrawCommand::DrawCustom { pipeline_name, .. }
+        if pipeline_name.as_ref() == FADE_MASK_PIPELINE_NAME)
+}
+
+#[tokio::test]
+async fn a_faded_stack_opens_the_list_with_one_fade_marker_then_every_layer_in_order() {
+    let ctx = context(1.0);
+    let element = stack!(faded).to_element(&ctx);
+    let commands = record_dyn(element.as_ref(), &ctx);
+    assert!(commands.first().is_some_and(is_fade_marker));
+    assert_eq!(commands.iter().filter(|command| is_fade_marker(command)).count(), 1);
+    assert!(!commands.iter().any(is_marker), "not the coverage marker");
+    assert_eq!(kinds(&commands), LAYERS);
+    let mut children = 0;
+    element.visit_children(&mut |_| children += 1);
+    assert_eq!(children, 1, "the child is the only node below the wrapper");
+}
+
+#[tokio::test]
+async fn a_faded_stack_takes_any_mix_of_layers() {
+    let ctx = context(1.0);
+    let element = MultiDecorationBox::new()
+        .decoration(OpacityGradient::linear().opacities([1.0, 0.0]))
+        .decoration(LightEdge::new())
+        .faded()
+        .child(SizedBox::new().width(60.0).height(20.0))
+        .to_element(&ctx);
+    let commands = record_dyn(element.as_ref(), &ctx);
+    assert!(commands.first().is_some_and(is_fade_marker));
+    assert_eq!(kinds(&commands), LAYERS, "an opacity ramp records a gradient material");
+}
+
+#[tokio::test]
+async fn an_empty_faded_stack_leaves_the_child_unfaded() {
+    let ctx = context(1.0);
+    let element = MultiDecorationBox::new()
+        .faded()
+        .child(SizedBox::new().width(60.0).height(20.0))
+        .to_element(&ctx);
+    assert!(!record_dyn(element.as_ref(), &ctx).iter().any(is_fade_marker));
+}
+
+#[tokio::test]
+async fn the_last_placement_wins_over_faded_too() {
+    let ctx = context(1.0);
+    let foreground_last = MultiDecorationBox::new()
+        .decoration(Gradient::rainbow())
+        .faded()
+        .foreground()
+        .child(SizedBox::new().width(60.0).height(20.0))
+        .to_element(&ctx);
+    assert!(!record_dyn(foreground_last.as_ref(), &ctx).iter().any(is_fade_marker));
+
+    let faded_last = MultiDecorationBox::new()
+        .decoration(Gradient::rainbow())
+        .masked()
+        .faded()
+        .child(SizedBox::new().width(60.0).height(20.0))
+        .to_element(&ctx);
+    let commands = record_dyn(faded_last.as_ref(), &ctx);
+    assert!(commands.first().is_some_and(is_fade_marker));
+    assert!(!commands.iter().any(is_marker));
+
+    let masked_last = MultiDecorationBox::new()
+        .decoration(Gradient::rainbow())
+        .faded()
+        .masked()
+        .child(SizedBox::new().width(60.0).height(20.0))
+        .to_element(&ctx);
+    let commands = record_dyn(masked_last.as_ref(), &ctx);
+    assert!(commands.first().is_some_and(is_marker));
+    assert!(!commands.iter().any(is_fade_marker));
 }

@@ -1,4 +1,4 @@
-use crate::decoration_box::decoration_element_with;
+use crate::decoration_box::{ChildMask, decoration_element_with};
 use crate::{BoxDecoration, Decoration};
 use aimer_widget::base::BuildContext;
 use aimer_widget::{AnyElement, AnyWidget, PortableWidget, RequiredChild, Widget};
@@ -107,7 +107,13 @@ impl<D: Decoration + 'static, W: Widget> PortableWidget for MaskedDecorationBox<
 
 impl<D: Decoration + 'static, W: Widget> Widget for MaskedDecorationBox<D, W> {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
-        decoration_element_with(self.decoration, self.child, ctx, "MaskedDecorationBox", true)
+        decoration_element_with(
+            self.decoration,
+            self.child,
+            ctx,
+            "MaskedDecorationBox",
+            ChildMask::DecorationByChild,
+        )
     }
 
     fn debug_name(&self) -> &'static str {

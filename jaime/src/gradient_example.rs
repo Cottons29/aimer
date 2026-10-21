@@ -1,15 +1,15 @@
 //! Linear, radial and conic gradients, plus decorations painted over and through a child.
 
 use aimer::decoration::{
-    BackdropFilter, BorderRadius, Decoration, DecorationBox, ForegroundDecorationBox, Gradient, LightEdge,
-    MaskedDecorationBox,
+    BackdropFilter, BorderRadius, Decoration, DecorationBox, ForegroundDecorationBox, Gradient,
+    LightEdge, MaskedDecorationBox,
 };
 use aimer::macros::widget;
 use aimer::range::Slider;
 use aimer::style::{BoxDecoration, Color, FontWeight, LayoutSpacing, Spacing, TextStyle};
 use aimer::{
-    AimerApp, AnyWidget, BuildContext, ChildBuilder, Column, Container, Row, SizedBox, State,
-    StateUpdater, StatefulWidget, Text, Widget,
+    AimerApp, AnyWidget, BuildContext, ChildBuilder, Column, Container, Row, ScrollAxis,
+    Scrollable, SizedBox, State, StateUpdater, StatefulWidget, Text, Widget,
 };
 
 use crate::theme;
@@ -23,8 +23,12 @@ pub fn start_gradient_example() {
 }
 
 /// Builds adjustable gradients and the behind/over/through decoration comparison.
+///
+/// The gallery is taller than a small window, so it scrolls vertically.
 pub fn gradient_example() -> impl Widget {
-    GradientExample::new()
+    Scrollable::new()
+        .axis(ScrollAxis::Vertical)
+        .child(GradientExample::new())
 }
 
 /// Demonstrates GPU-evaluated gradients and where a decoration can paint.
@@ -68,7 +72,11 @@ impl StatefulWidget for GradientExample {
             start: 0.0,
             corners: 20.0,
             blanks: std::array::from_fn(|_| {
-                ChildBuilder::from_widget(SizedBox::new().width(CARD_WIDTH).height(CARD_HEIGHT))
+                ChildBuilder::from_widget(
+                    SizedBox::new()
+                        .width(CARD_WIDTH)
+                        .height(CARD_HEIGHT),
+                )
             }),
             artworks: std::array::from_fn(|_| {
                 ChildBuilder::from_widget(
@@ -78,26 +86,28 @@ impl StatefulWidget for GradientExample {
                                 .background_color(Color::Rgb(24, 42, 76))
                                 .border_radius(16),
                         )
-                        .child(SizedBox::new().width(CARD_WIDTH).height(CARD_HEIGHT)),
+                        .child(
+                            SizedBox::new()
+                                .width(CARD_WIDTH)
+                                .height(CARD_HEIGHT),
+                        ),
                 )
             }),
             caption: ChildBuilder::from_widget(
-                Text::new("Rainbow text")
-                    .text_style(
-                        TextStyle::new()
-                            .font_size(44)
-                            .font_weight(FontWeight::Bold)
-                            .color(Color::WHITE),
-                    ),
+                Text::new("Rainbow text").text_style(
+                    TextStyle::new()
+                        .font_size(44)
+                        .font_weight(FontWeight::Bold)
+                        .color(Color::WHITE),
+                ),
             ),
             glass_caption: ChildBuilder::from_widget(
-                Text::new("Glass text")
-                    .text_style(
-                        TextStyle::new()
-                            .font_size(56)
-                            .font_weight(FontWeight::Bold)
-                            .color(Color::WHITE),
-                    ),
+                Text::new("Glass text").text_style(
+                    TextStyle::new()
+                        .font_size(56)
+                        .font_weight(FontWeight::Bold)
+                        .color(Color::WHITE),
+                ),
             ),
             updater: StateUpdater::empty(),
         }

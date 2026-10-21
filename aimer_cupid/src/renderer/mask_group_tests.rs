@@ -16,7 +16,7 @@ use crate::pipeline::material::{
 use crate::renderer::RendererImpl;
 use crate::utilities::Color;
 
-const SIZE: u32 = 128;
+pub(super) const SIZE: u32 = 128;
 
 fn marker() -> DrawCommand {
     DrawCommand::DrawCustom {
@@ -26,7 +26,7 @@ fn marker() -> DrawCommand {
 }
 
 /// A horizontal red-to-blue ramp across a `width` by `height` box.
-fn ramp(width: f32, height: f32) -> DrawCommand {
+pub(super) fn ramp(width: f32, height: f32) -> DrawCommand {
     let mut request = MaterialRequest::new(MaterialKind::Gradient, [0.0, 0.0, width, height]);
     request.opacity = 1.0;
     request.corner_radii = [0.0; 4];
@@ -45,7 +45,7 @@ fn ramp(width: f32, height: f32) -> DrawCommand {
     }
 }
 
-fn disc(rect: Rect, color: Color) -> DrawCommand {
+pub(super) fn disc(rect: Rect, color: Color) -> DrawCommand {
     DrawCommand::FillRect {
         rect,
         color,
@@ -57,7 +57,7 @@ fn disc(rect: Rect, color: Color) -> DrawCommand {
     }
 }
 
-fn record(tree: &RenderTree, node: RenderNodeId, commands: Vec<DrawCommand>) {
+pub(super) fn record(tree: &RenderTree, node: RenderNodeId, commands: Vec<DrawCommand>) {
     tree.context(node)
         .unwrap()
         .begin_recording()
@@ -67,7 +67,7 @@ fn record(tree: &RenderTree, node: RenderNodeId, commands: Vec<DrawCommand>) {
 }
 
 /// Renders `tree` and returns its RGBA8 pixels.
-fn render(antialiasing: AntiAlias, tree: &RenderTree) -> Vec<u8> {
+pub(super) fn render(antialiasing: AntiAlias, tree: &RenderTree) -> Vec<u8> {
     let backend = MetalBackend::new().expect("mask pixel regression requires Metal");
     let format = <MetalBackend as GpuBackend>::rgba8_unorm_format();
     let target = backend.create_texture(&TextureDescriptor {
@@ -129,12 +129,12 @@ fn render(antialiasing: AntiAlias, tree: &RenderTree) -> Vec<u8> {
     pixels
 }
 
-fn pixel(pixels: &[u8], x: u32, y: u32) -> [u8; 4] {
+pub(super) fn pixel(pixels: &[u8], x: u32, y: u32) -> [u8; 4] {
     let offset = ((y * SIZE + x) * 4) as usize;
     pixels[offset..offset + 4].try_into().unwrap()
 }
 
-fn near(actual: [u8; 4], expected: [u8; 4], tolerance: u8, what: &str) {
+pub(super) fn near(actual: [u8; 4], expected: [u8; 4], tolerance: u8, what: &str) {
     for (actual_channel, expected_channel) in actual.into_iter().zip(expected) {
         assert!(
             actual_channel.abs_diff(expected_channel) <= tolerance,

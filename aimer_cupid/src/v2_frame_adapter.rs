@@ -146,6 +146,7 @@ impl FramePacket {
                             item.element.get(),
                             item.opacity,
                             false,
+                            false,
                             None,
                             bounds,
                         ));
@@ -176,6 +177,7 @@ impl FramePacket {
                     bounds,
                     opacity,
                     masked,
+                    fade,
                     morph,
                     ..
                 } => {
@@ -187,6 +189,7 @@ impl FramePacket {
                         element.get(),
                         *opacity,
                         *masked,
+                        *fade,
                         *morph,
                         device_bounds,
                     ));

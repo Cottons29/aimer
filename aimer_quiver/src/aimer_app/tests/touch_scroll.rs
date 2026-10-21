@@ -213,3 +213,122 @@ fn a_mouse_still_hovers_a_row_after_a_touch() {
         "a real cursor must hover the row under it"
     );
 }
+
+// A fast flick reports a first sample past the tap slop (18) while still over the
+// row it pressed. A detector that only observes the drag, or only wants a swipe,
+// must not claim the finger, or the scroll view stands down for the whole gesture.
+
+#[derive(Clone, Copy)]
+enum RowKind {
+    Plain,
+    Button,
+    Swipe,
+    Drag,
+}
+
+struct KindRows {
+    kind: RowKind,
+    controller: aimer_scroll::ScrollController,
+}
+
+impl Widget for KindRows {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
+        let kind = self.kind;
+        let rows = (0..ROWS)
+            .map(|_| {
+                let cell = SizedBox::new()
+                    .width(Dimension::Px(200.0))
+                    .height(Dimension::Px(ROW_HEIGHT));
+                match kind {
+                    RowKind::Plain => cell.boxed(),
+                    RowKind::Button => aimer_input::button::Button::new()
+                        .no_decor()
+                        .on_press(|| {})
+                        .child(cell)
+                        .boxed(),
+                    RowKind::Swipe => GestureDetector::new().on_swipe(|_| {}).child(cell).boxed(),
+                    RowKind::Drag => GestureDetector::new().on_drag_start(|_| {}).child(cell).boxed(),
+                }
+            })
+            .collect::<Vec<_>>();
+        SizedBox::new()
+            .width(Dimension::Px(200.0))
+            .height(Dimension::Px(400.0))
+            .child(
+                Scrollable::new()
+                    .controller(self.controller)
+                    .vertical_scroll_bar(None)
+                    .horizontal_scroll_bar(None)
+                    .child(Column::new().children(rows)),
+            )
+            .to_element(ctx)
+    }
+}
+
+impl aimer_widget::PortableWidget for KindRows {}
+
+/// The scroll offset after a finger pressed near the bottom of a row flicks up
+/// with a 30px first sample, which stays inside that row (y 300..360).
+fn offset_after_fast_flick(kind: RowKind) -> f32 {
+    let controller = aimer_scroll::ScrollController::new();
+    let mut app = AimerApp::start_headless_with(
+        KindRows {
+            kind,
+            controller: controller.clone(),
+        },
+        HeadlessOptions {
+            size: PhysicalSize::new(200, 400),
+            scale_factor: 1.0,
+        },
+    );
+    app.pump_frames(3);
+    touch(&mut app, TouchPhase::Started, 100.0, 355.0);
+    for y in [325.0, 295.0, 265.0, 235.0, 205.0] {
+        touch(&mut app, TouchPhase::Moved, 100.0, y);
+    }
+    let offset = controller.offset().y;
+    touch(&mut app, TouchPhase::Ended, 100.0, 205.0);
+    offset
+}
+
+#[test]
+fn a_fast_flick_over_a_plain_row_scrolls() {
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    assert!(offset_after_fast_flick(RowKind::Plain) > 0.0);
+}
+
+#[test]
+fn a_fast_flick_over_a_button_scrolls() {
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    assert!(
+        offset_after_fast_flick(RowKind::Button) > 0.0,
+        "a button only observes the drag, so the list must still scroll"
+    );
+}
+
+#[test]
+fn a_fast_flick_over_a_swipe_detector_scrolls() {
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    assert!(
+        offset_after_fast_flick(RowKind::Swipe) > 0.0,
+        "a swipe detector moves nothing while the finger travels"
+    );
+}
+
+#[test]
+fn a_fast_flick_over_a_drag_handler_leaves_the_drag_to_it() {
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    assert_eq!(
+        offset_after_fast_flick(RowKind::Drag),
+        0.0,
+        "a real drag handler owns the finger and the list stands down"
+    );
+}

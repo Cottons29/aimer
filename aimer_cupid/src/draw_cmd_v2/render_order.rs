@@ -339,6 +339,7 @@ impl RenderWorkspace {
                         // The source's descendants keep their own container clips.
                         clip: None,
                         masked: false,
+                        fade: false,
                         morph: Some(role),
                     });
                     self.render_stack
@@ -371,17 +372,19 @@ impl RenderWorkspace {
             let id = node.id;
             let opacity = node.presentation_opacity * node.opacity;
             let has_children = !node.children.is_empty();
-            let (masked, morph) = {
+            let (masked, fade, morph) = {
                 let draw_list = node.draw_list.borrow();
                 // A morph needs both pictures; with any other child count the
                 // marker is inert and the node paints as an ordinary one.
                 (
                     draw_list.masks_descendants,
+                    draw_list.fades_descendants,
                     draw_list.morph.filter(|_| topology.children_of(index).len() == 2),
                 )
             };
-            if masked && !has_children {
-                // Masking by nothing shows nothing.
+            if (masked || fade) && !has_children {
+                // Masking by nothing shows nothing, and the mask of a fade is
+                // never shown on its own.
                 continue;
             }
             // Child draw items keep their individual container clips.
@@ -402,6 +405,7 @@ impl RenderWorkspace {
                     bounds: visible_subtree,
                     opacity,
                     masked: false,
+                    fade: false,
                     clip: group_clip,
                     morph: Some(MorphGroup::Host(params)),
                 });
@@ -415,13 +419,14 @@ impl RenderWorkspace {
                     .push(RenderTraversal::MorphSource(from, MorphGroup::From));
                 continue;
             }
-            let groups_opacity = (opacity < 1.0 || masked) && has_children;
+            let groups_opacity = (opacity < 1.0 || masked || fade) && has_children;
             if groups_opacity {
                 output.push(RenderOp::BeginOpacityGroup {
                     element: id,
                     bounds: visible_subtree,
                     opacity,
                     masked,
+                    fade,
                     clip: group_clip,
                     morph: None,
                 });

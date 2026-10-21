@@ -790,6 +790,25 @@ impl Canvas {
         );
     }
 
+    /// Declares that this element's commands are only an alpha mask, and that
+    /// its descendants are drawn through it.
+    ///
+    /// Call it before any other command so it heads the list. This records the
+    /// marker [`FADE_MASK_PIPELINE_NAME`], which makes the renderer draw the
+    /// element's commands into one offscreen target and its descendants into
+    /// another, then scale the descendants by the first target's alpha. The
+    /// element's own colors are never shown. An element with no descendants shows
+    /// nothing.
+    ///
+    /// [`FADE_MASK_PIPELINE_NAME`]: aimer_cupid::draw_cmd_v2::FADE_MASK_PIPELINE_NAME
+    #[inline]
+    pub fn fade_descendants(&self) {
+        self.draw_custom(
+            aimer_cupid::draw_cmd_v2::FADE_MASK_PIPELINE_NAME,
+            std::sync::Arc::<[u8]>::from(Vec::new()),
+        );
+    }
+
     /// Declares that this element's first two children are the outgoing and
     /// incoming pictures of a shader transition described by `params`.
     ///
