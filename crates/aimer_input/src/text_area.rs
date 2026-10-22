@@ -573,17 +573,18 @@ mod tests {
         assert_eq!(key, Some(Key::Value("notes".to_owned())));
     }
 
-    #[test]
-    fn a_built_text_area_uses_the_shared_selection_area_for_dragging() {
-        let controller = TextEditingController::with_text("hello world");
+    /// Drags the mouse across a built text area, along its first line, from
+    /// `from` to `to`, and reports the selection it leaves, in graphemes.
+    fn drag_selection(text: &str, from: f32, to: f32) -> (usize, usize) {
+        let controller = TextEditingController::with_text(text);
         let ctx = dummy_build_context(200.0, 80.0);
         let element: AnyElement = TextArea::new()
             .controller(controller.clone())
             .to_element(&ctx);
         element.update(&ctx);
         let mut dispatcher = EventDispatcher::new();
-        let start = Vec2d { x: 4.0, y: 12.0 };
-        let end = Vec2d { x: 50.0, y: 12.0 };
+        let start = Vec2d { x: from, y: 12.0 };
+        let end = Vec2d { x: to, y: 12.0 };
 
         assert!(
             dispatcher
@@ -615,6 +616,27 @@ mod tests {
                 .is_consumed()
         );
 
-        assert_eq!(controller.selection_graphemes(), (1, 9));
+        controller.selection_graphemes()
+    }
+
+    /// Dragging selects through the shared selection area.
+    ///
+    /// The area measures its text with the system's font, so where a given pixel
+    /// falls among the characters differs from one platform to the next. The
+    /// drags below mean the same thing in any font: from the very left edge to a
+    /// point past the end of the text, and to a point inside it.
+    #[test]
+    fn a_built_text_area_uses_the_shared_selection_area_for_dragging() {
+        const TEXT: &str = "hello world";
+        let length = TEXT.chars().count();
+
+        assert_eq!(drag_selection(TEXT, 1.0, 190.0), (0, length));
+
+        let (start, end) = drag_selection(TEXT, 1.0, 30.0);
+        assert_eq!(start, 0);
+        assert!(
+            0 < end && end < length,
+            "a drag that ends inside the text selected {start}..{end} of {length}"
+        );
     }
 }

@@ -1867,13 +1867,14 @@ mod focus_tests {
         assert!(!node.has_focus());
     }
 
-    #[test]
-    fn a_built_text_field_uses_the_shared_selection_area_for_dragging() {
-        let controller = TextEditingController::with_text("hello world");
+    /// Drags the mouse across a built field from `from` to `to` and reports the
+    /// selection it leaves, in graphemes.
+    fn drag_selection(text: &str, from: f32, to: f32) -> (usize, usize) {
+        let controller = TextEditingController::with_text(text);
         let (element, ctx) = drawn(TextField::new().controller(controller.clone()));
         let mut dispatcher = EventDispatcher::new();
-        let start = Vec2d { x: 4.0, y: 12.0 };
-        let end = Vec2d { x: 50.0, y: 12.0 };
+        let start = Vec2d { x: from, y: 12.0 };
+        let end = Vec2d { x: to, y: 12.0 };
         assert!(
             dispatcher
                 .dispatch(
@@ -1904,7 +1905,34 @@ mod focus_tests {
                 .is_consumed()
         );
         element.update(&ctx);
+        controller.selection_graphemes()
+    }
 
-        assert_eq!(controller.selection_graphemes(), (1, 9));
+    /// Dragging selects through the field's shared selection area.
+    ///
+    /// The field measures its text with the system's font, so where a given
+    /// pixel falls among the characters differs from one platform to the next.
+    /// The drags below are therefore chosen to mean the same thing in any font:
+    /// from the very left edge, which is before the first character, to a point
+    /// past the end of the text, and to a point inside it.
+    #[test]
+    fn a_built_text_field_uses_the_shared_selection_area_for_dragging() {
+        const TEXT: &str = "hello world";
+        let length = TEXT.chars().count();
+
+        // Everything: the whole text lies between the two ends of the drag.
+        assert_eq!(
+            drag_selection(TEXT, 1.0, FIELD_WIDTH - 10.0),
+            (0, length)
+        );
+
+        // Part of it: the drag stops inside the text, so the selection starts
+        // at the beginning, is not empty, and does not reach the end.
+        let (start, end) = drag_selection(TEXT, 1.0, 30.0);
+        assert_eq!(start, 0);
+        assert!(
+            0 < end && end < length,
+            "a drag that ends inside the text selected {start}..{end} of {length}"
+        );
     }
 }

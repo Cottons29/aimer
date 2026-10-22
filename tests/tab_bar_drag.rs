@@ -10,12 +10,12 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use aimer::indicator::{IndicatorController, TabBar, TabItem};
+use aimer::modal::ModalHost;
 use aimer::quiver::aimer_app::HeadlessAimerApp;
 use aimer::quiver::winit::dpi::{PhysicalPosition, PhysicalSize};
 use aimer::quiver::winit::event::{
     DeviceId, ElementState, MouseButton, Touch, TouchPhase, WindowEvent,
 };
-use aimer::modal::ModalHost;
 use aimer::{AimerApp, HeadlessOptions};
 
 const ITEM_WIDTH: f64 = 96.0;
@@ -51,10 +51,17 @@ fn bar_with(selection: Option<usize>) -> Bar {
         .item(TabItem::new().label("Browse"));
     let mut app = AimerApp::start_headless_with(
         widget,
-        HeadlessOptions { size: PhysicalSize::new(400, 200), scale_factor: 1.0 },
+        HeadlessOptions {
+            size: PhysicalSize::new(400, 200),
+            scale_factor: 1.0,
+        },
     );
     app.pump_frames(3);
-    Bar { app, controller, selections }
+    Bar {
+        app,
+        controller,
+        selections,
+    }
 }
 
 impl Bar {
@@ -81,6 +88,28 @@ impl Bar {
         }
     }
 
+    /// Runs frames until `done` holds of the controller, giving up after
+    /// `limit_millis`, and reports whether it held.
+    ///
+    /// The motions are springs driven by the wall clock, so how many frames it
+    /// takes to arrive depends on how fast the machine renders them. Waiting for
+    /// the arrival, rather than for a fixed time, is what keeps a test of the
+    /// arrival from depending on that.
+    fn run_until(
+        &mut self,
+        limit_millis: u64,
+        done: impl Fn(&IndicatorController) -> bool,
+    ) -> bool {
+        for _ in 0..limit_millis / 16 {
+            if done(&self.controller) {
+                return true;
+            }
+            self.app.render_frame();
+            std::thread::sleep(Duration::from_millis(16));
+        }
+        done(&self.controller)
+    }
+
     fn press(&mut self, x: f64) {
         // The recognizer merges two taps within 300 ms into a double tap.
         std::thread::sleep(Duration::from_millis(350));
@@ -93,7 +122,10 @@ impl Bar {
     fn drag_to(&mut self, from: f64, to: f64) {
         let steps = 12;
         for step in 1..=steps {
-            self.move_to(from + (to - from) * f64::from(step) / f64::from(steps), ROW_Y);
+            self.move_to(
+                from + (to - from) * f64::from(step) / f64::from(steps),
+                ROW_Y,
+            );
             self.app.render_frame();
             std::thread::sleep(Duration::from_millis(16));
         }
@@ -137,11 +169,19 @@ fn holding_an_item_lifts_the_indicator_until_it_is_let_go() {
 
     bar.press(centre(0.0));
     bar.run_for(400);
-    assert!(bar.controller.lift() > 0.9, "the lens did not lift: {}", bar.controller.lift());
+    assert!(
+        bar.controller.lift() > 0.9,
+        "the lens did not lift: {}",
+        bar.controller.lift()
+    );
 
     bar.release();
     bar.run_for(800);
-    assert!(bar.controller.lift() < 0.05, "the lens did not settle: {}", bar.controller.lift());
+    assert!(
+        bar.controller.lift() < 0.05,
+        "the lens did not settle: {}",
+        bar.controller.lift()
+    );
 }
 
 #[test]
@@ -153,11 +193,19 @@ fn dragging_across_the_bar_carries_the_indicator_and_selects_where_it_was_let_go
 
     // The indicator is under the pointer, lifted, and nothing is proposed yet.
     assert!(bar.controller.is_dragging());
-    assert!((bar.controller.target() - 2.0).abs() < 0.05, "target {}", bar.controller.target());
+    assert!(
+        (bar.controller.target() - 2.0).abs() < 0.05,
+        "target {}",
+        bar.controller.target()
+    );
     assert_eq!(bar.selections(), [] as [usize; 0]);
     bar.run_for(400);
     assert!(bar.controller.lift() > 0.9);
-    assert!((bar.controller.position() - 2.0).abs() < 0.1, "position {}", bar.controller.position());
+    assert!(
+        (bar.controller.position() - 2.0).abs() < 0.1,
+        "position {}",
+        bar.controller.position()
+    );
 
     bar.release();
     assert!(!bar.controller.is_dragging());
@@ -212,7 +260,11 @@ fn pressing_an_unselected_item_and_dragging_moves_the_indicator_from_that_item()
     bar.drag_to(centre(2.0), centre(2.0) - ITEM_WIDTH);
 
     // The indicator came to the pressed item and then back by one slot.
-    assert!((bar.controller.target() - 1.0).abs() < 0.05, "target {}", bar.controller.target());
+    assert!(
+        (bar.controller.target() - 1.0).abs() < 0.05,
+        "target {}",
+        bar.controller.target()
+    );
     bar.release();
     assert_eq!(bar.selections(), [1]);
 }
@@ -229,7 +281,11 @@ fn a_finger_drags_the_indicator_like_a_mouse() {
             centre(0.0) + (centre(2.0) - centre(0.0)) * f64::from(step) / 12.0,
         );
     }
-    assert!((bar.controller.target() - 2.0).abs() < 0.05, "target {}", bar.controller.target());
+    assert!(
+        (bar.controller.target() - 2.0).abs() < 0.05,
+        "target {}",
+        bar.controller.target()
+    );
     assert_eq!(bar.selections(), [] as [usize; 0]);
     bar.touch(TouchPhase::Ended, centre(2.0));
 
@@ -243,9 +299,16 @@ fn a_drag_the_platform_cancels_puts_the_indicator_back_and_proposes_nothing() {
     std::thread::sleep(Duration::from_millis(350));
     bar.touch(TouchPhase::Started, centre(1.0));
     for step in 1..=8 {
-        bar.touch(TouchPhase::Moved, centre(1.0) + ITEM_WIDTH * f64::from(step) / 8.0);
+        bar.touch(
+            TouchPhase::Moved,
+            centre(1.0) + ITEM_WIDTH * f64::from(step) / 8.0,
+        );
     }
-    assert!((bar.controller.target() - 2.0).abs() < 0.05, "target {}", bar.controller.target());
+    assert!(
+        (bar.controller.target() - 2.0).abs() < 0.05,
+        "target {}",
+        bar.controller.target()
+    );
 
     bar.touch(TouchPhase::Cancelled, centre(2.0));
     bar.run_for(900);
@@ -260,7 +323,13 @@ fn a_drag_the_platform_cancels_puts_the_indicator_back_and_proposes_nothing() {
 fn a_bar_with_nothing_selected_hides_its_indicator() {
     let mut bar = bar_with(None);
 
-    bar.run_for(400);
+    // The fade is a spring that rings a little before it settles, so for a
+    // moment the presence is not exactly zero. It is exact once it arrives.
+    assert!(
+        bar.run_until(2000, |controller| controller.presence() == 0.0),
+        "the indicator never finished fading out: {}",
+        bar.controller.presence()
+    );
 
     assert!(bar.controller.is_hidden());
     assert_eq!(bar.controller.presence(), 0.0);
@@ -285,8 +354,16 @@ fn pressing_a_bar_with_nothing_selected_brings_the_indicator_under_the_pointer()
     bar.press(centre(2.0));
     bar.run_for(400);
     assert!(!bar.controller.is_hidden());
-    assert!(bar.controller.presence() > 0.95, "presence {}", bar.controller.presence());
-    assert!((bar.controller.position() - 2.0).abs() < 0.1, "position {}", bar.controller.position());
+    assert!(
+        bar.controller.presence() > 0.95,
+        "presence {}",
+        bar.controller.presence()
+    );
+    assert!(
+        (bar.controller.position() - 2.0).abs() < 0.1,
+        "position {}",
+        bar.controller.position()
+    );
     bar.release();
 
     assert_eq!(bar.selections(), [2]);
@@ -300,7 +377,11 @@ fn a_cancelled_press_on_a_bar_with_nothing_selected_hides_the_indicator_again() 
     bar.touch(TouchPhase::Started, centre(1.0));
     bar.touch(TouchPhase::Moved, centre(1.0) + 40.0);
     bar.touch(TouchPhase::Cancelled, centre(1.0) + 40.0);
-    bar.run_for(600);
+    assert!(
+        bar.run_until(2000, |controller| controller.presence() == 0.0),
+        "the indicator never finished fading out: {}",
+        bar.controller.presence()
+    );
 
     assert!(bar.controller.is_hidden());
     assert_eq!(bar.controller.presence(), 0.0);

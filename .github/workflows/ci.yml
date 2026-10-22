@@ -20,13 +20,13 @@ jobs:
       matrix:
         include:
           - os: macos-latest
-            job_name: clippy + tests (workspace)
+            job_name: clippy + tests (macos)
             targets: x86_64-apple-darwin, aarch64-apple-darwin, aarch64-apple-ios, aarch64-apple-ios-sim, wasm32-unknown-unknown
           - os: ubuntu-latest
-            job_name: clippy + tests (workspace, linux)
+            job_name: clippy + tests (linux)
             targets: wasm32-unknown-unknown
           - os: windows-latest
-            job_name: clippy + tests (workspace, windows)
+            job_name: clippy + tests (windows)
             targets: wasm32-unknown-unknown
     steps:
       - uses: actions/checkout@v4
