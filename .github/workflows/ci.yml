@@ -10,8 +10,24 @@ env:
 
 jobs:
   lint-and-test:
-    name: clippy + tests (workspace)
-    runs-on: macos-latest
+    # The macOS entry keeps the name this job has always had, so a branch rule
+    # that requires it keeps matching.
+    name: ${{ matrix.job_name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One platform failing must not hide what the others say.
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            job_name: clippy + tests (workspace)
+            targets: x86_64-apple-darwin, aarch64-apple-darwin, aarch64-apple-ios, aarch64-apple-ios-sim, wasm32-unknown-unknown
+          - os: ubuntu-latest
+            job_name: clippy + tests (workspace, linux)
+            targets: wasm32-unknown-unknown
+          - os: windows-latest
+            job_name: clippy + tests (workspace, windows)
+            targets: wasm32-unknown-unknown
     steps:
       - uses: actions/checkout@v4
 
@@ -19,11 +35,25 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
         with:
-          targets: x86_64-apple-darwin, aarch64-apple-darwin, aarch64-apple-ios, aarch64-apple-ios-sim, wasm32-unknown-unknown
+          targets: ${{ matrix.targets }}
           components: clippy
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
+
+      # aimer_vault's platform tests use the machine's real secret store:
+      # Keychain on macOS and Credential Manager on Windows are there on a
+      # hosted runner, a Secret Service on Linux is not. This starts a session
+      # bus with an unlocked default keyring, and exports its address to the
+      # steps after it.
+      - name: Start a secret store (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends dbus gnome-keyring
+          export DBUS_SESSION_BUS_ADDRESS="$(dbus-daemon --session --fork --print-address)"
+          echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> "$GITHUB_ENV"
+          printf '\n' | gnome-keyring-daemon --unlock --components=secrets
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2

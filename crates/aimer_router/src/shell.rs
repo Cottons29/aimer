@@ -1,7 +1,5 @@
 use std::cell::RefCell;
 use std::rc::Rc;
-#[cfg(feature = "portable-guest")]
-use aimer_widget::AnyWidgetExt;
 
 use aimer_widget::base::{BuildContext, ResolvedSize, Size, Vec2d};
 use aimer_widget::{

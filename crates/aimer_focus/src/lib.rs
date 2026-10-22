@@ -56,5 +56,7 @@ mod traversal;
 pub use crate::focusable::{FocusBehavior, FocusCallback, FocusGate};
 pub use crate::manager::{FocusManager, FocusOwner, FocusSync, FocusTransition};
 pub use crate::node::{FocusNode, FocusRequest, focus_request_generation, request_focus_resolution};
-pub use crate::scope::{FocusTrap, FocusTrapId, active_focus_trap, focus_trap_generation};
+pub use crate::scope::{
+    FocusTrap, FocusTrapId, WindowFocusTraps, active_focus_trap, focus_trap_generation,
+};
 pub use crate::traversal::{FocusCandidate, FocusCandidates, next_focus_index};

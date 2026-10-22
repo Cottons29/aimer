@@ -1,11 +1,15 @@
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use winit::window::Window;
 
-static GLOBAL_WINDOW: OnceLock<&'static Window> = OnceLock::new();
+/// The first window of the application that is still alive.
+///
+/// Held weakly: a window that closes must be freed by its last owner, not kept
+/// alive by this.
+static GLOBAL_WINDOW: Mutex<Weak<Window>> = Mutex::new(Weak::new());
 
 /// Whether a frame has been requested since the last display-link tick.
 ///
@@ -168,19 +172,331 @@ fn thread_redraw_requester() -> Option<Rc<dyn Fn()>> {
     THREAD_REDRAW_REQUESTER.with(|slot| slot.borrow().clone())
 }
 
+/// Names one window to the frame scheduling of the thread that owns it.
+///
+/// Every window on a UI thread schedules its own frames, but the functions a
+/// widget calls to ask for one — [`request_animation_frame`] and its siblings —
+/// take no window. They answer for whichever window is *active* on the thread.
+/// A key is how a widget that outlives that moment (a state updater, called
+/// later by a timer) says which window it belongs to.
+///
+/// Two windows alive at the same time must not share a key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct WindowKey(usize);
+
+impl WindowKey {
+    /// Builds a key from an address that is unique to the window for as long
+    /// as the window lives: the platform window, or the state its handle shares.
+    #[inline]
+    pub const fn from_address(address: usize) -> Self {
+        Self(address)
+    }
+
+    /// The address this key was made from, for carrying it through an API that
+    /// only holds a number.
+    #[inline]
+    pub const fn address(self) -> usize {
+        self.0
+    }
+}
+
+/// Thread-local state that belongs to one window and has to follow it.
+///
+/// A window keeps this state with itself while another window's is on the
+/// thread. The state of the window that was active last stays on the thread
+/// after its scope ends, so code that runs outside any window — a platform
+/// callback, a test — talks to the window that was most recently in use, as it
+/// always did when there was only one. It is taken off when a different window
+/// becomes active or when the window is unregistered.
+pub trait WindowLocals {
+    /// Makes the window's state the thread's.
+    fn install(&self);
+
+    /// Takes the window's state back off the thread. Always follows an
+    /// [`install`](Self::install), and precedes the next window's.
+    fn uninstall(&self);
+}
+
+/// How a window asks for frames and what it brings onto the thread.
+pub struct WindowScopeConfig {
+    requester: Rc<dyn Fn()>,
+    observer: Rc<dyn Fn()>,
+    native: Option<Arc<Window>>,
+    locals: Option<Rc<dyn WindowLocals>>,
+}
+
+impl WindowScopeConfig {
+    /// `requester` schedules the window's next frame; `observer` records that
+    /// a redraw was asked for (see [`notify_redraw_requested`]).
+    pub fn new(requester: impl Fn() + 'static, observer: impl Fn() + 'static) -> Self {
+        Self {
+            requester: Rc::new(requester),
+            observer: Rc::new(observer),
+            native: None,
+            locals: None,
+        }
+    }
+
+    /// The platform window, which [`get_window`] answers with while this
+    /// window is the active one.
+    pub fn native(mut self, window: Arc<Window>) -> Self {
+        self.native = Some(window);
+        self
+    }
+
+    /// State to put on the thread while this window is active.
+    pub fn locals(mut self, locals: Rc<dyn WindowLocals>) -> Self {
+        self.locals = Some(locals);
+        self
+    }
+}
+
+/// What a window leaves on the thread while it is active.
+struct WindowScope {
+    key: WindowKey,
+    config: WindowScopeConfig,
+}
+
+thread_local! {
+    /// Every window of this thread that can be made active, by key.
+    ///
+    /// A thread has a handful of windows, so a vector scanned in order is
+    /// cheaper than hashing.
+    static WINDOW_SCOPES: RefCell<Vec<WindowScope>> = const { RefCell::new(Vec::new()) };
+    /// The window whose scope is installed in the thread's requester and
+    /// observer slots right now, if it was installed through a scope.
+    static ACTIVE_WINDOW: std::cell::Cell<Option<WindowKey>> = const { std::cell::Cell::new(None) };
+    /// The platform window of the active scope, if it has one.
+    static ACTIVE_NATIVE: RefCell<Option<Arc<Window>>> = const { RefCell::new(None) };
+    /// The window whose [`WindowLocals`] are on the thread.
+    ///
+    /// Not the same as [`ACTIVE_WINDOW`]: this one is still set between scopes.
+    static INSTALLED: RefCell<Option<(WindowKey, Rc<dyn WindowLocals>)>> = const { RefCell::new(None) };
+}
+
+/// Puts `key`'s state on the thread, taking whichever window's was there off.
+///
+/// Does nothing when it is already there, which is what makes entering the same
+/// window again cheap.
+fn install_locals_for(key: WindowKey, locals: Option<Rc<dyn WindowLocals>>) {
+    let displaced = INSTALLED.with(|installed| {
+        let mut installed = installed.borrow_mut();
+        if installed.as_ref().is_some_and(|(held, _)| *held == key) {
+            return None;
+        }
+        Some(installed.take())
+    });
+    let Some(displaced) = displaced else {
+        return;
+    };
+    // Outside the borrow: both calls run the owner's code.
+    if let Some((_, previous)) = displaced {
+        previous.uninstall();
+    }
+    if let Some(locals) = locals {
+        locals.install();
+        INSTALLED.with(|installed| *installed.borrow_mut() = Some((key, locals)));
+    }
+}
+
+/// Keeps a window registered with [`register_window_scope`]; unregisters it
+/// when dropped.
+#[must_use = "the window is unregistered as soon as this is dropped"]
+pub struct WindowScopeRegistration {
+    key: WindowKey,
+}
+
+impl Drop for WindowScopeRegistration {
+    fn drop(&mut self) {
+        // A window that is gone must not leave its state on the thread.
+        let held = INSTALLED.with(|installed| {
+            let mut installed = installed.borrow_mut();
+            if installed.as_ref().is_some_and(|(held, _)| *held == self.key) {
+                installed.take()
+            } else {
+                None
+            }
+        });
+        if let Some((_, locals)) = held {
+            locals.uninstall();
+        }
+        WINDOW_SCOPES.with(|scopes| scopes.borrow_mut().retain(|scope| scope.key != self.key));
+    }
+}
+
+/// Registers how the window `key` asks for frames, so [`enter_window_scope`]
+/// can make it the active one.
+///
+/// `requester` schedules the window's next frame, and `observer` records that a
+/// redraw was asked for (see [`notify_redraw_requested`]). Registering a key
+/// that is already registered replaces it.
+pub fn register_window_scope(
+    key: WindowKey,
+    requester: impl Fn() + 'static,
+    observer: impl Fn() + 'static,
+) -> WindowScopeRegistration {
+    register_window_scope_with(key, WindowScopeConfig::new(requester, observer))
+}
+
+/// Like [`register_window_scope`], for a window that also has a platform window
+/// or state of its own to bring onto the thread.
+pub fn register_window_scope_with(
+    key: WindowKey,
+    config: WindowScopeConfig,
+) -> WindowScopeRegistration {
+    let scope = WindowScope { key, config };
+    WINDOW_SCOPES.with(|scopes| {
+        let mut scopes = scopes.borrow_mut();
+        match scopes.iter_mut().find(|existing| existing.key == key) {
+            Some(existing) => *existing = scope,
+            None => scopes.push(scope),
+        }
+    });
+    WindowScopeRegistration { key }
+}
+
+/// What entering a window displaced, to be put back.
+struct Displaced {
+    requester: Option<Rc<dyn Fn()>>,
+    observer: Option<Rc<dyn Fn()>>,
+    key: Option<WindowKey>,
+    native: Option<Arc<Window>>,
+}
+
+/// Puts a window back as the thread's active one when dropped. See
+/// [`enter_window_scope`].
+#[must_use = "the previous window becomes active again as soon as this is dropped"]
+pub struct WindowScopeGuard {
+    /// What to put back; `None` when entering changed nothing.
+    previous: Option<Displaced>,
+}
+
+impl WindowScopeGuard {
+    /// Whether entering made a different window the active one, as opposed to
+    /// finding the right one already active (or not knowing the window at all).
+    #[inline]
+    pub fn switched(&self) -> bool {
+        self.previous.is_some()
+    }
+}
+
+impl Drop for WindowScopeGuard {
+    fn drop(&mut self) {
+        if let Some(displaced) = self.previous.take() {
+            THREAD_REDRAW_REQUESTER.with(|slot| *slot.borrow_mut() = displaced.requester);
+            THREAD_REDRAW_OBSERVER.with(|slot| *slot.borrow_mut() = displaced.observer);
+            ACTIVE_WINDOW.with(|active| active.set(displaced.key));
+            ACTIVE_NATIVE.with(|native| *native.borrow_mut() = displaced.native);
+            // A window that was running when this one was entered is running
+            // again, and expects its own state. When none was, this window's
+            // stays on the thread.
+            if let Some(resumed) = displaced.key {
+                let locals = WINDOW_SCOPES.with(|scopes| {
+                    scopes
+                        .borrow()
+                        .iter()
+                        .find(|scope| scope.key == resumed)
+                        .and_then(|scope| scope.config.locals.clone())
+                });
+                install_locals_for(resumed, locals);
+            }
+        }
+    }
+}
+
+/// Makes the window `key` the one the thread's frame requests answer for, until
+/// the guard is dropped.
+///
+/// Entering the window that is already active, or one that was never
+/// registered, changes nothing and costs a comparison. Guards nest: dropping
+/// one restores whatever was active when it was made.
+#[inline]
+pub fn enter_window_scope(key: WindowKey) -> WindowScopeGuard {
+    if ACTIVE_WINDOW.with(std::cell::Cell::get) == Some(key) {
+        return WindowScopeGuard { previous: None };
+    }
+    enter_registered_scope(key)
+}
+
+fn enter_registered_scope(key: WindowKey) -> WindowScopeGuard {
+    let found = WINDOW_SCOPES.with(|scopes| {
+        scopes
+            .borrow()
+            .iter()
+            .find(|scope| scope.key == key)
+            .map(|scope| {
+                (
+                    scope.config.requester.clone(),
+                    scope.config.observer.clone(),
+                    scope.config.native.clone(),
+                    scope.config.locals.clone(),
+                )
+            })
+    });
+    let Some((requester, observer, native, locals)) = found else {
+        return WindowScopeGuard { previous: None };
+    };
+    let displaced = Displaced {
+        requester: THREAD_REDRAW_REQUESTER.with(|slot| slot.borrow_mut().replace(requester)),
+        observer: THREAD_REDRAW_OBSERVER.with(|slot| slot.borrow_mut().replace(observer)),
+        key: ACTIVE_WINDOW.with(|active| active.replace(Some(key))),
+        native: ACTIVE_NATIVE.with(|slot| slot.replace(native)),
+    };
+    install_locals_for(key, locals);
+    WindowScopeGuard {
+        previous: Some(displaced),
+    }
+}
+
+/// The window that is active on this thread right now, if one was entered
+/// through [`enter_window_scope`].
+///
+/// Code that has no window of its own to ask — a function that reads "the
+/// window's" state without being handed a handle — answers for this one.
+#[inline]
+pub fn active_window() -> Option<WindowKey> {
+    ACTIVE_WINDOW.with(std::cell::Cell::get)
+}
+
+/// Runs `f` with the window `key` active. See [`enter_window_scope`].
+#[inline]
+pub fn with_window_scope<R>(key: WindowKey, f: impl FnOnce() -> R) -> R {
+    let _active = enter_window_scope(key);
+    f()
+}
+
 /// Optional, platform-supplied redraw requester. When installed it is used to
 /// schedule the next frame through the event loop (e.g. an `EventLoopProxy`)
 /// instead of calling `Window::request_redraw()` directly.
 static REDRAW_REQUESTER: OnceLock<RedrawRequester> = OnceLock::new();
 
-/// Store the application window reference so other crates can access it.
-pub fn set_window(window: &'static Window) {
-    let _ = GLOBAL_WINDOW.set(window);
+/// Store the application window so other crates can access it.
+///
+/// The first window wins for as long as it is alive; once it is gone the next
+/// one registered takes its place. Only a weak reference is kept.
+pub fn set_window(window: &Arc<Window>) {
+    let mut global = GLOBAL_WINDOW.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if global.strong_count() == 0 {
+        *global = Arc::downgrade(window);
+    }
 }
 
 /// Retrieve the application window reference, if it has been set.
-pub fn get_window() -> Option<&'static Window> {
-    GLOBAL_WINDOW.get().copied()
+///
+/// With several windows this answers for the active one (see
+/// [`enter_window_scope`]) when it has a platform window, and for the first
+/// window registered with [`set_window`] otherwise.
+pub fn get_window() -> Option<Arc<Window>> {
+    ACTIVE_NATIVE
+        .with(|native| native.borrow().clone())
+        .or_else(global_window)
+}
+
+fn global_window() -> Option<Arc<Window>> {
+    GLOBAL_WINDOW
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .upgrade()
 }
 
 /// Install a platform redraw requester.
@@ -256,7 +572,7 @@ fn request_animation_frame_inner() {
         requester();
         return;
     }
-    if let Some(window) = GLOBAL_WINDOW.get() {
+    if let Some(window) = global_window() {
         window.request_redraw();
     }
 }
@@ -328,5 +644,264 @@ mod scroll_request_tests {
         });
         assert_eq!(seen, [true]);
         assert!(!is_scroll_frame_request());
+    }
+}
+
+#[cfg(all(test, not(aimer_portable_guest)))]
+mod window_scope_tests {
+    use std::cell::Cell;
+
+    use super::*;
+
+    /// A window that counts the frames requested of it and the redraws it
+    /// observed.
+    struct Counted {
+        requests: Rc<Cell<usize>>,
+        observed: Rc<Cell<usize>>,
+        _registration: WindowScopeRegistration,
+    }
+
+    fn window(address: usize) -> (WindowKey, Counted) {
+        let key = WindowKey::from_address(address);
+        let requests = Rc::new(Cell::new(0));
+        let observed = Rc::new(Cell::new(0));
+        let registration = register_window_scope(
+            key,
+            {
+                let requests = requests.clone();
+                move || requests.set(requests.get() + 1)
+            },
+            {
+                let observed = observed.clone();
+                move || observed.set(observed.get() + 1)
+            },
+        );
+        (key, Counted { requests, observed, _registration: registration })
+    }
+
+    #[test]
+    fn a_request_made_inside_a_window_reaches_that_window_only() {
+        let (a, first) = window(0xA);
+        let (_b, second) = window(0xB);
+
+        with_window_scope(a, request_animation_frame);
+
+        assert_eq!((first.requests.get(), second.requests.get()), (1, 0));
+    }
+
+    #[test]
+    fn the_observer_follows_the_window() {
+        let (a, first) = window(0xA);
+        let (b, second) = window(0xB);
+
+        with_window_scope(a, notify_redraw_requested);
+        with_window_scope(b, notify_redraw_requested);
+        with_window_scope(b, notify_redraw_requested);
+
+        assert_eq!((first.observed.get(), second.observed.get()), (1, 2));
+    }
+
+    #[test]
+    fn leaving_a_window_puts_back_the_one_that_was_active() {
+        let (a, first) = window(0xA);
+        let (b, second) = window(0xB);
+
+        let outer = enter_window_scope(a);
+        with_window_scope(b, request_animation_frame);
+        request_animation_frame();
+        drop(outer);
+
+        assert_eq!((first.requests.get(), second.requests.get()), (1, 1));
+        assert_eq!(ACTIVE_WINDOW.with(Cell::get), None);
+    }
+
+    #[test]
+    fn entering_the_active_window_again_changes_nothing() {
+        let (a, first) = window(0xA);
+
+        let _outer = enter_window_scope(a);
+        let inner = enter_window_scope(a);
+        assert!(inner.previous.is_none());
+        drop(inner);
+        request_animation_frame();
+
+        assert_eq!(first.requests.get(), 1, "the inner guard deactivated the window");
+    }
+
+    #[test]
+    fn an_unregistered_window_leaves_the_active_one_alone() {
+        let (a, first) = window(0xA);
+
+        let _outer = enter_window_scope(a);
+        with_window_scope(WindowKey::from_address(0xDEAD), request_animation_frame);
+
+        assert_eq!(first.requests.get(), 1);
+    }
+
+    #[test]
+    fn a_dropped_window_can_no_longer_be_entered() {
+        let (a, first) = window(0xA);
+        let requests = first.requests.clone();
+        drop(first);
+
+        with_window_scope(a, request_animation_frame);
+
+        assert_eq!(requests.get(), 0);
+    }
+
+    /// Records the order its window's state was put on and taken off the thread.
+    struct Recorded {
+        log: Rc<RefCell<Vec<&'static str>>>,
+        name: &'static str,
+    }
+
+    impl WindowLocals for Recorded {
+        fn install(&self) {
+            self.log.borrow_mut().push(self.name);
+            self.log.borrow_mut().push("install");
+        }
+
+        fn uninstall(&self) {
+            self.log.borrow_mut().push(self.name);
+            self.log.borrow_mut().push("uninstall");
+        }
+    }
+
+    fn window_with_locals(
+        address: usize,
+        name: &'static str,
+        log: &Rc<RefCell<Vec<&'static str>>>,
+    ) -> (WindowKey, WindowScopeRegistration) {
+        let key = WindowKey::from_address(address);
+        let registration = register_window_scope_with(
+            key,
+            WindowScopeConfig::new(|| {}, || {}).locals(Rc::new(Recorded {
+                log: log.clone(),
+                name,
+            })),
+        );
+        (key, registration)
+    }
+
+    #[test]
+    fn a_windows_state_stays_on_the_thread_after_its_scope_ends() {
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let (a, _a) = window_with_locals(0xA, "a", &log);
+
+        with_window_scope(a, || log.borrow_mut().push("inside"));
+
+        // Code outside any window still talks to the window used last.
+        assert_eq!(*log.borrow(), ["a", "install", "inside"]);
+    }
+
+    #[test]
+    fn entering_another_window_takes_the_last_ones_state_off_first() {
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let (a, _a) = window_with_locals(0xA, "a", &log);
+        let (b, _b) = window_with_locals(0xB, "b", &log);
+
+        with_window_scope(a, || {});
+        with_window_scope(b, || {});
+
+        assert_eq!(
+            *log.borrow(),
+            ["a", "install", "a", "uninstall", "b", "install"]
+        );
+    }
+
+    #[test]
+    fn a_window_that_was_running_gets_its_state_back_when_a_nested_one_ends() {
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let (a, _a) = window_with_locals(0xA, "a", &log);
+        let (b, _b) = window_with_locals(0xB, "b", &log);
+
+        with_window_scope(a, || with_window_scope(b, || {}));
+
+        assert_eq!(
+            *log.borrow(),
+            [
+                "a", "install", "a", "uninstall", "b", "install", "b", "uninstall", "a",
+                "install"
+            ]
+        );
+    }
+
+    #[test]
+    fn entering_the_window_whose_state_is_on_the_thread_installs_nothing() {
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let (a, _a) = window_with_locals(0xA, "a", &log);
+
+        with_window_scope(a, || {});
+        with_window_scope(a, || {});
+        with_window_scope(a, || with_window_scope(a, || {}));
+
+        assert_eq!(*log.borrow(), ["a", "install"]);
+    }
+
+    #[test]
+    fn a_window_that_is_unregistered_takes_its_state_off_the_thread() {
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let (a, registration) = window_with_locals(0xA, "a", &log);
+
+        with_window_scope(a, || {});
+        drop(registration);
+
+        assert_eq!(*log.borrow(), ["a", "install", "a", "uninstall"]);
+    }
+
+    #[test]
+    fn with_no_window_active_there_is_no_active_window() {
+        assert_eq!(active_window(), None);
+        let (a, _first) = window(0xA);
+
+        with_window_scope(a, || assert_eq!(active_window(), Some(a)));
+
+        assert_eq!(active_window(), None);
+    }
+
+    /// Cost of entering a window scope, for `cargo nextest run --release
+    /// --run-ignored only window_scope_cost`. Not an assertion: it prints what
+    /// a state update pays for naming its window.
+    #[test]
+    #[ignore = "measurement, not a check"]
+    fn window_scope_cost() {
+        use std::hint::black_box;
+        use std::time::Instant;
+
+        const ROUNDS: u32 = 20_000_000;
+        let time = |label: &str, mut body: Box<dyn FnMut()>| {
+            for _ in 0..ROUNDS / 10 {
+                body();
+            }
+            let start = Instant::now();
+            for _ in 0..ROUNDS {
+                body();
+            }
+            let per = start.elapsed().as_secs_f64() * 1e9 / f64::from(ROUNDS);
+            eprintln!("{label:<58} {per:6.2} ns");
+        };
+        let count = Rc::new(Cell::new(0u64));
+        let sink = count.clone();
+        let previous = set_thread_redraw_requester(move || sink.set(sink.get() + 1));
+
+        time("request_animation_frame alone", Box::new(|| request_animation_frame()));
+        let nowhere = WindowKey::from_address(0xDEAD);
+        time(
+            "with_window_scope, no window registered (native, one window)",
+            Box::new(move || with_window_scope(black_box(nowhere), request_animation_frame)),
+        );
+        let (a, _first) = window(0xA);
+        let (b, _second) = window(0xB);
+        let _entered = enter_window_scope(a);
+        time(
+            "with_window_scope, window already active (inside an event)",
+            Box::new(move || with_window_scope(black_box(a), request_animation_frame)),
+        );
+        time(
+            "with_window_scope, switching to the other window",
+            Box::new(move || with_window_scope(black_box(b), request_animation_frame)),
+        );
+        restore_thread_redraw_requester(previous);
+        assert!(count.get() > 0);
     }
 }

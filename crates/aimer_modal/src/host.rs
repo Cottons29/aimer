@@ -24,21 +24,77 @@ type EntryBuilder =
 thread_local! {
     static NEXT_ID: Cell<u64> = const { Cell::new(1) };
     static COMMANDS: RefCell<VecDeque<ModalCommand>> = const { RefCell::new(VecDeque::new()) };
-    static ENTRIES: Rc<HostedModalEntries> = Rc::new(HostedModalEntries::default());
+    // The entries and contents are shared with the overlay elements built for
+    // this window, so what the thread holds is a handle to swap, not the data.
+    static ENTRIES: RefCell<Rc<HostedModalEntries>> = RefCell::new(Rc::default());
     static LAYERS: RefCell<Vec<HostedLayer>> = const { RefCell::new(Vec::new()) };
-    static CONTENTS: Rc<HostedContents> = Rc::new(HostedContents::default());
+    static CONTENTS: RefCell<Rc<HostedContents>> = RefCell::new(Rc::default());
+}
+
+/// The modals, layers and hosted content of one window, kept with the window
+/// while another is active.
+///
+/// A dialog belongs to the window that presented it. With several windows on a
+/// thread the registry cannot be one: a dialog shown in a window would appear
+/// in every window's overlay. Each window holds its own registry and puts it on
+/// the thread for as long as it is the active one; the overlay a window builds
+/// keeps the entries it was built with.
+#[doc(hidden)]
+#[derive(Default)]
+pub struct WindowModalState {
+    commands: VecDeque<ModalCommand>,
+    entries: Rc<HostedModalEntries>,
+    layers: Vec<HostedLayer>,
+    contents: Rc<HostedContents>,
+}
+
+impl WindowModalState {
+    /// Moves what this registry holds that no window was around to own — modal
+    /// commands, layers and hosted content — onto the thread's, leaving it
+    /// empty.
+    ///
+    /// Called right after a window's registry is put on the thread, with the
+    /// registry that was there before: whatever was asked while no window was
+    /// active is given to the window that is active now. The entries are not
+    /// moved; they exist only once a window has processed a command.
+    pub fn absorb_into_thread(&mut self) {
+        COMMANDS.with(|commands| commands.borrow_mut().append(&mut self.commands));
+        LAYERS.with(|layers| layers.borrow_mut().append(&mut self.layers));
+        let orphaned = std::mem::take(self.contents.items_mut());
+        if !orphaned.is_empty() {
+            hosted_contents().items_mut().extend(orphaned);
+        }
+        self.entries = Rc::default();
+    }
+
+    /// Exchanges this registry with the thread's. Calling it twice puts both
+    /// back.
+    pub fn swap_with_thread(&mut self) {
+        COMMANDS.with(|commands| std::mem::swap(&mut *commands.borrow_mut(), &mut self.commands));
+        ENTRIES.with(|entries| std::mem::swap(&mut *entries.borrow_mut(), &mut self.entries));
+        LAYERS.with(|layers| std::mem::swap(&mut *layers.borrow_mut(), &mut self.layers));
+        CONTENTS.with(|contents| std::mem::swap(&mut *contents.borrow_mut(), &mut self.contents));
+    }
 }
 
 fn hosted_entries() -> Rc<HostedModalEntries> {
-    ENTRIES.with(Rc::clone)
+    ENTRIES.with(|entries| entries.borrow().clone())
+}
+
+fn hosted_contents() -> Rc<HostedContents> {
+    CONTENTS.with(|contents| contents.borrow().clone())
 }
 
 fn with_entries<R>(callback: impl FnOnce(&[HostedModal]) -> R) -> R {
-    ENTRIES.with(|entries| callback(entries.entries()))
+    // The handle is cloned out first: the callback may run code that makes
+    // another window active, which swaps the handle.
+    let entries = hosted_entries();
+    callback(entries.entries())
 }
 
 fn with_entries_mut<R>(callback: impl FnOnce(&mut Vec<HostedModal>) -> R) -> R {
-    ENTRIES.with(|entries| callback(entries.entries_mut()))
+    let entries = hosted_entries();
+    callback(entries.entries_mut())
 }
 
 /// A painter installed above every modal, receiving no events.
@@ -124,15 +180,13 @@ impl OverlayLayer {
             next_id.set(id.wrapping_add(1).max(1));
             id
         });
-        CONTENTS.with(|contents| {
-            contents.items_mut().push(HostedContent {
-                id,
-                element: OverlayFollower {
-                    child: element,
-                    position,
-                }
-                .boxed(),
-            });
+        hosted_contents().items_mut().push(HostedContent {
+            id,
+            element: OverlayFollower {
+                child: element,
+                position,
+            }
+            .boxed(),
         });
         aimer_widget::notify_hosted_element_tree_changed();
         request_animation_frame();
@@ -148,12 +202,13 @@ pub struct OverlayContentHandle(u64);
 impl OverlayContentHandle {
     /// Takes the content down. Repeated calls are harmless.
     pub fn remove(self) {
-        let removed = CONTENTS.with(|contents| {
+        let removed = {
+            let contents = hosted_contents();
             let items = contents.items_mut();
             let before = items.len();
             items.retain(|item| item.id != self.0);
             before != items.len()
-        });
+        };
         if removed {
             aimer_widget::notify_hosted_element_tree_changed();
         }
@@ -568,7 +623,7 @@ impl Default for RawModalOverlay {
     fn default() -> Self {
         Self {
             entries: hosted_entries(),
-            contents: CONTENTS.with(Rc::clone),
+            contents: hosted_contents(),
             promoted_captures: RefCell::new(HashSet::new()),
             recorded_layers: Cell::new(false),
         }
@@ -1577,5 +1632,76 @@ mod tests {
         assert_eq!(timeline.progress(), 0.0);
         assert!(timeline.finished());
         assert!(!timeline.is_active());
+    }
+
+    #[test]
+    fn a_layer_installed_in_one_window_is_not_in_another() {
+        super::clear_registry();
+        let (mut first, mut second) = (
+            super::WindowModalState::default(),
+            super::WindowModalState::default(),
+        );
+
+        first.swap_with_thread();
+        super::OverlayLayer::install(Rc::new(|_ctx, _canvas| true));
+        assert!(super::OverlayLayer::is_installed());
+        first.swap_with_thread();
+
+        second.swap_with_thread();
+        assert!(
+            !super::OverlayLayer::is_installed(),
+            "a layer of another window was installed here"
+        );
+        second.swap_with_thread();
+
+        first.swap_with_thread();
+        assert!(super::OverlayLayer::is_installed());
+        super::clear_registry();
+        first.swap_with_thread();
+    }
+
+    #[test]
+    fn a_pending_command_waits_in_the_window_that_issued_it() {
+        super::clear_registry();
+        let (mut first, mut second) = (
+            super::WindowModalState::default(),
+            super::WindowModalState::default(),
+        );
+
+        first.swap_with_thread();
+        super::dismiss(ModalId(1));
+        assert_eq!(super::pending_command_count_for_test(), 1);
+        first.swap_with_thread();
+
+        second.swap_with_thread();
+        assert_eq!(super::pending_command_count_for_test(), 0);
+        second.swap_with_thread();
+
+        first.swap_with_thread();
+        assert_eq!(super::pending_command_count_for_test(), 1);
+        super::clear_registry();
+        first.swap_with_thread();
+    }
+
+    #[test]
+    fn an_overlay_keeps_the_registry_it_was_built_with() {
+        super::clear_registry();
+        let (mut first, mut second) = (
+            super::WindowModalState::default(),
+            super::WindowModalState::default(),
+        );
+
+        first.swap_with_thread();
+        let overlay = super::RawModalOverlay::default();
+        let entries = overlay.entries.clone();
+        first.swap_with_thread();
+        second.swap_with_thread();
+        let other = super::RawModalOverlay::default();
+        second.swap_with_thread();
+
+        assert!(
+            !Rc::ptr_eq(&entries, &other.entries),
+            "two windows' overlays share one registry"
+        );
     }
 }

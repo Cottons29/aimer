@@ -143,7 +143,7 @@ impl<R: Route + Router> aimer_widget::PortableWidget for Navigator<R> {
                         MAX_REDIRECT_HOPS,
                     );
                     let route_widget = Router::build(&effective, &build_context);
-                    aimer_widget::AnyWidgetExt::into_portable_node(route_widget, ctx, source)
+                    route_widget.into_portable_node(ctx, source)
                 })
             },
         )

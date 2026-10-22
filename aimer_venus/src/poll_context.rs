@@ -1,7 +1,10 @@
 //! The hook a host runtime installs so futures from other ecosystems can be
 //! polled on the UI thread.
 
+use std::future::Future;
 use std::pin::Pin;
+use std::rc::Rc;
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 /// Something a host runtime has to be *inside of* while a task is polled.
@@ -74,6 +77,54 @@ pub trait PollContext {
     /// must enter their runtime when constructing a runtime-backed timer.
     fn sleep(&self, _duration: Duration) -> Option<Pin<Box<dyn Future<Output = ()>>>> {
         None
+    }
+
+    /// Names who a task being spawned right now belongs to, or `0` for nobody.
+    ///
+    /// A host with several owners of tasks — windows sharing one scheduler —
+    /// answers with the owner that is active at the call. Venus remembers the
+    /// answer with the task and hands it back to [`Self::enter_tagged`] on every
+    /// poll, wherever and whenever that poll happens. A task nobody owns costs
+    /// nothing extra.
+    fn task_tag(&self) -> u64 {
+        0
+    }
+
+    /// Runs one poll of a task whose [`Self::task_tag`] was `tag`.
+    ///
+    /// Called from inside [`Self::enter`], never for tag `0`. The default does
+    /// nothing but poll.
+    fn enter_tagged(&self, _tag: u64, poll: &mut dyn FnMut()) {
+        poll();
+    }
+}
+
+/// A task that is polled on behalf of the owner it was spawned for.
+pub(crate) struct Tagged<F> {
+    tag: u64,
+    host: Rc<dyn PollContext>,
+    future: F,
+}
+
+impl<F> Tagged<F> {
+    pub(crate) fn new(tag: u64, host: Rc<dyn PollContext>, future: F) -> Self {
+        Self { tag, host, future }
+    }
+}
+
+impl<F: Future<Output = ()>> Future for Tagged<F> {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        // SAFETY: `future` is the only field projected as pinned, it is never
+        // moved out of `self`, and `Tagged` has no `Drop` impl and no other way
+        // to reach it, so the pin guarantee of `self` carries over to it.
+        let this = unsafe { self.get_unchecked_mut() };
+        let mut future = unsafe { Pin::new_unchecked(&mut this.future) };
+        let mut result = Poll::Pending;
+        this.host
+            .enter_tagged(this.tag, &mut || result = future.as_mut().poll(cx));
+        result
     }
 }
 
@@ -215,5 +266,89 @@ mod tests {
         venus.run_microtasks();
 
         assert_eq!(entries.get(), 1);
+    }
+
+    /// Owns tasks by a number the test sets, and records which owner each poll
+    /// ran for.
+    struct Owners {
+        current: Rc<Cell<u64>>,
+        polled_for: Rc<std::cell::RefCell<Vec<u64>>>,
+        inside: Rc<Cell<u64>>,
+    }
+
+    impl PollContext for Owners {
+        fn enter(&self, poll: &mut dyn FnMut()) {
+            poll();
+        }
+
+        fn task_tag(&self) -> u64 {
+            self.current.get()
+        }
+
+        fn enter_tagged(&self, tag: u64, poll: &mut dyn FnMut()) {
+            self.polled_for.borrow_mut().push(tag);
+            self.inside.set(tag);
+            poll();
+            self.inside.set(0);
+        }
+    }
+
+    fn owned_venus() -> (Rc<Venus>, Rc<Cell<u64>>, Rc<std::cell::RefCell<Vec<u64>>>, Rc<Cell<u64>>) {
+        let current = Rc::new(Cell::new(0));
+        let polled_for = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let inside = Rc::new(Cell::new(0));
+        let venus = Venus::new();
+        venus.set_poll_context(Owners {
+            current: current.clone(),
+            polled_for: polled_for.clone(),
+            inside: inside.clone(),
+        });
+        (venus, current, polled_for, inside)
+    }
+
+    #[test]
+    fn a_task_is_polled_for_the_owner_that_was_active_when_it_was_spawned() {
+        let (venus, current, polled_for, inside) = owned_venus();
+        let seen = Rc::new(Cell::new(0));
+
+        current.set(7);
+        let observed = seen.clone();
+        let during = inside.clone();
+        venus.spawn(async move { observed.set(during.get()) });
+        // Another owner is active by the time the task runs.
+        current.set(9);
+        venus.run_microtasks();
+
+        assert_eq!(seen.get(), 7, "the task ran for the wrong owner");
+        assert_eq!(*polled_for.borrow(), [7]);
+    }
+
+    #[test]
+    fn every_poll_of_a_task_is_for_its_owner() {
+        let (venus, current, polled_for, _inside) = owned_venus();
+
+        current.set(3);
+        venus.spawn(async {
+            crate::yield_now().await;
+            crate::yield_now().await;
+        });
+        current.set(0);
+        for _ in 0..5 {
+            venus.run_microtasks();
+        }
+
+        assert!(polled_for.borrow().len() >= 2);
+        assert!(polled_for.borrow().iter().all(|tag| *tag == 3));
+    }
+
+    #[test]
+    fn a_task_nobody_owns_is_not_tagged() {
+        let (venus, current, polled_for, _inside) = owned_venus();
+
+        current.set(0);
+        venus.spawn(async {});
+        venus.run_microtasks();
+
+        assert!(polled_for.borrow().is_empty());
     }
 }

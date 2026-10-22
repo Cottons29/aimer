@@ -87,8 +87,8 @@ pub use aimer_quiver as quiver;
 pub use aimer_quiver::frame_stats;
 #[cfg(not(aimer_portable_guest))]
 pub use aimer_quiver::{
-    self, AimerApp, FIRST_FRAME_RENDERED_EVENT, HeadlessAimerApp, HeadlessOptions, RenderMode,
-    WindowAttr, set_first_frame_rendered_callback,
+    self, AimerApp, ExitPolicy, FIRST_FRAME_RENDERED_EVENT, HeadlessAimerApp, HeadlessOptions,
+    NewWindow, RenderMode, Window, WindowAttr, WindowId, set_first_frame_rendered_callback,
 };
 
 #[cfg(feature = "vault")]
@@ -3659,6 +3659,8 @@ use aimer_grid::{Grid, GridItem, GridTrack};
         }
     }
 
+    // The deprecated attribute stays covered until it is removed.
+    #[allow(deprecated)]
     mod widget_attribute {
         use aimer::portable::{
             AimerReflectionType, DecodeError, Decoder, EncodeError, Encoder, FieldDescriptor,
@@ -3826,7 +3828,7 @@ use aimer_grid::{Grid, GridItem, GridTrack};
     }
 
     mod widget_derive {
-        //! The derive forms of `#[widget(...)]`, exercised the way a user writes them.
+        //! The derive forms that replace `#[widget(...)]`, exercised the way a user writes them.
         //!
         //! The unit tests in `aimer_macro` compare token streams; these compile the
         //! generated code against the real traits, which is the only way to catch a

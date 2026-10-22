@@ -1,0 +1,14 @@
+[package]
+name = "aimer_frame_stats"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+# Measure build / encode / present per frame. When this is off, every build
+# compiles the timing and content instrumentation out.
+frame-stats = ["aimer_widget/frame-stats", "aimer_cupid/frame-stats"]
+
+[dependencies]
+aimer_widget.workspace = true
+aimer_cupid.workspace = true
+aimer_utils.workspace = true

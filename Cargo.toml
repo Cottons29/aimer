@@ -158,6 +158,35 @@ markdown-arborium = ["aimer_markdown/arborium"]
 # `.sublime-syntax` files and so lets applications add their own languages.
 markdown-syntect = ["aimer_markdown/syntect"]
 
+# Every user-facing feature at once, for apps that want the whole framework.
+# Left out on purpose:
+# * hot reload (`wasm-hot-reload`) and `portable-guest`, which only the CLI's
+#   development host and generated shadow applications enable;
+# * `venus-debug`, `force-scalar` and `frame-stats`, which are diagnostics and
+#   benchmark controls (`force-scalar` slows the flex path on purpose);
+# * `markdown-arborium`: with `markdown-syntect` on, syntect is the highlighter
+#   that wins, so compiling tree-sitter as well would be dead weight;
+# * `wgpu`, the optional alternative render backend: `native` and `web` already
+#   select each target's own backend;
+# * the deprecated `metal`, `dx12` and `webgl` aliases, which `native` and `web`
+#   already cover.
+full = [
+    "native",
+    "web",
+    "canvas",
+    "cupid",
+    "markdown",
+    "markdown-syntect",
+    "provider",
+    "svg",
+    "icons",
+    "vault",
+    "passkey",
+    "apple-core-text",
+    "bundled-fonts",
+    "raster-thread",
+]
+
 [[test]]
 name = "glass_backdrop"
 required-features = ["wgpu"]
@@ -225,6 +254,11 @@ members = [
     "crates/aimer_simd",
     "crates/aimer_decoration",
     "crates/aimer_lucide",
+    "crates/aimer_frame_stats",
+    "crates/aimer_platform",
+    "crates/aimer_render",
+    "crates/aimer_hot_reload",
+    "crates/aimer_window",
 ]
 
 [workspace.dependencies]
@@ -237,6 +271,11 @@ aimer_simd = { path = "crates/aimer_simd" }
 aimer_rubick = { path = "aimer_rubick" }
 aimer_venus = { path = "aimer_venus" }
 aimer_quiver = { path = "aimer_quiver", default-features = false }
+aimer_frame_stats = { path = "crates/aimer_frame_stats" }
+aimer_platform = { path = "crates/aimer_platform" }
+aimer_render = { path = "crates/aimer_render", default-features = false }
+aimer_hot_reload = { path = "crates/aimer_hot_reload" }
+aimer_window = { path = "crates/aimer_window" }
 aimer_canvas = { path = "crates/aimer_canvas" }
 aimer_animation = { path = "crates/aimer_animation" }
 aimer_input = { path = "crates/aimer_input" }

@@ -28,7 +28,7 @@ use aimer::events::pointer::PointerButton;
 use aimer::events::pointer::PointerInfo;
 use aimer::quiver::winit::dpi::PhysicalSize;
 use aimer::{
-    AnyElement, AnyWidget, AnyWidgetExt, BuildContext, Color, Column, Drawable, Element,
+    AnyElement, AnyWidget, BuildContext, Color, Column, Drawable, Element,
     EventDispatcher, EventElement, LayoutElement, Rebuildable, SizedBox, StatelessElement, Vec2d,
     VisitorElement, Widget, broadcast_event,
 };

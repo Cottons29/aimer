@@ -3,21 +3,15 @@ use std::rc::Rc;
 use crate::BoxDecoration;
 use aimer_attribute::{ResolvedSize, Vec2d};
 use aimer_canvas::Canvas;
-use aimer_rubick::{ErasedFrom, Rubick};
+use aimer_rubick::ErasedFrom;
 
 mod any_decor;
+pub use any_decor::AnyDecor;
 mod collections;
 mod components;
 
 #[cfg(test)]
 mod components_tests;
-
-/// An owned, type-erased [`Decoration`] with eight words of inline capacity.
-///
-/// Construct with [`Decoration::notype`]. Small, suitably aligned values stay
-/// inline; larger or over-aligned values use Rubick's pooled heap storage.
-/// The owner forwards painting, child geometry, backgrounds and revisions.
-pub type AnyDecor = Rubick<dyn Decoration, 8>;
 
 // SAFETY: Unsizing the null pointer supplies exactly D's Decoration vtable
 // with a null data address. The template is never dereferenced.
@@ -176,7 +170,7 @@ pub trait Decoration {
     where
         Self: Sized + 'static,
     {
-        AnyDecor::erase(self)
+        AnyDecor::new(self)
     }
 }
 

@@ -8,6 +8,32 @@ thread_local! {
     static TRAPS: RefCell<SmallVec<[FocusTrapId; 4]>> = const { RefCell::new(SmallVec::new_const()) };
 }
 
+/// The focus traps of one window, kept with the window while another is active.
+///
+/// A trap confines keyboard focus to one region of one window. With several
+/// windows on a thread, a dialog trapping focus in one must not trap it in the
+/// others, so each window holds its own list and puts it on the thread while it
+/// is the active one.
+#[doc(hidden)]
+#[derive(Debug, Default)]
+pub struct WindowFocusTraps(SmallVec<[FocusTrapId; 4]>);
+
+impl WindowFocusTraps {
+    /// Exchanges these traps with the thread's. Calling it twice puts both back.
+    pub fn swap_with_thread(&mut self) {
+        let any = TRAPS.with(|traps| {
+            let mut traps = traps.borrow_mut();
+            std::mem::swap(&mut *traps, &mut self.0);
+            !traps.is_empty() || !self.0.is_empty()
+        });
+        // Managers decide whether they are confined from the generation, so a
+        // change of the active list has to be visible as one.
+        if any {
+            advance_trap_generation();
+        }
+    }
+}
+
 /// Identifies one focus trap for as long as it is held.
 ///
 /// Identities are never reused, so a trap that has been released can never be
@@ -161,5 +187,40 @@ mod tests {
 
         drop(trap);
         assert_ne!(focus_trap_generation(), acquired);
+    }
+
+    #[test]
+    fn a_trap_held_by_one_window_does_not_confine_another() {
+        let (mut first, mut second) = (WindowFocusTraps::default(), WindowFocusTraps::default());
+
+        first.swap_with_thread();
+        let dialog = FocusTrap::acquire();
+        let held = active_focus_trap();
+        first.swap_with_thread();
+
+        second.swap_with_thread();
+        assert_eq!(held, Some(dialog.id()));
+        assert_eq!(active_focus_trap(), None, "the other window was trapped");
+        second.swap_with_thread();
+
+        first.swap_with_thread();
+        assert_eq!(active_focus_trap(), Some(dialog.id()));
+        drop(dialog);
+        assert_eq!(active_focus_trap(), None);
+        first.swap_with_thread();
+    }
+
+    #[test]
+    fn changing_the_active_window_is_visible_as_a_new_generation() {
+        let mut window = WindowFocusTraps::default();
+        window.swap_with_thread();
+        let _dialog = FocusTrap::acquire();
+        window.swap_with_thread();
+
+        let before = focus_trap_generation();
+        window.swap_with_thread();
+
+        assert_ne!(focus_trap_generation(), before);
+        window.swap_with_thread();
     }
 }

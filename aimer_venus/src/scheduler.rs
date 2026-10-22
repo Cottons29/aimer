@@ -45,7 +45,7 @@ impl Drop for PollingGuard {
         POLLING.with(|depth| depth.set(depth.get() - 1));
     }
 }
-use crate::poll_context::PollContext;
+use crate::poll_context::{PollContext, Tagged};
 use crate::task::slab::TaskSlab;
 use crate::task::waker::{Notifier, WakeQueue, waker_for};
 use crate::task::{Phase, ScopeId, TaskId, TaskScope};
@@ -170,12 +170,21 @@ impl LocalScheduler {
         scope: ScopeId,
         future: impl Future<Output = ()> + 'static,
     ) -> TaskId {
+        // Asked before `inner` is borrowed: the host reads its own state.
+        let owner = self
+            .poll_context
+            .borrow()
+            .clone()
+            .map(|host| (host.task_tag(), host))
+            .filter(|(tag, _)| *tag != 0);
+        let future: crate::task::LocalFuture = match owner {
+            Some((tag, host)) => Box::pin(Tagged::new(tag, host, future)),
+            None => Box::pin(future),
+        };
         let mut inner = self.inner.borrow_mut();
         let id = inner.tasks.reserve();
         let waker = waker_for(id, &self.wakes);
-        inner
-            .tasks
-            .occupy(id, Box::pin(future), waker, phase, scope);
+        inner.tasks.occupy(id, future, waker, phase, scope);
         inner.ready[phase.index()].push_back(id);
         id
     }

@@ -144,7 +144,7 @@ impl aimer_widget::PortableWidget for Outlet {
             return Err(ctx.unsupported_widget("Outlet", source));
         };
         let child = slot.build_child(&build_context);
-        aimer_widget::AnyWidgetExt::into_portable_node(child, ctx, source)
+        child.into_portable_node(ctx, source)
     }
 }
 

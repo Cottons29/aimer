@@ -184,6 +184,38 @@ impl TryFrom<&str> for AttributeKind {
 
 /// Attribute macro that wires up an item as a Widget.
 ///
+/// # Deprecated
+///
+/// Use the derives instead. They generate identical code, but are expanded
+/// *beside* the item instead of replacing it, so the definition the compiler
+/// (and rust-analyzer) sees is the one you wrote:
+///
+/// | Instead of | Write |
+/// |------------|-------|
+/// | `#[widget(Stateless)]` | [`#[derive(StatelessWidget)]`](macro@StatelessWidget) |
+/// | `#[widget(Stateful)]` | [`#[derive(StatefulWidget)]`](macro@StatefulWidget) |
+/// | `#[widget(Router)]` | [`#[derive(Router)]`](macro@Router) |
+/// | `#[widget(RawWidget)]` | implement `Widget` by hand: this kind only emitted a stub whose body is `unimplemented!` |
+///
+/// ```rust,ignore
+/// // Before
+/// #[widget(Stateless)]
+/// pub struct MyWidget {
+///     pub label: String,
+/// }
+///
+/// // After
+/// #[derive(StatelessWidget)]
+/// pub struct MyWidget {
+///     pub label: String,
+/// }
+/// ```
+///
+/// The `impl StatelessWidget`, `impl StatefulWidget` or `impl Router` block you
+/// already wrote stays as it is.
+///
+/// # What it did
+///
 /// Accepts one of four kinds as its argument:
 ///
 /// | Kind | Target | What is generated |
@@ -193,38 +225,12 @@ impl TryFrom<&str> for AttributeKind {
 /// | `Router` | enum | full router `impl Widget` dispatch |
 /// | `RawWidget` | struct | bare `impl Widget` stub (body uses `unimplemented!`) |
 ///
-/// # Usage
-/// ```rust,ignore
-/// #[widget(Stateless)]
-/// pub struct MyWidget {
-///     pub label: String,
-/// }
-///
-/// impl StatelessWidget for MyWidget {
-///     fn build(&self, ctx: &BuildContext) -> AnyWidget {
-///         // ...
-///     }
-/// }
-/// ```
-///
-/// ```rust,ignore
-/// #[widget(Router)]
-/// pub enum AppRouter {
-///     Home,
-///     Settings,
-/// }
-/// ```
-///
-/// # Derive alternatives
-/// The first three kinds also exist as derives —
-/// [`StatelessWidget`](macro@StatelessWidget),
-/// [`StatefulWidget`](macro@StatefulWidget) and [`Router`](macro@Router) —
-/// which generate identical code. A derive is expanded *beside* the item, so
-/// the definition the compiler sees is the one you wrote; this attribute
-/// replaces it.
-///
 /// # Panics
 /// Panics at compile time if no argument is provided.
+#[deprecated(
+    since = "0.1.0",
+    note = "use `#[derive(StatelessWidget)]`, `#[derive(StatefulWidget)]` or `#[derive(Router)]` instead; they generate the same code beside your item rather than replacing it"
+)]
 #[proc_macro_attribute]
 pub fn widget(args: TokenStream, input: TokenStream) -> TokenStream {
     if args.is_empty() {
@@ -284,9 +290,9 @@ pub fn widget(args: TokenStream, input: TokenStream) -> TokenStream {
 
 /// Derives `Widget` for a stateless widget item.
 ///
-/// The derive form of [`#[widget(Stateless)]`](macro@widget): it generates the
-/// exact same `Widget` impl, but is written *beside* your item instead of
-/// replacing it, so the definition the compiler sees is the one you wrote.
+/// Replaces the deprecated `#[widget(Stateless)]`: it generates the exact same
+/// `Widget` impl, but is written *beside* your item instead of replacing it, so
+/// the definition the compiler sees is the one you wrote.
 ///
 /// The generated `to_element` keeps the widget in a [`StatelessElement`] so
 /// that the element can re-run `build()` when it is marked dirty — on a resize,
@@ -321,9 +327,9 @@ pub fn stateless_widget_derive(input: TokenStream) -> TokenStream {
 
 /// Derives `Widget` for a stateful widget item.
 ///
-/// The derive form of [`#[widget(Stateful)]`](macro@widget): it generates the
-/// exact same `Widget` impl, but is written *beside* your item instead of
-/// replacing it, so the definition the compiler sees is the one you wrote.
+/// Replaces the deprecated `#[widget(Stateful)]`: it generates the exact same
+/// `Widget` impl, but is written *beside* your item instead of replacing it, so
+/// the definition the compiler sees is the one you wrote.
 ///
 /// The generated `to_element` hands the widget to a `StatefulElement`, which
 /// owns the `State` your `StatefulWidget` impl creates and keeps it alive
@@ -358,8 +364,8 @@ pub fn stateful_widget_derive(input: TokenStream) -> TokenStream {
 
 /// Derives `Route` and `Widget` for a route enum.
 ///
-/// The derive form of [`#[widget(Router)]`](macro@widget): it generates the
-/// exact same `Route` parsing/formatting table and `Widget` dispatch, but is
+/// Replaces the deprecated `#[widget(Router)]`: it generates the exact same
+/// `Route` parsing/formatting table and `Widget` dispatch, but is
 /// written *beside* your enum instead of replacing it. You supply the
 /// `Router::build` impl that turns a route into a widget.
 ///
