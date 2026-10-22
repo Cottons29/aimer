@@ -1432,9 +1432,10 @@ mod tests {
 
         assert_eq!(layout.line_heights, vec![40.0, 40.0]);
         assert_eq!(layout.size.height, 80.0);
-        assert_eq!(
-            layout.fragments[1].baseline - layout.fragments[0].baseline,
-            40.0
+        let baseline_step = layout.fragments[1].baseline - layout.fragments[0].baseline;
+        assert!(
+            (baseline_step - 40.0).abs() < 1e-3,
+            "baselines are {baseline_step} apart, expected 40"
         );
     }
 

@@ -109,6 +109,9 @@ pub(crate) struct FontMetrics {
     pub(crate) ascender: i16,
     pub(crate) descender: i16,
     pub(crate) line_gap: i16,
+    /// Design cap height from `OS/2` (version 2 and later); `0` when the face
+    /// does not state one.
+    pub(crate) cap_height: i16,
     pub(crate) x_min: i16,
     pub(crate) y_min: i16,
     pub(crate) x_max: i16,
@@ -116,6 +119,44 @@ pub(crate) struct FontMetrics {
     pub(crate) num_glyphs: u16,
     pub(crate) number_of_h_metrics: u16,
     pub(crate) index_to_loc_format: i16,
+}
+
+impl FontMetrics {
+    /// Largest baseline shift, in em, that centring the capitals may apply.
+    ///
+    /// A face whose stated cap height disagrees with its `hhea` box by more
+    /// than this is more likely misdeclared than deliberately lopsided.
+    const MAX_OPTICAL_SHIFT_EM: f32 = 0.15;
+
+    /// Scaled `(ascent, descent, line_gap)` for a line set in `font_size`.
+    ///
+    /// `descent` is negative, as in `hhea`. The line box is the face's own
+    /// `ascent - descent` tall, but the baseline is placed so the capitals are
+    /// centred in it. Faces tuned the usual way already are: their ascent
+    /// exceeds the cap height by about what their descent leaves under the
+    /// baseline. A face that sets its ascent equal to its cap height, as Nimbus
+    /// Sans does, reserves 0.27 em under the baseline that only descenders use,
+    /// so its text sits high in a box centred on `hhea`. Faces that state no cap
+    /// height keep their `hhea` values.
+    pub(crate) fn scaled_line_metrics(&self, font_size: f32) -> (f32, f32, f32) {
+        let scale = font_size / f32::from(self.units_per_em);
+        let ascent = f32::from(self.ascender);
+        let descent = f32::from(self.descender);
+        let shift = if self.cap_height > 0 {
+            let limit = Self::MAX_OPTICAL_SHIFT_EM * f32::from(self.units_per_em);
+            let centred = f32::from(self.cap_height) / 2.0 - (ascent + descent) / 2.0;
+            // The baseline stays inside the box: ascent cannot go negative and
+            // the descent cannot cross to the other side of it.
+            centred.clamp(-limit, limit).clamp(-ascent.max(0.0), (-descent).max(0.0))
+        } else {
+            0.0
+        };
+        (
+            (ascent + shift) * scale,
+            (descent + shift) * scale,
+            f32::from(self.line_gap) * scale,
+        )
+    }
 }
 
 #[derive(Clone)]
@@ -610,6 +651,17 @@ impl<'a> SfntFace<'a> {
         (1..=1000).contains(&weight).then_some(weight)
     }
 
+    /// Reads the design cap height from `OS/2` when the table is version 2 or
+    /// later and states a positive one.
+    fn cap_height(&self) -> Option<i16> {
+        let reader = Reader::new(self.table(*b"OS/2")?);
+        if reader.u16(0).ok()? < 2 {
+            return None;
+        }
+        let cap_height = reader.i16(88).ok()?;
+        (cap_height > 0).then_some(cap_height)
+    }
+
     /// Looks up a Unicode scalar value in the face's best supported base
     /// `cmap` subtable.
     pub(crate) fn glyph_index(&self, codepoint: u32) -> Result<Option<u16>, SfntError> {
@@ -702,6 +754,7 @@ impl<'a> SfntFace<'a> {
             ascender: hhea_reader.i16(4)?,
             descender: hhea_reader.i16(6)?,
             line_gap: hhea_reader.i16(8)?,
+            cap_height: self.cap_height().unwrap_or(0),
             x_min: head_reader.i16(36)?,
             y_min: head_reader.i16(38)?,
             x_max: head_reader.i16(40)?,
@@ -2553,6 +2606,69 @@ pub(crate) fn fuzz_outlines(data: &[u8]) {
 pub(crate) mod tests {
     use super::cff::CffPathCommand;
     use super::{MAX_TABLE_BYTES, SfntError, SfntFace, Tag, VerticalGlyphMetrics};
+    use super::FontMetrics;
+
+    fn face_metrics(ascender: i16, descender: i16, line_gap: i16, cap_height: i16) -> FontMetrics {
+        FontMetrics {
+            units_per_em: 1000,
+            ascender,
+            descender,
+            line_gap,
+            cap_height,
+            x_min: 0,
+            y_min: 0,
+            x_max: 0,
+            y_max: 0,
+            num_glyphs: 1,
+            number_of_h_metrics: 1,
+            index_to_loc_format: 0,
+        }
+    }
+
+    /// Nimbus Sans sets its ascent equal to its cap height and reserves 0.27 em
+    /// below the baseline that only descenders use, so the capitals of a line
+    /// sit high in a box centred on `ascent + descent`. The baseline moves down
+    /// inside the same box until the cap height is centred in it.
+    #[test]
+    fn a_font_whose_ascent_is_its_cap_height_gets_its_capitals_centred_in_the_line() {
+        let metrics = face_metrics(729, -271, 200, 718);
+
+        let (ascent, descent, gap) = metrics.scaled_line_metrics(1000.0);
+
+        // The box is the same size; only the baseline within it moved.
+        assert!((ascent - descent - (729.0 + 271.0)).abs() < 1e-3);
+        assert_eq!(gap, 200.0);
+        // Capitals now span the box's middle: as much above its centre as below.
+        let centre_above_baseline = (ascent + descent) / 2.0;
+        assert!((centre_above_baseline - 718.0 / 2.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn a_font_that_is_already_balanced_keeps_its_metrics() {
+        // Capitals are centred on (969 - 242) / 2 = 363.5 already.
+        let metrics = face_metrics(969, -242, 0, 727);
+
+        let (ascent, descent, _) = metrics.scaled_line_metrics(1000.0);
+
+        assert!((ascent - 969.0).abs() < 1.0 && (descent + 242.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn a_font_without_a_cap_height_keeps_its_metrics() {
+        let metrics = face_metrics(729, -271, 200, 0);
+
+        assert_eq!(metrics.scaled_line_metrics(1000.0), (729.0, -271.0, 200.0));
+    }
+
+    #[test]
+    fn the_shift_scales_with_the_font_size() {
+        let metrics = face_metrics(729, -271, 200, 718);
+
+        let (ascent, descent, _) = metrics.scaled_line_metrics(16.0);
+
+        assert!((ascent - descent - 16.0).abs() < 1e-4);
+        assert!(((ascent + descent) / 2.0 - 718.0 / 2000.0 * 16.0).abs() < 1e-3);
+    }
 
     fn minimal_sfnt() -> Vec<u8> {
         let mut bytes = vec![0; 32];

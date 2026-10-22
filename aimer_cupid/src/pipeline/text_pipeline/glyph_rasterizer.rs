@@ -2707,12 +2707,7 @@ impl GlyphRasterizer {
             && let Some(metrics) =
                 crate::text_pipeline::aimer_font::primary_metrics(data, record.collection_index)
         {
-            let scale = font_size / f32::from(metrics.units_per_em);
-            return (
-                f32::from(metrics.ascender) * scale,
-                f32::from(metrics.descender) * scale,
-                f32::from(metrics.line_gap) * scale,
-            );
+            return metrics.scaled_line_metrics(font_size);
         }
         if let Some(metrics) = record.line_metrics(font_size) {
             return metrics;

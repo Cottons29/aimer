@@ -295,3 +295,52 @@ fn a_paused_context_keeps_its_surface_and_records_nothing_until_resumed() {
     context.close();
     context.suspend();
 }
+
+/// A Linux compositor scales the previous buffer to the new window bounds until
+/// the next one is committed, so the resized frame must be presented in the turn
+/// that delivered the resize rather than by the worker some turns later.
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_presents_a_resized_frame_before_the_resize_returns() {
+    assert!(SYNC_RESIZE);
+}
+
+/// A resize is followed by a redraw at the new size, because the platform asks
+/// for one on every configure. If that frame stayed with the worker it would be
+/// presented while the next resize is being handled, committing a buffer of the
+/// old size against the new window geometry, which shows as the previous frame
+/// stretched. Inline rendering never had the overlap: every frame was presented
+/// before the next event was read.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_redraw_that_follows_a_live_resize_is_also_presented_before_the_call_returns() {
+    let (mut context, release, rendering) = ready_context(true);
+    // First frame: the initial size, which is not a live resize.
+    release.send(()).unwrap();
+    context.render_frame(|_, _, _| {});
+    rendering.recv_timeout(Duration::from_secs(5)).unwrap();
+    // The resize itself, and the frame it asks for.
+    context.resize(PhysicalSize::new(16, 12));
+    release.send(()).unwrap();
+    context.render_frame(|_, _, _| {});
+    rendering.recv_timeout(Duration::from_secs(5)).unwrap();
+
+    // The follow-up redraw at the same size. The worker is held for a while, so
+    // returning early would leave the frame outstanding.
+    let holder = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(30));
+        release.send(()).unwrap();
+        release
+    });
+    let before = std::time::Instant::now();
+    assert_eq!(context.render_frame(|_, _, _| {}), PresentOutcome::Deferred);
+    assert!(before.elapsed() >= Duration::from_millis(25));
+    assert_eq!(
+        outstanding(&context),
+        0,
+        "a redraw during a live resize must not be left to overlap the next resize"
+    );
+    let _release = holder.join().unwrap();
+    context.close();
+    context.suspend();
+}
