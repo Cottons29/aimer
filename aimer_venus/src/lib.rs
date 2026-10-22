@@ -1,6 +1,10 @@
 #![doc = include_str!("../README.md")]
 
 mod budget;
+mod completion;
+// The browser has no threads to run a lane on.
+#[cfg(not(target_arch = "wasm32"))]
+mod lane;
 mod lifecycle;
 mod panic_hook;
 // The browser has no threads to offload onto, and `requestIdleCallback` plus a
@@ -19,6 +23,9 @@ pub use crate::budget::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use crate::offload::{OffloadPool, Offloaded};
+pub use crate::completion::{Completer, Completion, Interrupted, completion};
+#[cfg(not(target_arch = "wasm32"))]
+pub use crate::lane::{Lane, LaneState};
 pub use crate::lifecycle::{Lifecycle, LifecycleSubscription, notify_lifecycle, on_lifecycle};
 pub use crate::panic_hook::install_panic_hook;
 pub use crate::poll_context::PollContext;

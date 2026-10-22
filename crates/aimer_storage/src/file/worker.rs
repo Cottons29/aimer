@@ -1,10 +1,9 @@
 //! Runs file operations, in order, on Venus's offload pool.
 //!
-//! A [`FileStorage`](super::FileStorage) owns no thread. Each operation becomes
-//! a job in a per-store FIFO queue; when the queue goes from empty to busy, one
-//! drain job is handed to `Venus::spawn_blocking` and runs jobs until the queue
-//! is empty again. That gives two things the old dedicated writer thread gave,
-//! without the thread:
+//! A [`FileStorage`](super::FileStorage) owns no thread. Its operations go
+//! through an `aimer_venus::Lane`: a per-store FIFO queue drained by one
+//! `Venus::spawn_blocking` job at a time. That gives two things the old
+//! dedicated writer thread gave, without the thread:
 //!
 //! * **Order.** Jobs run one at a time in the order they were issued, so a
 //!   `read` issued after a `write` sees it, and two writes to one key land in
@@ -15,16 +14,11 @@
 //! The awaiting task is woken through the same thread-safe waker Venus gives
 //! `Offloaded`, so the result is applied in the frame phase the task belongs to.
 
-use std::collections::VecDeque;
-use std::future::Future;
-use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
-use std::pin::Pin;
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::task::{Context, Poll, Waker};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use aimer_venus::Venus;
+use aimer_venus::{Lane, LaneState};
 
 use super::commit;
 use crate::error::{
@@ -33,17 +27,7 @@ use crate::error::{
 use crate::limits::{StorageLimits, Usage};
 use crate::storage::{StorageFuture, ready};
 
-type Job = Box<dyn FnOnce(&Inner) + Send>;
-
-#[derive(Default)]
-struct Queue {
-    jobs: VecDeque<Job>,
-    /// Whether a drain job is queued or running. Set and cleared under the same
-    /// lock that guards `jobs`, so a job is never left with nobody to run it.
-    draining: bool,
-}
-
-/// The state shared between a store handle and its drain jobs.
+/// The state a store's lane shares with its jobs.
 pub(super) struct Inner {
     pub(super) root: PathBuf,
     pub(super) limits: StorageLimits,
@@ -56,19 +40,32 @@ pub(super) struct Inner {
     /// The files of the last committed batch, still waiting for their sync and
     /// for the journal to be retired. `None` when nothing is outstanding.
     pub(super) deferred: Mutex<Option<Vec<std::path::PathBuf>>>,
-    queue: Mutex<Queue>,
 }
 
 impl Inner {
-    pub(super) fn new(root: PathBuf, limits: StorageLimits) -> Self {
-        Self {
+    /// Creates the lane a store runs on.
+    pub(super) fn lane(root: PathBuf, limits: StorageLimits) -> Lane<Inner> {
+        Lane::new(Self {
             root,
             limits,
             usage: Mutex::new(None),
             recovered: AtomicBool::new(false),
             deferred: Mutex::new(None),
-            queue: Mutex::new(Queue::default()),
-        }
+        })
+    }
+}
+
+impl LaneState for Inner {
+    /// `usage` may be half-updated, so it is rebuilt on next use.
+    fn job_panicked(&self) {
+        *lock(&self.usage) = None;
+    }
+
+    /// Finishes the deferred syncs of the last batch now, where no caller is
+    /// waiting on them. A failure leaves them outstanding for the next mutating
+    /// operation to retry and report.
+    fn idle(&self) {
+        let _ = commit::checkpoint(self);
     }
 }
 
@@ -78,7 +75,7 @@ pub(super) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Queues `work` behind everything already issued to `inner` and returns its
+/// Queues `work` behind everything already issued to `lane` and returns its
 /// result.
 ///
 /// Resolves to `Unavailable { capability: Runtime }` when no Venus runtime is
@@ -89,7 +86,7 @@ pub(super) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 /// journal retired, so a stale journal is never replayed over a newer write;
 /// reads do not wait, because they see applied data either way.
 pub(super) fn submit<T, F>(
-    inner: &Arc<Inner>,
+    lane: &Lane<Inner>,
     operation: StorageOperation,
     mutates: bool,
     work: F,
@@ -98,15 +95,8 @@ where
     T: Send + 'static,
     F: FnOnce(&Inner) -> StorageResult<T> + Send + 'static,
 {
-    let Some(venus) = Venus::current() else {
-        return ready(Err(StorageError::Unavailable {
-            capability: StorageCapability::Runtime,
-        }));
-    };
-
-    let (completer, receive) = oneshot(operation);
-    let job: Job = Box::new(move |inner| {
-        let result = commit::recover(inner)
+    let job = move |inner: &Inner| {
+        commit::recover(inner)
             .and_then(|()| {
                 if mutates {
                     commit::checkpoint(inner)
@@ -114,139 +104,19 @@ where
                     Ok(())
                 }
             })
-            .and_then(|()| work(inner));
-        completer.complete(result);
-    });
-    let start_drain = {
-        let mut queue = lock(&inner.queue);
-        queue.jobs.push_back(job);
-        !std::mem::replace(&mut queue.draining, true)
+            .and_then(|()| work(inner))
     };
-    if start_drain {
-        let inner = Arc::clone(inner);
-        // The jobs report through their own oneshots; the drain's result is not
-        // observed, and dropping the handle does not cancel the work.
-        drop(venus.spawn_blocking(move || drain(&inner)));
-    }
-    Box::pin(receive)
-}
-
-fn drain(inner: &Inner) {
-    loop {
-        let next = lock(&inner.queue).jobs.pop_front();
-        match next {
-            Some(job) => {
-                // A panicking job must not strand the jobs behind it. Its completer
-                // is dropped by the unwind, which resolves its future with an error,
-                // and `usage` may be half-updated, so it is rebuilt on next use.
-                if catch_unwind(AssertUnwindSafe(|| job(inner))).is_err() {
-                    *lock(&inner.usage) = None;
-                }
-            }
-            None => {
-                // Idle: finish the deferred syncs of the last batch now, where no
-                // caller is waiting on them. A failure leaves them outstanding for
-                // the next mutating operation to retry and report.
-                let _ = catch_unwind(AssertUnwindSafe(|| commit::checkpoint(inner)));
-                let mut queue = lock(&inner.queue);
-                // Something may have been queued during the checkpoint.
-                if queue.jobs.is_empty() {
-                    queue.draining = false;
-                    return;
-                }
-            }
-        }
-    }
-}
-
-/// The slot a job's result is delivered through.
-struct Slot<T> {
-    state: Mutex<SlotState<T>>,
-}
-
-struct SlotState<T> {
-    result: Option<StorageResult<T>>,
-    waker: Option<Waker>,
-}
-
-fn oneshot<T>(operation: StorageOperation) -> (Completer<T>, Receive<T>) {
-    let slot = Arc::new(Slot {
-        state: Mutex::new(SlotState {
-            result: None,
-            waker: None,
-        }),
-    });
-    (
-        Completer {
-            slot: Arc::clone(&slot),
-            operation,
-            completed: false,
-        },
-        Receive { slot },
-    )
-}
-
-/// The worker half of a result slot.
-struct Completer<T> {
-    slot: Arc<Slot<T>>,
-    operation: StorageOperation,
-    completed: bool,
-}
-
-impl<T> Completer<T> {
-    fn complete(mut self, result: StorageResult<T>) {
-        self.completed = true;
-        self.finish(result);
-    }
-
-    fn finish(&self, result: StorageResult<T>) {
-        let waker = {
-            let mut state = lock(&self.slot.state);
-            if state.result.is_some() {
-                return;
-            }
-            state.result = Some(result);
-            state.waker.take()
-        };
-        // Outside the lock: waking may run arbitrary scheduler code.
-        if let Some(waker) = waker {
-            waker.wake();
-        }
-    }
-}
-
-impl<T> Drop for Completer<T> {
-    /// A job that never completed (it panicked, or its queue was dropped)
-    /// resolves its future with an error rather than leaving it pending forever.
-    fn drop(&mut self) {
-        if !self.completed {
-            self.finish(Err(StorageError::Io {
-                operation: self.operation,
+    match lane.submit(job) {
+        // A job that never completed (it panicked) resolves with an error rather
+        // than leaving its future pending forever.
+        Some(completion) => Box::pin(async move {
+            completion.await.unwrap_or(Err(StorageError::Io {
+                operation,
                 kind: StorageIoKind::Other,
-            }));
-        }
-    }
-}
-
-/// The awaiting half of a result slot.
-struct Receive<T> {
-    slot: Arc<Slot<T>>,
-}
-
-impl<T> Future for Receive<T> {
-    type Output = StorageResult<T>;
-
-    fn poll(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut state = lock(&self.slot.state);
-        match state.result.take() {
-            Some(result) => Poll::Ready(result),
-            None => {
-                match &mut state.waker {
-                    Some(waker) => waker.clone_from(context.waker()),
-                    waker @ None => *waker = Some(context.waker().clone()),
-                }
-                Poll::Pending
-            }
-        }
+            }))
+        }),
+        None => ready(Err(StorageError::Unavailable {
+            capability: StorageCapability::Runtime,
+        })),
     }
 }

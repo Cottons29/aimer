@@ -53,6 +53,17 @@ input ──▶ frame tasks ──▶ microtasks ──▶ build / layout / pain
 Everything unsliceable goes to `Venus::spawn_blocking`, the single place `Send` is
 required — and where it is genuinely true.
 
+Two small pieces sit on top of it for code that talks to the platform:
+
+* `Lane` runs blocking calls one at a time, in the order they were issued, on the
+  pool, so a read issued after a write sees it. Secret stores and file storage use
+  it. It can carry shared state and hooks for "a job panicked" and "the queue ran
+  empty".
+* `completion()` is a one-value rendezvous for a result that arrives on a thread of
+  the platform's choosing, such as a system callback: the producer is `Send`, the
+  awaiting task is not, and a producer dropped without a value resolves the task
+  with `Interrupted` instead of leaving it parked.
+
 ## Using it
 
 ```rust

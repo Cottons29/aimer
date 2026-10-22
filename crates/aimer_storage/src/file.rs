@@ -13,11 +13,12 @@ use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 #[cfg(target_os = "android")]
 pub use self::app_dir::set_android_data_dir;
 pub use self::app_dir::{app_data_dir, app_dir};
+
+use aimer_venus::Lane;
 
 use self::commit::{commit_batch, current_usage};
 use self::layout::{
@@ -89,7 +90,7 @@ const APP_SUBDIRECTORY: &str = "storage";
 /// [`StorageCapability::Runtime`]: crate::StorageCapability::Runtime
 #[derive(Clone)]
 pub struct FileStorage {
-    inner: Arc<Inner>,
+    inner: Lane<Inner>,
 }
 
 impl FileStorage {
@@ -104,7 +105,7 @@ impl FileStorage {
     /// Creates a file-backed adapter rooted at `root` with explicit limits.
     pub fn with_limits(root: impl Into<PathBuf>, limits: StorageLimits) -> Self {
         Self {
-            inner: Arc::new(Inner::new(root.into(), limits)),
+            inner: Inner::lane(root.into(), limits),
         }
     }
 
