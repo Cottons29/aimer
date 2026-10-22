@@ -12,7 +12,6 @@ use aimer_attribute::{ResolvedSize, Size, Vec2d};
 use aimer_venus::{ScopeId, TaskScope, Venus};
 
 use crate::base::BuildContext;
-use crate::widget::AnyWidgetExt;
 use crate::widget::stateful::{SyncChild, carry_child_state};
 use crate::{
     AnyElement, AnyWidget, Drawable, Element, EventElement, Key, LayoutElement, Rebuildable,

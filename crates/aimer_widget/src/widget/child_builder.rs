@@ -18,7 +18,7 @@ use crate::components::event_element::{EventElement, EventResult, EventTreeRole}
 use crate::components::layout_element::LayoutElement;
 use crate::components::rebuildable::Rebuildable;
 use crate::key::Key;
-use crate::widget::{AnyWidgetExt, Widget};
+use crate::widget::Widget;
 use crate::{AnyElement, AnyWidget};
 
 /// A child subtree its parent may place into the tree, any number of times.

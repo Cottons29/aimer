@@ -8,13 +8,13 @@ pub mod focus_scope;
 pub mod focusable;
 mod frame_work_stats;
 mod hover_reconciliation;
-mod pointer_occlusion;
 pub mod key;
 pub mod layout_cache;
 pub mod page_storage;
 mod paint_damage;
 pub mod platform_brightness;
 pub mod pointer_claim;
+mod pointer_occlusion;
 #[doc(hidden)]
 pub mod portable;
 mod rebuild_stats;
@@ -42,10 +42,8 @@ pub struct RequiredChild;
 #[derive(Default)]
 pub struct CalledCounter(Cell<(u32, &'static str)>);
 
-
-
-unsafe  impl Send for CalledCounter{}
-unsafe  impl Sync for CalledCounter{}
+unsafe impl Send for CalledCounter {}
+unsafe impl Sync for CalledCounter {}
 impl CalledCounter {
     pub const fn new() -> Self {
         Self(Cell::new((0, "NotSet")))
@@ -68,61 +66,10 @@ impl CalledCounter {
         debug!("{}: {}", l, c);
     }
 }
-pub static CALLED : CalledCounter = CalledCounter::new();
+pub static CALLED: CalledCounter = CalledCounter::new();
 
-/// An owned, type-erased [`Element`], stored as a thin two-word owner.
-///
-/// Elements are the retained side of the tree and are large: the smallest
-/// documented layout is well over a hundred bytes, so no realistic inline
-/// capacity would ever avoid their allocation. `AnyElement` therefore asks
-/// [`aimer_rubick::Rubick`] for the minimum capacity of one word, which is
-/// exactly the heap pointer. The owner costs two words instead of carrying an
-/// inline buffer that could never be used, which matters because the retained
-/// tree holds one owner per node for the lifetime of the application.
-///
-/// Borrowing through `Deref` or `AsRef` provides a `dyn Element` view with
-/// normal dynamic dispatch and no adapter call. The name of [`Element::boxed`]
-/// is retained for source familiarity.
-pub type AnyElement = aimer_rubick::Rubick<dyn Element, 4>;
-
-/// An owned, type-erased [`Widget`] with inline storage and heap fallback.
-///
-/// Widgets are the throwaway side of the tree: they are rebuilt every frame
-/// and are small, so avoiding their allocation is worth spending owner bytes
-/// on. `AnyWidget` reserves eight words of inline capacity, which covers the
-/// common containers — a `Row` or `Column` is eight words — and leaves the
-/// owner itself at nine words. Larger or over-aligned widgets transparently
-/// take one pooled heap block.
-///
-/// `Deref` and `AsRef` expose the stored widget as [`DynWidget`], the
-/// object-safe half of [`Widget`], and [`aimer_rubick::Rubick::is_inline`] and
-/// [`aimer_rubick::Rubick::is_heap`] report the selected mode. The conversion
-/// itself consumes the handle: [`AnyWidgetExt::into_element`] moves the widget
-/// out of this storage, so the erased path copies no more than the direct one.
-///
-/// Moving an inline `AnyWidget` changes the address of its concrete widget. The
-/// owner does not provide implicit unsizing or a stable-address guarantee;
-/// construct it through [`Widget::boxed`].
-///
-/// ```
-/// use aimer_widget::base::BuildContext;
-/// use aimer_widget::{AnyElement, PortableWidget, Widget};
-///
-/// struct Badge;
-///
-/// impl PortableWidget for Badge {}
-///
-/// impl Widget for Badge {
-///     fn to_element(self, _ctx: &BuildContext) -> AnyElement {
-///         unreachable!("this example only erases the widget")
-///     }
-/// }
-///
-/// let widget = Badge.boxed();
-/// assert!(widget.is_inline());
-/// ```
-pub type AnyWidget = aimer_rubick::Rubick<dyn DynWidget, 8>;
-
+#[doc(hidden)]
+pub use crate::components::context::{InheritedStates, RetainedNodeHandle};
 pub use crate::components::diagnostics::{
     ErrorElement, ErrorWidget, OverflowEdges, OverflowIndicator, detect_overflow,
 };
@@ -131,27 +78,30 @@ pub use crate::components::drawable::{
     CompositorAnimationDecision, CompositorAnimationFrame, CompositorTransform, Drawable,
 };
 pub use crate::components::element::{
-    Element, ElementId, ElementNodeMap, ElementPath, EventDispatchContext, EventDispatcher,
+    AnyElement, Element, ElementId, ElementNodeMap, ElementPath, EventDispatchContext, EventDispatcher,
     begin_event_frame, begin_paint_frame, element_tree_generation,
-    has_active_v2_render_presentation, has_active_v2_render_tree, keep_ticking_elements_reachable, layout_invalidation_generation, notify_layout_changed,
-    mark_paint_damage, mark_paint_damage_full, notify_element_tree_changed,
-    live_children_generation, notify_hosted_element_tree_changed, notify_live_children_changed,
-    notify_retained_render_structure_changed,
+    has_active_v2_render_presentation, has_active_v2_render_tree, keep_ticking_elements_reachable,
+    layout_invalidation_generation, live_children_generation, mark_paint_damage,
+    mark_paint_damage_full, notify_element_tree_changed, notify_hosted_element_tree_changed,
+    notify_layout_changed, notify_live_children_changed, notify_retained_render_structure_changed,
     rebuild_invalidation_generation, retained_render_structure_generation, set_rebuild_source_path,
-    take_declined_paint_elements, take_paint_frame_damage,
-    take_unmapped_draws, update_v2_render_node_geometry, with_v2_render_tree_context,
+    take_declined_paint_elements, take_paint_frame_damage, take_unmapped_draws,
+    update_v2_render_node_geometry, with_v2_render_tree_context,
 };
 #[doc(hidden)]
-pub use crate::components::context::{InheritedStates, RetainedNodeHandle};
-#[doc(hidden)]
 pub use crate::components::element::{
-    VisibleWindow, may_escape_ancestor_clips, may_skip_settled_offscreen, retained_element_settled, retained_visible_window,
-    retained_visible_window_of_current, set_scroll_only_frame, set_settled_offscreen_skip,
-    animation_only_targets, is_animation_only_frame, run_animation_only_pass,
-    set_animation_only_frame, with_v2_animation_only_context, request_isolated_animation_frame, request_isolated_subtree_animation_frame, set_frame_rebuilt_roots, traversal_counts, keep_element_reachable, KeepReachable, preserving_dirty_paths, rebuild_replaced_subtree, rebuild_keepalive_count, rebuild_descent_count, rebuild_visit_count, rebuild_dirty_children, structural_search_count, stable_generation_cursor, stable_generations_since, note_state_update_marked,
-    rebuild_state_mark_count,
-    ScopedCursor, has_scoped_rebuilds_since, scoped_rebuild_cursor, scoped_rebuilds_since,
-    unscoped_element_tree_generation,
+    KeepReachable, ScopedCursor, VisibleWindow, animation_only_targets, has_scoped_rebuilds_since,
+    is_animation_only_frame, keep_element_reachable, may_escape_ancestor_clips,
+    may_skip_settled_offscreen, note_state_update_marked, preserving_dirty_paths,
+    rebuild_descent_count, rebuild_dirty_children, rebuild_keepalive_count,
+    rebuild_replaced_subtree, rebuild_state_mark_count, rebuild_visit_count,
+    request_isolated_animation_frame, request_isolated_subtree_animation_frame,
+    retained_element_settled, retained_visible_window, retained_visible_window_of_current,
+    run_animation_only_pass, scoped_rebuild_cursor, scoped_rebuilds_since,
+    set_animation_only_frame, set_frame_rebuilt_roots, set_scroll_only_frame,
+    set_settled_offscreen_skip, stable_generation_cursor, stable_generations_since,
+    structural_search_count, traversal_counts, unscoped_element_tree_generation,
+    with_v2_animation_only_context,
 };
 #[cfg(feature = "frame-stats")]
 pub use crate::components::element::{
@@ -218,14 +168,14 @@ pub use crate::async_builder::{
 };
 pub use crate::components::element::{broadcast_event, dispatch_event, dispatch_focused_event};
 pub use crate::key::Key;
-pub use crate::pointer_occlusion::pointer_occluded_at;
-#[doc(hidden)]
-pub use crate::pointer_occlusion::request_pointer_view_frame;
 pub use crate::layout_cache::LayoutCache;
 pub use crate::platform_brightness::{Brightness, platform_brightness, set_platform_brightness};
 pub use crate::pointer_claim::{
     claim_pointer, claimed_pointer_count, is_pointer_claimed, release_all_pointers, release_pointer,
 };
+pub use crate::pointer_occlusion::pointer_occluded_at;
+#[doc(hidden)]
+pub use crate::pointer_occlusion::request_pointer_view_frame;
 pub use crate::reconciliation_plan::{
     ReconciliationMatch, ReconciliationMatchKind, ReconciliationPlan, ReconciliationPlanError,
     plan_element_reconciliation,
@@ -238,7 +188,7 @@ pub use crate::widget::stateful::{
     State, StateReadGuard, StateUpdater, StatefulElement, StatefulWidget,
 };
 pub use crate::widget::stateless::{NamedWidget, StatelessElement, StatelessWidget};
-pub use crate::widget::{AnyWidgetExt, DynWidget, PortableWidget, Widget};
+pub use crate::widget::{AnyWidget, DynWidget, PortableWidget, Widget};
 pub use crate::window_metrics::{WindowMetrics, notify_window_metrics_changed};
 pub use aimer_canvas::{TextHorizontalAlign, TextOverflowMode};
 pub use aimer_macro::{PortableValue, PortableWidget, main, widget};
@@ -342,8 +292,14 @@ mod tests {
 
     #[test]
     fn a_child_stored_at_its_wrappers_address_is_still_matched() {
-        let old = FirstFieldWrapper { child: StateLeaf::unkeyed(1).boxed() }.boxed();
-        let new = FirstFieldWrapper { child: StateLeaf::unkeyed(0).boxed() }.boxed();
+        let old = FirstFieldWrapper {
+            child: StateLeaf::unkeyed(1).boxed(),
+        }
+        .boxed();
+        let new = FirstFieldWrapper {
+            child: StateLeaf::unkeyed(0).boxed(),
+        }
+        .boxed();
         let old_child = child_ids(old.as_ref());
 
         let plan = plan_element_reconciliation(old.as_ref(), new.as_ref());
@@ -354,7 +310,11 @@ mod tests {
         );
         plan.apply_identities();
 
-        assert_eq!(child_ids(new.as_ref()), old_child, "the child keeps its identity");
+        assert_eq!(
+            child_ids(new.as_ref()),
+            old_child,
+            "the child keeps its identity"
+        );
     }
 
     #[test]
@@ -370,7 +330,10 @@ mod tests {
             .commit(&context())
             .unwrap();
 
-        assert!(element_tree_generation() > generation, "other consumers still see the advance");
+        assert!(
+            element_tree_generation() > generation,
+            "other consumers still see the advance"
+        );
         assert_eq!(
             unscoped_element_tree_generation(),
             unscoped,

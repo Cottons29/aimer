@@ -313,6 +313,10 @@ struct StateUpdaterInner<S> {
     state: Rc<SyncState<S>>,
     dirty_source: Rc<DirtySource>,
     failure: Rc<FailureState>,
+    /// The window the element was built for, so a state update made later —
+    /// by a timer, by a finished request — asks that window for its frame no
+    /// matter which window is active when it happens.
+    window: aimer_events::window::WindowKey,
 }
 
 impl<S: 'static> StateUpdater<S> {
@@ -324,12 +328,14 @@ impl<S: 'static> StateUpdater<S> {
         state: Rc<SyncState<S>>,
         dirty_source: Rc<DirtySource>,
         failure: Rc<FailureState>,
+        window: aimer_events::window::WindowKey,
     ) -> (StateStorage, Self) {
         let (storage, slot) = StateStorage::insert(UpdaterSlot::Native(StateUpdaterInner {
                 tx,
                 state,
                 dirty_source,
                 failure,
+                window,
             }));
         (
             storage,
@@ -604,7 +610,7 @@ impl<S: 'static> StateUpdater<S> {
                     #[cfg(not(aimer_portable_guest))]
                     {
                         crate::components::element::note_state_update_marked();
-                        request_state_frame();
+                        request_state_frame(inner.window);
                     }
                 }
             }
@@ -639,7 +645,7 @@ impl<S: 'static> StateUpdater<S> {
                     #[cfg(not(aimer_portable_guest))]
                     {
                         crate::components::element::note_state_update_marked();
-                        request_state_frame();
+                        request_state_frame(inner.window);
                     }
                 }
                 Some(())
@@ -678,7 +684,7 @@ impl<S: 'static> StateUpdater<S> {
                         #[cfg(not(aimer_portable_guest))]
                         {
                             crate::components::element::note_state_update_marked();
-                            request_state_frame();
+                            request_state_frame(inner.window);
                         }
                     }
                 }
@@ -1101,6 +1107,7 @@ impl StatefulElement {
             state_cell.clone(),
             dirty_source.clone(),
             failure.clone(),
+            ctx.window.key(),
         );
 
         {
@@ -3596,10 +3603,12 @@ mod tests {
 /// something else) has no such guarantee about what the rest of the frame must
 /// do, and keeps the ordinary full frame it always had.
 #[inline]
-fn request_state_frame() {
-    if aimer_venus::is_polling_task() {
-        request_scoped_frame();
-    } else {
-        request_animation_frame();
-    }
+fn request_state_frame(window: aimer_events::window::WindowKey) {
+    aimer_events::window::with_window_scope(window, || {
+        if aimer_venus::is_polling_task() {
+            request_scoped_frame();
+        } else {
+            request_animation_frame();
+        }
+    });
 }

@@ -1,6 +1,7 @@
 use crate::base::BuildContext;
-use crate::{AnyElement, AnyWidget};
-use aimer_rubick::UiAllocator;
+use crate::AnyElement;
+use aimer_rubick::{Rubick, UiAllocator};
+use std::ops::Deref;
 
 pub mod child_builder;
 mod recovery;
@@ -94,11 +95,24 @@ pub trait Widget: PortableWidget {
     /// directly in the returned owner. Other values use one heap allocation.
     /// Despite the historical method name, allocation is therefore not
     /// guaranteed. Moving an inline owner also moves this widget.
+    /// 
+    /// Using [`Widget::notype`] instead because this is not meaningful
     fn boxed(self) -> AnyWidget
     where
         Self: Sized + 'static,
     {
-        AnyWidget::erase(self)
+        AnyWidget::new(self)
+    }
+
+
+    /// Erases this widget into an inline-or-heap [`AnyWidget`].
+    ///
+    /// Values fitting the configured `Rubick` size and alignment are embedded
+    /// directly in the returned owner. Other values use one heap allocation.
+    /// Despite the historical method name, allocation is therefore not
+    /// guaranteed. Moving an inline owner also moves this widget.
+    fn notype(self) -> AnyWidget where Self: Sized + 'static {
+        AnyWidget::new(self)
     }
 
     /// Erases this widget using the supplied application UI allocator.
@@ -110,7 +124,7 @@ pub trait Widget: PortableWidget {
     where
         Self: Sized + 'static,
     {
-        AnyWidget::erase_in(self, allocator)
+        AnyWidget::new_in(self, allocator)
     }
 
     /// Returns the text content if this is a text widget.
@@ -139,7 +153,7 @@ pub trait DynWidget: 'static {
     /// # Safety
     ///
     /// The pointee is left uninitialized and must never be read or dropped
-    /// again. The only caller is [`AnyWidgetExt::into_element`], which marks the
+    /// again. The only caller is [`AnyWidget::into_element`], which marks the
     /// storage vacant before this runs.
     #[cfg(not(aimer_portable_guest))]
     unsafe fn to_element_in_place(&mut self, ctx: &BuildContext) -> AnyElement;
@@ -213,37 +227,98 @@ unsafe impl<W: DynWidget> aimer_rubick::ErasedFrom<W> for dyn DynWidget {
     const TEMPLATE: *const Self = std::ptr::null::<W>() as *const dyn DynWidget;
 }
 
-/// Builds the element of an erased widget.
+/// An owned, type-erased [`Widget`] with inline storage and heap fallback.
 ///
-/// [`AnyWidget`] is a type alias for an [`aimer_rubick::Rubick`] owner, so the
-/// conversion arrives as an extension trait rather than an inherent method.
-pub trait AnyWidgetExt {
+/// Widgets are the throwaway side of the tree: they are rebuilt every frame
+/// and are small, so avoiding their allocation is worth spending owner bytes
+/// on. `AnyWidget` reserves eight words of inline capacity, which covers the
+/// common containers — a `Row` or `Column` is eight words — and leaves the
+/// owner itself at nine words. Larger or over-aligned widgets transparently
+/// take one pooled heap block.
+///
+/// `AnyWidget` is a thin wrapper around an [`aimer_rubick::Rubick`] owner, and
+/// is exactly its size. `Deref` and `AsRef` expose the stored widget as
+/// [`DynWidget`], the object-safe half of [`Widget`], and
+/// [`AnyWidget::is_inline`] and [`AnyWidget::is_heap`] report the selected
+/// mode. The conversion itself consumes the handle: [`AnyWidget::into_element`]
+/// moves the widget out of this storage, so the erased path copies no more than
+/// the direct one.
+///
+/// Moving an inline `AnyWidget` changes the address of its concrete widget. The
+/// owner does not provide implicit unsizing or a stable-address guarantee;
+/// construct it through [`Widget::boxed`] or [`AnyWidget::new`].
+///
+/// ```
+/// use aimer_widget::base::BuildContext;
+/// use aimer_widget::{AnyElement, PortableWidget, Widget};
+///
+/// struct Badge;
+///
+/// impl PortableWidget for Badge {}
+///
+/// impl Widget for Badge {
+///     fn to_element(self, _ctx: &BuildContext) -> AnyElement {
+///         unreachable!("this example only erases the widget")
+///     }
+/// }
+///
+/// let widget = Badge.boxed();
+/// assert!(widget.is_inline());
+/// ```
+#[repr(transparent)]
+pub struct AnyWidget(Rubick<dyn DynWidget, 8>);
+
+impl AnyWidget {
+    /// Payload bytes a widget may occupy and still be stored inside the handle.
+    ///
+    /// A wider or more strictly aligned widget takes one pooled heap block.
+    pub const INLINE_CAPACITY: usize = Rubick::<dyn DynWidget, 8>::INLINE_CAPACITY;
+
+    /// Erases `widget`, embedding it when it fits and pooling it otherwise.
+    ///
+    /// This is what [`Widget::boxed`] calls; it exists so a widget can be erased
+    /// without importing the trait.
+    #[inline]
+    pub fn new<W: Widget + 'static>(widget: W) -> Self {
+        Self(Rubick::erase(widget))
+    }
+
+    /// Erases `widget` using the supplied application UI allocator.
+    ///
+    /// The owner retains the allocator for as long as its heap payload exists,
+    /// even if it is dropped outside the allocator's active scope.
+    #[inline]
+    pub fn new_in<W: Widget + 'static>(widget: W, allocator: &UiAllocator) -> Self {
+        Self(Rubick::erase_in(widget, allocator))
+    }
+
+    /// Returns whether the widget is stored inside this handle, with no
+    /// separate allocation.
+    #[inline]
+    pub fn is_inline(&self) -> bool {
+        self.0.is_inline()
+    }
+
+    /// Returns whether the widget lives in a separate heap block.
+    #[inline]
+    pub fn is_heap(&self) -> bool {
+        self.0.is_heap()
+    }
+
     /// Consumes this handle and builds the widget's element.
     ///
     /// The widget is moved out of its storage, converted, and the storage is
     /// returned to the pool. Nothing is cloned, and the widget's destructor runs
     /// exactly once — inside [`Widget::to_element`], on whatever that method
     /// chooses not to keep — including when the conversion unwinds.
-    fn into_element(self, ctx: &BuildContext) -> AnyElement;
-
-    /// Consumes this erased handle and appends its portable Widget IR node.
-    #[cfg(feature = "portable-guest")]
-    fn into_portable_node(
-        self,
-        ctx: &mut crate::portable::PortableBuildContext,
-        source: crate::portable::SourceFingerprint,
-    ) -> Result<crate::portable::PortableNodeId, crate::portable::PortableBuildError>;
-}
-
-impl AnyWidgetExt for AnyWidget {
     #[inline]
-    fn into_element(self, ctx: &BuildContext) -> AnyElement {
+    pub fn into_element(self, ctx: &BuildContext) -> AnyElement {
         // SAFETY: `take` installs the vacant operation table before the closure
         // runs and releases the pooled block afterwards, on both the normal and
         // the unwinding path. The closure moves the widget out exactly once and
         // never drops it in place, which is the contract `take` requires.
         #[cfg(not(aimer_portable_guest))]
-        return unsafe { self.take(|widget| (*widget).to_element_in_place(ctx)) };
+        return unsafe { self.0.take(|widget| (*widget).to_element_in_place(ctx)) };
 
         #[cfg(aimer_portable_guest)]
         {
@@ -252,16 +327,33 @@ impl AnyWidgetExt for AnyWidget {
         }
     }
 
+    /// Consumes this erased handle and appends its portable Widget IR node.
     #[cfg(feature = "portable-guest")]
     #[inline]
-    fn into_portable_node(
+    pub fn into_portable_node(
         self,
         ctx: &mut crate::portable::PortableBuildContext,
         source: crate::portable::SourceFingerprint,
     ) -> Result<crate::portable::PortableNodeId, crate::portable::PortableBuildError> {
         // SAFETY: `take` vacates the erased storage before the concrete widget
         // is moved out, and releases it on both success and error paths.
-        unsafe { self.take(|widget| (*widget).to_portable_node_in_place(ctx, source)) }
+        unsafe { self.0.take(|widget| (*widget).to_portable_node_in_place(ctx, source)) }
+    }
+}
+
+impl Deref for AnyWidget {
+    type Target = dyn DynWidget;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &*self.0
+    }
+}
+
+impl AsRef<dyn DynWidget> for AnyWidget {
+    #[inline]
+    fn as_ref(&self) -> &(dyn DynWidget + 'static) {
+        &*self.0
     }
 }
 
@@ -330,6 +422,28 @@ mod tests {
     const WIDGET_CAPACITY: usize = AnyWidget::INLINE_CAPACITY;
 
     #[test]
+    fn the_wrapper_is_exactly_as_large_as_the_owner_it_wraps() {
+        assert_eq!(
+            size_of::<AnyWidget>(),
+            size_of::<Rubick<dyn DynWidget, 8>>(),
+            "wrapping the owner must not add a word to every child handle"
+        );
+        assert_eq!(size_of::<AnyWidget>(), 9 * size_of::<usize>());
+        assert_eq!(align_of::<AnyWidget>(), align_of::<Rubick<dyn DynWidget, 8>>());
+    }
+
+    #[test]
+    fn new_and_boxed_erase_identically_and_a_boxed_handle_is_not_wrapped_again() {
+        let direct = AnyWidget::new(StorageWidget([0; 1]));
+        let boxed = StorageWidget([0; 1]).boxed();
+        assert_eq!(direct.is_inline(), boxed.is_inline());
+        assert_eq!(direct.debug_name(), boxed.debug_name());
+
+        let rebox = direct.boxed();
+        assert!(rebox.is_inline(), "boxing a handle returns it unchanged");
+    }
+
+    #[test]
     fn every_widget_is_a_portable_capability() {
         fn requires_portable_widget<T: Widget + PortableWidget>() {}
 
@@ -389,7 +503,7 @@ mod tests {
             "a container sized widget must fit the erased owner"
         );
         assert!(
-            container.is_direct(),
+            container.0.is_direct(),
             "erasing must not store projection adapters"
         );
     }

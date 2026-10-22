@@ -34,7 +34,7 @@ use crate::components::drawable::{
 #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
 use crate::components::drawable::CompositorTransform;
 use crate::pointer_claim;
-use crate::{AnyElement, Drawable, Key};
+use crate::{Drawable, Key};
 
 mod event;
 mod live_children;
@@ -52,6 +52,8 @@ mod paint_invalidation_tests;
 mod keep_reachable_tests;
 #[cfg(test)]
 mod render_context_tests;
+#[cfg(test)]
+mod window_paint_state_tests;
 mod retained_window;
 
 pub use animation_only::{
@@ -75,6 +77,9 @@ pub use scoped_rebuild::{
 use scoped_rebuild::{note_scoped_rebuild, note_unscoped_tree_change};
 pub(crate) use scoped_rebuild::rename_scoped_rebuilds_since;
 use node::ElementNode;
+
+mod any_element;
+pub use any_element::AnyElement;
 pub use retained_window::{
     may_escape_ancestor_clips,
     VisibleWindow, may_skip_settled_offscreen, retained_element_settled, retained_visible_window,
@@ -328,6 +333,73 @@ pub fn begin_event_frame() {
         let next = epoch.get().unwrap_or(0).wrapping_add(1);
         epoch.set(Some(next));
     });
+}
+
+/// The paint state that waits between an event and the frame that answers it,
+/// for one window.
+///
+/// A window records what changed — a full repaint, a hover that has to be drawn
+/// — and its next frame acts on it. Those records live in thread-locals,
+/// because a frame and the events before it run on one thread; with several
+/// windows on that thread they would be one shared set, and the frame of one
+/// window would spend what was recorded for another. A window therefore keeps
+/// its own state here and swaps it onto the thread while it is the active one
+/// (see [`Self::swap_with_thread`]).
+///
+/// The state also remembers the size of the target the window last drew, which
+/// is how the first frame for a target is told from the ones after it.
+#[doc(hidden)]
+#[derive(Default)]
+pub struct WindowPaintState {
+    frame_damage: Option<DamageSet>,
+    damage_owners: HashSet<ElementId>,
+    pending_full: bool,
+    target: Option<(u32, u32)>,
+    event_invalidations: HashSet<ElementId>,
+    queue: crate::element_invalidation::PendingRecords,
+}
+
+impl WindowPaintState {
+    /// Exchanges this state with the one on the thread.
+    ///
+    /// Calling it twice puts both back where they were, so one call makes a
+    /// window's state the thread's and the second hands the thread's back.
+    pub fn swap_with_thread(&mut self) {
+        FRAME_PAINT_DAMAGE
+            .with(|damage| std::mem::swap(&mut *damage.borrow_mut(), &mut self.frame_damage));
+        FRAME_PAINT_DAMAGE_OWNERS
+            .with(|owners| std::mem::swap(&mut *owners.borrow_mut(), &mut self.damage_owners));
+        PENDING_PAINT_DAMAGE_FULL.with(|pending| self.pending_full = pending.replace(self.pending_full));
+        FRAME_PAINT_TARGET.with(|target| {
+            let theirs = target.replace(self.target);
+            self.target = theirs;
+        });
+        EVENT_PAINT_INVALIDATIONS.with(|invalidations| {
+            std::mem::swap(&mut *invalidations.borrow_mut(), &mut self.event_invalidations)
+        });
+        crate::element_invalidation::swap_pending(&mut self.queue);
+    }
+
+    /// Moves what this state recorded into the thread's, leaving this empty.
+    ///
+    /// Whatever was recorded while no window was active has no window to wait
+    /// for, so the window that becomes active next takes it: it is handed to
+    /// the thread right after that window's own state is installed. A record
+    /// that cannot say what it touched becomes a full repaint.
+    pub fn absorb_into_thread(&mut self) {
+        let mut full = std::mem::take(&mut self.pending_full);
+        EVENT_PAINT_INVALIDATIONS.with(|invalidations| {
+            invalidations
+                .borrow_mut()
+                .extend(self.event_invalidations.drain());
+        });
+        full |= crate::element_invalidation::absorb_pending(&mut self.queue);
+        self.frame_damage = None;
+        self.damage_owners.clear();
+        if full {
+            PENDING_PAINT_DAMAGE_FULL.with(|pending| pending.set(true));
+        }
+    }
 }
 
 /// Starts collecting damage for one device-sized frame target.
@@ -1130,7 +1202,7 @@ pub trait Element: VisitorElement + EventElement + LayoutElement + Rebuildable +
     where
         Self: Sized + 'static,
     {
-        AnyElement::erase(ElementNode {
+        AnyElement::from_node(ElementNode {
             id: Cell::new(ElementId::next()),
             element: self,
         })
@@ -1145,7 +1217,7 @@ pub trait Element: VisitorElement + EventElement + LayoutElement + Rebuildable +
     where
         Self: Sized + 'static,
     {
-        AnyElement::erase_in(
+        AnyElement::from_node_in(
             ElementNode {
                 id: Cell::new(ElementId::next()),
                 element: self,

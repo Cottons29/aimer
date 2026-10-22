@@ -180,6 +180,21 @@ pub(crate) fn subscribe_selected<T: Clone + PartialEq + 'static>(
 ///
 /// Widgets that have since left the tree are dropped here rather than rebuilt.
 pub fn notify_window_metrics_changed() -> usize {
+    notify_matching(|_| true)
+}
+
+/// Like [`notify_window_metrics_changed`], for a change to `window` alone.
+///
+/// Only the widgets that read `window` are asked; widgets built for any other
+/// window on the thread are left exactly as they were, because nothing about
+/// them changed. This is what the platform layer calls when it knows which
+/// window was resized or moved to another display.
+pub fn notify_window_metrics_changed_for(window: &WindowHandle) -> usize {
+    let key = window.key();
+    notify_matching(|subscriber| subscriber.window.key() == key)
+}
+
+fn notify_matching(mut matches: impl FnMut(&Subscriber) -> bool) -> usize {
     SUBSCRIBERS.with(|subscribers| {
         let mut subscribers = subscribers.borrow_mut();
         let mut notified = 0;
@@ -187,6 +202,9 @@ pub fn notify_window_metrics_changed() -> usize {
             let Some(consumer) = subscriber.consumer.upgrade() else {
                 return false;
             };
+            if !matches(subscriber) {
+                return true;
+            }
             let metrics = WindowMetrics::of(&subscriber.window);
             if (subscriber.should_notify)(&metrics) {
                 consumer.mark_needs_rebuild();

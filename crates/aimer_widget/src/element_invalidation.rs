@@ -206,6 +206,38 @@ fn union_damage(left: DamageRect, right: DamageRect) -> DamageRect {
     )
 }
 
+/// The records waiting for a frame, as one window keeps them while another
+/// window is the active one.
+pub(crate) type PendingRecords = HashMap<Option<ElementId>, ElementInvalidation>;
+
+/// Exchanges the thread's waiting records with `other`.
+pub(crate) fn swap_pending(other: &mut PendingRecords) {
+    PENDING.with(|pending| std::mem::swap(&mut *pending.borrow_mut(), other));
+}
+
+/// Moves `other`'s records onto the thread's, and reports whether any of them
+/// cannot be attributed to an element.
+///
+/// A record for an element the thread already has one for is dropped in favour
+/// of the thread's, which is reported as unattributed too: two records for one
+/// element are two accounts of what changed, and only a full repaint covers both.
+pub(crate) fn absorb_pending(other: &mut PendingRecords) -> bool {
+    PENDING.with(|pending| {
+        let mut pending = pending.borrow_mut();
+        let mut unattributed = false;
+        for (element, record) in other.drain() {
+            match (element, pending.entry(element)) {
+                (None, _) => unattributed = true,
+                (Some(_), Entry::Occupied(_)) => unattributed = true,
+                (Some(_), Entry::Vacant(slot)) => {
+                    slot.insert(record);
+                }
+            }
+        }
+        unattributed
+    })
+}
+
 pub(crate) fn take_pending() -> ElementInvalidationBatch {
     PENDING.with(|pending| {
         let mut pending = pending.borrow_mut();

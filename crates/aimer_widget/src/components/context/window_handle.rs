@@ -69,14 +69,16 @@ fn cursor_from_id(id: usize) -> winit::window::CursorIcon {
 
 #[derive(Clone, Debug)]
 pub enum WindowHandle {
-    Native(&'static Window),
+    /// A platform window, owned by whoever holds a handle to it: the window is
+    /// destroyed when the last handle is dropped.
+    Native(Arc<Window>),
     Headless(Arc<HeadlessWindowState>),
     #[cfg(feature = "portable-guest")]
     Portable(Arc<HeadlessWindowState>),
 }
 
 impl WindowHandle {
-    pub fn native(window: &'static Window) -> Self {
+    pub fn native(window: Arc<Window>) -> Self {
         Self::Native(window)
     }
 
@@ -144,6 +146,22 @@ impl WindowHandle {
             #[cfg(feature = "portable-guest")]
             Self::Portable(state) => f64::from_bits(state.scale_factor.load(Ordering::Relaxed)),
         }
+    }
+
+    /// The key this window answers to in the thread's frame scheduling.
+    ///
+    /// Stable for as long as the window lives, and distinct from every other
+    /// window alive at the same time: it is the address of the platform window
+    /// or of the state the handle's clones share.
+    #[inline]
+    pub fn key(&self) -> aimer_events::window::WindowKey {
+        let address = match self {
+            Self::Native(window) => Arc::as_ptr(window) as usize,
+            Self::Headless(state) => Arc::as_ptr(state) as usize,
+            #[cfg(feature = "portable-guest")]
+            Self::Portable(state) => Arc::as_ptr(state) as usize,
+        };
+        aimer_events::window::WindowKey::from_address(address)
     }
 
     pub fn request_redraw(&self) {
@@ -226,10 +244,10 @@ impl WindowHandle {
         self.set_cursor(winit::window::CursorIcon::Default);
     }
 
-    pub fn native_window(&self) -> Option<&'static Window> {
+    pub fn native_window(&self) -> Option<&Arc<Window>> {
         match self {
             #[cfg(not(aimer_portable_guest))]
-            Self::Native(window) => Some(*window),
+            Self::Native(window) => Some(window),
             #[cfg(aimer_portable_guest)]
             Self::Native(_) => None,
             Self::Headless(_) => None,

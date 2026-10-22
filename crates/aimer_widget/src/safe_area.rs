@@ -23,7 +23,9 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 
-use crate::components::context::BuildConsumer;
+use aimer_events::window::WindowKey;
+
+use crate::components::context::{BuildConsumer, WindowHandle};
 
 /// The window edges the system reserves, in logical pixels.
 ///
@@ -187,15 +189,24 @@ fn identity() -> usize {
 }
 
 thread_local! {
-    /// The insets the platform last reported.
+    /// The insets the platform last reported for the application as a whole.
     ///
     /// Held per thread because it is only ever written by the platform layer on
     /// the thread that owns the event loop, and only ever read by the widget
-    /// tree on that same thread.
+    /// tree on that same thread. A window the platform has reported insets for
+    /// on its own (see [`set_safe_area_insets_for`]) uses those instead; this
+    /// is what every other window falls back to.
     static CURRENT: Cell<SafeAreaInsets> = const { Cell::new(SafeAreaInsets::ZERO) };
 
-    /// Every widget whose current build read the insets.
-    static SUBSCRIBERS: RefCell<HashMap<u64, Weak<BuildConsumer>>> = RefCell::new(HashMap::new());
+    /// The insets reported for one window alone: two windows of an application
+    /// need not be reserved the same region, as on a tablet where one scene
+    /// sits under the status bar and another does not.
+    static PER_WINDOW: RefCell<HashMap<WindowKey, SafeAreaInsets>> = RefCell::new(HashMap::new());
+
+    /// Every widget whose current build read the insets, with the window it
+    /// was built for (`None` for a reader that follows every window).
+    static SUBSCRIBERS: RefCell<HashMap<u64, (Option<WindowKey>, Weak<BuildConsumer>)>> =
+        RefCell::new(HashMap::new());
     static NEXT_SUBSCRIBER: Cell<u64> = const { Cell::new(0) };
 }
 
@@ -214,9 +225,70 @@ thread_local! {
 /// // A platform that reports nothing leaves the whole window usable.
 /// let _insets: SafeAreaInsets = safe_area_insets();
 /// ```
+///
+/// With several windows on the thread this answers for the active one (see
+/// [`aimer_events::window::active_window`]); a widget that knows its window
+/// should ask [`safe_area_insets_for`] instead.
 #[inline]
 pub fn safe_area_insets() -> SafeAreaInsets {
-    CURRENT.with(Cell::get)
+    match aimer_events::window::active_window() {
+        Some(window) => insets_of(window),
+        None => CURRENT.with(Cell::get),
+    }
+}
+
+/// Reads the insets the platform last reported for `window`, or the
+/// application's when it reported none for that window alone.
+///
+/// # Examples
+///
+/// ```
+/// use aimer_widget::base::WindowHandle;
+/// use aimer_widget::safe_area::{SafeAreaInsets, safe_area_insets_for, set_safe_area_insets_for};
+///
+/// let window = WindowHandle::headless(winit::dpi::PhysicalSize::new(800, 600), 1.0);
+/// let other = WindowHandle::headless(winit::dpi::PhysicalSize::new(800, 600), 1.0);
+///
+/// set_safe_area_insets_for(&window, SafeAreaInsets::new(0.0, 24.0, 0.0, 0.0));
+///
+/// assert_eq!(safe_area_insets_for(&window).top, 24.0);
+/// assert_eq!(safe_area_insets_for(&other).top, 0.0);
+/// # aimer_widget::safe_area::forget_safe_area_of(&window);
+/// ```
+#[inline]
+pub fn safe_area_insets_for(window: &WindowHandle) -> SafeAreaInsets {
+    insets_of(window.key())
+}
+
+fn insets_of(window: WindowKey) -> SafeAreaInsets {
+    PER_WINDOW
+        .with(|per_window| per_window.borrow().get(&window).copied())
+        .unwrap_or_else(|| CURRENT.with(Cell::get))
+}
+
+/// Reports the region the system reserves in one window and rebuilds the
+/// widgets of that window that follow it.
+///
+/// The counterpart of [`set_safe_area_insets`] for a platform that knows which
+/// window an announcement is about. Widgets built for any other window are not
+/// asked to rebuild: nothing changed for them. Returns how many widgets were
+/// marked.
+pub fn set_safe_area_insets_for(window: &WindowHandle, insets: SafeAreaInsets) -> usize {
+    let key = window.key();
+    if insets_of(key) == insets {
+        return 0;
+    }
+    PER_WINDOW.with(|per_window| per_window.borrow_mut().insert(key, insets));
+    notify(|subscribed| subscribed.is_none_or(|subscribed| subscribed == key))
+}
+
+/// Forgets what was reported for `window`, once it is gone.
+///
+/// A window that closes leaves nothing behind; one that stays gets the
+/// application's insets again.
+pub fn forget_safe_area_of(window: &WindowHandle) {
+    let key = window.key();
+    PER_WINDOW.with(|per_window| per_window.borrow_mut().remove(&key));
 }
 
 /// Reports the region the system reserves and rebuilds the widgets that follow
@@ -247,15 +319,23 @@ pub fn set_safe_area_insets(insets: SafeAreaInsets) -> usize {
         return 0;
     }
     CURRENT.with(|current| current.set(insets));
+    notify(|_| true)
+}
+
+/// Marks every live follower whose window `wanted` accepts, and drops the
+/// followers that have left the tree.
+fn notify(wanted: impl Fn(Option<WindowKey>) -> bool) -> usize {
     SUBSCRIBERS.with(|subscribers| {
         let mut subscribers = subscribers.borrow_mut();
         let mut notified = 0;
-        subscribers.retain(|_, consumer| {
+        subscribers.retain(|_, (window, consumer)| {
             let Some(consumer) = consumer.upgrade() else {
                 return false;
             };
-            consumer.mark_needs_rebuild();
-            notified += 1;
+            if wanted(*window) {
+                consumer.mark_needs_rebuild();
+                notified += 1;
+            }
             true
         });
         notified
@@ -267,6 +347,16 @@ pub fn set_safe_area_insets(insets: SafeAreaInsets) -> usize {
 ///
 /// Repeated reads within one build cost a hash lookup and nothing more.
 pub(crate) fn subscribe(consumer: &Rc<BuildConsumer>) {
+    subscribe_in(consumer, None);
+}
+
+/// Registers the widget currently building as a follower of the safe area of
+/// `window` alone.
+pub(crate) fn subscribe_for(consumer: &Rc<BuildConsumer>, window: &WindowHandle) {
+    subscribe_in(consumer, Some(window.key()));
+}
+
+fn subscribe_in(consumer: &Rc<BuildConsumer>, window: Option<WindowKey>) {
     if !consumer.register_dependency(identity()) {
         return;
     }
@@ -276,7 +366,9 @@ pub(crate) fn subscribe(consumer: &Rc<BuildConsumer>) {
         id
     });
     SUBSCRIBERS.with(|subscribers| {
-        subscribers.borrow_mut().insert(id, Rc::downgrade(consumer));
+        subscribers
+            .borrow_mut()
+            .insert(id, (window, Rc::downgrade(consumer)));
     });
     consumer.add_cleanup(move || {
         SUBSCRIBERS.with(|subscribers| {
@@ -299,6 +391,7 @@ mod tests {
     /// The store is per thread and shared by every test on it.
     fn reset() {
         CURRENT.with(|current| current.set(SafeAreaInsets::ZERO));
+        PER_WINDOW.with(|per_window| per_window.borrow_mut().clear());
     }
 
     #[test]
@@ -383,6 +476,93 @@ mod tests {
 
         let after = SUBSCRIBERS.with(|subscribers| subscribers.borrow().len());
         assert_eq!(after - before, 1);
+    }
+
+    fn window() -> WindowHandle {
+        WindowHandle::headless(winit::dpi::PhysicalSize::new(800, 600), 1.0)
+    }
+
+    #[test]
+    fn a_window_reported_on_its_own_keeps_the_others_as_they_were() {
+        reset();
+        let (first, second) = (window(), window());
+
+        set_safe_area_insets_for(&first, SafeAreaInsets::new(0.0, 24.0, 0.0, 0.0));
+
+        assert_eq!(safe_area_insets_for(&first).top, 24.0);
+        assert_eq!(safe_area_insets_for(&second), SafeAreaInsets::ZERO);
+        reset();
+    }
+
+    #[test]
+    fn a_window_without_insets_of_its_own_follows_the_application() {
+        reset();
+        let window = window();
+
+        set_safe_area_insets(SafeAreaInsets::all(6.0));
+
+        assert_eq!(safe_area_insets_for(&window), SafeAreaInsets::all(6.0));
+        reset();
+    }
+
+    #[test]
+    fn only_the_followers_of_the_reported_window_are_rebuilt() {
+        reset();
+        let (first, second) = (window(), window());
+        let (follower_a, dirty_a) = consumer();
+        let (follower_b, dirty_b) = consumer();
+        subscribe_for(&follower_a, &first);
+        subscribe_for(&follower_b, &second);
+
+        let notified = set_safe_area_insets_for(&first, SafeAreaInsets::all(10.0));
+
+        assert_eq!(notified, 1);
+        assert!(dirty_a.get(), "the follower of the reported window was missed");
+        assert!(!dirty_b.get(), "another window's follower was rebuilt");
+        reset();
+    }
+
+    #[test]
+    fn reporting_a_windows_insets_again_rebuilds_nothing() {
+        reset();
+        let window = window();
+        let (follower, dirty) = consumer();
+        subscribe_for(&follower, &window);
+        set_safe_area_insets_for(&window, SafeAreaInsets::all(10.0));
+        dirty.set(false);
+
+        let notified = set_safe_area_insets_for(&window, SafeAreaInsets::all(10.0));
+
+        assert_eq!(notified, 0);
+        assert!(!dirty.get());
+        reset();
+    }
+
+    #[test]
+    fn a_forgotten_window_returns_to_the_applications_insets() {
+        reset();
+        let window = window();
+        set_safe_area_insets_for(&window, SafeAreaInsets::all(10.0));
+
+        forget_safe_area_of(&window);
+
+        assert_eq!(safe_area_insets_for(&window), SafeAreaInsets::ZERO);
+        reset();
+    }
+
+    #[test]
+    fn the_active_window_decides_what_the_unqualified_read_answers() {
+        reset();
+        let window = window();
+        set_safe_area_insets_for(&window, SafeAreaInsets::all(10.0));
+        let registration = aimer_events::window::register_window_scope(window.key(), || {}, || {});
+
+        let inside = aimer_events::window::with_window_scope(window.key(), safe_area_insets);
+
+        assert_eq!(inside, SafeAreaInsets::all(10.0));
+        assert_eq!(safe_area_insets(), SafeAreaInsets::ZERO);
+        drop(registration);
+        reset();
     }
 
     #[test]

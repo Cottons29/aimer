@@ -65,7 +65,7 @@ fn browser_required_limits(adapter_limits: Limits) -> Limits {
 }
 
 async fn create_gpu<'w>(
-    window: &'w Window,
+    window: impl Into<wgpu::SurfaceTarget<'w>>,
     size: PhysicalSize<u32>,
     backends: wgpu::Backends,
 ) -> Result<(Device, Queue, Surface<'w>, wgpu::Adapter), String> {
@@ -202,19 +202,29 @@ impl GpuDevice {
 impl<'w> GpuContext<'w> {
     /// Synchronous initializer for non-wasm targets.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn initialize(window: &'w Window, size: PhysicalSize<u32>) -> Self {
+    ///
+    /// `window` is anything wgpu can make a surface of: a borrowed window, or an
+    /// owning one such as `Arc<Window>`, which keeps the window alive for as
+    /// long as the context uses its surface and frees it with the last owner.
+    pub fn initialize<W>(window: W, size: PhysicalSize<u32>) -> Self
+    where
+        W: Into<wgpu::SurfaceTarget<'w>> + Clone,
+    {
         Self::initialize_async(window, size).block()
     }
 
     /// Async initializer usable on all targets (required on wasm where blocking
     /// is not allowed).
-    pub async fn initialize_async(window: &'w Window, size: PhysicalSize<u32>) -> Self {
+    pub async fn initialize_async<W>(window: W, size: PhysicalSize<u32>) -> Self
+    where
+        W: Into<wgpu::SurfaceTarget<'w>> + Clone,
+    {
         #[cfg(target_arch = "wasm32")]
         let (device, queue, surface, adapter) = {
             let mut failures = Vec::new();
             let mut initialized = None;
             for backend in wasm_gpu_backends() {
-                match create_gpu(window, size, backend).await {
+                match create_gpu(window.clone(), size, backend).await {
                     Ok(gpu) => {
                         initialized = Some(gpu);
                         break;

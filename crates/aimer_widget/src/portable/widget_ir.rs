@@ -2377,7 +2377,7 @@ mod tests {
         FieldKind, PortableApply, PortableDecode, PortableEncode, PortableLimits, StableId128,
         TypeSchema,
     };
-    use crate::{AnyElement, AnyWidgetExt, Key, PortableWidget, Widget};
+    use crate::{AnyElement, Key, PortableWidget, Widget};
 
     const STATE_FIELDS: &[FieldDescriptor] = &[
         FieldDescriptor::new("value", "u32", FieldKind::Retained),

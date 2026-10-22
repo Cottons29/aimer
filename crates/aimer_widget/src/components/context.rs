@@ -673,9 +673,9 @@ impl<'a> BuildContext<'a> {
     /// ```
     pub fn watch_safe_area_insets(&self) -> crate::SafeAreaInsets {
         if let Some(consumer) = self.current_build_consumer() {
-            crate::safe_area::subscribe(&consumer);
+            crate::safe_area::subscribe_for(&consumer, &self.window);
         }
-        crate::safe_area_insets()
+        crate::safe_area::safe_area_insets_for(&self.window)
     }
 
     /// Answers one question about the window and rebuilds the widget currently
