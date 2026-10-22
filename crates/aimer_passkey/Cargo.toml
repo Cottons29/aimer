@@ -1,0 +1,82 @@
+[package]
+name = "aimer_passkey"
+version = "0.1.0"
+edition = "2024"
+resolver = "3"
+description = "Aimer's passkeys: WebAuthn ceremonies through the operating system's own provider (AuthenticationServices, Credential Manager, Windows Hello)"
+
+[dependencies]
+
+[dev-dependencies]
+serde_json.workspace = true
+
+# Apple and Android resolve a ceremony from a system callback; Windows runs a
+# blocking call on the offload pool. Both come back through Venus.
+[target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "windows", target_os = "android"))'.dependencies]
+aimer_venus.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { workspace = true, features = [
+    "Win32_Networking_WindowsWebServices",
+    "Win32_System_Threading",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+objc2.workspace = true
+objc2-foundation = { workspace = true, features = [
+    "NSArray",
+    "NSData",
+    "NSError",
+    "NSObject",
+    "NSProcessInfo",
+    "NSSet",
+    "NSString",
+    "NSThread",
+] }
+objc2-authentication-services = { workspace = true, features = [
+    "std",
+    "ASAuthorization",
+    "ASAuthorizationController",
+    "ASAuthorizationCredential",
+    "ASAuthorizationError",
+    "ASAuthorizationPlatformPublicKeyCredentialAssertion",
+    "ASAuthorizationPlatformPublicKeyCredentialAssertionRequest",
+    "ASAuthorizationPlatformPublicKeyCredentialDescriptor",
+    "ASAuthorizationPlatformPublicKeyCredentialProvider",
+    "ASAuthorizationPlatformPublicKeyCredentialRegistration",
+    "ASAuthorizationPlatformPublicKeyCredentialRegistrationRequest",
+    "ASAuthorizationProvider",
+    "ASAuthorizationPublicKeyCredentialAssertion",
+    "ASAuthorizationPublicKeyCredentialAssertionRequest",
+    "ASAuthorizationPublicKeyCredentialConstants",
+    "ASAuthorizationPublicKeyCredentialDescriptor",
+    "ASAuthorizationPublicKeyCredentialRegistration",
+    "ASAuthorizationPublicKeyCredentialRegistrationRequest",
+    "ASAuthorizationRequest",
+    "ASFoundation",
+    "ASPublicKeyCredential",
+] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { workspace = true, features = ["NSApplication", "NSResponder", "NSWindow"] }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2-ui-kit = { workspace = true, features = [
+    "UIApplication",
+    "UIResponder",
+    "UIScene",
+    "UIView",
+    "UIWindow",
+    "UIWindowScene",
+] }
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+objc2-app-kit = { workspace = true, features = ["NSApplication", "NSResponder", "NSWindow", "NSGraphics", "NSRunningApplication"] }
+objc2-foundation = { workspace = true, features = ["NSDate", "NSRunLoop", "NSGeometry"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni.workspace = true
+ndk-context.workspace = true
+serde_json.workspace = true
