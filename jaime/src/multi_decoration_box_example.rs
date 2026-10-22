@@ -87,12 +87,12 @@ impl State<MultiDecorationBoxExample> for MultiDecorationBoxExampleState {
                 .text_style(TextStyle::new().font_size(15).color(theme::app_theme().on_background_color))
                 .wrapped().boxed(),
             Row::new().gaps(LayoutSpacing::all(Spacing::Px(24))).children([
-                Checkbox::new().with_label("Include light edge")
-                    .with_value(if self.include_edge { CheckboxValue::Checked } else { CheckboxValue::Unchecked })
+                Checkbox::new().label("Include light edge")
+                    .value(if self.include_edge { CheckboxValue::Checked } else { CheckboxValue::Unchecked })
                     .on_change(move |value| updater.set_state(move |state| state.include_edge = value == CheckboxValue::Checked))
                     .boxed(),
-                Checkbox::new().with_label("Reverse layer order")
-                    .with_value(if self.reverse { CheckboxValue::Checked } else { CheckboxValue::Unchecked })
+                Checkbox::new().label("Reverse layer order")
+                    .value(if self.reverse { CheckboxValue::Checked } else { CheckboxValue::Unchecked })
                     .on_change(move |value| updater.set_state(move |state| state.reverse = value == CheckboxValue::Checked))
                     .boxed(),
             ]).boxed(),

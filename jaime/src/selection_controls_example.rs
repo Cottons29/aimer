@@ -240,8 +240,8 @@ impl State<CheckboxSection> for CheckboxSectionState {
         let checkbox_updater = self.updater;
         let checkbox_theme = app_theme;
         let checkbox = Checkbox::new()
-            .with_value(self.value)
-            .with_label("Accept terms")
+            .value(self.value)
+            .label("Accept terms")
             .on_change(move |value| {
                 checkbox_updater.set_state(move |state| state.value = value);
             })
@@ -307,8 +307,8 @@ impl State<CheckboxSection> for CheckboxSectionState {
                     .boxed()
             });
         let disabled_checkbox = Checkbox::new()
-            .with_value(CheckboxValue::Checked)
-            .with_label("Locked by policy (disabled)")
+            .value(CheckboxValue::Checked)
+            .label("Locked by policy (disabled)")
             .disabled(true);
 
         SelectionControlsExample::section(
@@ -377,8 +377,8 @@ impl State<SwitchSection> for SwitchSectionState {
         let app_theme = ThemeData::copied(ctx);
         let updater = self.updater;
         let switch = Switch::new()
-            .with_value(self.value)
-            .with_label("Email notifications")
+            .value(self.value)
+            .label("Email notifications")
             .on_change(move |value| {
                 updater.set_state(move |state| state.value = value);
             });
@@ -446,15 +446,14 @@ impl State<RadioSection> for RadioSectionState {
         let app_theme = ThemeData::copied(ctx);
         let updater = self.updater;
         let radios = RadioGroup::new()
-            .try_options([
+            .options([
                 ChoiceOption::new("basic", "Basic", "basic"),
                 ChoiceOption::new("pro", "Pro", "pro"),
                 ChoiceOption::new("enterprise", "Enterprise (disabled)", "enterprise")
-                    .with_disabled(true),
+                    .disabled(true),
             ])
-            .expect("the example uses unique radio keys")
-            .with_label("Plan")
-            .with_selected(Some(self.selected))
+            .label("Plan")
+            .selected(Some(self.selected))
             .on_change(move |value| {
                 updater.set_state(move |state| state.selected = value);
             });
@@ -522,14 +521,13 @@ impl State<SelectSection> for SelectSectionState {
         let app_theme = ThemeData::copied(ctx);
         let updater = self.updater;
         let select = Select::new()
-            .try_options([
+            .options([
                 ChoiceOption::new("small", "Small", "small"),
                 ChoiceOption::new("medium", "Medium", "medium"),
                 ChoiceOption::new("large", "Large", "large"),
             ])
-            .expect("the example uses unique select keys")
-            .with_label("Size")
-            .with_selected(self.selected)
+            .label("Size")
+            .selected(self.selected)
             .on_change(move |value| {
                 updater.set_state(move |state| state.selected = Some(value));
             });
@@ -604,19 +602,21 @@ impl State<AutocompleteSection> for AutocompleteSectionState {
         let app_theme = ThemeData::copied(ctx);
         let updater = self.updater;
         let autocomplete = Autocomplete::new()
-            .try_options([
+            .options([
                 ChoiceOption::new("apple", "Apple", "apple"),
                 ChoiceOption::new("apricot", "Apricot", "apricot"),
                 ChoiceOption::new("banana", "Banana", "banana"),
                 ChoiceOption::new("blueberry", "Blueberry", "blueberry"),
                 ChoiceOption::new("cherry", "Cherry", "cherry"),
             ])
-            .expect("the example uses unique autocomplete keys")
-            .with_label("Fruit")
-            .with_query(self.query.clone())
-            .with_selected(self.selected)
+            .label("Fruit")
+            .query(self.query.clone())
+            .selected(self.selected)
             .on_change(move |value| {
                 updater.set_state(move |state| state.selected = Some(value));
+            })
+            .on_query_change(move |query| {
+                updater.set_state(move |state| state.query = query);
             });
         let filters = Row::new()
             .gaps(LayoutSpacing::all(Spacing::Px(8)))

@@ -269,6 +269,11 @@ impl EventElement for RawTextField {
                     if *action == KeyAction::Released {
                         return false;
                     }
+                    if let Some(filter) = &self.key_filter
+                        && filter(key, modifiers)
+                    {
+                        return true;
+                    }
                     self.dismiss_menu();
 
                     let is_shortcut = modifiers.ctrl || modifiers.meta;

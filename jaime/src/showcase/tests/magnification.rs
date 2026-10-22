@@ -395,6 +395,14 @@ fn magnification_sliders_update_the_lens_and_retain_static_text_elements() {
 
 #[test]
 fn magnification_style_controls_combine_effects_axes_and_anchors() {
+    // A select's options live in a popup presented by the modal host, which the
+    // paint capture below does not see. The popup is anchored under its trigger
+    // and its rows are one standard row tall, so an option is clicked where the
+    // popup puts it.
+    const POPUP_GAP: f32 = 4.0;
+    let row_height = aimer::style::ThemeTokens::light()
+        .density
+        .target_size(32.0);
     for scale in [1.0, 2.0] {
         let paints: Paints = Rc::default();
         let mut app = AimerApp::start_headless_with(
@@ -410,23 +418,37 @@ fn magnification_style_controls_combine_effects_axes_and_anchors() {
         app.pump_frames(3);
         let before = text_ids(&paints.borrow());
         let mut expected = Style::DEFAULT;
-        for (label, remove, add) in [
-            ("Uniform zoom", Style::UNIFORM, Style::NONE),
-            ("Bulge", Style::NONE, Style::BULGE),
-            ("Edge refraction", Style::REFRACTION, Style::NONE),
-            ("Both axes", Style::NONE, Style::NONE),
-            ("Horizontal", Style::NONE, Style::HORIZONTAL),
-            ("Center X", Style::NONE, Style::NONE),
-            ("Left", Style::NONE, Style::LEFT),
-            ("Center Y", Style::NONE, Style::NONE),
-            ("Top", Style::NONE, Style::TOP),
+        let mut last_trigger: Option<Rect> = None;
+        // (control, bits to clear, bits to set, popup row when it is an option)
+        for (label, remove, add, popup_row) in [
+            ("Uniform zoom", Style::UNIFORM, Style::NONE, None),
+            ("Bulge", Style::NONE, Style::BULGE, None),
+            ("Edge refraction", Style::REFRACTION, Style::NONE, None),
+            ("Both axes", Style::NONE, Style::NONE, None),
+            ("Horizontal", Style::NONE, Style::HORIZONTAL, Some(1)),
+            ("Center X", Style::NONE, Style::NONE, None),
+            ("Left", Style::NONE, Style::LEFT, Some(1)),
+            ("Center Y", Style::NONE, Style::NONE, None),
+            ("Top", Style::NONE, Style::TOP, Some(1)),
         ] {
-            let bounds = paints
-                .borrow()
-                .targets
-                .iter()
-                .find_map(|(text, bounds)| (text == label).then_some(*bounds))
-                .unwrap_or_else(|| panic!("visible control: {label}"));
+            let bounds = match popup_row {
+                Some(row) => {
+                    let trigger = last_trigger.expect("an option follows its trigger");
+                    Rect::new(
+                        trigger.x,
+                        trigger.y + trigger.height + POPUP_GAP + row as f32 * row_height,
+                        trigger.width,
+                        row_height,
+                    )
+                }
+                None => paints
+                    .borrow()
+                    .targets
+                    .iter()
+                    .find_map(|(text, bounds)| (text == label).then_some(*bounds))
+                    .unwrap_or_else(|| panic!("visible control: {label}")),
+            };
+            last_trigger = Some(bounds);
             app.send_window_event(WindowEvent::CursorMoved {
                 device_id: DeviceId::dummy(),
                 position: PhysicalPosition::new(

@@ -1,17 +1,37 @@
-use super::checkbox::CheckboxValue;
-use super::events::{ChangeCallback, ControlAction, InputEvent, emit_change, is_activation_key};
-use super::semantics::{SelectionSemantics, SemanticRole};
-use super::state::InteractionState;
+use std::rc::Rc;
 
-/// A controlled binary switch.
+use aimer_widget::base::BuildContext;
+use aimer_widget::{
+    AnyElement, PortableWidget, State, StateUpdater, StatefulElement, StatefulWidget, Widget,
+};
+
+use crate::binary::{Binary, ChangeCallback, VisualBuilder};
+use crate::common::{Common, common_setters};
+use crate::indicator::Mark;
+use crate::semantics::{SelectionSemantics, SemanticRole};
+use crate::visual::ToggleVisualState;
+
+/// A controlled on/off switch.
 ///
-/// `Switch` is the canonical API name; the crate intentionally does not
-/// define a duplicate `Toggle` model.
+/// A switch never changes its own value: a tap or an activation key calls
+/// [`on_change`](Self::on_change) with the opposite value, and the owner
+/// rebuilds the switch with [`value`](Self::value).
+///
+/// # Examples
+///
+/// ```
+/// use aimer_selection::Switch;
+///
+/// let switch = Switch::new()
+///     .value(false)
+///     .label("Notifications")
+///     .on_change(|on| assert!(on));
+/// ```
 pub struct Switch {
-    pub(crate) value: bool,
-    pub(crate) label: Option<String>,
-    pub(crate) state: InteractionState,
-    pub(crate) on_change: Option<ChangeCallback<bool>>,
+    value: bool,
+    common: Common,
+    on_change: Option<ChangeCallback<bool>>,
+    builder: Option<VisualBuilder<bool>>,
 }
 
 impl Default for Switch {
@@ -22,134 +42,107 @@ impl Default for Switch {
 }
 
 impl Switch {
-    /// Creates an off switch with no callback or accessible label.
+    /// Creates an off switch with no callback or label.
     #[inline]
     pub fn new() -> Self {
         Self {
             value: false,
-            label: None,
-            state: InteractionState::new(),
+            common: Common::default(),
             on_change: None,
+            builder: None,
         }
     }
 
-    /// Returns a switch configured with the caller-owned value.
+    /// Sets the caller-owned value.
     #[inline]
-    pub fn with_value(mut self, value: bool) -> Self {
+    pub fn value(mut self, value: bool) -> Self {
         self.value = value;
         self
     }
 
-    /// Returns the current controlled value.
-    #[inline]
-    pub fn value(&self) -> bool {
-        self.value
-    }
-
-    /// Returns a switch with an accessible label.
-    #[inline]
-    pub fn with_label(mut self, label: impl Into<String>) -> Self {
-        self.label = Some(label.into());
-        self
-    }
-
-    /// Registers the callback that receives proposed controlled values.
+    /// Registers the callback that receives proposed values.
     #[inline]
     pub fn on_change<F>(mut self, callback: F) -> Self
     where
         F: Fn(bool) + 'static,
     {
-        self.on_change = Some(std::rc::Rc::new(callback));
+        self.on_change = Some(Rc::new(callback));
         self
     }
 
-    /// Returns a switch with the supplied interaction state.
+    common_setters!();
+
+    /// Replaces the default track and label with a composition of your own.
+    ///
+    /// The closure runs on every rebuild and receives the value, label, and
+    /// interaction flags. Pointer, keyboard, focus, disabled, and callback
+    /// behavior stay with the switch.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use aimer_selection::Switch;
+    /// use aimer_text::Text;
+    ///
+    /// let switch = Switch::new().builder(|state| Text::new(if state.is_on() { "On" } else { "Off" }));
+    /// ```
     #[inline]
-    pub fn with_state(mut self, state: InteractionState) -> Self {
-        self.state = state;
+    pub fn builder<F, W>(mut self, builder: F) -> Self
+    where
+        F: for<'a> Fn(ToggleVisualState<'a>) -> W + 'static,
+        W: Widget + 'static,
+    {
+        self.builder = Some(Rc::new(move |state| builder(state).boxed()));
         self
     }
 
-    /// Returns a switch with the disabled flag set.
-    #[inline]
-    pub fn disabled(mut self, disabled: bool) -> Self {
-        self.state.set_disabled(disabled);
-        self
-    }
-
-    /// Returns a switch with the focus flag set.
-    #[inline]
-    pub fn focused(mut self, focused: bool) -> Self {
-        self.state.set_focused(focused);
-        self
-    }
-
-    /// Returns a switch with the hover flag set.
-    #[inline]
-    pub fn hovered(mut self, hovered: bool) -> Self {
-        self.state.set_hovered(hovered);
-        self
-    }
-
-    /// Returns a switch with a validation error.
-    #[inline]
-    pub fn error(mut self, error: impl Into<String>) -> Self {
-        self.state.set_error(Some(error.into()));
-        self
-    }
-
-    /// Returns the live interaction state.
-    #[inline]
-    pub fn interaction_state(&self) -> &InteractionState {
-        &self.state
-    }
-
-    /// Proposes the opposite value without changing the current value.
-    pub fn activate(&self) -> ControlAction<bool> {
-        if self.state.disabled() {
-            return ControlAction::Ignored;
-        }
-        emit_change(&self.on_change, !self.value)
-    }
-
-    /// Applies a platform-neutral input event.
-    pub fn handle_event(&mut self, event: InputEvent) -> ControlAction<bool> {
-        if self.state.disabled() {
-            self.state.set_pressed(false);
-            return ControlAction::Ignored;
-        }
-
-        match event {
-            InputEvent::PointerDown => {
-                self.state.set_pressed(true);
-                ControlAction::Pressed
-            }
-            InputEvent::PointerUp { inside } => {
-                let was_pressed = self.state.pressed();
-                self.state.set_pressed(false);
-                if was_pressed && inside {
-                    self.activate()
-                } else {
-                    ControlAction::Released
-                }
-            }
-            InputEvent::KeyDown(key) if is_activation_key(key) => self.activate(),
-            InputEvent::Cancel => {
-                self.state.set_pressed(false);
-                ControlAction::Cancelled
-            }
-            InputEvent::KeyDown(_) | InputEvent::KeyUp(_) => ControlAction::Ignored,
-        }
-    }
-
-    /// Builds a platform-neutral semantic snapshot.
+    /// Returns a snapshot of the switch for assistive technology.
     pub fn semantics(&self) -> SelectionSemantics {
-        let checked = if self.value {
-            CheckboxValue::Checked
-        } else {
-            CheckboxValue::Unchecked
-        };
-        SelectionSemantics::from_state(SemanticRole::Switch, &self.label, &self.state)
-            .with_checked(checked)
+        SelectionSemantics::new(SemanticRole::Switch, &self.common).checked(self.value.into())
     }
 }
+
+type SwitchState = Binary<bool, bool>;
+
+impl StatefulWidget for Switch {
+    type State = SwitchState;
+
+    fn create_state(self) -> Self::State {
+        Binary::new(
+            self.value,
+            Mark::Switch { on: self.value },
+            Some(!self.value),
+            self.on_change,
+            self.common,
+            self.builder,
+        )
+    }
+}
+
+impl State<Switch> for SwitchState {
+    fn init_state(&mut self, updater: StateUpdater<Self>) {
+        self.init(updater);
+    }
+
+    fn adopt_config_from(&mut self, new: Self) {
+        self.adopt(new);
+    }
+
+    fn build(&self, ctx: &BuildContext) -> impl Widget {
+        self.render(ctx)
+    }
+}
+
+impl Widget for Switch {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
+        StatefulElement::new_with_name(self, ctx, "Switch", None)
+            .0
+            .boxed()
+    }
+
+    fn debug_name(&self) -> &'static str {
+        "Switch"
+    }
+}
+
+impl PortableWidget for Switch {}

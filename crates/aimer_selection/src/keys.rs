@@ -8,7 +8,40 @@ use aimer_widget::{
     Rebuildable, RequiredChild, VisitorElement, Widget,
 };
 
-use crate::Key;
+/// A platform-neutral key used by the choice controls.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Key {
+    Enter,
+    Space,
+    ArrowUp,
+    ArrowDown,
+    ArrowLeft,
+    ArrowRight,
+    Home,
+    End,
+    Escape,
+    Tab,
+}
+
+impl Key {
+    /// Whether the key activates a simple control.
+    #[inline]
+    pub(crate) fn is_activation(self) -> bool {
+        matches!(self, Self::Enter | Self::Space)
+    }
+
+    /// Whether the key moves the highlight toward the previous row.
+    #[inline]
+    pub(crate) fn is_previous(self) -> bool {
+        matches!(self, Self::ArrowUp | Self::ArrowLeft)
+    }
+
+    /// Whether the key moves the highlight toward the next row.
+    #[inline]
+    pub(crate) fn is_next(self) -> bool {
+        matches!(self, Self::ArrowDown | Self::ArrowRight)
+    }
+}
 
 /// Maps a platform named key onto the selection-control key vocabulary.
 pub(crate) fn map_named_key(key: &NamedKey) -> Option<Key> {

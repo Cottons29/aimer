@@ -492,10 +492,12 @@ use aimer_widget::{
 };
 
 use crate::TextEditingController;
+use aimer_events::element::{Modifiers, NamedKey};
 use crate::input_field::caret::{CaretBlink, CaretBuilder, CaretContext};
 use crate::input_field::chrome::{Chrome, TextFieldVisualState, VisualBuilder, VisualFlags};
 use crate::input_field::raw_fields::{
-    CaretSlot, ExpandDirection, InputType, RawFieldConfig, RawTextFieldWidget, TextFieldCallback,
+    CaretSlot, ExpandDirection, InputType, KeyFilter, RawFieldConfig, RawTextFieldWidget,
+    TextFieldCallback,
 };
 
 #[allow(dead_code)]
@@ -657,6 +659,8 @@ pub struct TextField {
     #[portable_skip]
     pub on_blur: TextFieldCallback,
     pub read_only: bool,
+    #[portable_skip]
+    key_filter: Option<KeyFilter>,
     pub padding: LayoutSpacing,
     #[portable_skip]
     widget_key: Option<Key>,
@@ -941,6 +945,7 @@ impl TextField {
             on_focus: TextFieldCallback::default(),
             on_blur: TextFieldCallback::default(),
             read_only: false,
+            key_filter: None,
             padding: LayoutSpacing::default(),
             widget_key: None,
         }
@@ -987,6 +992,7 @@ impl TextField {
             on_focus: self.on_focus.clone(),
             on_blur: self.on_blur.clone(),
             read_only: self.read_only,
+            key_filter: self.key_filter.clone(),
             padding: self.padding,
             chrome: self.chrome(),
             visual: None,
@@ -1343,6 +1349,33 @@ impl TextField {
     #[inline]
     pub fn read_only(mut self, read_only: bool) -> Self {
         self.read_only = read_only;
+        self
+    }
+
+    /// Offers every key press to `filter` before the field acts on it.
+    ///
+    /// The filter runs only while the field is focused, for presses and
+    /// repeats but not releases. Returning `true` consumes the key: the field
+    /// does nothing with it and the event goes no further. Returning `false`
+    /// leaves the field's own handling untouched, so a filter that claims only
+    /// a few keys changes nothing else.
+    ///
+    /// A field consumes the arrow keys, `Home`, `End`, and `Escape` itself, so
+    /// nothing outside it can react to them; this is how a list that is driven
+    /// while typing — a combobox, a command palette — takes them first.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use aimer_events::element::NamedKey;
+    /// use aimer_input::input::TextField;
+    ///
+    /// // Claim ArrowDown for a suggestion list; the caret still moves on the rest.
+    /// let field = TextField::new().on_key(|key, _modifiers| matches!(key, NamedKey::ArrowDown));
+    /// ```
+    #[inline]
+    pub fn on_key(mut self, filter: impl Fn(&NamedKey, &Modifiers) -> bool + 'static) -> Self {
+        self.key_filter = Some(Rc::new(filter));
         self
     }
 

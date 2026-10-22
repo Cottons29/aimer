@@ -43,6 +43,7 @@ pub(super) fn field_config(controller: impl Into<TextEditingController>) -> RawF
         on_focus: TextFieldCallback::default(),
         on_blur: TextFieldCallback::default(),
         read_only: false,
+        key_filter: None,
         padding: LayoutSpacing::all(Spacing::Px(4)),
         chrome: None,
         visual: None,

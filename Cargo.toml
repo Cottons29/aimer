@@ -41,6 +41,7 @@ aimer_provider.workspace = true
 aimer_svg.workspace = true
 aimer_lucide = { workspace = true, optional = true }
 aimer_vault = { workspace = true, optional = true }
+aimer_passkey = { workspace = true, optional = true }
 aimer_markdown.workspace = true
 aimer_modal.workspace = true
 aimer_dnd.workspace = true
@@ -102,6 +103,10 @@ icons = ["dep:aimer_lucide", "svg"]
 # Secure storage for credentials and tokens: the platform secret store (Keychain
 # on Apple platforms) behind `aimer::vault`.
 vault = ["dep:aimer_vault"]
+# Passkeys: WebAuthn ceremonies through the operating system's own provider
+# (AuthenticationServices, Credential Manager, Windows Hello) behind
+# `aimer::passkey`.
+passkey = ["dep:aimer_passkey"]
 apple-core-text = [
     "aimer_cupid/apple-core-text",
     "aimer_canvas/apple-core-text",
@@ -110,10 +115,7 @@ apple-core-text = [
 # Opt into the checked-in Google Sans, JetBrains Mono, and CJK faces on native
 # targets. wasm already embeds its generic Latin/monospace faces because a
 # browser cannot provide Cupid with readable system font files.
-bundled-fonts = [
-    "aimer_cupid/bundled-fonts",
-    "aimer_assets/bundled-fonts",
-]
+bundled-fonts = ["aimer_cupid/bundled-fonts", "aimer_assets/bundled-fonts"]
 # Benchmark control: compare the release flex path with its scalar kernel.
 force-scalar = ["aimer_flex/force-scalar"]
 # Compatibility alias; native apps default to RenderMode::Threaded.
@@ -164,12 +166,12 @@ required-features = ["wgpu"]
 resolver = "3"
 members = [
     ".",
+    "jaime",
     "aimer_quiver",
     "aimer_cupid",
     "aimer_rubick",
     "aimer_venus",
     "aimer_anteros",
-    "jaime",
     "aimer_laboratory",
     "crates/aimer_widget",
     "crates/aimer_container",
@@ -217,16 +219,20 @@ members = [
     "crates/aimer_storage",
     "crates/aimer_persist",
     "crates/aimer_vault",
+    "crates/aimer_passkey",
     "crates/aimer_shape",
-    "crates/aimer_collapsible", 
+    "crates/aimer_collapsible",
     "crates/aimer_simd",
-     "crates/aimer_decoration", 
-     "crates/aimer_lucide",
+    "crates/aimer_decoration",
+    "crates/aimer_lucide",
 ]
 
 [workspace.dependencies]
 
-aimer_cupid = { path = "aimer_cupid", default-features = false, features = ["apple-core-text", "native"] }
+aimer_cupid = { path = "aimer_cupid", default-features = false, features = [
+    "apple-core-text",
+    "native",
+] }
 aimer_simd = { path = "crates/aimer_simd" }
 aimer_rubick = { path = "aimer_rubick" }
 aimer_venus = { path = "aimer_venus" }
@@ -272,6 +278,7 @@ aimer_media = { path = "crates/aimer_media" }
 aimer_storage = { path = "crates/aimer_storage" }
 aimer_persist = { path = "crates/aimer_persist" }
 aimer_vault = { path = "crates/aimer_vault" }
+aimer_passkey = { path = "crates/aimer_passkey" }
 aimer_shape = { path = "crates/aimer_shape" }
 aimer_collapsible = { path = "crates/aimer_collapsible" }
 aimer_native = { path = "crates/aimer_native" }
@@ -287,7 +294,10 @@ aimer_wasm_guest = { path = "crates/aimer_wasm_guest" }
 allocator-api2 = "0.2.21"
 dlmalloc = "0.2.14"
 libc = "0.2.189"
-windows-sys = { version = "0.61.2", features = ["Win32_System_Memory", "Win32_System_SystemInformation"] }
+windows-sys = { version = "0.61.2", features = [
+    "Win32_System_Memory",
+    "Win32_System_SystemInformation",
+] }
 console_error_panic_hook = "0.1.7"
 winit = { version = "0.30.12", features = ["android-native-activity"] }
 raw-window-handle = "0.6.2"
@@ -299,14 +309,18 @@ futures-util = "0.3.31"
 once_cell = "1.21.4"
 smallvec = { version = "1.13.2", features = ["const_new"] }
 url = "2.5.8"
-serde = { version = "1.0.228", features = ["default", "derive"] }
+# WebAuthn JSON for `aimer_passkey` on Android, where Credential Manager takes and
+# returns JSON. Default features are enough; nothing derives.
 serde_json = "1.0.150"
 wgpu = { version = "30.0.0", features = ["gles", "webgl", "web"] }
 ash = "0.38.0"
 ash-window = "0.13.0"
 image = { version = "0.25.10", default-features = false }
-reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "http2"] }
-ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
+reqwest = { version = "0.13.4", default-features = false, features = [
+    "rustls",
+    "http2",
+] }
+ureq = { version = "3.5.0", default-features = false, features = ["rustls"] }
 openssl = { version = "0.10.81", features = ["vendored"] }
 uuid = { version = "1.23.5", features = ["js", "v4", "serde"] }
 dirs = "6.0.0"
@@ -321,8 +335,14 @@ synoptic = "2.2.9"
 # Pure Rust regex engine only: `default` pulls in the C `onig` library and themes
 # this crate never uses. The bundled syntaxes come from `two-face`, which adds the
 # languages syntect's own set lacks (TypeScript, Kotlin, Swift, TOML, ...).
-syntect = { version = "5.3.0", default-features = false, features = ["parsing", "yaml-load", "regex-fancy"] }
-two-face = { version = "0.5.2", default-features = false, features = ["syntect-fancy"] }
+syntect = { version = "5.3.0", default-features = false, features = [
+    "parsing",
+    "yaml-load",
+    "regex-fancy",
+] }
+two-face = { version = "0.5.2", default-features = false, features = [
+    "syntect-fancy",
+] }
 
 
 # Macros Dependencies
@@ -348,7 +368,14 @@ wasmparser = { version = "0.239.0", default-features = false }
 # Web Deps
 
 wasm-bindgen = "0.2.126"
-web-sys = { version = "0.3.103", features = ["CanvasRenderingContext2d", "Clipboard", "DomMatrix", "Navigator", "TextMetrics", "Window"] }
+web-sys = { version = "0.3.103", features = [
+    "CanvasRenderingContext2d",
+    "Clipboard",
+    "DomMatrix",
+    "Navigator",
+    "TextMetrics",
+    "Window",
+] }
 wasm-bindgen-futures = "0.4.76"
 wasm-bindgen-test = "0.3.79"
 js-sys = "0.3.103"
@@ -356,8 +383,6 @@ js-sys = "0.3.103"
 # Android Family
 
 jni = "0.22.4"
-ndk-glue = "0.7.0"
-ndk = "0.9.0"
 ndk-context = "0.1.1"
 
 # Apple Family
@@ -372,6 +397,9 @@ objc2-core-text = { version = "0.3.2", default-features = false }
 objc2-core-foundation = { version = "0.3.2", default-features = false }
 objc2-core-graphics = { version = "0.3.2", default-features = false }
 objc2-foundation = { version = "0.3.2", default-features = false }
+# System passkeys for `aimer_passkey` (AuthenticationServices). Default features
+# are off: the crate binds a hundred classes and only a few are used.
+objc2-authentication-services = { version = "0.3.2", default-features = false }
 # Cupid's native Metal backend. Default features are off because they drag in
 # dispatch2 and every MTL4* module; member crates opt into the specific
 # MTL* submodules they need, mirroring wgpu-hal's own selection.
@@ -406,21 +434,12 @@ core-foundation = "0.10.1"
 # Secret Service (GNOME Keyring / KWallet) client for `aimer_vault` on Linux. 5.19.0
 # is the newest release older than two weeks; 6.0.0 is too fresh to adopt yet.
 zbus = "5.19.0"
-rustls-platform-verifier = { version = "0.7.0", features = ["jni"] }
-axum = { version = "0.8.6", default-features = false }
-tower = "0.5.2"
-tower-service = "0.3.3"
-tower-http = { version = "0.7.0", default-features = false, features = ["cors"] }
-worker = { version = "0.8.5", default-features = false }
-worker-macros = { version = "0.8.5", default-features = false }
-
 # macOS defaults dev builds to `unpacked`, which keeps every codegen-unit object
 # file beside the binary and leaks a fresh set of 256 per crate on each rebuild.
 # Hundreds of thousands of them made the first Core Foundation call of every
 # test binary (a scan of its own directory) take 20+ seconds.
 [profile.dev]
 debug = "line-tables-only"
-
 
 
 [profile.dev.package.aimer_rubick]
@@ -458,4 +477,3 @@ opt-level = 3
 unexpected_cfgs = { level = "allow", check-cfg = ['cfg(aimer_portable_guest)'] }
 [workspace.lints.rust]
 unexpected_cfgs = { level = "allow", check-cfg = ['cfg(aimer_portable_guest)'] }
-

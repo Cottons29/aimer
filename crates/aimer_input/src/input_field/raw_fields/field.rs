@@ -180,6 +180,11 @@ impl Cursor {
     }
 }
 
+/// Offered every key press a focused field receives before the field acts on
+/// it. Returning `true` consumes the key, so the field leaves it alone; a
+/// combobox uses this to move its highlight with the arrow keys.
+pub(crate) type KeyFilter = Rc<dyn Fn(&NamedKey, &Modifiers) -> bool>;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ExpandDirection {
     Horizontal,
@@ -231,6 +236,7 @@ pub(crate) struct RawFieldConfig {
     pub on_focus: TextFieldCallback,
     pub on_blur: TextFieldCallback,
     pub read_only: bool,
+    pub key_filter: Option<KeyFilter>,
     pub padding: LayoutSpacing,
     /// The frame placed around the field, when it has one.
     ///
@@ -388,6 +394,7 @@ pub(crate) struct RawTextField {
     pub on_focus: TextFieldCallback,
     pub on_blur: TextFieldCallback,
     pub read_only: bool,
+    pub key_filter: Option<KeyFilter>,
     /// Told when hover, focus or emptiness changes, so the chrome built around
     /// this field is rebuilt from them.
     visual: Option<Rc<VisualFlags>>,
@@ -602,6 +609,7 @@ impl RawTextField {
             on_focus: config.on_focus,
             on_blur: config.on_blur,
             read_only: config.read_only,
+            key_filter: config.key_filter,
             visual: config.visual,
             mouse_held: Cell::new(None),
             last_click_time: Cell::new(AnimInstant::now()),
@@ -1445,6 +1453,48 @@ mod grapheme_tests {
 
         assert_eq!(field.cursor.selection_anchor(), Some(3));
         assert_eq!(field.cursor.offset(), 5);
+    }
+
+    #[test]
+    fn a_key_filter_that_consumes_a_key_keeps_it_from_the_field() {
+        let mut field = focused_field(TextFieldController::with_initial("hello"));
+        field.cursor.set_offset(3);
+        field.key_filter = Some(std::rc::Rc::new(|key, _| matches!(key, NamedKey::ArrowLeft)));
+
+        assert!(field.on_event(&key(NamedKey::ArrowLeft)).is_consumed());
+        assert_eq!(field.cursor.offset(), 3, "the filter claimed ArrowLeft");
+
+        assert!(field.on_event(&key(NamedKey::ArrowRight)).is_consumed());
+        assert_eq!(field.cursor.offset(), 4, "a key the filter declines is the field's own");
+    }
+
+    #[test]
+    fn a_key_filter_does_not_see_releases() {
+        let mut field = focused_field(TextFieldController::with_initial("hello"));
+        let seen = std::rc::Rc::new(std::cell::Cell::new(0_u32));
+        let observed = std::rc::Rc::clone(&seen);
+        field.key_filter = Some(std::rc::Rc::new(move |_, _| {
+            observed.set(observed.get() + 1);
+            false
+        }));
+
+        let _ = field.on_event(&ElementEvent::KeyInput {
+            key: NamedKey::ArrowLeft,
+            action: KeyAction::Released,
+            modifiers: Modifiers::default(),
+        });
+        assert_eq!(seen.get(), 0);
+
+        let _ = field.on_event(&key(NamedKey::ArrowLeft));
+        assert_eq!(seen.get(), 1);
+    }
+
+    #[test]
+    fn a_field_without_a_key_filter_handles_keys_as_before() {
+        let mut field = focused_field(TextFieldController::with_initial("hello"));
+        field.cursor.set_offset(3);
+        assert!(field.on_event(&key(NamedKey::ArrowLeft)).is_consumed());
+        assert_eq!(field.cursor.offset(), 2);
     }
 
     #[test]

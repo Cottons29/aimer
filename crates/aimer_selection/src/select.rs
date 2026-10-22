@@ -1,24 +1,53 @@
-use super::events::{
-    ChangeCallback, ControlAction, InputEvent, Key, emit_change, is_activation_key, is_next_key,
-    is_previous_key,
-};
-use super::option::{ChoiceOption, OptionError, validate_options};
-use super::semantics::{SelectionSemantics, SemanticRole};
-use super::state::InteractionState;
+use std::rc::Rc;
 
-/// A controlled select model with stable option keys.
+use aimer_widget::base::BuildContext;
+use aimer_widget::{
+    AnyElement, PortableWidget, State, StateUpdater, StatefulElement, StatefulWidget, Widget,
+};
+
+use crate::binary::ChangeCallback;
+use crate::combo::{Combo, ComboConfig, TriggerBuilder};
+use crate::common::{Common, common_setters};
+use crate::option::{ChoiceOption, OptionError, Options};
+use crate::popup::RowBuilder;
+use crate::semantics::{SelectionSemantics, SemanticRole};
+use crate::visual::{OptionState, TriggerState};
+
+/// A controlled single-choice dropdown.
 ///
-/// Opening and focus are transient control state. The selected value remains
-/// owned by the caller; [`Self::select_key`] invokes the callback and returns
-/// the candidate value without changing [`Self::selected`].
+/// Tapping the trigger — or pressing Enter, Space, or an arrow key while it is
+/// focused — opens a popup anchored under it. The popup takes the keyboard:
+/// arrows, Home, and End move the highlight, Enter or Space chooses, and Escape
+/// or a press outside closes it. Choosing an option calls
+/// [`on_change`](Self::on_change) with its value and closes the popup; the
+/// owner rebuilds the select with [`selected`](Self::selected). Choosing the
+/// value that is already selected only closes.
+///
+/// Only the rows in view are built, so a select over thousands of options opens
+/// as fast as one over a handful.
+///
+/// # Examples
+///
+/// ```
+/// use aimer_selection::{ChoiceOption, Select};
+///
+/// let select = Select::new()
+///     .options([
+///         ChoiceOption::new("s", "Small", 1),
+///         ChoiceOption::new("m", "Medium", 2),
+///     ])
+///     .selected(Some(2))
+///     .label("Size")
+///     .on_change(|size| assert_eq!(size, 1));
+/// ```
 pub struct Select<T> {
-    options: Vec<ChoiceOption<T>>,
+    options: Options<T>,
     selected: Option<T>,
-    focused_index: Option<usize>,
-    label: Option<String>,
-    state: InteractionState,
-    open: bool,
+    placeholder: Rc<str>,
+    common: Common,
     on_change: Option<ChangeCallback<T>>,
+    trigger: Option<TriggerBuilder>,
+    rows: Option<RowBuilder<T>>,
 }
 
 impl<T> Default for Select<T> {
@@ -29,345 +58,156 @@ impl<T> Default for Select<T> {
 }
 
 impl<T> Select<T> {
-    /// Creates a closed select with no options.
+    /// Creates a select with no options, nothing selected, and no callback.
     #[inline]
     pub fn new() -> Self {
         Self {
-            options: Vec::new(),
+            options: Options::default(),
             selected: None,
-            focused_index: None,
-            label: None,
-            state: InteractionState::new(),
-            open: false,
+            placeholder: Rc::from("Select…"),
+            common: Common::default(),
             on_change: None,
+            trigger: None,
+            rows: None,
         }
     }
 
-    /// Replaces the options after validating their stable keys.
-    pub fn try_options<I>(mut self, options: I) -> Result<Self, OptionError>
-    where
-        I: IntoIterator<Item = ChoiceOption<T>>,
-    {
-        let options: Vec<_> = options.into_iter().collect();
-        validate_options(&options)?;
-        self.options = options;
-        self.focused_index = None;
+    /// Sets the options, in display order.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an option key is empty or repeated. Use
+    /// [`try_options`](Self::try_options) for keys that come from data.
+    #[inline]
+    #[track_caller]
+    pub fn options(self, options: impl IntoIterator<Item = ChoiceOption<T>>) -> Self {
+        match self.try_options(options) {
+            Ok(select) => select,
+            Err(error) => panic!("invalid select options: {error}"),
+        }
+    }
+
+    /// Sets the options, in display order, rejecting empty and repeated keys.
+    pub fn try_options(
+        mut self,
+        options: impl IntoIterator<Item = ChoiceOption<T>>,
+    ) -> Result<Self, OptionError> {
+        self.options = Options::try_new(options)?;
         Ok(self)
     }
 
-    /// Returns the options in display order.
+    /// Sets the caller-owned selection.
     #[inline]
-    pub fn options(&self) -> &[ChoiceOption<T>] {
-        &self.options
-    }
-
-    /// Returns a select configured with the caller-owned selected value.
-    #[inline]
-    pub fn with_selected(mut self, selected: Option<T>) -> Self {
+    pub fn selected(mut self, selected: Option<T>) -> Self {
         self.selected = selected;
         self
     }
 
-    /// Returns the current controlled selected value.
+    /// Sets the text shown while nothing is selected.
     #[inline]
-    pub fn selected(&self) -> Option<&T> {
-        self.selected.as_ref()
-    }
-
-    /// Returns a select with an initial focus index when that option is enabled.
-    #[inline]
-    pub fn with_focus_index(mut self, index: Option<usize>) -> Self {
-        self.focused_index = index.filter(|index| self.is_available(*index));
+    pub fn placeholder(mut self, placeholder: impl Into<Rc<str>>) -> Self {
+        self.placeholder = placeholder.into();
         self
     }
 
-    /// Returns the transient focused option index.
-    #[inline]
-    pub fn focused_index(&self) -> Option<usize> {
-        self.focused_index
-    }
-
-    pub(crate) fn set_focused_index(&mut self, index: Option<usize>) {
-        self.focused_index = index.filter(|index| self.is_available(*index));
-    }
-
-    /// Returns the stable key of the transiently focused option.
-    #[inline]
-    pub fn focused_key(&self) -> Option<&str> {
-        self.focused_index
-            .and_then(|index| self.options.get(index))
-            .map(ChoiceOption::key)
-    }
-
-    /// Returns whether the select surface is currently open.
-    #[inline]
-    pub fn is_open(&self) -> bool {
-        self.open
-    }
-
-    /// Returns a select with an accessible label.
-    #[inline]
-    pub fn with_label(mut self, label: impl Into<String>) -> Self {
-        self.label = Some(label.into());
-        self
-    }
-
-    /// Registers the callback that receives proposed selected values.
+    /// Registers the callback that receives the chosen value.
     #[inline]
     pub fn on_change<F>(mut self, callback: F) -> Self
     where
         F: Fn(T) + 'static,
     {
-        self.on_change = Some(std::rc::Rc::new(callback));
+        self.on_change = Some(Rc::new(callback));
         self
     }
 
-    /// Returns a select with the supplied interaction state.
-    #[inline]
-    pub fn with_state(mut self, state: InteractionState) -> Self {
-        self.state = state;
-        self
-    }
+    common_setters!();
 
-    /// Returns a select with the disabled flag set.
+    /// Replaces the default trigger with a composition of your own.
+    ///
+    /// The closure runs on every rebuild and receives the selected label, the
+    /// placeholder, and whether the popup is open. Opening, closing, keyboard,
+    /// and focus behavior stay with the select.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use aimer_selection::Select;
+    /// use aimer_text::Text;
+    ///
+    /// let select = Select::<u8>::new().builder(|state| Text::new(state.text().to_owned()));
+    /// ```
     #[inline]
-    pub fn disabled(mut self, disabled: bool) -> Self {
-        self.state.set_disabled(disabled);
-        self
-    }
-
-    /// Returns a select with the focus flag set.
-    #[inline]
-    pub fn focused(mut self, focused: bool) -> Self {
-        self.state.set_focused(focused);
-        self
-    }
-
-    /// Returns a select with the hover flag set.
-    #[inline]
-    pub fn hovered(mut self, hovered: bool) -> Self {
-        self.state.set_hovered(hovered);
-        self
-    }
-
-    /// Returns a select with a validation error.
-    #[inline]
-    pub fn error(mut self, error: impl Into<String>) -> Self {
-        self.state.set_error(Some(error.into()));
-        self
-    }
-
-    /// Returns the live interaction state.
-    #[inline]
-    pub fn interaction_state(&self) -> &InteractionState {
-        &self.state
-    }
-
-    /// Opens the select and focuses the selected or first enabled option.
-    pub fn open_menu(&mut self) -> ControlAction<T>
+    pub fn builder<F, W>(mut self, builder: F) -> Self
     where
-        T: PartialEq,
+        F: for<'a> Fn(TriggerState<'a>) -> W + 'static,
+        W: Widget + 'static,
     {
-        if self.state.disabled() || self.open {
-            return ControlAction::Ignored;
-        }
-        self.open = true;
-        if self
-            .focused_index
-            .is_none_or(|index| !self.is_available(index))
-        {
-            self.focused_index = self.selected_index().or_else(|| self.first_available());
-        }
-        ControlAction::Opened
+        self.trigger = Some(Rc::new(move |state| builder(state).boxed()));
+        self
     }
 
-    /// Closes an open select without changing its controlled value.
-    pub fn close_menu(&mut self) -> ControlAction<T> {
-        if !self.open {
-            return ControlAction::Ignored;
-        }
-        self.open = false;
-        self.focused_index = None;
-        ControlAction::Closed
-    }
-
-    /// Cancels an open select without changing its controlled value.
-    pub fn cancel(&mut self) -> ControlAction<T> {
-        if !self.open {
-            return ControlAction::Ignored;
-        }
-        self.open = false;
-        self.focused_index = None;
-        ControlAction::Cancelled
-    }
-
-    /// Selects an enabled option by stable key while the surface is open.
-    pub fn select_key(&mut self, key: &str) -> ControlAction<T>
+    /// Replaces the default option row with a composition of your own.
+    ///
+    /// Pointer behavior stays with the select; the closure only draws the row.
+    #[inline]
+    pub fn option_builder<F, W>(mut self, builder: F) -> Self
     where
-        T: Clone + PartialEq,
+        F: for<'a> Fn(OptionState<'a, T>) -> W + 'static,
+        W: Widget + 'static,
     {
-        if self.state.disabled() || !self.open {
-            return ControlAction::Ignored;
-        }
-        let Some(index) = self.options.iter().position(|option| option.key() == key) else {
-            return ControlAction::Ignored;
-        };
-        self.select_index(index)
+        self.rows = Some(Rc::new(move |state| builder(state).boxed()));
+        self
     }
 
-    /// Applies a platform-neutral input event to the select trigger and menu.
-    pub fn handle_event(&mut self, event: InputEvent) -> ControlAction<T>
-    where
-        T: Clone + PartialEq,
-    {
-        if self.state.disabled() {
-            self.state.set_pressed(false);
-            self.open = false;
-            self.focused_index = None;
-            return ControlAction::Ignored;
-        }
-
-        match event {
-            InputEvent::PointerDown => {
-                self.state.set_pressed(true);
-                ControlAction::Pressed
-            }
-            InputEvent::PointerUp { inside } => {
-                let was_pressed = self.state.pressed();
-                self.state.set_pressed(false);
-                if was_pressed && inside {
-                    if self.open {
-                        self.close_menu()
-                    } else {
-                        self.open_menu()
-                    }
-                } else {
-                    ControlAction::Released
-                }
-            }
-            InputEvent::KeyDown(Key::Escape) => self.cancel(),
-            InputEvent::KeyDown(Key::Tab) => self.close_menu(),
-            InputEvent::KeyDown(key) if is_activation_key(key) => {
-                if self.open {
-                    let index = self.focused_index.or_else(|| self.first_available());
-                    index.map_or(ControlAction::Ignored, |index| self.select_index(index))
-                } else {
-                    self.open_menu()
-                }
-            }
-            InputEvent::KeyDown(key) if is_next_key(key) => {
-                if self.open {
-                    self.move_focus(true)
-                        .map_or(ControlAction::Ignored, ControlAction::FocusMoved)
-                } else {
-                    self.open_menu()
-                }
-            }
-            InputEvent::KeyDown(key) if is_previous_key(key) => {
-                if self.open {
-                    self.move_focus(false)
-                        .map_or(ControlAction::Ignored, ControlAction::FocusMoved)
-                } else {
-                    self.open_menu()
-                }
-            }
-            InputEvent::KeyDown(Key::Home) if self.open => self
-                .focus_edge(false)
-                .map_or(ControlAction::Ignored, ControlAction::FocusMoved),
-            InputEvent::KeyDown(Key::End) if self.open => self
-                .focus_edge(true)
-                .map_or(ControlAction::Ignored, ControlAction::FocusMoved),
-            InputEvent::Cancel => {
-                self.state.set_pressed(false);
-                self.cancel()
-            }
-            InputEvent::KeyDown(_) | InputEvent::KeyUp(_) => ControlAction::Ignored,
-        }
-    }
-
-    /// Builds a platform-neutral semantic snapshot.
+    /// Returns a snapshot of the select for assistive technology.
     pub fn semantics(&self) -> SelectionSemantics {
-        SelectionSemantics::from_state(SemanticRole::Select, &self.label, &self.state)
-            .with_expanded(self.open)
-    }
-
-    fn is_available(&self, index: usize) -> bool {
-        self.options
-            .get(index)
-            .is_some_and(|option| !option.disabled())
-    }
-
-    fn first_available(&self) -> Option<usize> {
-        self.options.iter().position(|option| !option.disabled())
-    }
-
-    fn selected_index(&self) -> Option<usize>
-    where
-        T: PartialEq,
-    {
-        self.selected.as_ref().and_then(|selected| {
-            self.options
-                .iter()
-                .position(|option| option.value() == selected && !option.disabled())
-        })
-    }
-
-    fn move_focus(&mut self, forward: bool) -> Option<usize>
-    where
-        T: PartialEq,
-    {
-        let length = self.options.len();
-        if length == 0 {
-            return None;
-        }
-        let current = self
-            .focused_index
-            .or_else(|| self.selected_index())
-            .or_else(|| self.first_available())?;
-        for step in 1..=length {
-            let index = if forward {
-                (current + step) % length
-            } else {
-                (current + length - step % length) % length
-            };
-            if self.is_available(index) {
-                self.focused_index = Some(index);
-                return Some(index);
-            }
-        }
-        Some(current)
-    }
-
-    fn focus_edge(&mut self, last: bool) -> Option<usize> {
-        let index = if last {
-            self.options.iter().rposition(|option| !option.disabled())
-        } else {
-            self.first_available()
-        }?;
-        self.focused_index = Some(index);
-        Some(index)
-    }
-
-    fn select_index(&mut self, index: usize) -> ControlAction<T>
-    where
-        T: Clone + PartialEq,
-    {
-        let Some(option) = self.options.get(index) else {
-            return ControlAction::Ignored;
-        };
-        if option.disabled() {
-            return ControlAction::Ignored;
-        }
-        let value = option.value().clone();
-        self.focused_index = Some(index);
-        self.open = false;
-        if self
-            .selected
-            .as_ref()
-            .is_some_and(|selected| selected == &value)
-        {
-            return ControlAction::Closed;
-        }
-        emit_change(&self.on_change, value)
+        SelectionSemantics::new(SemanticRole::Select, &self.common)
     }
 }
+
+impl<T: Clone + PartialEq + 'static> StatefulWidget for Select<T> {
+    type State = Combo<T>;
+
+    fn create_state(self) -> Self::State {
+        Combo::new(ComboConfig {
+            options: self.options,
+            selected: self.selected,
+            on_change: self.on_change,
+            common: self.common,
+            placeholder: self.placeholder,
+            empty_text: None,
+            loading: false,
+            trigger: self.trigger,
+            rows: self.rows,
+            search: None,
+        })
+    }
+}
+
+impl<T: Clone + PartialEq + 'static> State<Select<T>> for Combo<T> {
+    fn init_state(&mut self, updater: StateUpdater<Self>) {
+        self.init(updater);
+    }
+
+    fn adopt_config_from(&mut self, new: Self) {
+        self.adopt(new);
+    }
+
+    fn build(&self, ctx: &BuildContext) -> impl Widget {
+        self.render(ctx)
+    }
+}
+
+impl<T: Clone + PartialEq + 'static> Widget for Select<T> {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
+        StatefulElement::new_with_name(self, ctx, "Select", None)
+            .0
+            .boxed()
+    }
+
+    fn debug_name(&self) -> &'static str {
+        "Select"
+    }
+}
+
+impl<T: 'static> PortableWidget for Select<T> {}

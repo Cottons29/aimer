@@ -183,8 +183,8 @@ fn effect_checkbox(
     updater: StateUpdater<MagnificationExampleState>,
 ) -> AnyWidget {
     Checkbox::new()
-        .with_label(label)
-        .with_value(if style.contains(flag) {
+        .label(label)
+        .value(if style.contains(flag) {
             CheckboxValue::Checked
         } else {
             CheckboxValue::Unchecked
@@ -212,10 +212,9 @@ fn style_select(
         .width(200)
         .child(
             Select::new()
-                .try_options(choices.map(|(label, value)| ChoiceOption::new(label, label, value)))
-                .expect("magnification choices have unique keys")
-                .with_label(label)
-                .with_selected(Some(style & mask))
+                .options(choices.map(|(label, value)| ChoiceOption::new(label, label, value)))
+                .label(label)
+                .selected(Some(style & mask))
                 .on_change(move |value| {
                     updater.set_state(move |state| state.style = (state.style & !mask) | value)
                 }),

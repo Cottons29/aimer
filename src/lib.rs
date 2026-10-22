@@ -93,6 +93,8 @@ pub use aimer_quiver::{
 
 #[cfg(feature = "vault")]
 pub use aimer_vault as vault;
+#[cfg(feature = "passkey")]
+pub use aimer_passkey as passkey;
 #[cfg(feature = "icons")]
 pub use aimer_lucide as icons;
 #[cfg(feature = "icons")]
