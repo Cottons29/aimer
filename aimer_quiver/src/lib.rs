@@ -20,14 +20,15 @@ mod android_storage;
 #[cfg(target_os = "android")]
 pub use android_storage::register_android_app;
 #[cfg(all(unix, not(any(target_os = "android", target_os = "ios"))))]
-mod shutdown_signals;
-mod ffi_utils;
+pub(crate) use aimer_platform::shutdown_signals;
+pub(crate) use aimer_platform::{ffi_utils, link_inbox};
 mod first_frame;
-mod link_inbox;
+mod window_locals;
 #[cfg(any(target_os = "ios", test))]
 mod ios_input;
-mod render_mode;
-pub use render_mode::RenderMode;
+pub use aimer_render::RenderMode;
+#[cfg(test)]
+mod render_mode_tests;
 #[cfg(debug_assertions)]
 mod debug_overlay;
 
@@ -36,9 +37,9 @@ pub mod aimer_app;
 pub mod handler;
 /// Concrete Aimer Widget IR schemas and disconnected native materialization.
 #[cfg(feature = "wasm-hot-reload")]
-pub mod hot_reload;
+pub use aimer_hot_reload as hot_reload;
 #[cfg(feature = "wasm-hot-reload")]
-pub use hot_reload::initialize_hot_reload_host;
+pub use aimer_hot_reload::initialize_hot_reload_host;
 /// Keeps generated application entry points uniform when hot reload is absent.
 ///
 /// Native AOT builds call this no-op without compiling any listener, protocol,
@@ -57,26 +58,27 @@ mod ios_screen {
 }
 
 mod adapter_detail;
-pub mod frame_stats;
+pub use aimer_frame_stats as frame_stats;
 /// The native application menu, and the shortcuts macOS routes through it.
-pub mod menu;
+pub use aimer_platform::menu;
 /// Entering the application's async runtime while Venus polls a task. Native
 /// only: the browser has one task queue and no runtime to be inside of.
 #[cfg(not(target_arch = "wasm32"))]
-pub mod poll_context;
+pub use aimer_platform::poll_context;
 #[cfg(target_arch = "wasm32")]
-mod browser_poll_context;
+pub(crate) use aimer_platform::browser_poll_context;
 /// Off-thread rasterization. Native only: the browser has no thread the WebGPU
 /// objects could move to, so the web backend presents inline.
 #[cfg(not(target_arch = "wasm32"))]
-pub mod raster;
-pub mod render_ctx;
-/// Where the platform's light / dark appearance comes from.
-mod system_appearance;
-/// Where the region the platform reserves in the window comes from.
-mod system_safe_area;
-pub mod window_attr;
-pub use window_attr::WindowAttr;
+pub use aimer_render::raster;
+pub use aimer_render::render_ctx;
+pub(crate) use aimer_platform::{system_appearance, system_safe_area};
+pub use aimer_window::window_attr;
+pub use aimer_window::{ExitPolicy, NewWindow, Window, WindowAttr, WindowId};
+/// Opening, controlling and closing windows.
+pub use aimer_window as windows;
+#[cfg(not(any(target_os = "ios", target_os = "android", target_arch = "wasm32")))]
+mod desktop_host;
 
 pub use winit;
 

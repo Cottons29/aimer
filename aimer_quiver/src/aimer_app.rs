@@ -34,62 +34,12 @@ use crate::hot_reload::{LiveReloadConfig, LiveReloadHost};
 use crate::reload_protocol::SessionCredentials;
 use crate::render_ctx::AimerRenderContext;
 
-#[cfg(target_os = "android")]
-pub static ANDROID_APP: std::sync::OnceLock<AndroidApp> = std::sync::OnceLock::new();
-
 static APP_STARTED: AtomicBool = AtomicBool::new(false);
 
-#[derive(Debug, Clone)]
-pub enum AimerNativePlatformEvent {
-    /// The process was asked to terminate (`SIGTERM`, Ctrl-C, a closing
-    /// terminal). The event loop exits in an orderly way, so the app's services
-    /// are told and can save what they hold.
-    ShutdownRequested,
-    /// Pointer or hardware-key input from a platform bridge, in logical window
-    /// coordinates. Text commits continue through the IME/text-editing path.
-    NativeInput {
-        event: aimer_events::element::ElementEvent,
-        modifiers: aimer_events::element::Modifiers,
-    },
-    ForceBackspace,
-    InsertText(String),
-    /// Provisional text a soft keyboard is still composing.
-    ///
-    /// A multistage input method — Chinese Pinyin, Japanese Kana, Korean
-    /// Hangul — shows the user what it has so far before any candidate is
-    /// chosen. On desktop that arrives as `WindowEvent::Ime(Ime::Preedit)`;
-    /// neither iOS nor Android reports it as a window event, so their keyboard
-    /// shims report it here instead and it is dispatched down the very same
-    /// path.
-    ///
-    /// `cursor` is the byte range of the active segment inside `text`, and an
-    /// empty `text` ends the composition — the same contract winit's
-    /// [`Ime::Preedit`](winit::event::Ime::Preedit) carries.
-    SetPreedit {
-        text: String,
-        cursor: Option<(usize, usize)>,
-    },
-    TextEditingDelta(TextEditingDelta),
-    FrameReady,
-    /// A bounded render completion or initialization result is ready for the UI.
-    RenderWorkerReady,
-    /// A live-reload native callback is waiting at the host safe point.
-    ///
-    /// This has its own coalescing slot so an animation frame already waiting
-    /// in the event loop cannot hide the callback's redraw request.
-    HotReloadCallbackReady,
-    /// An editing shortcut the macOS menu bar claimed before the window could
-    /// see it, handed back to the widget tree. See [`crate::menu`].
-    MenuShortcut(crate::menu::MenuShortcut),
-    /// A step of the system's back, reported by a platform bridge that is not a
-    /// key: Android's predictive back arrives from Kotlin as a start, progress
-    /// and an end. See [`crate::handler::system_back`].
-    Back(crate::handler::system_back::BackSignal),
-    /// Links were posted from the platform (see [`crate::link_inbox`]).
-    OpenLinks,
-}
-
-pub static EVENT_PROXY: OnceLock<EventLoopProxy<AimerNativePlatformEvent>> = OnceLock::new();
+pub use aimer_platform::AimerNativePlatformEvent;
+#[cfg(target_os = "android")]
+pub use aimer_platform::ANDROID_APP;
+pub use aimer_platform::EVENT_PROXY;
 
 /// The reason a pending frame was scheduled, kept private to the event loop.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -167,7 +117,7 @@ pub(crate) fn with_frame_request_kind<T>(kind: FrameRequestKind, request: impl F
     request()
 }
 
-fn current_frame_request_kind() -> FrameRequestKind {
+pub(crate) fn current_frame_request_kind() -> FrameRequestKind {
     // Scroll physics asks for its continuation frames from inside the draw,
     // far from anything that could open a `request_scroll_frame` scope here.
     if aimer_events::window::is_scroll_frame_request() {
@@ -183,7 +133,7 @@ pub(crate) fn request_scroll_frame(request: impl FnOnce()) {
     with_frame_request_kind(FrameRequestKind::ScrollOnly, request);
 }
 
-fn observe_frame_request(slot: &Cell<Option<FrameRequestKind>>) {
+pub(crate) fn observe_frame_request(slot: &Cell<Option<FrameRequestKind>>) {
     let kind = current_frame_request_kind();
     let kind = slot.get().map_or(kind, |pending| pending.merge(kind));
     slot.set(Some(kind));
@@ -207,7 +157,7 @@ static FRAME_READY_PENDING: AtomicU8 = AtomicU8::new(0);
 /// wake that makes a freshly queued callback visible.
 static CALLBACK_READY_PENDING: AtomicBool = AtomicBool::new(false);
 
-fn try_begin_frame_ready_request(pending: &AtomicU8, kind: FrameRequestKind) -> bool {
+pub(crate) fn try_begin_frame_ready_request(pending: &AtomicU8, kind: FrameRequestKind) -> bool {
     let requested = kind.encode();
     loop {
         let current = pending.load(Ordering::Acquire);
@@ -235,7 +185,7 @@ fn try_begin_frame_ready_request(pending: &AtomicU8, kind: FrameRequestKind) -> 
     }
 }
 
-fn complete_frame_ready_request(pending: &AtomicU8) -> FrameRequestKind {
+pub(crate) fn complete_frame_ready_request(pending: &AtomicU8) -> FrameRequestKind {
     FrameRequestKind::decode(pending.swap(0, Ordering::AcqRel)).unwrap_or(FrameRequestKind::Full)
 }
 
@@ -716,6 +666,7 @@ pub struct AimerApp<W = ()> {
     ui_memory_limit: usize,
     startup_hooks: Vec<StartupHook>,
     window_attr: WindowAttr,
+    exit_policy: crate::ExitPolicy,
     #[cfg(feature = "wasm-hot-reload")]
     live_reload: Option<LiveReloadLaunch>,
 }
@@ -810,8 +761,14 @@ pub struct HeadlessAimerApp<W: Widget + 'static> {
     /// The UI-thread runtime that was installed for this thread before this
     /// application took it over, put back when the application is dropped.
     previous_runtime: Option<std::rc::Rc<Venus>>,
+    /// How this window asks for frames while another window of the thread is
+    /// the active one. Dropped with the application.
+    _window_scope: aimer_events::window::WindowScopeRegistration,
     #[cfg(test)]
     last_frame_result: Option<(f32, aimer_cupid::damage_region::DamageSet)>,
+    /// The runtime the application's tasks run on; dropped after the rest.
+    #[cfg(not(target_arch = "wasm32"))]
+    _async_runtime: Runtime,
 }
 
 impl<W: Widget + 'static> HeadlessAimerApp<W> {
@@ -868,9 +825,30 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
             )
             .expect("failed to start configured live reload listener")
         });
+        // The thread-wide requester below answers for the application created
+        // last. Registering the window as well is what lets every entry point
+        // make *this* window the active one, so two applications on one thread
+        // each get their own frame requests.
+        let window_scope = aimer_events::window::register_window_scope_with(
+            window.key(),
+            aimer_events::window::WindowScopeConfig::new(
+                {
+                    let window = window.clone();
+                    move || window.request_redraw()
+                },
+                {
+                    let frame_request_reason = frame_request_reason.clone();
+                    move || observe_frame_request(&frame_request_reason)
+                },
+            )
+            .locals(Rc::new(crate::window_locals::WindowThreadState::default())),
+        );
         let mut headless = Self {
             app: AimerApplicationHandler {
                 window: Some(window.clone()),
+                hosted: false,
+                closed: false,
+                inherited_states: None,
                 macos_windowing: Default::default(),
                 render_ctx: AimerRenderContext::new(antialiasing),
                 ui_memory: UiMemory::new(ui_memory_limit),
@@ -898,7 +876,7 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
                 startup_hooks,
                 startup_resources: Vec::new(),
                 #[cfg(not(target_arch = "wasm32"))]
-                async_runtime,
+                async_handle: async_runtime.handle().clone(),
                 active_touch_id: None,
                 venus,
                 file_drag: crate::handler::file_drag::FileDrag::new(),
@@ -922,8 +900,12 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
                 move || observe_frame_request(&frame_request_reason)
             }),
             previous_runtime,
+            _window_scope: window_scope,
             #[cfg(test)]
             last_frame_result: None,
+            // Last, so it outlives everything that holds a handle to it.
+            #[cfg(not(target_arch = "wasm32"))]
+            _async_runtime: async_runtime,
         };
 
         // The windowed application runs its setup the moment the platform loop
@@ -948,6 +930,30 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
         headless
     }
 
+    /// Makes this application the one the thread answers for until the guard
+    /// is dropped: frame requests made meanwhile land on its window, and the
+    /// runtime that is current is its own.
+    ///
+    /// Every way into the application does this first. A second application on
+    /// the same thread would otherwise be built, and asked for frames, under
+    /// whichever one was created last.
+    fn activate(&self) -> ActiveHeadless {
+        let window = aimer_events::window::enter_window_scope(self.window.key());
+        let runtime_is_current = Venus::current()
+            .is_some_and(|current| Rc::ptr_eq(&current, &self.app.venus));
+        let previous_runtime = if runtime_is_current {
+            None
+        } else {
+            let previous = Venus::uninstall();
+            self.app.venus.install();
+            Some(previous)
+        };
+        ActiveHeadless {
+            _window: window,
+            previous_runtime,
+        }
+    }
+
     /// Builds and draws one frame into the non-presenting in-memory canvas.
     ///
     /// A frame does what a windowed frame does: this frame's share of a scroll
@@ -962,6 +968,7 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
         if self.exit_requested {
             return;
         }
+        let _active = self.activate();
         #[cfg(test)]
         {
             self.last_frame_result = None;
@@ -1101,6 +1108,7 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
     /// the one event a window answers with a frame of its own, drawn before the
     /// compositor can stretch the old one, and it is answered that way here too.
     pub fn send_window_event(&mut self, event: WindowEvent) {
+        let _active = self.activate();
         let action = WindowEventHandler::handle_headless_event(&mut self.app, event);
         match action {
             HeadlessEventAction::None => {}
@@ -1112,6 +1120,7 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
     /// Delivers an Aimer user event through the same path as the native event
     /// loop.
     pub fn send_user_event(&mut self, event: AimerNativePlatformEvent) {
+        let _active = self.activate();
         crate::handler::user_events::handle_user_event(
             &mut self.app,
             event,
@@ -1294,12 +1303,32 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
     }
 }
 
+/// Keeps a headless application active; see [`HeadlessAimerApp::activate`].
+struct ActiveHeadless {
+    _window: aimer_events::window::WindowScopeGuard,
+    /// The runtime to put back, if this application had to install its own.
+    /// The inner `None` means there was no runtime installed before.
+    previous_runtime: Option<Option<Rc<Venus>>>,
+}
+
+impl Drop for ActiveHeadless {
+    fn drop(&mut self) {
+        if let Some(previous) = self.previous_runtime.take() {
+            Venus::uninstall();
+            if let Some(previous) = previous {
+                previous.install();
+            }
+        }
+    }
+}
+
 impl<W: Widget + 'static> Drop for HeadlessAimerApp<W> {
     /// Stops taking the frame requests of this thread once the application is
     /// gone, so a later one — or none at all — receives them instead.
     fn drop(&mut self) {
         aimer_events::window::restore_thread_redraw_requester(self.previous_frame_requester.take());
         aimer_events::window::restore_thread_redraw_observer(self.previous_redraw_observer.take());
+        aimer_widget::safe_area::forget_safe_area_of(&self.window);
         Venus::uninstall();
         if let Some(previous) = self.previous_runtime.take() {
             previous.install();
@@ -1327,6 +1356,7 @@ impl AimerApp {
             ui_memory_limit: usize::MAX,
             startup_hooks: Vec::new(),
             window_attr: WindowAttr::new(),
+            exit_policy: crate::ExitPolicy::default(),
             #[cfg(feature = "wasm-hot-reload")]
             live_reload,
         }
@@ -1366,6 +1396,17 @@ impl AimerApp {
     #[inline]
     pub fn window(mut self, window_attr: WindowAttr) -> Self {
         self.window_attr = window_attr;
+        self
+    }
+
+    /// Chooses what closing windows does to the application.
+    ///
+    /// The default ends the application when its last window closes. Only
+    /// desktop platforms have more than one window; elsewhere the single window
+    /// is the application whatever the policy says.
+    #[inline]
+    pub fn exit_policy(mut self, policy: crate::ExitPolicy) -> Self {
+        self.exit_policy = policy;
         self
     }
 
@@ -1420,6 +1461,7 @@ impl AimerApp {
             ui_memory_limit: self.ui_memory_limit,
             startup_hooks: self.startup_hooks,
             window_attr: self.window_attr,
+            exit_policy: self.exit_policy,
             #[cfg(feature = "wasm-hot-reload")]
             live_reload: self.live_reload,
         }
@@ -1493,6 +1535,7 @@ impl<W: Widget + 'static> AimerApp<W> {
             self.render_mode,
             self.window_attr,
             self.ui_memory_limit,
+            self.exit_policy,
             #[cfg(feature = "wasm-hot-reload")]
             self.live_reload,
         );
@@ -1509,6 +1552,7 @@ impl<W: Widget + 'static> AimerApp<W> {
             self.render_mode,
             self.window_attr,
             self.ui_memory_limit,
+            self.exit_policy,
             #[cfg(feature = "wasm-hot-reload")]
             self.live_reload,
         );
@@ -1541,6 +1585,7 @@ fn start_event_loop(
     render_mode: crate::RenderMode,
     window_attr: WindowAttr,
     ui_memory_limit: usize,
+    exit_policy: crate::ExitPolicy,
     #[cfg(feature = "wasm-hot-reload")] live_reload: Option<LiveReloadLaunch>,
 ) {
     if APP_STARTED.swap(true, Ordering::SeqCst) {
@@ -1664,72 +1709,101 @@ fn start_event_loop(
     venus.set_poll_context(crate::browser_poll_context::BrowserPollContext);
 
     let run_app = || {
-        info!("Creating App instance...");
-        #[cfg(all(target_os = "windows", feature = "native", not(feature = "wgpu")))]
-        let show_window_after_first_frame = window_attr.visible;
-        let mut app = AimerApplicationHandler {
-            window: None,
-            macos_windowing: Default::default(),
-            render_ctx: crate::render_ctx::configured_context(antialiasing, render_mode),
-            ui_memory: UiMemory::new(ui_memory_limit),
-            #[cfg(debug_assertions)]
-            debug_overlay: Default::default(),
-            window_attr,
-            render_tree: WindowRenderTree::default(),
-            #[cfg(all(target_os = "windows", feature = "native", not(feature = "wgpu")))]
-            show_window_after_first_frame,
-            widget_root: None,
-            event_dispatcher: aimer_widget::EventDispatcher::new(),
-            scroll_smoother: crate::handler::scroll_classifier::DualScroller::new(),
-            frame_request_reason: Rc::new(Cell::new(None)),
-            #[cfg(target_arch = "wasm32")]
-            web_scroll_phase: crate::handler::web_scroll_phase::WebScrollPhase::new(),
-            pending_widget: Some(widget),
-            cursor_pos: crate::handler::event_handler::CURSOR_OUTSIDE_POSITION,
-            touch_pointer: false,
-            pressed_button: None,
-            current_modifiers: Default::default(),
-            ime_composing: false,
-            window_scale: 1.0,
-            native_window_size: None,
-            pending_resize: None,
-            startup_hooks,
-            startup_resources: Vec::new(),
-            #[cfg(not(target_arch = "wasm32"))]
-            async_runtime,
-            active_touch_id: None,
-            venus,
-            file_drag: crate::handler::file_drag::FileDrag::new(),
-            #[cfg(feature = "wasm-hot-reload")]
-            live_reload,
-        };
-
-        let previous_redraw_observer = aimer_events::window::set_thread_redraw_observer({
-            let frame_request_reason = app.frame_request_reason.clone();
-            move || observe_frame_request(&frame_request_reason)
-        });
-
-        info!("Started main event loop");
-
-        // On iOS, this function never returns.
-        match event_loop.run_app(&mut app) {
-            Ok(_) => info!("EventLoop finished successfully"),
-            Err(e) => aimer_utils::error!("EventLoop::run_app failed: {:?}", e),
-        }
-        aimer_events::window::restore_thread_redraw_observer(previous_redraw_observer);
-
-        #[cfg(not(target_arch = "wasm32"))]
+        // A desktop application can have several windows, so its loop is the
+        // host's. Mobile and web platforms have one surface and keep the
+        // single-window handler.
+        #[cfg(not(any(target_os = "ios", target_os = "android", target_arch = "wasm32")))]
         {
-            // Return the runtime only after the app, renderer, widget tree,
-            // and task context have been dropped at the end of this closure.
-            let AimerApplicationHandler { async_runtime, .. } = app;
-            async_runtime
+            let shared = crate::desktop_host::Shared {
+                venus: venus.clone(),
+                async_handle: async_runtime.handle().clone(),
+                ui_memory: UiMemory::new(ui_memory_limit),
+                antialiasing,
+                render_mode,
+            };
+            #[allow(unused_mut)]
+            let mut main = shared.window_app(window_attr, widget.boxed());
+            #[cfg(feature = "wasm-hot-reload")]
+            {
+                main.live_reload = live_reload;
+            }
+            let mut host =
+                crate::desktop_host::DesktopHost::new(shared, main, exit_policy, startup_hooks);
+
+            info!("Started main event loop");
+            match event_loop.run_app(&mut host) {
+                Ok(_) => info!("EventLoop finished successfully"),
+                Err(e) => aimer_utils::error!("EventLoop::run_app failed: {:?}", e),
+            }
+            // The windows, renderers and widget trees drop here, before the
+            // runtime they hold a handle to is shut down.
+            drop(host);
+        }
+        #[cfg(any(target_os = "ios", target_os = "android", target_arch = "wasm32"))]
+        {
+            info!("Creating App instance...");
+            #[cfg(all(target_os = "windows", feature = "native", not(feature = "wgpu")))]
+            let show_window_after_first_frame = window_attr.is_visible();
+            let mut app = AimerApplicationHandler {
+                window: None,
+                hosted: false,
+                closed: false,
+                inherited_states: None,
+                macos_windowing: Default::default(),
+                render_ctx: crate::render_ctx::configured_context(antialiasing, render_mode),
+                ui_memory: UiMemory::new(ui_memory_limit),
+                #[cfg(debug_assertions)]
+                debug_overlay: Default::default(),
+                window_attr,
+                render_tree: WindowRenderTree::default(),
+                #[cfg(all(target_os = "windows", feature = "native", not(feature = "wgpu")))]
+                show_window_after_first_frame,
+                widget_root: None,
+                event_dispatcher: aimer_widget::EventDispatcher::new(),
+                scroll_smoother: crate::handler::scroll_classifier::DualScroller::new(),
+                frame_request_reason: Rc::new(Cell::new(None)),
+                #[cfg(target_arch = "wasm32")]
+                web_scroll_phase: crate::handler::web_scroll_phase::WebScrollPhase::new(),
+                pending_widget: Some(widget),
+                cursor_pos: crate::handler::event_handler::CURSOR_OUTSIDE_POSITION,
+                touch_pointer: false,
+                pressed_button: None,
+                current_modifiers: Default::default(),
+                ime_composing: false,
+                window_scale: 1.0,
+                native_window_size: None,
+                pending_resize: None,
+                startup_hooks,
+                startup_resources: Vec::new(),
+                #[cfg(not(target_arch = "wasm32"))]
+                async_handle: async_runtime.handle().clone(),
+                active_touch_id: None,
+                venus,
+                file_drag: crate::handler::file_drag::FileDrag::new(),
+                #[cfg(feature = "wasm-hot-reload")]
+                live_reload,
+            };
+
+            let previous_redraw_observer = aimer_events::window::set_thread_redraw_observer({
+                let frame_request_reason = app.frame_request_reason.clone();
+                move || observe_frame_request(&frame_request_reason)
+            });
+
+            info!("Started main event loop");
+
+            // On iOS, this function never returns.
+            match event_loop.run_app(&mut app) {
+                Ok(_) => info!("EventLoop finished successfully"),
+                Err(e) => aimer_utils::error!("EventLoop::run_app failed: {:?}", e),
+            }
+            aimer_events::window::restore_thread_redraw_observer(previous_redraw_observer);
+
+            // The app, renderer, widget tree and task context drop at the end of
+            // this closure, before the runtime they hold a handle to is shut down.
+            drop(app);
         }
     };
 
-    #[cfg(not(target_arch = "wasm32"))]
-    let async_runtime = run_app();
-    #[cfg(target_arch = "wasm32")]
     run_app();
 
     // `Venus::install` keeps a thread-local strong reference. Drop it on the
@@ -1780,6 +1854,9 @@ mod tests {
     mod animation_only;
     mod broadcast;
     mod lifecycle;
+    mod multi_window;
+    mod multi_window_paint;
+    mod window_api;
     mod builder_prepass;
     #[cfg(all(feature = "wgpu", target_os = "macos"))]
     mod bypass_target;
@@ -2359,6 +2436,9 @@ mod tests {
     fn direct_headless_frame_packet<W: Widget + 'static>(
         app: &mut HeadlessAimerApp<W>,
     ) -> (f32, FramePacket) {
+        // Drives the frame by hand, so it has to make the window the active
+        // one itself, as every public way into the application does.
+        let _active = app.activate();
         let width = app.size.width;
         let height = app.size.height;
         app.canvas.begin_frame();
@@ -2377,6 +2457,7 @@ mod tests {
         pos: Vec2d,
         event: &ElementEvent,
     ) {
+        let _active = app.activate();
         let root = app
             .app
             .widget_root
@@ -7050,8 +7131,12 @@ mod tests {
                 cancels: Arc::new(AtomicUsize::new(0)),
             });
 
-        assert_eq!(app.window_attr.title, "Configured Window");
-        assert_eq!(app.window_attr.inner_size, (900, 600));
+        assert_eq!(
+            app.window_attr,
+            WindowAttr::new()
+                .title("Configured Window")
+                .inner_size(900, 600)
+        );
     }
 
     struct RedrawWidget;

@@ -14,7 +14,7 @@ mod platform_gesture;
 #[cfg(not(target_arch = "wasm32"))]
 mod render_worker;
 mod scoped_sync;
-pub(crate) mod system_back;
+pub(crate) use aimer_platform::system_back;
 pub mod scroll_classifier;
 pub mod scroll_utils;
 #[cfg(any(target_os = "ios", test))]
@@ -67,8 +67,9 @@ use aimer_widget::{ReconciliationPlanError, plan_element_reconciliation};
 use std::any::Any;
 use std::cell::Cell;
 use std::rc::Rc;
+use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]
-use tokio::runtime::Runtime;
+use tokio::runtime::Handle;
 use winit::application::ApplicationHandler;
 #[allow(unused)]
 use winit::dpi::{LogicalSize, PhysicalSize, Position};
@@ -994,6 +995,18 @@ pub struct AimerApplicationHandler<W: Widget + 'static> {
     /// report its metrics. Keeping the handle here is what lets both drivers
     /// run the same event and frame code.
     pub window: Option<WindowHandle>,
+    /// Whether a host with its own loop owns this window.
+    ///
+    /// A hosted window that finishes closing says so (see [`Self::closed`])
+    /// and leaves it to the host to decide whether the application ends with
+    /// it. An unhosted one is the whole application, and ends the loop.
+    pub(crate) hosted: bool,
+    /// Set once the window has stopped its renderer and is ready to be removed.
+    pub(crate) closed: bool,
+    /// The providers this window's tree starts with, when it was opened to
+    /// share those of the window that opened it.
+    pub(crate) inherited_states:
+        Option<Rc<std::cell::RefCell<aimer_widget::components::context::InheritedStates>>>,
     pub window_attr: WindowAttr,
     /// Delays a requested visible state until the first DX12 present succeeds.
     #[cfg(all(target_os = "windows", feature = "native", not(feature = "wgpu")))]
@@ -1046,8 +1059,12 @@ pub struct AimerApplicationHandler<W: Widget + 'static> {
     /// frame drives the runtime it owns: a second window on a second thread is
     /// a second application, and it must drive its own.
     pub venus: Rc<Venus>,
+    /// A handle to the application's async runtime.
+    ///
+    /// A handle rather than the runtime: windows share one, and whoever
+    /// started the application owns it and outlives every window.
     #[cfg(not(target_arch = "wasm32"))]
-    pub async_runtime: Runtime,
+    pub async_handle: Handle,
     /// The batch of files being dragged over the window, so the drag can be
     /// re-reported for every position it is found at rather than only for the
     /// one it came in at.
@@ -1123,7 +1140,7 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
     /// appearance queries, AppKit drag polling — needs this; everything else
     /// goes through [`window`](Self::window) and works headlessly too.
     #[inline]
-    pub(crate) fn native_window(&self) -> Option<&'static Window> {
+    pub(crate) fn native_window(&self) -> Option<&Arc<Window>> {
         self.window.as_ref().and_then(WindowHandle::native_window)
     }
 
@@ -1165,10 +1182,34 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
             .unwrap_or(FrameRequestKind::Full)
     }
 
+    /// Records that this window has finished closing and, when nothing hosts
+    /// it, ends the event loop.
+    pub(crate) fn window_finished(&mut self, event_loop: &ActiveEventLoop) {
+        self.closed = true;
+        if !self.hosted {
+            event_loop.exit();
+        }
+    }
+
     pub(crate) fn request_full_redraw(&self) {
         self.note_frame_request(FrameRequestKind::Full);
         if let Some(window) = &self.window {
             window.request_redraw();
+        }
+    }
+
+    /// Rebuilds the widgets that read this window's metrics, after they changed.
+    ///
+    /// Other windows on the thread have metrics of their own, and a change to
+    /// this one is not a change to them.
+    pub(crate) fn notify_window_metrics_changed(&self) {
+        match &self.window {
+            Some(window) => {
+                aimer_widget::window_metrics::notify_window_metrics_changed_for(window);
+            }
+            None => {
+                aimer_widget::notify_window_metrics_changed();
+            }
         }
     }
 
@@ -1567,6 +1608,8 @@ pub(crate) struct FrameDrawer<'a, W: Widget + 'static> {
     #[cfg(feature = "wasm-hot-reload")]
     live_reload: &'a mut Option<crate::hot_reload::LiveReloadHost>,
     window: WindowHandle,
+    inherited_states:
+        Option<Rc<std::cell::RefCell<aimer_widget::components::context::InheritedStates>>>,
     ui_allocator: UiAllocator,
     scale: f32,
     cursor_pos: Vec2d,
@@ -1642,6 +1685,12 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
             max_width: width as f32,
             max_height: height as f32,
         };
+        // A window opened to share its opener's providers starts every frame
+        // with them. Scoped providers are added and removed on this map as the
+        // traversal enters and leaves them, so it is the same map every frame.
+        if let Some(states) = &self.inherited_states {
+            build_ctx.inherited_states = states.clone();
+        }
 
         #[cfg(feature = "wasm-hot-reload")]
         let live_layout_required = if let Some(host) = self.live_reload.as_mut() {
@@ -2035,14 +2084,14 @@ pub(crate) fn run_startup_hooks(
     startup_resources.extend(startup_hooks.drain(..).map(|hook| hook()));
 }
 
-impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent>
-    for AimerApplicationHandler<W>
-{
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        // Before the first frame builds the widget tree: the link that launched
-        // the app has to be waiting when the navigator is created.
-        crate::link_inbox::deliver_posted_links();
-        run_startup_hooks(&mut self.startup_hooks, &mut self.startup_resources);
+impl<W: Widget + 'static> AimerApplicationHandler<W> {
+    /// Creates this application's platform window, unless it already has one.
+    ///
+    /// The window is made before everything else a resume does so that a host
+    /// with several windows can register the new one with the thread (see
+    /// [`aimer_events::window::register_window_scope`]) before any of the
+    /// work that asks it for frames.
+    pub(crate) fn create_native_window(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_none() {
             self.macos_windowing = aimer_native::macos_windowing::take_pending();
         }
@@ -2088,15 +2137,25 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent>
         };
 
         if self.window.is_none() {
-            let window = event_loop.create_window(window_attributes).unwrap();
-            let window: &'static Window = Box::leak(Box::new(window)); // Leak to static ref
-            aimer_events::window::set_window(window);
+            // Owned by whoever still holds it: the window is destroyed when the
+            // last handle goes, which is what lets a closed window be freed.
+            let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
+            aimer_events::window::set_window(&window);
             self.window = Some(WindowHandle::native(window));
         }
+    }
 
+    /// Brings this application's window up: renderer, metrics, appearance and
+    /// the first frame. Creates the window first if it does not exist yet.
+    pub(crate) fn resume_window(&mut self, event_loop: &ActiveEventLoop) {
+        self.create_native_window(event_loop);
+
+        // Cloned: resuming changes the application while it uses the window.
         let window = self
             .native_window()
+            .cloned()
             .expect("the windowed loop always owns a native window");
+        let window = &window;
         self.macos_windowing.window_created(window);
 
         // The runtime was built before this window existed, so it has been
@@ -2137,7 +2196,7 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent>
         crate::system_safe_area::start_observing(window);
 
         #[allow(unused_mut)]
-        let mut size = WindowHandle::native(window).inner_size();
+        let mut size = WindowHandle::native(window.clone()).inner_size();
 
         #[cfg(target_os = "android")]
         {
@@ -2175,6 +2234,19 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent>
         #[cfg(not(all(target_os = "windows", feature = "native", not(feature = "wgpu"))))]
         self.request_full_redraw();
     }
+}
+
+impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent>
+    for AimerApplicationHandler<W>
+{
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        // Before the first frame builds the widget tree: the link that launched
+        // the app has to be waiting when the navigator is created.
+        crate::link_inbox::deliver_posted_links();
+        run_startup_hooks(&mut self.startup_hooks, &mut self.startup_resources);
+        self.resume_window(event_loop);
+    }
+
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: AimerNativePlatformEvent) {
         if let AimerNativePlatformEvent::Back(signal) = event {
@@ -2245,7 +2317,7 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent>
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
         #[cfg(target_os = "macos")]
-        if let Some(window) = self.native_window() {
+        if let Some(window) = self.window.as_ref().and_then(WindowHandle::native_window) {
             self.macos_windowing.window_redraw_requested(window);
         }
 
@@ -2291,6 +2363,7 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         let scale = self.window_scale as f32;
         let cursor_pos = self.hover_pos();
         let ui_allocator = self.ui_memory.allocator();
+        let inherited_states = self.inherited_states.clone();
         let Self {
             render_ctx,
             widget_root,
@@ -2302,11 +2375,11 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
             #[cfg(feature = "wasm-hot-reload")]
             live_reload,
             #[cfg(not(target_arch = "wasm32"))]
-            async_runtime,
+            async_handle,
             ..
         } = self;
         #[cfg(not(target_arch = "wasm32"))]
-        let async_handle = async_runtime.handle().clone();
+        let async_handle = async_handle.clone();
 
         (
             render_ctx,
@@ -2320,6 +2393,7 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
                 #[cfg(feature = "wasm-hot-reload")]
                 live_reload,
                 window,
+                inherited_states,
                 ui_allocator,
                 scale,
                 cursor_pos,

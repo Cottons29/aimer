@@ -33,7 +33,7 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         });
     }
 
-    pub(super) fn deliver_render_completions(&mut self, event_loop: &ActiveEventLoop) {
+    pub(crate) fn deliver_render_completions(&mut self, event_loop: &ActiveEventLoop) {
         let completed = self.render_ctx.poll_completions();
         crate::first_frame::notify_first_frame_presented(completed.presented);
         #[cfg(all(target_os = "windows", feature = "native", not(feature = "wgpu")))]
@@ -45,7 +45,7 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         }
         if self.render_ctx.is_closing() {
             if self.render_ctx.is_stopped() {
-                event_loop.exit();
+                self.window_finished(event_loop);
             }
             return;
         }

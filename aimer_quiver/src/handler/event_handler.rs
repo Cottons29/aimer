@@ -115,7 +115,7 @@ impl WindowEventHandler {
         {
             app.render_ctx.close();
             if app.render_ctx.is_stopped() {
-                event_loop.exit();
+                app.window_finished(event_loop);
             }
         }
         #[cfg(target_arch = "wasm32")]
@@ -217,12 +217,12 @@ impl WindowEventHandler {
                     // Keep CAMetalLayer's contents scale current even when the
                     // physical drawable size did not change with the display.
                     app.render_ctx
-                        .resize(aimer_widget::base::WindowHandle::native(window).inner_size());
+                        .resize(aimer_widget::base::WindowHandle::native(window.clone()).inner_size());
                 }
                 app.sync_headless_metrics(None);
                 if let Some(root) = app.active_root() {
                     root.invalidate_layout();
-                    aimer_widget::notify_window_metrics_changed();
+                    app.notify_window_metrics_changed();
                 }
                 Self::refresh_system_appearance(app);
                 Self::refresh_safe_area(app);
@@ -1003,7 +1003,9 @@ impl WindowEventHandler {
         _event_loop: &ActiveEventLoop,
     ) {
         #[cfg(target_os = "macos")]
-        if let Some(window) = app.native_window() {
+        // The fields are named, not read through `native_window`, so the borrow of
+        // the window does not cover the rest of the application.
+        if let Some(window) = app.window.as_ref().and_then(aimer_widget::base::WindowHandle::native_window) {
             app.macos_windowing.window_layout_changed(window);
         }
 
@@ -1059,7 +1061,7 @@ impl WindowEventHandler {
 
         if let Some(root) = app.active_root() {
             root.invalidate_layout();
-            aimer_widget::notify_window_metrics_changed();
+            app.notify_window_metrics_changed();
         }
     }
 
