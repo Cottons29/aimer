@@ -74,6 +74,10 @@ pub use aimer_anteros::{
     PROPERTY_SIZED_BOX_WIDTH, PROPERTY_TEXT_CONTENT, THEME_DATA_VALUE_VERSION,
     WIDGET_ANIMATED_THEME, WIDGET_BUTTON, WIDGET_COLUMN, WIDGET_CONTAINER, WIDGET_GESTURE_DETECTOR,
     WIDGET_MOUSE_REGION, WIDGET_PROVIDER, WIDGET_ROW, WIDGET_SIZED_BOX, WIDGET_TEXT,
+    EVENT_GESTURE_DETECTOR_DRAG_END, EVENT_GESTURE_DETECTOR_DOUBLE_PRESS,
+    EVENT_GESTURE_DETECTOR_LONG_PRESS, EVENT_GESTURE_DETECTOR_RIGHT_TAP,
+    EVENT_GESTURE_DETECTOR_TAP, EVENT_MOUSE_REGION_HOVER_ENTER, EVENT_MOUSE_REGION_HOVER_EXIT,
+    WIDGET_GESTURE_DETECTOR, WIDGET_MOUSE_REGION,
 };
 
 const BRIDGE_QUEUE_FULL: u32 = 0x7001;
@@ -1612,6 +1616,40 @@ fn materialize_mouse_region(
     )
     .child(RetainedElementWidget(child))
     .to_element(factory.ctx)
+}
+
+fn materialize_gesture_detector(
+    factory: &AimerWidgetFactory<'_>,
+    _document: &WidgetDocumentView<'_>,
+    node: WidgetNodeView<'_>,
+    mut children: Vec<AnyElement>,
+) -> AnyElement {
+    let child = children
+        .pop()
+        .expect("validated GestureDetector has exactly one child");
+    debug_assert!(children.is_empty());
+    bind_gesture_detector_callbacks(
+        GestureDetector::new(),
+        node.callbacks(),
+        &factory.dispatch_callback,
+    )
+    .child(RetainedElementWidget(child))
+    .to_element(factory.ctx)
+}
+
+fn materialize_mouse_region(
+    factory: &AimerWidgetFactory<'_>,
+    _document: &WidgetDocumentView<'_>,
+    node: WidgetNodeView<'_>,
+    mut children: Vec<AnyElement>,
+) -> AnyElement {
+    let child = children
+        .pop()
+        .expect("validated MouseRegion has exactly one child");
+    debug_assert!(children.is_empty());
+    bind_mouse_region_callbacks(MouseRegion::new(), node.callbacks(), &factory.dispatch_callback)
+        .child(RetainedElementWidget(child))
+        .to_element(factory.ctx)
 }
 
 fn materialize_button(
