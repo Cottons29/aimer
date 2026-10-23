@@ -332,7 +332,7 @@ aimer_wasm_guest = { path = "crates/aimer_wasm_guest" }
 
 allocator-api2 = "0.2.21"
 dlmalloc = "0.2.14"
-libc = "0.2.189"
+libc = "0.2.191"
 windows-sys = { version = "0.61.2", features = [
     "Win32_System_Memory",
     "Win32_System_SystemInformation",

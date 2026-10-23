@@ -99,6 +99,51 @@ fn a_nested_walk_does_not_replace_the_path_from_the_root_with_its_tail() {
 }
 
 #[test]
+fn a_holder_that_was_given_a_new_id_keeps_the_path_from_the_root_and_the_index() {
+    let ids: Vec<ElementId> = (0..4).map(|_| ElementId::next()).collect();
+    let held = KeepReachable::new();
+    with_pass_path(&ids, || held.hold());
+    DIRTY_PATHS_READY.with(|ready| ready.set(true));
+
+    // A walk that starts below the root sees the same ancestors, but the holder
+    // itself under a new identity: the element it holds for was placed again.
+    let renamed = ElementId::next();
+    with_pass_path(&[ids[2], renamed], || held.hold());
+
+    assert!(
+        DIRTY_PATHS_READY.with(Cell::get),
+        "the same place under a new id is not a move, and must not discard the index"
+    );
+    assert!(ids[..3].iter().all(|id| dirty_path_contains(*id)), "the ancestors stay registered");
+    assert!(dirty_path_contains(renamed), "the new id is on the index");
+    assert!(!dirty_path_contains(ids[3]), "the old id is gone");
+    held.release();
+    assert!(
+        ids[..3].iter().all(|id| !dirty_path_contains(*id)) && !dirty_path_contains(renamed),
+        "releasing removes the whole path"
+    );
+}
+
+#[test]
+fn a_walk_from_the_root_replaces_a_tail_registered_by_a_nested_walk() {
+    let ids: Vec<ElementId> = (0..4).map(|_| ElementId::next()).collect();
+    let held = KeepReachable::new();
+    // The holder was first seen by a walk that started below the root.
+    with_pass_path(&ids[2..], || held.hold());
+    DIRTY_PATHS_READY.with(|ready| ready.set(true));
+
+    // The walk from the root sees the same ancestors, the holder under a new id.
+    let renamed = ElementId::next();
+    let full = [ids[0], ids[1], ids[2], renamed];
+    with_pass_path(&full, || held.hold());
+
+    assert!(DIRTY_PATHS_READY.with(Cell::get), "the root's walk completes the path, it does not move it");
+    assert!(full.iter().all(|id| dirty_path_contains(*id)), "every ancestor is registered now");
+    assert!(!dirty_path_contains(ids[3]));
+    held.release();
+}
+
+#[test]
 fn a_holder_that_moved_under_another_root_asks_for_a_full_pass() {
     let old: Vec<ElementId> = (0..3).map(|_| ElementId::next()).collect();
     let new: Vec<ElementId> = (0..3).map(|_| ElementId::next()).collect();
@@ -174,3 +219,60 @@ fn a_dirty_source_keeps_the_path_from_the_root_when_a_nested_walk_sees_its_tail(
     assert!(!DIRTY_PATHS_READY.with(Cell::get));
 }
 
+
+/// Runs `body` as if inside a rebuild traversal rooted at `root`, with the index
+/// either covering that root (the pass prunes by it) or not (the pass visits
+/// everything).
+fn within_traversal<R>(root: ElementId, covered: bool, body: impl FnOnce() -> R) -> R {
+    invalidate_dirty_paths();
+    DIRTY_PATHS_INVALIDATED_DURING_TRAVERSAL.with(|invalidated| invalidated.set(false));
+    REBUILD_TRAVERSAL_DEPTH.with(|depth| depth.set(1));
+    REBUILD_TRAVERSAL_ROOT.with(|current| current.set(Some(root)));
+    if covered {
+        DIRTY_PATHS_READY.with(|ready| ready.set(true));
+        DIRTY_INDEXED_ROOTS.with(|roots| {
+            roots.borrow_mut().insert(root);
+        });
+    }
+    let result = body();
+    REBUILD_TRAVERSAL_DEPTH.with(|depth| depth.set(0));
+    REBUILD_TRAVERSAL_ROOT.with(|current| current.set(None));
+    invalidate_dirty_paths();
+    result
+}
+
+#[test]
+fn a_walk_that_visits_everything_upgrades_a_tail_without_discarding_the_index() {
+    let ids: Vec<ElementId> = (0..4).map(|_| ElementId::next()).collect();
+    let source = DirtySource::new(Rc::new(Cell::new(false)));
+    // Registered by a walk that began below the root.
+    source.set_path(&ids[2..]);
+
+    let invalidated = within_traversal(ids[0], false, || {
+        source.set_path(&ids);
+        DIRTY_PATHS_INVALIDATED_DURING_TRAVERSAL.with(Cell::get)
+    });
+
+    assert!(
+        !invalidated,
+        "a walk that prunes nothing reaches every source, so it can complete the index itself"
+    );
+    assert_eq!(source.path.borrow().as_deref(), Some(&ids[..]), "the full path replaces the tail");
+}
+
+#[test]
+fn a_pruning_walk_that_finds_a_tail_still_asks_for_a_full_pass() {
+    let ids: Vec<ElementId> = (0..4).map(|_| ElementId::next()).collect();
+    let source = DirtySource::new(Rc::new(Cell::new(false)));
+    source.set_path(&ids[2..]);
+
+    let invalidated = within_traversal(ids[0], true, || {
+        source.set_path(&ids);
+        DIRTY_PATHS_INVALIDATED_DURING_TRAVERSAL.with(Cell::get)
+    });
+
+    assert!(
+        invalidated,
+        "a pass that prunes by the index cannot have reached the sources it skipped"
+    );
+}

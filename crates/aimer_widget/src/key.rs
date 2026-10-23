@@ -211,7 +211,8 @@ mod test {
         let debug = format!("{key:?}");
 
         assert!(debug.contains("create_at"));
-        assert!(debug.contains(file!()));
+        // `Debug` escapes the backslashes of a Windows path.
+        assert!(debug.contains(&file!().escape_debug().to_string()));
     }
 
     #[test]
@@ -249,6 +250,7 @@ mod test {
         let key = key!();
         let debug = format!("{key:?}");
 
-        assert!(debug.contains(file!()));
+        // `Debug` escapes the backslashes of a Windows path.
+        assert!(debug.contains(&file!().escape_debug().to_string()));
     }
 }

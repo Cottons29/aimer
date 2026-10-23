@@ -976,28 +976,46 @@ mod tests {
     fn list_content_wraps_within_the_space_remaining_after_its_marker() {
         let resolver: ImageResolver = Rc::new(default_image_resolver);
         let theme = MarkdownTheme::default();
-        let ctx = layout_context(320.0, 200.0);
-        let paragraph = Document::parse("Use CodeGraph to understand code safely now").unwrap();
-        let list = Document::parse("- Use CodeGraph to understand code safely now").unwrap();
+        let text = "Use CodeGraph to understand code safely now";
+        let paragraph = Document::parse(text).unwrap();
+        let list = Document::parse(&format!("- {text}")).unwrap();
+        let height_at = |document: &Document, width: f32| {
+            let ctx = layout_context(width, 200.0);
+            render_document(document, &theme, None, &resolver, &[], &[])
+                .to_element(&ctx)
+                .computed_size(&ctx)
+                .height
+        };
 
-        let paragraph_size = render_document(&paragraph, &theme, None, &resolver, &[], &[])
-            .to_element(&ctx)
-            .computed_size(&ctx);
-        let list_size = render_document(&list, &theme, None, &resolver, &[], &[])
-            .to_element(&ctx)
-            .computed_size(&ctx);
+        // The host's font decides how wide the sentence is, so a fixed viewport
+        // can already wrap the bare paragraph and leave nothing to compare.
+        // Find the narrowest viewport that still fits the paragraph on one
+        // line instead: any width the marker takes away from it must wrap.
+        let one_line = height_at(&paragraph, 2000.0);
+        let (mut narrow, mut fits) = (1.0_f32, 2000.0_f32);
+        while fits - narrow > 0.5 {
+            let middle = (narrow + fits) / 2.0;
+            if height_at(&paragraph, middle) <= one_line {
+                fits = middle;
+            } else {
+                narrow = middle;
+            }
+        }
+        let width = fits.ceil();
+        let paragraph_height = height_at(&paragraph, width);
+        let list_height = height_at(&list, width);
 
-        assert!(list_size.width <= ctx.box_constraint.max_width);
-        assert!(
-            list_size.height < ctx.box_constraint.max_height,
-            "a list row expanded to the viewport height: {}",
-            list_size.height
+        assert_eq!(
+            paragraph_height, one_line,
+            "the paragraph must fit on one line at {width}"
         );
         assert!(
-            list_size.height > paragraph_size.height,
-            "list content did not wrap in its reduced width: list height {}, paragraph height {}",
-            list_size.height,
-            paragraph_size.height
+            list_height < 200.0,
+            "a list row expanded to the viewport height: {list_height}"
+        );
+        assert!(
+            list_height > paragraph_height,
+            "list content did not wrap in its reduced width: list height {list_height}, paragraph height {paragraph_height}"
         );
     }
 

@@ -777,8 +777,15 @@ impl EventElement for AnimatedBuilderElement {
 }
 
 impl Rebuildable for AnimatedBuilderElement {
+    /// Only hands a mark on to its child, so placing it again leaves the
+    /// dirty-path index as it was; see [`Rebuildable::forwards_marks_only`].
+    #[inline]
+    fn forwards_marks_only(&self) -> bool {
+        true
+    }
+
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
-        let curved_value = self.controller.tick(AnimInstant::now());
+        let curved_value = self.controller.tick(aimer_widget::frame_instant());
         if self.controller.is_animating() || self.live {
             // Nothing marks this element dirty while it animates, so without
             // this the rebuild pass would skip it and the animation would stop.

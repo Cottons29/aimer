@@ -455,6 +455,24 @@ impl<B: crate::backend::GpuBackend> MaterialPipeline<B> {
         );
     }
 
+    /// Builds the pipeline a backdrop filter draws with, ahead of the first one.
+    ///
+    /// Left alone, the first frame with a filter in it builds the pipeline, and
+    /// that compiles the material shader in the middle of whatever animation
+    /// brought the filter in. Building it here moves the same work to a frame
+    /// nobody is watching.
+    pub(crate) fn prewarm(&mut self, backend: &B, format: B::TextureFormat) {
+        if self.filter_pipeline.is_none() {
+            self.filter_pipeline = Some(create_material_pipeline(
+                backend,
+                &self.bind_group_layout,
+                format,
+                self.antialiasing,
+                true,
+            ));
+        }
+    }
+
     /// Equivalent to [`CustomPipeline::prepare`] but routes GPU operations
     /// through the [`GpuBackend`] trait.
     pub fn prepare(&mut self, ctx: &crate::custom_pipeline::RenderContextGeneric<'_, B>) {

@@ -183,7 +183,10 @@ mod tests {
         click(
             &mut app,
             (size.width / 2.0) as f64,
-            (size.height / 2.0 + 30.0) as f64,
+            // The button sits below the centre by half the two captions' line
+            // heights, which depends on the host's fonts. Aim at the middle of
+            // the range it can land in, not at the edge of one font's layout.
+            (size.height / 2.0 + 58.0) as f64,
         );
 
         let mut frames = 0;

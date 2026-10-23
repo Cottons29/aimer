@@ -101,7 +101,20 @@ pub(super) fn stat_value(path: &Path, operation: StorageOperation) -> StorageRes
             .map(Some)
             .map_err(|_| StorageError::Corrupt { operation }),
         Ok(_) => Err(StorageError::Corrupt { operation }),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            // Unix reports a path through a regular file as `NotADirectory`.
+            // Windows reports it as plain "not found", which would let a
+            // batch plan around a namespace that is really a file in the way.
+            #[cfg(windows)]
+            if path
+                .parent()
+                .and_then(|parent| fs::metadata(parent).ok())
+                .is_some_and(|parent| !parent.is_dir())
+            {
+                return Err(StorageError::Corrupt { operation });
+            }
+            Ok(None)
+        }
         Err(error) => Err(native_error(operation, error)),
     }
 }

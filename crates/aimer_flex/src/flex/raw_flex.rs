@@ -1361,6 +1361,13 @@ fn hit_test_contains(element: &dyn Element, pos: Vec2d) -> bool {
 }
 
 impl Rebuildable for RawFlex {
+    /// Only hands a mark on to its child, so placing it again leaves the
+    /// dirty-path index as it was; see [`Rebuildable::forwards_marks_only`].
+    #[inline]
+    fn forwards_marks_only(&self) -> bool {
+        true
+    }
+
     fn option_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
     }

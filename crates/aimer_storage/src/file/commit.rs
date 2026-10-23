@@ -120,10 +120,27 @@ pub(super) fn checkpoint(inner: &Inner) -> StorageResult<()> {
     result.map_err(|error| native_error(OPERATION, error))
 }
 
+/// Opens a value file so that `sync_all` on it can succeed.
+///
+/// Windows implements `sync_all` with `FlushFileBuffers`, which needs write
+/// access: on a read-only handle it fails with `PermissionDenied`, and the
+/// checkpoint would then never retire the journal. Opening for write neither
+/// truncates nor changes the file.
+fn open_for_sync(path: &std::path::Path) -> io::Result<fs::File> {
+    #[cfg(windows)]
+    {
+        fs::OpenOptions::new().write(true).open(path)
+    }
+    #[cfg(not(windows))]
+    {
+        fs::File::open(path)
+    }
+}
+
 fn sync_and_retire(inner: &Inner, paths: &[PathBuf]) -> io::Result<()> {
     let mut directories: Vec<&std::path::Path> = Vec::new();
     for path in paths {
-        match fs::File::open(path) {
+        match open_for_sync(path) {
             Ok(file) => file.sync_all()?,
             // Removed by the batch (or replaced since): nothing to sync.
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}

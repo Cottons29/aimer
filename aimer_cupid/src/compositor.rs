@@ -506,6 +506,7 @@ pub enum SceneItem {
 
 /// One item yielded by the scene-led renderer.
 #[doc(hidden)]
+#[allow(unused)]
 pub(crate) enum SceneRenderItem<'a> {
     /// A live DrawList command owned by the scene's command payload.
     Command(&'a DrawCommand),

@@ -79,7 +79,7 @@ pub use crate::components::drawable::{
 };
 pub use crate::components::element::{
     AnyElement, Element, ElementId, ElementNodeMap, ElementPath, EventDispatchContext, EventDispatcher,
-    begin_event_frame, begin_paint_frame, element_tree_generation,
+    begin_event_frame, begin_paint_frame, element_tree_generation, frame_instant,
     has_active_v2_render_presentation, has_active_v2_render_tree, keep_ticking_elements_reachable,
     layout_invalidation_generation, live_children_generation, mark_paint_damage,
     mark_paint_damage_full, notify_element_tree_changed, notify_hosted_element_tree_changed,

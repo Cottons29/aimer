@@ -139,6 +139,8 @@ pub struct Renderer<B: GpuBackend = crate::backend::DefaultGpuBackend> {
     antialiasing: crate::AntiAlias,
     material_pipeline_enabled: bool,
     material_pipeline_initialized: bool,
+    /// Frames this renderer has started; see [`Self::prewarm_material_pipeline`].
+    frames_started: u32,
     format: B::TextureFormat,
     resolved: Vec<ResolvedCommand<B>>,
     text_requests: Vec<TextDrawRequest>,
@@ -357,6 +359,7 @@ impl<B: GpuBackend> Renderer<B> {
             antialiasing,
             material_pipeline_enabled: initialize_all,
             material_pipeline_initialized: false,
+            frames_started: 0,
             format,
             resolved: Vec::new(),
             text_requests: Vec::new(),
@@ -853,6 +856,34 @@ impl<B: GpuBackend> Renderer<B> {
         );
     }
 
+    /// Builds the material pipeline and the filter pipeline beside it.
+    fn install_material_pipeline(&mut self, backend: &B) {
+        let mut pipeline = MaterialPipeline::<B>::new(backend, self.format, self.antialiasing);
+        pipeline.prewarm(backend, self.format);
+        pipeline.begin_frame();
+        self.custom_pipelines
+            .insert(0, CustomPipelineSlotGeneric::new(pipeline));
+        self.material_pipeline_initialized = true;
+    }
+
+    /// Builds the material pipelines on the second frame, if no draw has yet.
+    ///
+    /// They are built lazily because most frames draw no material, but the
+    /// first backdrop blur then compiled the material shader mid-animation: 70 ms
+    /// on a laptop whose shader cache was cold. Waiting for the second frame
+    /// keeps the shader off the path to the first one.
+    fn prewarm_material_pipeline(&mut self, backend: &B) {
+        if self.material_pipeline_enabled && !self.material_pipeline_initialized {
+            self.install_material_pipeline(backend);
+        }
+    }
+
+    /// Whether the material pipelines exist, whether a material has drawn or not.
+    #[cfg(test)]
+    pub(crate) fn material_pipeline_is_warm(&self) -> bool {
+        self.material_pipeline_initialized
+    }
+
     fn render_with_metadata(
         &mut self,
         backend: &B,
@@ -866,6 +897,10 @@ impl<B: GpuBackend> Renderer<B> {
         scene: Option<&CompositorScene>,
         render_plan: Option<&RetainedRenderPlan>,
     ) {
+        if self.frames_started == 1 {
+            self.prewarm_material_pipeline(backend);
+        }
+        self.frames_started = self.frames_started.saturating_add(1);
         let scene_matches_target = scene.is_some_and(|scene| {
             scene.target_size() == (width, height)
                 && scene.damage().target_size() == metadata.damage().target_size()
@@ -3028,12 +3063,7 @@ impl<B: GpuBackend> Renderer<B> {
                         && !self.material_pipeline_initialized
                     {
                         let material_pipeline_started = dx12_stage_start!(startup_timing);
-                        let mut pipeline =
-                            MaterialPipeline::<B>::new(backend, self.format, self.antialiasing);
-                        pipeline.begin_frame();
-                        self.custom_pipelines
-                            .insert(0, CustomPipelineSlotGeneric::new(pipeline));
-                        self.material_pipeline_initialized = true;
+                        self.install_material_pipeline(backend);
                         dx12_stage_finish!(
                             material_pipeline_started,
                             "lazy material pipeline initialization"

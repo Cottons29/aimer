@@ -732,6 +732,10 @@ impl LayoutElement for PageElement {
 }
 impl EventElement for PageElement {}
 impl Rebuildable for PageElement {
+    /// Only hands a mark on to its child, so placing it again leaves the
+    /// dirty-path index as it was; see [`Rebuildable::forwards_marks_only`].
+    #[inline]
+    fn forwards_marks_only(&self) -> bool { true }
     fn rebuild_if_dirty(&self, ctx: &BuildContext) { self.scoped(ctx, |ctx| self.child.rebuild_if_dirty(ctx)); }
     fn with_rebuild_context(&self, ctx: &BuildContext, callback: &mut dyn FnMut(&BuildContext)) { self.scoped(ctx, callback); }
 }

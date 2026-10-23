@@ -1859,6 +1859,7 @@ mod tests {
     mod window_api;
     mod builder_prepass;
     mod builder_retained_child;
+    mod forwarding_elements;
     #[cfg(all(feature = "wgpu", target_os = "macos"))]
     mod backdrop_blur_cost;
     #[cfg(all(feature = "wgpu", target_os = "macos"))]

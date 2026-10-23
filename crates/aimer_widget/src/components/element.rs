@@ -51,6 +51,8 @@ mod paint_invalidation_tests;
 #[cfg(test)]
 mod keep_reachable_tests;
 #[cfg(test)]
+mod frame_instant_tests;
+#[cfg(test)]
 mod render_context_tests;
 #[cfg(test)]
 mod window_paint_state_tests;
@@ -198,6 +200,8 @@ thread_local! {
     /// it instead of silently dropping the invalidation.
     static PENDING_PAINT_DAMAGE_FULL: Cell<bool> = const { Cell::new(false) };
     static FRAME_PAINT_TARGET: Cell<Option<(u32, u32)>> = const { Cell::new(None) };
+    /// When the frame being drawn began; see [`frame_instant`].
+    static FRAME_INSTANT: Cell<Option<aimer_utils::AnimInstant>> = const { Cell::new(None) };
     #[cfg(feature = "frame-stats")]
     static DRAW_TRAVERSAL_COUNT: Cell<u64> = const { Cell::new(0) };
     #[cfg(feature = "frame-stats")]
@@ -411,6 +415,7 @@ impl WindowPaintState {
 /// interval.
 #[doc(hidden)]
 pub fn begin_paint_frame(width: u32, height: u32) {
+    FRAME_INSTANT.with(|instant| instant.set(Some(aimer_utils::AnimInstant::now())));
     FRAME_PAINT_DAMAGE_OWNERS.with(|owners| owners.borrow_mut().clear());
     let target_changed = FRAME_PAINT_TARGET.with(|target| {
         let changed = target.get() != Some((width, height));
@@ -427,9 +432,27 @@ pub fn begin_paint_frame(width: u32, height: u32) {
     });
 }
 
+/// The instant the frame being drawn began, or now between frames.
+///
+/// An element that samples a clock when it rebuilds is rebuilt more than once in
+/// a frame whenever a pass enters it from several places, and each visit saw a
+/// later time than the one before: a value that is a pure function of time moved
+/// a little on every visit, so the element replaced its subtree each time and the
+/// walk after it was the cost of all of them. Sampling this instead gives every
+/// visit of one frame the same answer, which is what an animation controller's
+/// `tick` asks for: once per frame.
+#[doc(hidden)]
+#[inline]
+pub fn frame_instant() -> aimer_utils::AnimInstant {
+    FRAME_INSTANT
+        .with(Cell::get)
+        .unwrap_or_else(aimer_utils::AnimInstant::now)
+}
+
 /// Takes the damage collected since [`begin_paint_frame`].
 #[doc(hidden)]
 pub fn take_paint_frame_damage(width: u32, height: u32) -> DamageSet {
+    FRAME_INSTANT.with(|instant| instant.set(None));
     let damage = FRAME_PAINT_DAMAGE
         .with(|damage| damage.borrow_mut().take())
         .unwrap_or_else(|| DamageSet::full(width, height));
@@ -988,7 +1011,18 @@ impl DirtySource {
 
         let old_root = old_path.as_deref().and_then(|path| path.first()).copied();
         let new_root = path.first().copied();
-        if old_root.is_some() && old_root != new_root {
+        // The path registered before was the tail of this one: a walk that began
+        // below the root saw the source first, and the walk from the root sees
+        // all of it. While the pass prunes by the index it has not necessarily
+        // reached every source it skipped, so each of those would stay on a path
+        // the pass cannot follow. A pass that prunes nothing reaches them all and
+        // upgrades each as it goes, which is what completes the index; discarding
+        // it at the first upgrade only made the next pass walk everything again.
+        let completes_a_tail = old_path
+            .as_deref()
+            .is_some_and(|old| path.len() > old.len() && path.ends_with(old))
+            && !dirty_paths_cover_current_traversal();
+        if old_root.is_some() && old_root != new_root && !completes_a_tail {
             // A source path is relative to the traversal root. If a subtree
             // was walked independently, its metadata cannot safely answer a
             // later walk from the retained application root.
@@ -1126,6 +1160,31 @@ pub(crate) fn invalidate_dirty_paths() {
     DIRTY_INDEXED_ROOTS.with(|roots| roots.borrow_mut().clear());
     if REBUILD_TRAVERSAL_DEPTH.with(|depth| depth.get() > 0) {
         DIRTY_PATHS_INVALIDATED_DURING_TRAVERSAL.with(|invalidated| invalidated.set(true));
+    }
+}
+
+/// The registered path of a holder whose own id changed while its ancestors did
+/// not, or `None` when `current` describes a different place.
+///
+/// A path is relative to the walk that produced it, so one of the two is usually
+/// the tail of the other, and what is compared is what lies above the holder. The
+/// holder's id differs because whatever placed it again gave it a new one; keeping
+/// the longer of the two ancestor chains, with the newest id at the end, is what
+/// both walks agree on.
+fn path_after_new_id(registered: &[ElementId], current: &[ElementId]) -> Option<Vec<ElementId>> {
+    let (registered_last, registered_above) = registered.split_last()?;
+    let (current_last, current_above) = current.split_last()?;
+    if registered_last == current_last {
+        return None;
+    }
+    if registered_above.len() >= current_above.len() && registered_above.ends_with(current_above) {
+        let mut path = registered.to_vec();
+        *path.last_mut()? = *current_last;
+        Some(path)
+    } else if current_above.ends_with(registered_above) {
+        Some(current.to_vec())
+    } else {
+        None
     }
 }
 
@@ -1470,7 +1529,17 @@ impl KeepReachable {
             // the index, and every later pass would prune at them and never
             // reach the holder again.
             let is_tail_of_registered = path.len() > current.len() && path.ends_with(&current);
-            if *path != *current && !is_tail_of_registered {
+            if let Some(renamed) = path_after_new_id(&path, &current) {
+                // The element is where it was, under the same ancestors, but
+                // something placed it again and it has another id. That is not a
+                // move: only its own entry on the index changes.
+                if *path != renamed {
+                    remove_dirty_path(&path);
+                    path.clear();
+                    path.extend_from_slice(&renamed);
+                    add_dirty_path(&path);
+                }
+            } else if *path != *current && !is_tail_of_registered {
                 // The index cannot answer a walk from a different root, so the
                 // next pass has to be a full one.
                 if path.first().is_some_and(|old_root| Some(old_root) != current.first()) {

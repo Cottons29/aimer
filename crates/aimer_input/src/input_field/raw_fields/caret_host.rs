@@ -144,6 +144,13 @@ impl EventElement for RawCaretPlacement {
 }
 
 impl Rebuildable for RawCaretPlacement {
+    /// Only hands a mark on to its child, so placing it again leaves the
+    /// dirty-path index as it was; see [`Rebuildable::forwards_marks_only`].
+    #[inline]
+    fn forwards_marks_only(&self) -> bool {
+        true
+    }
+
     fn is_carry_state(&self) -> bool {
         self.child.is_carry_state()
     }
@@ -327,6 +334,13 @@ impl LayoutElement for RawTextFieldHost {
 }
 
 impl Rebuildable for RawTextFieldHost {
+    /// Only hands a mark on to its child, so placing it again leaves the
+    /// dirty-path index as it was; see [`Rebuildable::forwards_marks_only`].
+    #[inline]
+    fn forwards_marks_only(&self) -> bool {
+        true
+    }
+
     fn is_carry_state(&self) -> bool {
         true
     }

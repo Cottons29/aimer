@@ -10,6 +10,7 @@ use std::sync::mpsc::{
 use std::time::Duration;
 
 use aimer_animation::AnyCurve;
+use aimer_anteros::{WIDGET_GESTURE_DETECTOR, WIDGET_MOUSE_REGION};
 use aimer_anteros::{
     BUILTIN_PORTABLE_WIDGET_SCHEMAS, BUILTIN_WIDGET_SCHEMA_VERSION, CallbackBindings, EventId,
     ModelError, ModelLimits, PortableWidgetSchemaValidator, PropertyId, PropertyValue, StableId128,
@@ -56,9 +57,7 @@ pub use live::{
 
 pub use aimer_anteros::{
     EVENT_BUTTON_DOUBLE_PRESS, EVENT_BUTTON_LONG_PRESS, EVENT_BUTTON_PRESS,
-    EVENT_BUTTON_RIGHT_PRESS, EVENT_GESTURE_DETECTOR_DOUBLE_PRESS, EVENT_GESTURE_DETECTOR_DRAG_END,
-    EVENT_GESTURE_DETECTOR_LONG_PRESS, EVENT_GESTURE_DETECTOR_RIGHT_TAP,
-    EVENT_GESTURE_DETECTOR_TAP, EVENT_MOUSE_REGION_HOVER_ENTER, EVENT_MOUSE_REGION_HOVER_EXIT,
+    EVENT_BUTTON_RIGHT_PRESS,
     PROPERTY_ANIMATED_THEME_CURVE, PROPERTY_ANIMATED_THEME_CURVE_X1,
     PROPERTY_ANIMATED_THEME_CURVE_X2, PROPERTY_ANIMATED_THEME_CURVE_Y1,
     PROPERTY_ANIMATED_THEME_CURVE_Y2, PROPERTY_ANIMATED_THEME_DURATION_MILLIS,
@@ -72,12 +71,8 @@ pub use aimer_anteros::{
     PROPERTY_ROW_GAPS, PROPERTY_ROW_HORIZONTAL_ALIGNMENT, PROPERTY_ROW_JUSTIFY_CONTENT,
     PROPERTY_ROW_OVERFLOW, PROPERTY_ROW_VERTICAL_ALIGNMENT, PROPERTY_SIZED_BOX_HEIGHT,
     PROPERTY_SIZED_BOX_WIDTH, PROPERTY_TEXT_CONTENT, THEME_DATA_VALUE_VERSION,
-    WIDGET_ANIMATED_THEME, WIDGET_BUTTON, WIDGET_COLUMN, WIDGET_CONTAINER, WIDGET_GESTURE_DETECTOR,
-    WIDGET_MOUSE_REGION, WIDGET_PROVIDER, WIDGET_ROW, WIDGET_SIZED_BOX, WIDGET_TEXT,
-    EVENT_GESTURE_DETECTOR_DRAG_END, EVENT_GESTURE_DETECTOR_DOUBLE_PRESS,
-    EVENT_GESTURE_DETECTOR_LONG_PRESS, EVENT_GESTURE_DETECTOR_RIGHT_TAP,
-    EVENT_GESTURE_DETECTOR_TAP, EVENT_MOUSE_REGION_HOVER_ENTER, EVENT_MOUSE_REGION_HOVER_EXIT,
-    WIDGET_GESTURE_DETECTOR, WIDGET_MOUSE_REGION,
+    WIDGET_ANIMATED_THEME, WIDGET_BUTTON, WIDGET_COLUMN, WIDGET_CONTAINER, WIDGET_PROVIDER, WIDGET_ROW, WIDGET_SIZED_BOX, WIDGET_TEXT,
+
 };
 
 const BRIDGE_QUEUE_FULL: u32 = 0x7001;
@@ -1618,39 +1613,7 @@ fn materialize_mouse_region(
     .to_element(factory.ctx)
 }
 
-fn materialize_gesture_detector(
-    factory: &AimerWidgetFactory<'_>,
-    _document: &WidgetDocumentView<'_>,
-    node: WidgetNodeView<'_>,
-    mut children: Vec<AnyElement>,
-) -> AnyElement {
-    let child = children
-        .pop()
-        .expect("validated GestureDetector has exactly one child");
-    debug_assert!(children.is_empty());
-    bind_gesture_detector_callbacks(
-        GestureDetector::new(),
-        node.callbacks(),
-        &factory.dispatch_callback,
-    )
-    .child(RetainedElementWidget(child))
-    .to_element(factory.ctx)
-}
 
-fn materialize_mouse_region(
-    factory: &AimerWidgetFactory<'_>,
-    _document: &WidgetDocumentView<'_>,
-    node: WidgetNodeView<'_>,
-    mut children: Vec<AnyElement>,
-) -> AnyElement {
-    let child = children
-        .pop()
-        .expect("validated MouseRegion has exactly one child");
-    debug_assert!(children.is_empty());
-    bind_mouse_region_callbacks(MouseRegion::new(), node.callbacks(), &factory.dispatch_callback)
-        .child(RetainedElementWidget(child))
-        .to_element(factory.ctx)
-}
 
 fn materialize_button(
     factory: &AimerWidgetFactory<'_>,

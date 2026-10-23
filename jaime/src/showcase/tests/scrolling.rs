@@ -165,6 +165,17 @@ fn check_panel_scrolling(scale_factor: f64) {
         position: PhysicalPosition::new(120.0, 400.0),
     });
     app.render_frame();
+    // The wheel can carry the right panel past its end, and its spring back
+    // runs on the wall clock. How far it goes depends on the host's fonts and
+    // how slowly frames render, so let it come to rest: what is checked next is
+    // the sidebar's wheel input, not the tail of the previous gesture.
+    let mut frames = 0;
+    while app.take_redraw_request() && frames < 600 {
+        app.render_frame();
+        frames += 1;
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(frames < 600, "the right panel never came to rest");
     let before = positions
         .borrow()
         .clone();

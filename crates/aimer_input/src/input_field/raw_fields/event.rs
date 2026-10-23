@@ -34,11 +34,11 @@ impl EventElement for RawTextField {
                     self.native_session.set(
                         NEXT_TEXT_EDITING_SESSION.fetch_add(1, Ordering::Relaxed),
                     );
-                    ime_trace!(
-                        "field focus gained: session={} rev={}",
-                        self.native_session.get(),
-                        self.controller.revision(),
-                    );
+                    // ime_trace!(
+                    //     "field focus gained: session={} rev={}",
+                    //     self.native_session.get(),
+                    //     self.controller.revision(),
+                    // );
                     self.sync_platform_text_state();
                     self.on_focus.call(&self.controller.text());
                     true

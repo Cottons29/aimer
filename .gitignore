@@ -1,7 +1,6 @@
 target
 .env
 .idea
-.junie
 playground
 error.log
 s_data
@@ -17,5 +16,5 @@ mylog
 
 # Self-signed TLS certs for the Trunk dev server (generated via gen_certs.sh)
 website/builds
-
+.vscode
 

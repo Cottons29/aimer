@@ -11,6 +11,14 @@ pub use generic_renderer::{Renderer, RendererImpl, RendererMemoryStats};
 ))]
 mod unpresented_tests;
 
+#[cfg(all(
+    test,
+    feature = "native",
+    not(feature = "wgpu"),
+    any(target_os = "macos", target_os = "ios")
+))]
+mod prewarm_tests;
+
 #[cfg(test)]
 mod gradient_scale_tests;
 

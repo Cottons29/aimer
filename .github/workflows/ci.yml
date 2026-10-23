@@ -55,6 +55,17 @@ jobs:
           echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> "$GITHUB_ENV"
           printf '\n' | gnome-keyring-daemon --unlock --components=secrets
 
+      # Cupid's text tests resolve Chinese through the host's fonts, as the
+      # macOS runner's PingFang does. The bundled CJK face is Japanese and has
+      # no simplified-only ideographs such as 你, and a hosted Ubuntu image
+      # carries no face that does, so those characters come out as .notdef.
+      - name: Install a CJK font (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y --no-install-recommends fonts-noto-cjk fontconfig
+          fc-cache -f
+          fc-match "sans:lang=zh-cn:charset=4f60"
+
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 

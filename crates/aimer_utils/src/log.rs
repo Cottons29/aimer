@@ -346,7 +346,8 @@ mod tests {
     #[test]
     fn json_record_carries_caller_location() {
         let line = record(Level::Warn, "careful");
-        assert!(line.contains(r#""file":"crates/aimer_utils/src/log.rs""#));
+        // `file!()` is the path as the compiler saw it: backslashes on Windows.
+        assert!(line.contains(&format!(r#""file":"{}""#, escape_json(file!()))));
         assert!(line.contains(r#""line":"#));
     }
 
