@@ -59,10 +59,18 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Clippy
+        id: check
         run: cargo check --workspace
 
+      # Every test runs even when one fails, and the failures are printed again
+      # at the end so they are not lost in the log. nextest still exits with a
+      # failure code if any test failed, which is what fails the job.
       - name: Run tests with nextest
-        run: cargo nextest run --workspace
+        run: cargo nextest run --workspace --no-fail-fast --failure-output immediate-final
 
+      # A failing test step skips the steps after it, so this asks to run
+      # regardless, as long as the workspace built. The job still fails at the
+      # end if either this or the tests failed.
       - name: Run doctests
+        if: ${{ !cancelled() && steps.check.outcome == 'success' }}
         run: cargo test --doc --workspace
