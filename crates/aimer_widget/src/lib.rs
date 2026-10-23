@@ -94,7 +94,7 @@ pub use crate::components::element::{
     is_animation_only_frame, keep_element_reachable, may_escape_ancestor_clips,
     may_skip_settled_offscreen, note_state_update_marked, preserving_dirty_paths,
     rebuild_descent_count, rebuild_dirty_children, rebuild_keepalive_count,
-    rebuild_replaced_subtree, rebuild_state_mark_count, rebuild_visit_count,
+    rebuild_replaced_subtree, without_placement_marks, rebuild_state_mark_count, rebuild_visit_count,
     request_isolated_animation_frame, request_isolated_subtree_animation_frame,
     retained_element_settled, retained_visible_window, retained_visible_window_of_current,
     run_animation_only_pass, scoped_rebuild_cursor, scoped_rebuilds_since,

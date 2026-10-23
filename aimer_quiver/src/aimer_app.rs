@@ -1858,6 +1858,9 @@ mod tests {
     mod multi_window_paint;
     mod window_api;
     mod builder_prepass;
+    mod builder_retained_child;
+    #[cfg(all(feature = "wgpu", target_os = "macos"))]
+    mod backdrop_blur_cost;
     #[cfg(all(feature = "wgpu", target_os = "macos"))]
     mod bypass_target;
     mod collapsed_chevron;

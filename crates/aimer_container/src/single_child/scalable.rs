@@ -107,6 +107,7 @@ fn normalized_scale(scale: f32) -> f32 {
 }
 
 #[derive(EventElement, Rebuildable)]
+#[rebuildable(forwards_marks_only)]
 struct RawScalable {
     scale: f32,
     child: AnyElement,

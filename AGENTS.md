@@ -17,7 +17,7 @@ Aimer is a performance-sensitive GUI framework.
 - Do not trade correctness or maintainability for speculative micro-optimizations.
 - When changing GPU buffers, FFI, or platform code, validate sizes, alignments, lifetimes, and thread-affinity
   assumptions.
-
+- Assume mobile phone performance is slower than PC in range of 3 ~ 10x for performance benchmark
 
 ## Priorities
 

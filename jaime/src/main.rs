@@ -44,6 +44,7 @@ mod navigation_example;
 mod navigation_transitions_example;
 mod overflow_behavior_example;
 mod panic_recovery;
+mod passkey_example;
 mod picker_example;
 mod range_controls_example;
 mod resizable_example;

@@ -533,6 +533,68 @@ vec4 gaussian_backdrop(vec2 pixel) {
     return total / normalization;
 }
 
+// A large blur is made on a texture `material.liquid.x` times smaller in each
+// direction (a power of two up to 8; below 2 the blur is made at full size). One
+// pass averages each block of the capture into a texel, a horizontal and a
+// vertical Gaussian then run over the small texture, where every pass center is
+// a texel center and the two-taps-in-one bilinear read of `gaussian_backdrop` is
+// exact, and the material's pass reads the result back with bilinear filtering.
+// Sigma is at least four texels there, so the filtering costs under a level.
+vec4 reduced_fetch(vec2 position, vec2 valid, bool from_capture) {
+    vec2 clamped = clamp(position, vec2(0.5), valid - vec2(0.5));
+    if (from_capture) {
+        return textureLod(_group_0_binding_1_fs, clamped / vec2(textureSize(_group_0_binding_1_fs, 0)), 0.0);
+    }
+    return textureLod(_group_0_binding_3_fs, clamped / vec2(textureSize(_group_0_binding_3_fs, 0)), 0.0);
+}
+
+// The average of the `factor` x `factor` block of capture texels under a texel
+// of the small texture, as `factor / 2` x `factor / 2` bilinear reads of four
+// texels each.
+vec4 decimate_backdrop(vec2 pixel) {
+    float factor = _group_0_binding_0_fs.liquid.x;
+    int count = int(factor) / 2;
+    vec2 center = pixel * factor;
+    vec2 valid = max(_group_0_binding_0_fs.backdrop_rect.zw, vec2(1.0));
+    vec4 total = vec4(0.0);
+    for (int row = 0; row < count; row++) {
+        for (int column = 0; column < count; column++) {
+            vec2 offset = vec2(float(2 * column - (count - 1)), float(2 * row - (count - 1)));
+            total += reduced_fetch(center + offset, valid, true);
+        }
+    }
+    return total / float(count * count);
+}
+
+// `gaussian_backdrop` over the small texture, along `axis`.
+vec4 gaussian_reduced(vec2 pixel, vec2 axis) {
+    vec2 valid = max(_group_0_binding_0_fs.backdrop_rect.zw, vec2(1.0));
+    int support = int(ceil(_group_0_binding_0_fs.detail.z));
+    vec4 total = reduced_fetch(pixel, valid, false);
+    float normalization = 1.0;
+    float previous = 1.0;
+    float ratio = _group_0_binding_0_fs.liquid2_.z;
+    for (int tap = 1; tap <= support; tap += 2) {
+        float first = previous * ratio;
+        ratio *= _group_0_binding_0_fs.liquid2_.w;
+        float second = tap + 1 <= support ? first * ratio : 0.0;
+        float weight = first + second;
+        vec2 offset = axis * (float(tap) + second / max(weight, 0.00000001));
+        total += (reduced_fetch(pixel + offset, valid, false) + reduced_fetch(pixel - offset, valid, false)) * weight;
+        normalization += 2.0 * weight;
+        previous = second;
+        ratio *= _group_0_binding_0_fs.liquid2_.w;
+    }
+    return total / normalization;
+}
+
+// The blurred small texture under a fragment of the material's own pass.
+vec4 reduced_result(vec2 pixel) {
+    float factor = _group_0_binding_0_fs.liquid.x;
+    vec2 valid = max(ceil(_group_0_binding_0_fs.backdrop_rect.zw / factor), vec2(1.0));
+    return reduced_fetch((pixel - _group_0_binding_0_fs.backdrop_rect.xy) / factor, valid, false);
+}
+
 vec4 frosted_backdrop(vec2 pixel_2) {
     vec4 total = vec4(0.0);
     float radius_1 = _group_0_binding_0_fs.detail.z;
@@ -913,6 +975,9 @@ void main() {
         discard;
     }
     if (_group_0_binding_0_fs.effect.x < -0.5) {
+        if (_group_0_binding_0_fs.effect.x < -3.5) { _fs2p_location0 = gaussian_reduced(input_.pixel_pos, vec2(0.0, 1.0)); return; }
+        if (_group_0_binding_0_fs.effect.x < -2.5) { _fs2p_location0 = gaussian_reduced(input_.pixel_pos, vec2(1.0, 0.0)); return; }
+        if (_group_0_binding_0_fs.effect.x < -1.5) { _fs2p_location0 = decimate_backdrop(input_.pixel_pos); return; }
         _fs2p_location0 = gaussian_backdrop(input_.pixel_pos);
         return;
     }
@@ -945,7 +1010,13 @@ void main() {
     }
     vec4 filtered;
     if (_group_0_binding_0_fs.effect.x > 1.5) {
-        filtered = _group_0_binding_0_fs.detail.z > 0.0 ? gaussian_backdrop(input_.pixel_pos) : sample_backdrop(input_.pixel_pos);
+        if (_group_0_binding_0_fs.detail.z <= 0.0) {
+            filtered = sample_backdrop(input_.pixel_pos);
+        } else if (_group_0_binding_0_fs.liquid.x > 1.5) {
+            filtered = reduced_result(input_.pixel_pos);
+        } else {
+            filtered = gaussian_backdrop(input_.pixel_pos);
+        }
     } else {
         filtered = frosted_backdrop(input_.pixel_pos);
     }

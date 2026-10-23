@@ -426,9 +426,14 @@ pub fn layout_element_derive(input: TokenStream) -> TokenStream {
     auto_impl("aimer_widget::LayoutElement", input)
 }
 
-#[proc_macro_derive(Rebuildable)]
+/// Implements `aimer_widget::Rebuildable` with its defaults.
+///
+/// Add `#[rebuildable(forwards_marks_only)]` to declare that the element is a
+/// plain wrapper that only passes marks and rebuilds on to its children; see
+/// `Rebuildable::forwards_marks_only` for what that promises.
+#[proc_macro_derive(Rebuildable, attributes(rebuildable))]
 pub fn rebuildable_element_derive(input: TokenStream) -> TokenStream {
-    auto_impl("aimer_widget::Rebuildable", input)
+    crate::auto_trait_impl::rebuildable_impl(input)
 }
 
 #[proc_macro_derive(Reconcilable)]

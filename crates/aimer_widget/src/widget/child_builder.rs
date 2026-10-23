@@ -130,6 +130,9 @@ struct Child {
     /// Whether the owner declared this child as a named slot, through
     /// `BuildContext::retain`.
     slot: bool,
+    /// The chain of elements above this child when the rebuild pass last
+    /// descended it inside a replaced subtree; see `rebuild_retained_child`.
+    placed_at: Cell<u64>,
 }
 
 /// How a [`Child`] produces its widget.
@@ -166,9 +169,11 @@ impl Child {
                     // Only builds that observed inherited context can differ now, so
                     // the mark is a placement's, which spares the others.
                     Some(element) => {
-                        crate::components::element::with_placement_mark(|| {
-                            element.mark_needs_rebuild()
-                        })
+                        if !crate::components::element::placement_marks_suspended() {
+                            crate::components::element::with_placement_mark(|| {
+                                element.mark_needs_rebuild()
+                            })
+                        }
                     }
                 }
                 RetainedChildElement(Rc::clone(self)).boxed()
@@ -208,6 +213,7 @@ impl ChildBuilder {
                 origin: Origin::Once(Cell::new(Some(widget.boxed()))),
                 element: OnceCell::new(),
                 slot: false,
+                placed_at: Cell::new(0),
             })),
             key,
             debug_name,
@@ -254,6 +260,7 @@ impl ChildBuilder {
                 origin: Origin::Every(Box::new(build)),
                 element: OnceCell::new(),
                 slot: false,
+                placed_at: Cell::new(0),
             })),
             key: None,
             debug_name: "ChildBuilder",
@@ -727,9 +734,15 @@ impl Drawable for RetainedChildElement {
 }
 
 impl Rebuildable for RetainedChildElement {
+    /// A placement is the child it stands for: the mark goes to the child's own
+    /// element, which is judged there.
+    fn forwards_marks_only(&self) -> bool {
+        true
+    }
+
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
         if let Some(child) = self.child() {
-            child.rebuild_if_dirty(ctx);
+            crate::components::element::rebuild_retained_child(child, &self.0.placed_at, ctx);
         }
     }
 
@@ -1031,6 +1044,112 @@ mod tests {
         assert!(
             crate::components::element::dirty_paths_are_ready(),
             "a second placement of a leaf discarded the index of dirty paths"
+        );
+    }
+
+    /// An element that holds one child and does nothing else.
+    ///
+    /// `forwards` is whether it declares that marking and rebuilding it only
+    /// reach its child, so that it cannot hide a producer of rebuilds itself.
+    struct Wrapper {
+        child: AnyElement,
+        forwards: bool,
+    }
+
+    impl VisitorElement for Wrapper {
+        fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+            visitor(&self.child);
+        }
+
+        fn debug_name(&self) -> &'static str {
+            "Wrapper"
+        }
+    }
+
+    impl EventElement for Wrapper {}
+    impl LayoutElement for Wrapper {}
+    impl Drawable for Wrapper {
+        fn update(&self, _ctx: &BuildContext) {}
+    }
+
+    impl Rebuildable for Wrapper {
+        fn forwards_marks_only(&self) -> bool {
+            self.forwards
+        }
+    }
+
+    /// A widget whose element is a wrapper around `inner`, or around a leaf.
+    struct WrapperWidget {
+        forwards: bool,
+        inner: Option<Box<WrapperWidget>>,
+    }
+
+    impl Widget for WrapperWidget {
+        fn to_element(self, ctx: &BuildContext) -> AnyElement {
+            let child = match self.inner {
+                Some(inner) => inner.to_element(ctx),
+                None => Counter { events: Rc::new(Cell::new(0)) }.boxed(),
+            };
+            Wrapper { child, forwards: self.forwards }.boxed()
+        }
+    }
+
+    impl crate::portable::PortableWidget for WrapperWidget {}
+
+    /// Places `widget` twice, as a parent that rebuilds itself does, and says
+    /// whether the second placement left the dirty-path index usable.
+    async fn index_survives_a_second_placement(widget: WrapperWidget) -> bool {
+        let child = ChildBuilder::from_widget(widget);
+        let ctx = context();
+        drop(child.build(&ctx));
+        crate::components::element::mark_dirty_paths_ready();
+
+        drop(child.build(&ctx));
+
+        crate::components::element::dirty_paths_are_ready()
+    }
+
+    #[tokio::test]
+    async fn placing_a_forwarding_wrapper_again_leaves_the_dirty_path_index_alone() {
+        // A container around a label is what a button holds, and a retained
+        // child of that shape is placed again by every frame of an animation.
+        // The wrapper only passes the mark on, and what it reaches is a leaf, so
+        // there is no producer the index could have lost.
+        let nested = WrapperWidget {
+            forwards: true,
+            inner: Some(Box::new(WrapperWidget { forwards: true, inner: None })),
+        };
+
+        assert!(
+            index_survives_a_second_placement(nested).await,
+            "a wrapper that only forwards discarded the index of dirty paths"
+        );
+    }
+
+    #[tokio::test]
+    async fn placing_a_wrapper_that_may_hide_a_producer_again_discards_the_index() {
+        // An element that does not say it only forwards could rebuild by means
+        // the index does not know, so a mark on it has to stay conservative.
+        let widget = WrapperWidget { forwards: false, inner: None };
+
+        assert!(
+            !index_survives_a_second_placement(widget).await,
+            "an opaque wrapper must keep discarding the index"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_forwarding_wrapper_over_an_opaque_one_still_discards_the_index() {
+        // The mark passes through the forwarder and reaches an element that could
+        // be a producer: the forwarder's promise covers only itself.
+        let widget = WrapperWidget {
+            forwards: true,
+            inner: Some(Box::new(WrapperWidget { forwards: false, inner: None })),
+        };
+
+        assert!(
+            !index_survives_a_second_placement(widget).await,
+            "an opaque element below a forwarder was not noticed"
         );
     }
 

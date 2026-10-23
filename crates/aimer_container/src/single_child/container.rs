@@ -238,6 +238,7 @@ mod portable;
 ///
 /// - **SizedBox**: fixed size container or placeholder
 #[derive(Default, Rebuildable)]
+#[rebuildable(forwards_marks_only)]
 pub struct RawContainer<T: Element, D: Decoration = BoxDecoration> {
     pub padding: LayoutSpacing,
     pub margin: LayoutSpacing,

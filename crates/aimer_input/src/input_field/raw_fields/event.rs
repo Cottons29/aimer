@@ -761,6 +761,9 @@ mod native_delta_tests {
     use aimer_events::text_editing::{NativeTextRange, TextEditingDelta};
     use aimer_widget::EventElement;
 
+    // The seam the delta tests drive the keyboard language through. An iOS
+    // build asks UIKit instead, so it has neither the seam nor these tests.
+    #[cfg(not(target_os = "ios"))]
     use super::simulate_keyboard_language;
     use super::test_support::{commit, focused_field};
     use crate::TextEditingController as TextFieldController;
@@ -821,6 +824,7 @@ mod native_delta_tests {
     }
 
     #[test]
+    #[cfg(not(target_os = "ios"))]
     fn a_delta_typed_on_a_chinese_keyboard_teaches_the_field_its_language() {
         let controller = TextFieldController::new();
         let field = focused_field(controller.clone());
@@ -843,6 +847,7 @@ mod native_delta_tests {
     }
 
     #[test]
+    #[cfg(not(target_os = "ios"))]
     fn a_delta_typed_on_a_latin_keyboard_never_erases_the_learned_language() {
         let controller = TextFieldController::new();
         let field = focused_field(controller.clone());
@@ -862,6 +867,7 @@ mod native_delta_tests {
     }
 
     #[test]
+    #[cfg(not(target_os = "ios"))]
     fn a_delta_reported_without_a_language_leaves_the_learned_one_alone() {
         let controller = TextFieldController::new();
         let field = focused_field(controller.clone());
@@ -879,6 +885,7 @@ mod native_delta_tests {
     }
 
     #[test]
+    #[cfg(not(target_os = "ios"))]
     fn the_learned_language_outlives_focus_and_rebuilds() {
         let controller = TextFieldController::new();
         let field = focused_field(controller.clone());

@@ -179,6 +179,71 @@ float4 gaussian_backdrop(float2 pixel) {
     return total / normalization;
 }
 
+// A large blur is made on a texture `material.liquid.x` times smaller in each
+// direction (a power of two up to 8; below 2 the blur is made at full size). One
+// pass averages each block of the capture into a texel, a horizontal and a
+// vertical Gaussian then run over the small texture, where every pass center is
+// a texel center and the two-taps-in-one bilinear read of `gaussian_backdrop` is
+// exact, and the material's pass reads the result back with bilinear filtering.
+// Sigma is at least four texels there, so the filtering costs under a level.
+float4 reduced_fetch(float2 position, float2 valid, bool from_capture) {
+    float2 clamped = clamp(position, float2(0.5, 0.5), valid - float2(0.5, 0.5));
+    uint width, height;
+    if (from_capture) {
+        backdrop.GetDimensions(width, height);
+        return backdrop.SampleLevel(backdrop_sampler, clamped / float2(width, height), 0.0);
+    }
+    horizontal_blur.GetDimensions(width, height);
+    return horizontal_blur.SampleLevel(backdrop_sampler, clamped / float2(width, height), 0.0);
+}
+
+// The average of the `factor` x `factor` block of capture texels under a texel
+// of the small texture, as `factor / 2` x `factor / 2` bilinear reads of four
+// texels each.
+float4 decimate_backdrop(float2 pixel) {
+    float factor = material.liquid.x;
+    int count = int(factor) / 2;
+    float2 center = pixel * factor;
+    float2 valid = max(material.backdrop_rect.zw, float2(1.0, 1.0));
+    float4 total = float4(0.0, 0.0, 0.0, 0.0);
+    for (int row = 0; row < count; row++) {
+        for (int column = 0; column < count; column++) {
+            float2 offset = float2(float(2 * column - (count - 1)), float(2 * row - (count - 1)));
+            total += reduced_fetch(center + offset, valid, true);
+        }
+    }
+    return total / float(count * count);
+}
+
+// `gaussian_backdrop` over the small texture, along `axis`.
+float4 gaussian_reduced(float2 pixel, float2 axis) {
+    float2 valid = max(material.backdrop_rect.zw, float2(1.0, 1.0));
+    int support = int(ceil(material.detail.z));
+    float4 total = reduced_fetch(pixel, valid, false);
+    float normalization = 1.0;
+    float previous = 1.0;
+    float ratio = material.liquid2.z;
+    for (int tap = 1; tap <= support; tap += 2) {
+        float first = previous * ratio;
+        ratio *= material.liquid2.w;
+        float second = tap + 1 <= support ? first * ratio : 0.0;
+        float weight = first + second;
+        float2 offset = axis * (float(tap) + second / max(weight, 0.00000001));
+        total += (reduced_fetch(pixel + offset, valid, false) + reduced_fetch(pixel - offset, valid, false)) * weight;
+        normalization += 2.0 * weight;
+        previous = second;
+        ratio *= material.liquid2.w;
+    }
+    return total / normalization;
+}
+
+// The blurred small texture under a fragment of the material's own pass.
+float4 reduced_result(float2 pixel) {
+    float factor = material.liquid.x;
+    float2 valid = max(ceil(material.backdrop_rect.zw / factor), float2(1.0, 1.0));
+    return reduced_fetch((pixel - material.backdrop_rect.xy) / factor, valid, false);
+}
+
 float4 frosted_backdrop(float2 pixel) {
     float radius = material.detail.z;
     float4 total = sample_backdrop(pixel);
@@ -489,7 +554,12 @@ float4 fs_main(MaterialVaryings input) : SV_Target0 {
     if (material.effect.x > 1.5 && material.viewport.w < 0.5) {
         discard;
     }
-    if (material.effect.x < -0.5) return gaussian_backdrop(input.pixel_pos);
+    if (material.effect.x < -0.5) {
+        if (material.effect.x < -3.5) return gaussian_reduced(input.pixel_pos, float2(0.0, 1.0));
+        if (material.effect.x < -2.5) return gaussian_reduced(input.pixel_pos, float2(1.0, 0.0));
+        if (material.effect.x < -1.5) return decimate_backdrop(input.pixel_pos);
+        return gaussian_backdrop(input.pixel_pos);
+    }
     if (material.effect.x > 2.5) {
         float2 center = material.bounds.xy + material.bounds.zw * 0.5;
         float distance = rounded_rect_sdf(input.pixel_pos - center, material.bounds.zw * 0.5, material.radii);
@@ -519,7 +589,13 @@ float4 fs_main(MaterialVaryings input) : SV_Target0 {
     }
     float4 filtered;
     if (material.effect.x > 1.5) {
-        filtered = material.detail.z > 0.0 ? gaussian_backdrop(input.pixel_pos) : sample_backdrop(input.pixel_pos);
+        if (material.detail.z <= 0.0) {
+            filtered = sample_backdrop(input.pixel_pos);
+        } else if (material.liquid.x > 1.5) {
+            filtered = reduced_result(input.pixel_pos);
+        } else {
+            filtered = gaussian_backdrop(input.pixel_pos);
+        }
     } else {
         filtered = frosted_backdrop(input.pixel_pos);
     }

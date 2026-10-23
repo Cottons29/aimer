@@ -28,6 +28,27 @@ pub trait Rebuildable: VisitorElement {
         false
     }
 
+    /// Whether marking this element for rebuild does nothing but mark its
+    /// children, and rebuilding it does nothing but rebuild them.
+    ///
+    /// The dirty-path index lets a rebuild pass skip everything that cannot lead
+    /// to work, which it knows for the elements that keep a rebuild source of
+    /// their own. A mark on any other element that has children could reach a
+    /// producer of rebuilds the index does not know of, so such a mark discards
+    /// the index and the next pass walks the whole tree. An element that returns
+    /// `true` promises it is not such a producer itself: the mark passes through
+    /// it, and what it reaches below is judged on its own. A plain wrapper (a
+    /// container, a retained child) should; anything that overrides
+    /// [`mark_needs_rebuild`](Rebuildable::mark_needs_rebuild) or
+    /// [`rebuild_if_dirty`](Rebuildable::rebuild_if_dirty) to do work of its own
+    /// must not.
+    ///
+    /// The default is `false`, which is always safe.
+    #[inline]
+    fn forwards_marks_only(&self) -> bool {
+        false
+    }
+
     fn option_any(&self) -> Option<&dyn std::any::Any> {
         None
     }

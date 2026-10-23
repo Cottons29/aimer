@@ -17,6 +17,7 @@
 		020104604E249606F8C9CAED /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/Cocoa.framework; sourceTree = DEVELOPER_DIR; };
 		D748B9601A3AA05BDAF53561 /* jaime.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = jaime.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E2F3A4B5C6D7E8091A2B3C4D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		C0FFEE1234567890ABCDEF01 /* RustLinkFlags.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = RustLinkFlags.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -34,6 +35,7 @@
 		42D9F67E0760F412DF98166F = {
 			isa = PBXGroup;
 			children = (
+				C0FFEE1234567890ABCDEF01 /* RustLinkFlags.xcconfig */,
 				BCE298E721FCDDD500AEEAC0 /* jaime */,
 				A0CAA35B87EA7D492A519F06 /* Products */,
 				474E090F57E886570692359B /* Frameworks */,
@@ -262,6 +264,7 @@
 		};
 		B2672DDDCE86BB2B16CB875F /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = C0FFEE1234567890ABCDEF01 /* RustLinkFlags.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -290,6 +293,7 @@
 					QuartzCore,
 					"-framework",
 					Security,
+					"$(AIMER_RUST_LDFLAGS)",
 				);
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
 				SDKROOT = macosx;
@@ -298,6 +302,7 @@
 		};
 		E17238934DC9A44C7CE6482E /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = C0FFEE1234567890ABCDEF01 /* RustLinkFlags.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -326,6 +331,7 @@
 					QuartzCore,
 					"-framework",
 					Security,
+					"$(AIMER_RUST_LDFLAGS)",
 				);
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
 				SDKROOT = macosx;

@@ -179,6 +179,7 @@ impl CachedHitTestIndex {
 }
 
 #[derive(Rebuildable, LayoutElement)]
+#[rebuildable(forwards_marks_only)]
 pub struct RawStackElement {
     pub children: Vec<AnyElement>,
     pub direction: StackDirection,

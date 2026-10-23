@@ -472,6 +472,10 @@ impl<E: Element + 'static> Rebuildable for ElementNode<E> {
         self.element.is_stateful_element()
     }
 
+    fn forwards_marks_only(&self) -> bool {
+        self.element.forwards_marks_only()
+    }
+
     fn is_carry_state(&self) -> bool {
         self.element.is_carry_state()
     }
@@ -501,7 +505,20 @@ impl<E: Element + 'static> Rebuildable for ElementNode<E> {
         // parent places it again, which an animation does every frame; treating
         // each as an unknown producer discarded the index and sent the next pass
         // through the whole page.
-        let unknown = outermost && !has_rebuild_source && has_children(&self.element);
+        //
+        // An element that only forwards the mark to its children (a container, a
+        // retained child) is no producer either: what it reaches is judged where
+        // the mark gets there. Marking one each frame is as ordinary as marking a
+        // leaf, and treating it as unknown did the same damage.
+        let opaque = !has_rebuild_source
+            && has_children(&self.element)
+            && !self.element.forwards_marks_only();
+        if outermost {
+            MARK_REACHED_OPAQUE_ELEMENT.with(|reached| reached.set(false));
+        } else if opaque {
+            MARK_REACHED_OPAQUE_ELEMENT.with(|reached| reached.set(true));
+        }
+        let unknown = outermost && opaque;
         with_rebuild_invalidation(|| {
             if unknown {
                 // A custom rebuild producer has no path to publish. Preserve
@@ -512,6 +529,18 @@ impl<E: Element + 'static> Rebuildable for ElementNode<E> {
             }
             self.element.mark_needs_rebuild();
         });
+        // A forwarder at the root of the mark decided nothing for what lies
+        // below it. If the mark reached an element that could be a producer, the
+        // index cannot be trusted any more than if that element had been marked
+        // on its own.
+        if outermost
+            && !has_rebuild_source
+            && !unknown
+            && MARK_REACHED_OPAQUE_ELEMENT.with(Cell::get)
+        {
+            mark_paint_invalidations_unknown();
+            invalidate_dirty_paths();
+        }
         // A stateful element may delegate the mark to a carrying child without
         // marking itself. If that child contains an untracked custom producer,
         // the retained path index has no source to point at; fall back to the
@@ -545,6 +574,12 @@ impl<E: Element + 'static> Rebuildable for ElementNode<E> {
             }
         }
     }
+}
+
+thread_local! {
+    /// Whether the recursive mark in progress reached an element that could be a
+    /// producer of rebuilds the dirty-path index does not know of.
+    static MARK_REACHED_OPAQUE_ELEMENT: Cell<bool> = const { Cell::new(false) };
 }
 
 #[inline]
@@ -980,6 +1015,10 @@ impl Rebuildable for AnyElement {
         self.as_ref().is_stateful_element()
     }
 
+    fn forwards_marks_only(&self) -> bool {
+        self.as_ref().forwards_marks_only()
+    }
+
     fn is_carry_state(&self) -> bool {
         self.as_ref().is_carry_state()
     }
@@ -1320,6 +1359,10 @@ impl Rebuildable for Box<dyn Element> {
         self.as_ref().is_stateful_element()
     }
 
+    fn forwards_marks_only(&self) -> bool {
+        self.as_ref().forwards_marks_only()
+    }
+
     fn is_carry_state(&self) -> bool {
         self.as_ref().is_carry_state()
     }
@@ -1559,3 +1602,4 @@ impl Drawable for Box<dyn Element> {
     }
 
 }
+

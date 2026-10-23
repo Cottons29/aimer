@@ -318,7 +318,7 @@ fn read_launch_config() -> Result<Option<StagedHostConfig>, ()> {
         if let Some(config) = staged.as_mut() {
             config
                 .address
-                .set_ip(ios_listener_ip(service_name.as_deref())?);
+                .set_ip(ios_listener_ip(service_name.as_deref())?.into());
         } else if service_name.is_some() {
             return Err(());
         }

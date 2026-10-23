@@ -174,6 +174,7 @@ thread_local! {
     static REBUILD_MARK_DEPTH: Cell<usize> = const { Cell::new(0) };
     static PLACEMENT_MARK_DEPTH: Cell<usize> = const { Cell::new(0) };
     static PLACEMENT_SKIP_SUSPENDED: Cell<usize> = const { Cell::new(0) };
+    static PLACEMENT_MARKS_SUSPENDED: Cell<usize> = const { Cell::new(0) };
     static DRAW_DEPTH: Cell<usize> = const { Cell::new(0) };
     static DRAW_INVALIDATION_OWNER: Cell<Option<ElementId>> = const { Cell::new(None) };
     /// Paint invalidation metadata is retained for the current pair of
@@ -720,6 +721,70 @@ pub(crate) fn with_placement_mark<R>(mark: impl FnOnce() -> R) -> R {
     PLACEMENT_MARK_DEPTH.with(|depth| depth.set(depth.get() + 1));
     let _guard = PlacementMarkGuard;
     mark()
+}
+
+/// Runs `build` with the marks of retained-child placements switched off: a
+/// retained child placed again inside it is not marked at all.
+///
+/// A placement marks the child it places so that builds which observed inherited
+/// context run again, because a parent that rebuilds itself is usually a parent
+/// whose context changed. That does not hold for a parent that rebuilds only
+/// because a value it animates moved: nothing it publishes has changed, and a
+/// context that does change marks its dependents on its own. For such a parent
+/// the mark would make every unchanged child run its builds on every frame, the
+/// work handing it over as a retained child was meant to avoid.
+#[doc(hidden)]
+pub fn without_placement_marks<R>(build: impl FnOnce() -> R) -> R {
+    struct Resume;
+    impl Drop for Resume {
+        fn drop(&mut self) {
+            PLACEMENT_MARKS_SUSPENDED.with(|depth| depth.set(depth.get() - 1));
+        }
+    }
+    PLACEMENT_MARKS_SUSPENDED.with(|depth| depth.set(depth.get() + 1));
+    let _resume = Resume;
+    build()
+}
+
+/// Whether [`without_placement_marks`] is in effect.
+#[inline]
+pub(crate) fn placement_marks_suspended() -> bool {
+    PLACEMENT_MARKS_SUSPENDED.with(|depth| depth.get() != 0)
+}
+
+/// A number that names the chain of elements the rebuild pass is inside of.
+fn rebuild_path_signature() -> u64 {
+    REBUILD_PATH.with(|path| {
+        path.borrow().iter().fold(0x9e37_79b9_7f4a_7c15u64, |hash, id| {
+            (hash.rotate_left(5) ^ id.get()).wrapping_mul(0xf135_7aea_2e62_a9c5)
+        })
+    })
+}
+
+/// Rebuilds a retained `child` the pass has reached.
+///
+/// Inside a replaced subtree the pass descends everything, because nothing in it
+/// has been visited and every element has to register its path. A retained child
+/// was not replaced: it is the same element as last frame, and if the chain of
+/// elements above it is the same too, the paths it registered then are still
+/// right, so the descent has nothing to add and would only cost as much as the
+/// child is large. `placed_at` remembers the chain the child was last descended
+/// under.
+pub(crate) fn rebuild_retained_child(child: &dyn Rebuildable, placed_at: &Cell<u64>, ctx: &BuildContext) {
+    let forced = REBUILD_FORCE_DESCEND_DEPTH.with(Cell::get);
+    if forced == 0 {
+        child.rebuild_if_dirty(ctx);
+        return;
+    }
+    let signature = rebuild_path_signature();
+    if placed_at.get() == signature {
+        REBUILD_FORCE_DESCEND_DEPTH.with(|depth| depth.set(0));
+        child.rebuild_if_dirty(ctx);
+        REBUILD_FORCE_DESCEND_DEPTH.with(|depth| depth.set(forced));
+    } else {
+        child.rebuild_if_dirty(ctx);
+        placed_at.set(signature);
+    }
 }
 
 /// Runs `build` with placement skipping suspended: every mark it makes is a full

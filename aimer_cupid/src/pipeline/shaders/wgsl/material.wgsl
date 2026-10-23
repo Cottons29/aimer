@@ -233,6 +233,69 @@ fn gaussian_backdrop(pixel: vec2<f32>) -> vec4<f32> {
     return total / normalization;
 }
 
+// A large blur is made on a texture `material.liquid.x` times smaller in each
+// direction (a power of two up to 8; below 2 the blur is made at full size). One
+// pass averages each block of the capture into a texel, a horizontal and a
+// vertical Gaussian then run over the small texture, where every pass center is
+// a texel center and the two-taps-in-one bilinear read of `gaussian_backdrop` is
+// exact, and the material's pass reads the result back with bilinear filtering.
+// Sigma is at least four texels there, so the filtering costs under a level.
+fn reduced_fetch(position: vec2<f32>, valid: vec2<f32>, from_capture: bool) -> vec4<f32> {
+    let clamped = clamp(position, vec2<f32>(0.5), valid - vec2<f32>(0.5));
+    if from_capture {
+        return textureSampleLevel(backdrop, backdrop_sampler, clamped / vec2<f32>(textureDimensions(backdrop)), 0.0);
+    }
+    return textureSampleLevel(horizontal_blur, backdrop_sampler, clamped / vec2<f32>(textureDimensions(horizontal_blur)), 0.0);
+}
+
+// The average of the `factor` x `factor` block of capture texels under a texel
+// of the small texture, as `factor / 2` x `factor / 2` bilinear reads of four
+// texels each.
+fn decimate_backdrop(pixel: vec2<f32>) -> vec4<f32> {
+    let factor = material.liquid.x;
+    let count = i32(factor) / 2;
+    let center = pixel * factor;
+    let valid = max(material.backdrop_rect.zw, vec2<f32>(1.0));
+    var total = vec4<f32>(0.0);
+    for (var row = 0; row < count; row += 1) {
+        for (var column = 0; column < count; column += 1) {
+            let offset = vec2<f32>(f32(2 * column - (count - 1)), f32(2 * row - (count - 1)));
+            total += reduced_fetch(center + offset, valid, true);
+        }
+    }
+    return total / f32(count * count);
+}
+
+// `gaussian_backdrop` over the small texture, along `axis`.
+fn gaussian_reduced(pixel: vec2<f32>, axis: vec2<f32>) -> vec4<f32> {
+    let valid = max(material.backdrop_rect.zw, vec2<f32>(1.0));
+    let support = i32(ceil(material.detail.z));
+    var total = reduced_fetch(pixel, valid, false);
+    var normalization = 1.0;
+    var previous = 1.0;
+    var ratio = material.liquid2.z;
+    for (var tap = 1; tap <= support; tap += 2) {
+        let first = previous * ratio;
+        ratio *= material.liquid2.w;
+        var second = 0.0;
+        if tap + 1 <= support { second = first * ratio; }
+        let weight = first + second;
+        let offset = axis * (f32(tap) + second / max(weight, 0.00000001));
+        total += (reduced_fetch(pixel + offset, valid, false) + reduced_fetch(pixel - offset, valid, false)) * weight;
+        normalization += 2.0 * weight;
+        previous = second;
+        ratio *= material.liquid2.w;
+    }
+    return total / normalization;
+}
+
+// The blurred small texture under a fragment of the material's own pass.
+fn reduced_result(pixel: vec2<f32>) -> vec4<f32> {
+    let factor = material.liquid.x;
+    let valid = max(ceil(material.backdrop_rect.zw / factor), vec2<f32>(1.0));
+    return reduced_fetch((pixel - material.backdrop_rect.xy) / factor, valid, false);
+}
+
 fn frosted_backdrop(pixel: vec2<f32>) -> vec4<f32> {
     // Nine texture reads replace the old 17-tap cross. A small reeded offset
     // makes silhouettes visibly refract like patterned architectural glass,
@@ -643,7 +706,12 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     if material.effect.x > 1.5 && material.viewport.w < 0.5 {
         discard;
     }
-    if material.effect.x < -0.5 { return gaussian_backdrop(input.pixel_pos); }
+    if material.effect.x < -0.5 {
+        if material.effect.x < -3.5 { return gaussian_reduced(input.pixel_pos, vec2<f32>(0.0, 1.0)); }
+        if material.effect.x < -2.5 { return gaussian_reduced(input.pixel_pos, vec2<f32>(1.0, 0.0)); }
+        if material.effect.x < -1.5 { return decimate_backdrop(input.pixel_pos); }
+        return gaussian_backdrop(input.pixel_pos);
+    }
     if material.effect.x > 2.5 {
         let center = material.bounds.xy + material.bounds.zw * 0.5;
         let distance = sdf_rounded_rect(input.pixel_pos - center, material.bounds.zw * 0.5, material.radii);
@@ -673,8 +741,10 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     }
     var filtered: vec4<f32>;
     if material.effect.x > 1.5 {
-        if material.detail.z > 0.0 { filtered = gaussian_backdrop(input.pixel_pos); }
-        else { filtered = sample_backdrop(input.pixel_pos); }
+        if material.detail.z > 0.0 {
+            if material.liquid.x > 1.5 { filtered = reduced_result(input.pixel_pos); }
+            else { filtered = gaussian_backdrop(input.pixel_pos); }
+        } else { filtered = sample_backdrop(input.pixel_pos); }
     } else {
         filtered = frosted_backdrop(input.pixel_pos);
     }

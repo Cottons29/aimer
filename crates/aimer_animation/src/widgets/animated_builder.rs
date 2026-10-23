@@ -212,6 +212,48 @@ impl AnimatedBuilder {
         }
     }
 
+    /// Creates a builder driven by `controller` that is handed a `child` which is
+    /// built once and kept.
+    ///
+    /// The closure runs on every step of the animation and returns the widgets
+    /// that depend on the value. Whatever does not depend on it belongs in
+    /// `child`, which the closure places in its output as many times as it is
+    /// called: the child is built the first time, is not built again, and the
+    /// rebuild that follows each step does not look inside it. A tab bar that
+    /// fades in is the same tab bar at every step, so only the fade around it is
+    /// worth rebuilding.
+    ///
+    /// The child keeps its state for as long as the builder exists. It does not
+    /// see a change to anything the closure captured; to change the child, make a
+    /// new `AnimatedBuilder` with a new one.
+    ///
+    /// ```rust
+    /// use std::time::Duration;
+    ///
+    /// use aimer_animation::{AnimatedBuilder, AnimationController, curves};
+    /// use aimer_widget::{ErrorWidget, Widget};
+    ///
+    /// let controller = AnimationController::new(Duration::from_millis(250), curves::LINEAR);
+    /// // A real builder wraps the child in a fade or a scale; this one just shows
+    /// // it from the halfway mark on.
+    /// let animated = AnimatedBuilder::with_child(
+    ///     controller,
+    ///     ErrorWidget::new("built once"),
+    ///     |value, child| {
+    ///         if value < 0.5 { ErrorWidget::new("not yet").boxed() } else { child.boxed() }
+    ///     },
+    /// );
+    /// ```
+    pub fn with_child<C, F, W>(controller: AnimationController, child: C, builder: F) -> Self
+    where
+        C: Widget + 'static,
+        F: Fn(f32, ChildBuilder) -> W + 'static,
+        W: Widget,
+    {
+        let child = ChildBuilder::from_widget(child);
+        Self::new(controller, move |value| builder(value, child.clone()))
+    }
+
     /// Keeps rebuilding the child from the controller's value for as long as the
     /// element exists, even while the controller is not animating. Off by default.
     ///
@@ -746,7 +788,10 @@ impl Rebuildable for AnimatedBuilderElement {
         }
         let output_changed = curved_value != self.last_value.get();
         if output_changed {
-            let child = (self.builder)(curved_value, ctx);
+            // The value moved, and nothing else: whatever the builder hands over as
+            // a retained child is the same child as last frame, so placing it again
+            // must not mark it for rebuild.
+            let child = aimer_widget::without_placement_marks(|| (self.builder)(curved_value, ctx));
             // Preserve state through the replacement, then publish the new
             // child before the retained render tree synchronizes its nodes.
             aimer_widget::preserving_dirty_paths(|| {

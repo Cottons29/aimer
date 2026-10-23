@@ -554,7 +554,8 @@ impl Widget for SvgAsset {
         let window = ctx.window.clone();
         // An asset that has loaded before is ready already, and loading it again
         // would only read the file once more for every time the widget is made.
-        let needs_load = matches!(loader.state(), SvgLoadState::Loading);
+        let initial = loader.state();
+        let needs_load = matches!(initial, SvgLoadState::Loading);
 
         #[cfg(not(target_arch = "wasm32"))]
         match aimer_venus::Venus::current() {
@@ -586,7 +587,7 @@ impl Widget for SvgAsset {
             });
         }
 
-        RawSvgAsset {
+        let asset = RawSvgAsset {
             loader: RefCell::new(loader),
             phase: Cell::new(SvgAssetPhase::Loading),
             width: self.width,
@@ -598,8 +599,15 @@ impl Widget for SvgAsset {
             loading_element: self.loading_widget.map(|widget| widget.to_element(ctx)),
             error_element: self.error_widget.map(|widget| widget.to_element(ctx)),
             svg_element: UnsafeCell::new(None),
+        };
+        // An asset that loaded before is ready as it is made. Installing its icon
+        // here, in the element that is still being built, is not a change of a
+        // tree anyone has seen; waiting for the first layout to do it announced
+        // one for every icon an animation made again, on every frame.
+        if let SvgLoadState::Ready(document) = initial {
+            asset.install(document, ctx);
         }
-        .boxed()
+        asset.boxed()
     }
 
     fn debug_name(&self) -> &'static str {
@@ -629,6 +637,32 @@ struct RawSvgAsset {
 }
 
 impl RawSvgAsset {
+    /// Builds the icon from a loaded `document` and makes it the active child.
+    ///
+    /// The caller says whether the change is one the rest of the tree has to be
+    /// told of.
+    fn install(&self, document: SvgDocument, ctx: &BuildContext) {
+        let source = document.source().to_owned();
+        let svg = Svg {
+            document,
+            source,
+            width: self.width,
+            height: self.height,
+            styles: self.styles.clone(),
+            hover_styles: self.hover_styles.clone(),
+            pressed_styles: self.pressed_styles.clone(),
+            callbacks: self.callbacks.clone(),
+            paint_bounded: false,
+        };
+        // Rendering and element-tree access are single-threaded. The
+        // background task only publishes an owned immutable state through
+        // the loader mailbox; this thread installs the resulting element.
+        unsafe {
+            *self.svg_element.get() = Some(svg.to_element(ctx));
+        }
+        self.phase.set(SvgAssetPhase::Ready);
+    }
+
     fn refresh(&self, ctx: &BuildContext) {
         if self.phase.get() != SvgAssetPhase::Loading {
             return;
@@ -636,25 +670,7 @@ impl RawSvgAsset {
         match self.loader.borrow().state() {
             SvgLoadState::Loading => {}
             SvgLoadState::Ready(document) => {
-                let source = document.source().to_owned();
-                let svg = Svg {
-                    document,
-                    source,
-                    width: self.width,
-                    height: self.height,
-                    styles: self.styles.clone(),
-                    hover_styles: self.hover_styles.clone(),
-                    pressed_styles: self.pressed_styles.clone(),
-                    callbacks: self.callbacks.clone(),
-                    paint_bounded: false,
-                };
-                // Rendering and element-tree access are single-threaded. The
-                // background task only publishes an owned immutable state through
-                // the loader mailbox; this thread installs the resulting element.
-                unsafe {
-                    *self.svg_element.get() = Some(svg.to_element(ctx));
-                }
-                self.phase.set(SvgAssetPhase::Ready);
+                self.install(document, ctx);
                 aimer_widget::notify_element_tree_changed();
                 request_animation_frame();
             }
@@ -1620,6 +1636,40 @@ mod tests {
             error_element: None,
             svg_element: UnsafeCell::new(None),
         }
+    }
+
+    // A tab bar that reveals itself makes its icons again on every frame. An asset
+    // that has loaded before is ready the moment it is made, so there is nothing
+    // for its first layout to announce: telling the framework the tree changed
+    // made every pass after it walk the whole page.
+    #[tokio::test]
+    async fn an_asset_that_loaded_before_is_ready_when_made_and_announces_no_change() {
+        use crate::source::finish_load;
+        use crate::SvgAsset;
+
+        let venus = aimer_venus::Venus::new();
+        venus.install();
+        let key = "assets/tests/ready-when-made.svg";
+        let document = SvgDocument::from_svg(
+            br#"<svg width="2" height="2" xmlns="http://www.w3.org/2000/svg"><path d="M0 0h1v1z"/></svg>"#,
+        )
+        .unwrap();
+        finish_load(&SvgSource::Asset(Arc::from(key)), SvgLoadState::Ready(document));
+        let ctx = context();
+
+        let element = SvgAsset::new(key).to_element(&ctx);
+
+        let mut children = 0;
+        element.visit_children(&mut |_| children += 1);
+        assert_eq!(children, 1, "the loaded icon is the element's child as soon as it is made");
+        let before = aimer_widget::element_tree_generation();
+        element.layout(&ctx);
+        assert_eq!(
+            aimer_widget::element_tree_generation(),
+            before,
+            "the first layout of a ready asset announced a change of the tree"
+        );
+        aimer_venus::Venus::uninstall();
     }
 
     // An ancestor animation rebuilds its child every frame and hands runtime

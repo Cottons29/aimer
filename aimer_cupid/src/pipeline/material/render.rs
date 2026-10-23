@@ -8,9 +8,15 @@ use super::{
 };
 
 mod blur;
+mod downsample;
+
+use downsample::{blur_downsample, reduced_extent};
 
 #[cfg(test)]
 mod light_edge_tests;
+
+#[cfg(test)]
+mod blur_reduction_tests;
 
 #[cfg(test)]
 mod gradient_tests;
@@ -179,6 +185,9 @@ impl MaterialUniform {
         };
         if request.kind == MaterialKind::Gradient {
             uniform.apply_gradient(&request.gradient);
+        }
+        if request.kind == MaterialKind::BackdropFilter && request.blur_radius > 0.0 {
+            uniform.set_vertical_blur(&request);
         }
         uniform
     }

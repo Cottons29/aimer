@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fmt;
+use std::hash::{BuildHasherDefault, Hasher};
 
 use smallvec::SmallVec;
 
@@ -10,6 +11,70 @@ use crate::components::element::{
     has_scoped_rebuilds_since, identities_are_compatible, rename_scoped_rebuilds_since,
     scoped_rebuild_cursor, structural_children,
 };
+
+/// A hasher for the pointers and keys a plan sets up.
+///
+/// A plan builds several sets of element addresses for every reconciliation, and
+/// an animation reconciles a subtree on every frame. The addresses come from
+/// this process, so nothing is gained by making them hard to predict, and the
+/// default hasher spent more time on them than the walk did. This multiplies
+/// each word and keeps the well mixed high bits, which is what the table indexes
+/// by, so aligned addresses spread as well as any other.
+#[derive(Default)]
+struct PlanHasher(u64);
+
+impl PlanHasher {
+    const MULTIPLIER: u64 = 0xf135_7aea_2e62_a9c5;
+
+    #[inline]
+    fn mix(&mut self, word: u64) {
+        self.0 = (self.0.rotate_left(5) ^ word).wrapping_mul(Self::MULTIPLIER);
+    }
+}
+
+impl Hasher for PlanHasher {
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        let mut chunks = bytes.chunks_exact(8);
+        for chunk in &mut chunks {
+            self.mix(u64::from_ne_bytes(chunk.try_into().expect("a chunk of eight bytes")));
+        }
+        let rest = chunks.remainder();
+        if !rest.is_empty() {
+            let mut last = [0u8; 8];
+            last[..rest.len()].copy_from_slice(rest);
+            self.mix(u64::from_ne_bytes(last) ^ ((rest.len() as u64) << 56));
+        }
+    }
+
+    #[inline]
+    fn write_u8(&mut self, value: u8) {
+        self.mix(u64::from(value));
+    }
+
+    #[inline]
+    fn write_u32(&mut self, value: u32) {
+        self.mix(u64::from(value));
+    }
+
+    #[inline]
+    fn write_u64(&mut self, value: u64) {
+        self.mix(value);
+    }
+
+    #[inline]
+    fn write_usize(&mut self, value: usize) {
+        self.mix(value as u64);
+    }
+
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.0.rotate_left(26)
+    }
+}
+
+type PlanBuildHasher = BuildHasherDefault<PlanHasher>;
+type PlanSet<T> = HashSet<T, PlanBuildHasher>;
 
 /// Describes how one compatible element pair was selected during planning.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -70,8 +135,8 @@ impl<'a> ReconciliationPlan<'a> {
 
     /// Revalidates every match before any commit-time mutation occurs.
     pub fn validate(&self) -> Result<(), ReconciliationPlanError> {
-        let mut old_nodes = HashSet::with_capacity(self.matches.len());
-        let mut new_nodes = HashSet::with_capacity(self.matches.len());
+        let mut old_nodes = PlanSet::with_capacity_and_hasher(self.matches.len(), PlanBuildHasher::default());
+        let mut new_nodes = PlanSet::with_capacity_and_hasher(self.matches.len(), PlanBuildHasher::default());
         for (index, element_match) in self.matches.iter().enumerate() {
             if !identities_are_compatible(element_match.old, element_match.new) {
                 return Err(ReconciliationPlanError::IncompatibleMatch { index });
@@ -238,7 +303,7 @@ pub fn plan_element_reconciliation<'a>(
 ) -> ReconciliationPlan<'a> {
     let mut matches = Vec::new();
     if identities_are_compatible(old, new) {
-        let mut visited_pairs = HashSet::new();
+        let mut visited_pairs = PlanSet::default();
         collect_matches(
             old,
             new,
@@ -259,7 +324,7 @@ fn collect_matches<'a>(
     new: &'a dyn Element,
     kind: ReconciliationMatchKind,
     matches: &mut Vec<ReconciliationMatch<'a>>,
-    visited_pairs: &mut HashSet<(*const (dyn Element + 'a), *const (dyn Element + 'a))>,
+    visited_pairs: &mut PlanSet<(*const (dyn Element + 'a), *const (dyn Element + 'a))>,
 ) {
     if !visited_pairs.insert((object_pointer(old), object_pointer(new))) {
         return;
@@ -271,10 +336,11 @@ fn collect_matches<'a>(
     let old_children = structural_children(old);
     let new_children = structural_children(new);
     let mut claimed = SmallVec::<[bool; 8]>::from_elem(false, old_children.len());
-    let mut keyed_candidates: HashMap<
-        (&'a crate::key::Key, std::any::TypeId, &'static str),
-        KeyedCandidates,
-    > = HashMap::new();
+    // Most parents have no keyed child at all, and a map made for each of them is
+    // made for nothing: it is built the first time an old child has a key.
+    let mut keyed_candidates: Option<
+        HashMap<(&'a crate::key::Key, std::any::TypeId, &'static str), KeyedCandidates, PlanBuildHasher>,
+    > = None;
 
     // Keep old keyed children in source order for each complete identity. The
     // cursor preserves the existing duplicate-key behavior while making the
@@ -282,6 +348,7 @@ fn collect_matches<'a>(
     for (old_index, old_child) in old_children.iter().copied().enumerate() {
         if let Some(old_key) = old_child.reconciliation_key() {
             keyed_candidates
+                .get_or_insert_with(HashMap::default)
                 .entry((
                     old_key,
                     old_child.element_type_id(),
@@ -295,7 +362,10 @@ fn collect_matches<'a>(
     for (new_index, new_child) in new_children.iter().copied().enumerate() {
         let selected = if let Some(new_key) = new_child.reconciliation_key() {
             keyed_candidates
-                .get_mut(&(new_key, new_child.element_type_id(), new_child.debug_name()))
+                .as_mut()
+                .and_then(|candidates| {
+                    candidates.get_mut(&(new_key, new_child.element_type_id(), new_child.debug_name()))
+                })
                 .and_then(|candidates: &mut KeyedCandidates| candidates.take(&claimed))
                 .map(|old_index| (old_index, ReconciliationMatchKind::Keyed))
         } else {
@@ -355,4 +425,92 @@ impl KeyedCandidates {
 #[inline]
 fn object_pointer<'a>(element: &'a dyn Element) -> *const (dyn Element + 'a) {
     element as *const (dyn Element + 'a)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Instant;
+
+    use super::*;
+    use crate::base::BuildContext;
+    use crate::components::element::AnyElement;
+    use crate::{Drawable, EventElement, LayoutElement, Rebuildable, VisitorElement};
+
+    /// An element with any number of children, which is all a plan looks at.
+    struct Node {
+        children: Vec<AnyElement>,
+    }
+
+    impl VisitorElement for Node {
+        fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+            for child in &self.children {
+                visitor(child);
+            }
+        }
+
+        fn debug_name(&self) -> &'static str {
+            "PlanNode"
+        }
+    }
+
+    impl EventElement for Node {}
+    impl LayoutElement for Node {}
+    impl Rebuildable for Node {}
+    impl Drawable for Node {
+        fn update(&self, _ctx: &BuildContext) {}
+    }
+
+    /// A balanced tree of `count` nodes, each with up to `fanout` children.
+    fn tree(count: usize, fanout: usize) -> AnyElement {
+        let mut below = count - 1;
+        let mut children = Vec::new();
+        for slot in 0..fanout {
+            if below == 0 {
+                break;
+            }
+            // Share what is left evenly among the slots that are still to come.
+            let share = below.div_ceil(fanout - slot);
+            below -= share;
+            children.push(tree(share, fanout));
+        }
+        Node { children }.boxed()
+    }
+
+    fn median_micros(mut samples: Vec<u128>) -> u128 {
+        samples.sort_unstable();
+        samples[samples.len() / 2]
+    }
+
+    #[test]
+    fn a_plan_pairs_every_node_of_two_trees_of_the_same_shape() {
+        let (old, new) = (tree(300, 4), tree(300, 4));
+
+        let plan = plan_element_reconciliation(old.as_ref(), new.as_ref());
+
+        assert_eq!(plan.matches().len(), 300);
+        assert!(plan.validate().is_ok());
+    }
+
+    /// Time to plan and validate one reconciliation of 2,000 elements.
+    ///
+    /// Run with `cargo nextest run -p aimer_widget -E 'test(profile_planning)'
+    /// --run-ignored only --no-capture`.
+    #[test]
+    #[ignore = "wall-clock measurement"]
+    fn profile_planning_a_reconciliation() {
+        let (old, new) = (tree(2_000, 4), tree(2_000, 4));
+        for _ in 0..20 {
+            let plan = plan_element_reconciliation(old.as_ref(), new.as_ref());
+            plan.validate().unwrap();
+        }
+        let samples: Vec<u128> = (0..300)
+            .map(|_| {
+                let started = Instant::now();
+                let plan = plan_element_reconciliation(old.as_ref(), new.as_ref());
+                plan.validate().unwrap();
+                started.elapsed().as_micros()
+            })
+            .collect();
+        println!("plan + validate, 2000 elements: p50 {} us", median_micros(samples));
+    }
 }

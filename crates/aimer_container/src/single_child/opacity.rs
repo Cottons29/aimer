@@ -89,6 +89,7 @@ fn normalized_opacity(opacity: f32) -> f32 {
 }
 
 #[derive(EventElement, Rebuildable)]
+#[rebuildable(forwards_marks_only)]
 struct RawOpacity {
     child: AnyElement,
     opacity: f32,

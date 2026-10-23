@@ -164,6 +164,7 @@ fn validate_portable_sized_box<W: Widget + 'static>(
     Ok(())
 }
 #[derive(Rebuildable)]
+#[rebuildable(forwards_marks_only)]
 pub struct RawSizedBox<E: Element> {
     pub(crate) width: Dimension,
     pub(crate) height: Dimension,

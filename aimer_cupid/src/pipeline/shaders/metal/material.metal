@@ -174,6 +174,73 @@ static float4 gaussian_backdrop(constant MaterialUniform& material, texture2d<fl
     return total / normalization;
 }
 
+// A large blur is made on a texture `material.liquid.x` times smaller in each
+// direction (a power of two up to 8; below 2 the blur is made at full size). One
+// pass averages each block of the capture into a texel, a horizontal and a
+// vertical Gaussian then run over the small texture, where every pass center is
+// a texel center and the two-taps-in-one bilinear read of `gaussian_backdrop` is
+// exact, and the material's pass reads the result back with bilinear filtering.
+// Sigma is at least four texels there, so the filtering costs under a level.
+static float4 reduced_fetch(texture2d<float> source, sampler backdrop_sampler,
+                            float2 position, float2 valid) {
+    float2 clamped = clamp(position, float2(0.5), valid - float2(0.5));
+    float2 texture_size = float2(float(source.get_width()), float(source.get_height()));
+    return source.sample(backdrop_sampler, clamped / texture_size);
+}
+
+// The average of the `factor` x `factor` block of capture texels under a texel
+// of the small texture, as `factor / 2` x `factor / 2` bilinear reads of four
+// texels each.
+static float4 decimate_backdrop(constant MaterialUniform& material,
+                                texture2d<float> backdrop,
+                                sampler backdrop_sampler, float2 pixel) {
+    float factor = material.liquid.x;
+    int count = int(factor) / 2;
+    float2 center = pixel * factor;
+    float2 valid = max(material.backdrop_rect.zw, float2(1.0));
+    float4 total = float4(0.0);
+    for (int row = 0; row < count; row++) {
+        for (int column = 0; column < count; column++) {
+            float2 offset = float2(float(2 * column - (count - 1)), float(2 * row - (count - 1)));
+            total += reduced_fetch(backdrop, backdrop_sampler, center + offset, valid);
+        }
+    }
+    return total / float(count * count);
+}
+
+// `gaussian_backdrop` over the small texture, along `axis`.
+static float4 gaussian_reduced(constant MaterialUniform& material,
+                               texture2d<float> source, sampler backdrop_sampler,
+                               float2 pixel, float2 axis) {
+    float2 valid = max(material.backdrop_rect.zw, float2(1.0));
+    int support = int(ceil(material.detail.z));
+    float4 total = reduced_fetch(source, backdrop_sampler, pixel, valid);
+    float normalization = 1.0;
+    float previous = 1.0;
+    float ratio = material.liquid2.z;
+    for (int tap = 1; tap <= support; tap += 2) {
+        float first = previous * ratio;
+        ratio *= material.liquid2.w;
+        float second = tap + 1 <= support ? first * ratio : 0.0;
+        float weight = first + second;
+        float2 offset = axis * (float(tap) + second / max(weight, 0.00000001));
+        total += (reduced_fetch(source, backdrop_sampler, pixel + offset, valid) + reduced_fetch(source, backdrop_sampler, pixel - offset, valid)) * weight;
+        normalization += 2.0 * weight;
+        previous = second;
+        ratio *= material.liquid2.w;
+    }
+    return total / normalization;
+}
+
+// The blurred small texture under a fragment of the material's own pass.
+static float4 reduced_result(constant MaterialUniform& material,
+                             texture2d<float> source, sampler backdrop_sampler,
+                             float2 pixel) {
+    float factor = material.liquid.x;
+    float2 valid = max(ceil(material.backdrop_rect.zw / factor), float2(1.0));
+    return reduced_fetch(source, backdrop_sampler, (pixel - material.backdrop_rect.xy) / factor, valid);
+}
+
 static float4 frosted_backdrop(constant MaterialUniform& material,
                                texture2d<float> backdrop,
                                sampler backdrop_sampler,
@@ -515,7 +582,12 @@ fragment float4 fs_main(MaterialVaryings varyings [[stage_in]],
     if (material.effect.x > 1.5 && material.viewport.w < 0.5) {
         discard_fragment();
     }
-    if (material.effect.x < -0.5) return gaussian_backdrop(material, backdrop, backdrop_sampler, varyings.pixel_pos);
+    if (material.effect.x < -0.5) {
+        if (material.effect.x < -3.5) return gaussian_reduced(material, horizontal_blur, backdrop_sampler, varyings.pixel_pos, float2(0.0, 1.0));
+        if (material.effect.x < -2.5) return gaussian_reduced(material, horizontal_blur, backdrop_sampler, varyings.pixel_pos, float2(1.0, 0.0));
+        if (material.effect.x < -1.5) return decimate_backdrop(material, backdrop, backdrop_sampler, varyings.pixel_pos);
+        return gaussian_backdrop(material, backdrop, backdrop_sampler, varyings.pixel_pos);
+    }
     if (material.effect.x > 2.5) {
         float2 center = material.bounds.xy + material.bounds.zw * 0.5;
         float distance = sdf_rounded_rect(varyings.pixel_pos - center, material.bounds.zw * 0.5, material.radii);
@@ -545,7 +617,13 @@ fragment float4 fs_main(MaterialVaryings varyings [[stage_in]],
     }
     float4 filtered;
     if (material.effect.x > 1.5) {
-        filtered = material.detail.z > 0.0 ? gaussian_backdrop(material, horizontal_blur, backdrop_sampler, varyings.pixel_pos) : sample_backdrop(material, backdrop, backdrop_sampler, varyings.pixel_pos);
+        if (material.detail.z <= 0.0) {
+            filtered = sample_backdrop(material, backdrop, backdrop_sampler, varyings.pixel_pos);
+        } else if (material.liquid.x > 1.5) {
+            filtered = reduced_result(material, horizontal_blur, backdrop_sampler, varyings.pixel_pos);
+        } else {
+            filtered = gaussian_backdrop(material, horizontal_blur, backdrop_sampler, varyings.pixel_pos);
+        }
     } else {
         filtered = frosted_backdrop(material, backdrop, backdrop_sampler, varyings.pixel_pos);
     }

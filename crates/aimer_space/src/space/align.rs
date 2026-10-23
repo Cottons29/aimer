@@ -118,6 +118,7 @@ fn alignment_offset(alignment: Alignment, parent: ResolvedSize, child: ResolvedS
 }
 
 #[derive(EventElement, Rebuildable)]
+#[rebuildable(forwards_marks_only)]
 struct RawAlign {
     child: AnyElement,
     layer: u32,
