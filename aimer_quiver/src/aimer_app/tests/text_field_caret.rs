@@ -80,3 +80,39 @@ fn the_caret_follows_text_typed_into_a_field() {
         "the caret stayed at x={before} while 18 characters were typed: now x={after}"
     );
 }
+
+/// A caret that moved is a render-tree matter: the layout of everything else is
+/// where it was. Retiring every layout cache of the window for it made each frame
+/// of a field that animates while focused measure the whole tree again.
+#[test]
+fn moving_the_caret_leaves_the_layout_caches_alone() {
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let mut app = AimerApp::start_headless_with(
+        Column::new().children([TextField::new()
+            .controller(TextEditingController::with_text("Hello"))
+            .cursor_color(aimer_widget::base::Colors::Magenta)
+            .max_length(None)
+            .boxed()]),
+        HeadlessOptions {
+            size: PhysicalSize::new(400, 200),
+            scale_factor: 1.0,
+        },
+    );
+    app.pump_frames(3);
+    click(&mut app, 100.0, 12.0);
+    app.pump_frames(3);
+    let before = caret_x(&app);
+    let layout_generation = aimer_widget::layout_invalidation_generation();
+
+    type_text(&mut app, " and a longer tail");
+    app.pump_frames(3);
+
+    assert!(caret_x(&app) > before + 40.0, "the caret did not follow the text");
+    assert_eq!(
+        aimer_widget::layout_invalidation_generation(),
+        layout_generation,
+        "moving the caret retired the layout caches of the whole window"
+    );
+}

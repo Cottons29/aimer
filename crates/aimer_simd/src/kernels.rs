@@ -4,19 +4,12 @@ use crate::number::Number;
 use crate::simd_traits::{Simd, SimdAdd};
 
 mod unsigned;
-
 pub use unsigned::{add_u8, add_u16};
-
 mod unpremultiply;
-
 pub use unpremultiply::unpremultiply_rgba8;
-
 mod rgba;
-
 pub use rgba::composite_rgba8;
-
 mod coverage;
-
 pub use coverage::{add_u8_in_place, normalize_coverage_u8};
 
 #[cfg(any(

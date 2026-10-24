@@ -110,8 +110,10 @@ impl RawTextFieldHost {
             // tree synchronizes, and a synchronization is skipped while nothing
             // it depends on has moved. The field publishes the caret while it
             // paints, after this frame's synchronization, so without this the
-            // caret would stay where the previous edit left it.
-            aimer_widget::notify_layout_changed();
+            // caret would stay where the previous edit left it. Nothing is laid
+            // out differently: the caret is out of flow, so retiring the layout
+            // caches would only make the next pass measure the window again.
+            aimer_widget::notify_retained_render_structure_changed();
         }
     }
 }

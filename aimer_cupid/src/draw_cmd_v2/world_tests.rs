@@ -239,6 +239,47 @@ fn world_queries_match_the_original_definitions_exactly() {
     }
 }
 
+/// Asking for many nodes at once gives each the answer it would have been given
+/// alone. A structural edit damages the footprint of every parent it touched,
+/// and those subtrees nest: the answer for a node already holds the answers for
+/// the nodes below it, so asking for them together reuses it.
+#[test]
+fn the_footprints_of_many_nodes_equal_asking_for_each_alone() {
+    for seed in [3, 11, 58, 2025, 777_777] {
+        for (tree, ids) in [varied_tree(seed, 90), untransformed_tree(seed, 120)] {
+            let inner = tree.draw_cmd.borrow();
+            // Parents and children together, out of order, one of them twice.
+            let mut asked = ids.clone();
+            asked.reverse();
+            asked.push(ids[ids.len() / 2]);
+
+            let together = inner.visible_subtree_bounds_of(&asked);
+            let alone: Vec<Rect> = asked
+                .iter()
+                .filter_map(|id| inner.visible_subtree_bounds(*id))
+                .collect();
+
+            assert_eq!(together, alone, "seed {seed}");
+        }
+    }
+}
+
+/// A node that does not exist has no footprint, as when asked alone.
+#[test]
+fn a_node_that_is_not_in_the_tree_has_no_footprint_among_many() {
+    let (tree, ids) = varied_tree(5, 20);
+    let inner = tree.draw_cmd.borrow();
+    let gone = RenderNodeId(u64::MAX);
+
+    let together = inner.visible_subtree_bounds_of(&[ids[1], gone, ids[2]]);
+
+    let alone: Vec<Rect> = [ids[1], ids[2]]
+        .iter()
+        .filter_map(|id| inner.visible_subtree_bounds(*id))
+        .collect();
+    assert_eq!(together, alone);
+}
+
 /// A tree like a real interface: almost no node carries a transform, a share
 /// of them clip, and a few animate. The identity shortcut takes every node
 /// that has no transform, so this is the shape that exercises it hardest.

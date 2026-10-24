@@ -963,6 +963,12 @@ impl FlexLayout {
     }
 }
 
+/// How many constraints a container remembers an answer for.
+///
+/// A container in a scroll view is asked under an unbounded extent and under its
+/// own, at its own width and at an unbounded one: four in all.
+const CACHED_CONSTRAINTS: usize = 4;
+
 /// A [`FlexLayout`] together with everything that decides whether it still
 /// describes the container.
 struct CachedTable {
@@ -1081,7 +1087,15 @@ impl CachedHitTestIndex {
 /// A declared or predicted table is kept across generations, see
 /// [`FlexLayout::describes_measured_children`].
 pub(crate) struct FlexLayoutCache {
-    table: UnsafeCell<Option<CachedTable>>,
+    /// The tables made for the constraints this container was asked under, the
+    /// one made last first.
+    ///
+    /// One container is asked under several constraints in a frame: the pass that
+    /// sizes the scroll view above it gives it an unbounded extent, the pass that
+    /// places and paints it gives it the extent it measured, and a wrapping parent
+    /// asks again at each line width. A single table made each pass throw the
+    /// previous one's answer away, so every pass measured every child again.
+    tables: UnsafeCell<[Option<CachedTable>; CACHED_CONSTRAINTS]>,
     painted: Cell<Option<(usize, usize)>>,
     paint_order: UnsafeCell<Option<CachedLayerOrder>>,
     hit_test_index: UnsafeCell<Option<CachedHitTestIndex>>,
@@ -1092,33 +1106,39 @@ impl FlexLayoutCache {
     #[inline]
     pub(crate) fn new() -> Self {
         Self {
-            table: UnsafeCell::new(None),
+            tables: UnsafeCell::new([const { None }; CACHED_CONSTRAINTS]),
             painted: Cell::new(None),
             paint_order: UnsafeCell::new(None),
             hit_test_index: UnsafeCell::new(None),
         }
     }
 
+    /// The held tables, the one made last first.
+    #[inline]
+    fn tables(&self) -> impl Iterator<Item = &CachedTable> {
+        // Only ever read through these shared references, and never while `set`
+        // holds an exclusive one; the element tree is single-threaded.
+        unsafe { &*self.tables.get() }.iter().flatten()
+    }
+
     /// Returns the cached table when it was measured under the same inputs and
     /// the element tree still holds the children it was measured from.
     #[inline]
     pub(crate) fn get(&self, constraint: BoxConstraint, scale_bits: u32) -> Option<Rc<FlexLayout>> {
-        // Only ever read through this exclusive reference, and never while `set`
-        // holds its own; the element tree is single-threaded.
-        let slot = unsafe { &*self.table.get() };
-        let cached = slot.as_ref()?;
-        if cached.constraint != constraint || cached.scale_bits != scale_bits {
-            return None;
-        }
-        if cached.layout_generation != aimer_widget::layout_invalidation_generation() {
-            return None;
-        }
-        if cached.generation != aimer_widget::element_tree_generation()
-            && cached.layout.describes_measured_children()
-        {
-            return None;
-        }
-        Some(Rc::clone(&cached.layout))
+        self.tables().find_map(|cached| {
+            if cached.constraint != constraint || cached.scale_bits != scale_bits {
+                return None;
+            }
+            if cached.layout_generation != aimer_widget::layout_invalidation_generation() {
+                return None;
+            }
+            if cached.generation != aimer_widget::element_tree_generation()
+                && cached.layout.describes_measured_children()
+            {
+                return None;
+            }
+            Some(Rc::clone(&cached.layout))
+        })
     }
 
     /// Returns the table held now when it is a prediction or a measure,
@@ -1131,8 +1151,7 @@ impl FlexLayoutCache {
     /// the constraint it is asked under differs.
     #[inline]
     pub(crate) fn learned(&self) -> Option<Rc<FlexLayout>> {
-        let slot = unsafe { &*self.table.get() };
-        let cached = slot.as_ref()?;
+        let cached = self.tables().next()?;
         (!cached.layout.is_declared()).then(|| Rc::clone(&cached.layout))
     }
 
@@ -1144,18 +1163,18 @@ impl FlexLayoutCache {
         constraint: BoxConstraint,
         scale_bits: u32,
     ) -> Option<Rc<FlexLayout>> {
-        let slot = unsafe { &*self.table.get() };
-        let cached = slot.as_ref()?;
-        if cached.constraint != constraint
-            || cached.scale_bits != scale_bits
-            || cached.layout_generation != aimer_widget::layout_invalidation_generation()
-            || cached.generation == aimer_widget::element_tree_generation()
-            || !cached.layout.describes_measured_children()
-            || !cached.layout.can_reuse_stable_children()
-        {
-            return None;
-        }
-        Some(Rc::clone(&cached.layout))
+        self.tables().find_map(|cached| {
+            if cached.constraint != constraint
+                || cached.scale_bits != scale_bits
+                || cached.layout_generation != aimer_widget::layout_invalidation_generation()
+                || cached.generation == aimer_widget::element_tree_generation()
+                || !cached.layout.describes_measured_children()
+                || !cached.layout.can_reuse_stable_children()
+            {
+                return None;
+            }
+            Some(Rc::clone(&cached.layout))
+        })
     }
 
     /// Returns a measured table built under these inputs whose only stale part
@@ -1166,30 +1185,43 @@ impl FlexLayoutCache {
         constraint: BoxConstraint,
         scale_bits: u32,
     ) -> Option<Rc<FlexLayout>> {
-        let slot = unsafe { &*self.table.get() };
-        let cached = slot.as_ref()?;
-        if cached.constraint != constraint
-            || cached.scale_bits != scale_bits
-            || cached.layout_generation != aimer_widget::layout_invalidation_generation()
-            || cached.generation == aimer_widget::element_tree_generation()
-            || !cached.layout.describes_measured_children()
-        {
-            return None;
-        }
-        Some(Rc::clone(&cached.layout))
+        self.tables().find_map(|cached| {
+            if cached.constraint != constraint
+                || cached.scale_bits != scale_bits
+                || cached.layout_generation != aimer_widget::layout_invalidation_generation()
+                || cached.generation == aimer_widget::element_tree_generation()
+                || !cached.layout.describes_measured_children()
+            {
+                return None;
+            }
+            Some(Rc::clone(&cached.layout))
+        })
     }
 
     /// Stores `layout` as the table for `constraint` and `scale_bits`.
     #[inline]
     pub(crate) fn set(&self, constraint: BoxConstraint, scale_bits: u32, layout: Rc<FlexLayout>) {
-        let slot = unsafe { &mut *self.table.get() };
-        *slot = Some(CachedTable {
+        let table = CachedTable {
             constraint,
             scale_bits,
             generation: aimer_widget::element_tree_generation(),
             layout_generation: aimer_widget::layout_invalidation_generation(),
             layout,
+        };
+        // Exclusive reference, dropped before `get` can run again.
+        let held = unsafe { &mut *self.tables.get() };
+        let same_key = held.iter().position(|held| {
+            held.as_ref()
+                .is_some_and(|held| held.constraint == constraint && held.scale_bits == scale_bits)
         });
+        match same_key {
+            Some(index) => held[index] = Some(table),
+            None => {
+                // The oldest answer makes room for this one.
+                held.rotate_right(1);
+                held[0] = Some(table);
+            }
+        }
     }
 
     /// Returns the cached paint order for `range`, rebuilding it only when the
@@ -1260,11 +1292,11 @@ impl FlexLayoutCache {
     /// rules, which the caller establishes. Nothing already cached here is
     /// overwritten.
     pub(crate) fn adopt(&self, old: &Self) {
-        let slot = unsafe { &mut *self.table.get() };
-        if slot.is_none() {
+        let held = unsafe { &mut *self.tables.get() };
+        if held.iter().all(Option::is_none) {
             // Taken rather than cloned: the cache it came from is dropped with
             // the container being replaced.
-            *slot = unsafe { (*old.table.get()).take() };
+            *held = unsafe { std::mem::take(&mut *old.tables.get()) };
         }
         if self.painted.get().is_none() {
             self.painted.set(old.painted.get());
@@ -1282,7 +1314,7 @@ impl FlexLayoutCache {
     #[inline]
     pub(crate) fn invalidate(&self) {
         unsafe {
-            *self.table.get() = None;
+            (*self.tables.get()).fill_with(|| None);
             *self.paint_order.get() = None;
             *self.hit_test_index.get() = None;
         }

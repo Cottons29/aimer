@@ -287,6 +287,70 @@ impl DrawCommandList {
         self.visible_subtree_bounds_from(node, &parent)
     }
 
+    /// [`Self::visible_subtree_bounds`] for each of `ids`, left out when a node
+    /// has none, with every node's footprint worked out once however many of
+    /// `ids` lie above it.
+    ///
+    /// A structural edit damages the footprint of each parent it touched, and a
+    /// page swapped in touches a parent at every level of the new subtree. Asked
+    /// one by one, each of those walked the subtree below it again, so the cost
+    /// grew with the depth of what was added. The footprint of a node holds the
+    /// footprints of the nodes below it, so it is kept the first time it is
+    /// found and read back by every query above it.
+    pub(super) fn visible_subtree_bounds_of(&self, ids: &[RenderNodeId]) -> Vec<Rect> {
+        let mut known: Vec<Option<Option<Rect>>> = vec![None; self.nodes.len()];
+        ids.iter()
+            .filter_map(|id| {
+                let index = *self.indices.get(id)?;
+                let node = &self.nodes[index];
+                let parent = self.frame_below(node.parent)?;
+                // The same early answer as `visible_subtree_bounds`, which does
+                // not visit a single descendant.
+                let world = node.world(&parent);
+                if let ClipState::Clipped(clip) = world.frame.clip
+                    && self.clip_escape_count == 0
+                    && let Some(bounds) = world.bounds
+                    && bounds.intersection(clip) == Some(clip)
+                {
+                    return Some(clip);
+                }
+                self.visible_subtree_bounds_known(index, &parent, &mut known)
+            })
+            .collect()
+    }
+
+    fn visible_subtree_bounds_known(
+        &self,
+        index: usize,
+        parent: &WorldFrame,
+        known: &mut [Option<Option<Rect>>],
+    ) -> Option<Rect> {
+        if let Some(found) = known[index] {
+            return found;
+        }
+        let node = &self.nodes[index];
+        let world = node.world(parent);
+        let mut bounds = world
+            .bounds
+            .and_then(|bounds| world.frame.clip.intersect_bounds(bounds));
+        // A node without bounds hides what is below it, as it does when asked
+        // alone.
+        if world.bounds.is_some() {
+            for child in node.children.iter().copied() {
+                let Some(&child) = self.indices.get(&child) else {
+                    continue;
+                };
+                if let Some(child_bounds) =
+                    self.visible_subtree_bounds_known(child, &world.frame, known)
+                {
+                    bounds = Some(bounds.map_or(child_bounds, |bounds| bounds.union(child_bounds)));
+                }
+            }
+        }
+        known[index] = Some(bounds);
+        bounds
+    }
+
     /// The footprint to damage when `id` or anything inside it changes: the
     /// union of the visible bounds of the node and every descendant.
     ///

@@ -969,6 +969,8 @@ mod lazy_tests {
 pub mod raw_flex;
 pub mod row_column;
 #[cfg(test)]
+mod layout_cache_tests;
+#[cfg(test)]
 mod saturation_tests;
 #[cfg(test)]
 pub(crate) mod test_support;

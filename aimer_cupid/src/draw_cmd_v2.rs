@@ -1230,10 +1230,7 @@ impl RenderTree {
         }
         let mut structural_damage_ids = structural_damage_ids.into_iter().collect::<Vec<_>>();
         structural_damage_ids.sort_unstable_by_key(|id| id.get());
-        let old_damage = structural_damage_ids
-            .iter()
-            .filter_map(|id| tree.visible_subtree_bounds(*id))
-            .collect::<Vec<_>>();
+        let old_damage = tree.visible_subtree_bounds_of(&structural_damage_ids);
         let mut previous = mem::take(&mut tree.nodes)
             .into_iter()
             .map(|node| (node.id, node))
@@ -1286,10 +1283,7 @@ impl RenderTree {
         tree.roots = roots;
         tree.next_id = next_id;
 
-        let new_damage = structural_damage_ids
-            .iter()
-            .filter_map(|id| tree.visible_subtree_bounds(*id))
-            .collect::<Vec<_>>();
+        let new_damage = tree.visible_subtree_bounds_of(&structural_damage_ids);
         for damage in old_damage.into_iter().chain(new_damage) {
             tree.push_damage(damage);
         }
